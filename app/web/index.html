@@ -635,14 +635,14 @@ body {
   display: flex;
   flex-direction: row;
   background: #fff;
-  border-radius: 18px;
+  border-radius: 16px;
   overflow: visible;
   box-shadow: 0 2px 12px rgba(0,0,0,0.06);
   border: 1px solid #f0e8ee;
   transition: box-shadow 0.3s, transform 0.3s;
   position: relative;
   isolation: isolate;
-  min-height: 200px;
+  min-height: 170px;
 }
 .gallery-list .today-compact::before {
   content: '';
@@ -666,9 +666,9 @@ body {
   transform: translateY(-2px);
 }
 .today-compact .tc-image {
-  flex: 0 0 35%;
-  max-width: 35%;
-  min-height: 280px;
+  flex: 0 0 30%;
+  max-width: 30%;
+  min-height: 220px;
   background: linear-gradient(135deg, #fce4ec, #f3d4e0);
   overflow: hidden;
   position: relative;
@@ -699,10 +699,10 @@ body {
 }
 .today-compact .tc-info {
   flex: 1;
-  padding: 16px 20px;
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   position: relative;
   z-index: 1;
@@ -1382,14 +1382,14 @@ body {
 /* 🐷 日程彩蛋弹窗 */
 .egg-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(6px); z-index: 9999; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
 .egg-overlay.show { opacity: 1; pointer-events: auto; }
-.egg-card { background: #fff; border-radius: 24px; width: 480px; max-height: 85vh; overflow-y: auto; box-shadow: 0 30px 80px rgba(100,50,120,0.3); transform: scale(0.9) translateY(20px); transition: transform 0.35s cubic-bezier(0.34,1.56,0.64,1); }
+.egg-card { background: #fff; border-radius: 20px; width: 420px; max-height: 80vh; overflow-y: auto; box-shadow: 0 30px 80px rgba(100,50,120,0.3); transform: scale(0.9) translateY(20px); transition: transform 0.35s cubic-bezier(0.34,1.56,0.64,1); }
 .egg-overlay.show .egg-card { transform: scale(1) translateY(0); }
-.egg-header { background: linear-gradient(135deg, #ff6b9d, #c084fc, #818cf8); padding: 28px 28px 22px; border-radius: 24px 24px 0 0; position: relative; }
+.egg-header { background: linear-gradient(135deg, #ff6b9d, #c084fc, #818cf8); padding: 22px 22px 18px; border-radius: 20px 20px 0 0; position: relative; }
 .egg-header h2 { color: #fff; font-size: 22px; margin: 0; font-family: 'ZCOOL KuaiLe', cursive; text-shadow: 0 2px 8px rgba(0,0,0,0.15); }
 .egg-header .egg-date { color: rgba(255,255,255,0.85); font-size: 13px; margin-top: 6px; }
 .egg-close { position: absolute; top: 16px; right: 18px; background: rgba(255,255,255,0.2); border: none; color: #fff; width: 32px; height: 32px; border-radius: 50%; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }
 .egg-close:hover { background: rgba(255,255,255,0.4); }
-.egg-body { padding: 24px 28px; }
+.egg-body { padding: 18px 22px; }
 .egg-section { margin-bottom: 22px; }
 .egg-section:last-child { margin-bottom: 0; }
 .egg-section-title { font-size: 14px; font-weight: 700; color: #c084fc; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
@@ -1412,15 +1412,15 @@ body {
 /* 📝 提示词弹窗 */
 .prompt-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(6px); z-index: 10000; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
 .prompt-overlay.show { opacity: 1; pointer-events: auto; }
-.prompt-card { background: #fff; border-radius: 20px; width: 560px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 30px 80px rgba(0,0,0,0.25); transform: scale(0.9); transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1); }
+.prompt-card { background: #fff; border-radius: 18px; width: 480px; max-height: 75vh; display: flex; flex-direction: column; box-shadow: 0 30px 80px rgba(0,0,0,0.25); transform: scale(0.9); transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1); }
 .prompt-overlay.show .prompt-card { transform: scale(1); }
-.prompt-header { display: flex; align-items: center; justify-content: space-between; padding: 18px 24px; border-bottom: 1px solid #f0e4f4; font-size: 16px; font-weight: 700; color: #7c3aed; }
+.prompt-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid #f0e4f4; font-size: 15px; font-weight: 700; color: #7c3aed; }
 .prompt-close { background: none; border: none; font-size: 18px; color: #aaa; cursor: pointer; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
 .prompt-close:hover { background: #f5f0ff; color: #7c3aed; }
-.prompt-body { flex: 1; overflow-y: auto; padding: 20px 24px; }
-.prompt-body pre { margin: 0; white-space: pre-wrap; word-break: break-all; font-family: 'SF Mono', 'Menlo', monospace; font-size: 13px; line-height: 1.7; color: #444; background: #faf7ff; border-radius: 12px; padding: 16px; }
-.prompt-footer { padding: 14px 24px; border-top: 1px solid #f0e4f4; display: flex; justify-content: flex-end; }
-.prompt-copy-btn { background: linear-gradient(135deg, #c084fc, #818cf8); color: #fff; border: none; border-radius: 12px; padding: 10px 24px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 12px rgba(192,132,252,0.3); }
+.prompt-body { flex: 1; overflow-y: auto; padding: 16px 20px; }
+.prompt-body pre { margin: 0; white-space: pre-wrap; word-break: break-all; font-family: 'SF Mono', 'Menlo', monospace; font-size: 12px; line-height: 1.6; color: #444; background: #faf7ff; border-radius: 10px; padding: 12px; }
+.prompt-footer { padding: 12px 20px; border-top: 1px solid #f0e4f4; display: flex; justify-content: flex-end; }
+.prompt-copy-btn { background: linear-gradient(135deg, #c084fc, #818cf8); color: #fff; border: none; border-radius: 10px; padding: 8px 20px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 12px rgba(192,132,252,0.3); }
 .prompt-copy-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(192,132,252,0.4); }
 
 </style>
@@ -1837,7 +1837,7 @@ function renderToday() {
         <div class="tc-image">
           <img src="/images/${today.image_filename}" alt="今日穿搭" onclick="openViewer('/images/${today.image_filename}')" style="cursor:pointer;">
         </div>
-        <div class="modal-info" style="flex:1;padding:20px 24px;border-radius:20px;">
+        <div class="modal-info" style="flex:1;padding:16px 18px;border-radius:20px;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
             <span class="modal-date" style="margin:0;padding:0;background:none;">${dateText} ${timeLabel}</span>
             ${today.outfit_style ? `<span class="modal-style" onclick="event.stopPropagation();filterByTag('${today.outfit_style}');">${today.outfit_style}</span>` : ""}
@@ -2124,20 +2124,20 @@ ms.textContent = `
 .modal-overlay.open { display:flex; }
 @keyframes fadeIn { from{opacity:0} to{opacity:1} }
 .modal-content {
-  background:#fff;border-radius:24px;max-width:1100px;width:100%;
-  max-height:88vh;overflow-y:auto;display:flex;flex-direction:row;
+  background:#fff;border-radius:20px;max-width:960px;width:100%;
+  max-height:85vh;overflow-y:auto;display:flex;flex-direction:row;
   box-shadow:0 25px 80px rgba(20,10,30,0.25);animation:slideUp 0.3s cubic-bezier(0.16,1,0.3,1);position:relative;
   border:1px solid rgba(255,255,255,0.3);
 }
 @keyframes slideUp { from{opacity:0;transform:translateY(24px) scale(0.98)} to{opacity:1;transform:translateY(0) scale(1)} }
-.modal-image { flex:0 0 42%;background:#f0ecf4;display:flex;min-height:480px;overflow:hidden;border-radius:24px 0 0 24px;cursor:pointer; }
+.modal-image { flex:0 0 40%;background:#f0ecf4;display:flex;min-height:400px;overflow:hidden;border-radius:20px 0 0 20px;cursor:pointer; }
 .modal-image img { width:100%;height:100%;object-fit:cover;transition:transform 0.4s; }
 .modal-image img:hover { transform:scale(1.03); }
 /* Fullscreen image viewer */
 .img-fullscreen { position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.92);z-index:9999;display:none;align-items:center;justify-content:center;cursor:zoom-out;animation:fadeIn 0.2s; }
 .img-fullscreen.open { display:flex; }
 .img-fullscreen img { max-width:92vw;max-height:92vh;object-fit:contain;border-radius:8px;box-shadow:0 0 60px rgba(0,0,0,0.5); }
-.modal-info { flex:1;padding:32px 32px 24px;display:flex;flex-direction:column;gap:14px;background:linear-gradient(180deg,#fcfaff 0%,#fff 100%); }
+.modal-info { flex:1;padding:24px 24px 20px;display:flex;flex-direction:column;gap:10px;background:linear-gradient(180deg,#fcfaff 0%,#fff 100%); }
 .modal-info-top { display:flex;align-items:center;justify-content:space-between;gap:12px; }
 .modal-date { font-size:15px;color:#999;font-weight:500;letter-spacing:0.3px; }
 .modal-style { display:inline-block;background:linear-gradient(135deg,#e91e63,#9c27b0);color:#fff;padding:4px 14px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:0.5px;width:fit-content;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(233,30,99,0.2);flex-shrink:0; }
