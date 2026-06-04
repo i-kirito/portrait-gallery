@@ -277,7 +277,23 @@ def _get_schedule_context(theme: str) -> tuple:
                 break
     
     if not schedule:
-        return "", ""
+        # Fallback: no schedule found, generate context from current time + theme
+        from datetime import datetime
+        now = datetime.now()
+        time_str = f"{now.hour:02d}:{now.minute:02d}"
+        
+        _FALLBACK_ACTIVITIES = {
+            "morning": ["晨间护肤routine", "喝咖啡看日出", "晨跑后拉伸放松", "做早餐中", "阳台看书晒太阳", "整理穿搭出门"],
+            "noon": ["午后小憩", "咖啡厅办公", "和闺蜜约饭", "逛街shopping", "公园散步拍照", "喝下午茶吃甜点"],
+            "evening": ["下班后放松时刻", "健身房运动", "弹琴唱歌", "做饭时间", "夜晚城市漫步", "居家追剧放松"],
+            "bedtime": ["睡前护肤敷面膜", "窝在被窝看小说", "泡澡放松", "床头灯下看书", "深夜emo时间", "和主人说晚安"],
+        }
+        import random as _rnd
+        activity = _rnd.choice(_FALLBACK_ACTIVITIES.get(theme, ["日常活动"]))
+        ctx = f"Today's plan: {activity}"
+        raw_slot = f"{time_str} {activity}"
+        print(f"📋 Schedule fallback: {ctx}", file=sys.stderr)
+        return ctx, raw_slot
     
     import re
     # Time-based schedule format: "HH:MM activity" or "period：activity"
@@ -337,6 +353,7 @@ def _get_schedule_context(theme: str) -> tuple:
                 print(f"📋 Schedule context: {ctx}", file=sys.stderr)
                 # Return both context (for prompt) and raw time slot (for display)
                 return ctx, f"{h_str}:{m_str} {activity}"
+    # If we get here, no time slot matched - return empty
     return "", ""
 
 
