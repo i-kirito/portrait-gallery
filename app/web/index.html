@@ -1394,10 +1394,10 @@ body {
 .egg-section:last-child { margin-bottom: 0; }
 .egg-section-title { font-size: 14px; font-weight: 700; color: #c084fc; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
 .egg-section-title .icon { font-size: 16px; }
-.egg-outfit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.egg-outfit-item { background: linear-gradient(135deg, #fdf2f8, #f5f3ff); border-radius: 14px; padding: 12px 14px; }
+.egg-outfit-grid { display: flex; flex-direction: column; gap: 10px; }
+.egg-outfit-item { background: linear-gradient(135deg, #fdf2f8, #f5f3ff); border-radius: 14px; padding: 12px 14px; width: 100%; box-sizing: border-box; }
 .egg-outfit-label { font-size: 11px; color: #a78bfa; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
-.egg-outfit-value { font-size: 14px; color: #333; line-height: 1.5; }
+.egg-outfit-value { font-size: 14px; color: #333; line-height: 1.5; word-break: break-all; }
 .egg-schedule-list { position: relative; padding-left: 24px; }
 .egg-schedule-list::before { content: ''; position: absolute; left: 8px; top: 4px; bottom: 4px; width: 2px; background: linear-gradient(to bottom, #ff6b9d, #c084fc, #818cf8); border-radius: 1px; }
 .egg-sched-item { position: relative; padding: 8px 0; }
