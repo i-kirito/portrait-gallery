@@ -43,3 +43,6 @@ Thumbs.db
 
 # Docker
 docker-compose.override.yml
+
+# User uploaded reference images
+app/references/uploads/

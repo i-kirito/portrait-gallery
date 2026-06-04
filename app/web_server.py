@@ -2,6 +2,8 @@
 import json
 import logging
 import os
+import sys
+import subprocess
 from datetime import date
 from pathlib import Path
 import time
@@ -76,6 +78,10 @@ class GalleryServer:
         self.app.router.add_get("/api/health", self.handle_health)
         self.app.router.add_get("/api/config/keys", self.handle_get_keys)
         self.app.router.add_post("/api/config/keys", self.handle_save_keys)
+        # 版本管理
+        self.app.router.add_get("/api/version", self.handle_version)
+        self.app.router.add_post("/api/check-update", self.handle_check_update)
+        self.app.router.add_post("/api/update", self.handle_update)
 
         # 图片服务
         self.app.router.add_static("/images", self.image_dir, show_index=False)
@@ -259,25 +265,9 @@ class GalleryServer:
         return web.json_response({"status": "error", "date": today_str})
 
     async def handle_ref_list(self, request: web.Request):
-        """返回预置参考图列表（3个底模）"""
-        ref_dir = os.path.join(os.path.dirname(__file__), "references")
-        refs = []
-        ref_config = {
-            "reference_face.jpg": {"name": "cool", "label": "冷御风", "desc": "精致冷艳风"},
-            "ref_style_girly.jpg": {"name": "girly", "label": "少女风", "desc": "活力少女猫咪自拍"},
-            "ref_style_sweet.jpg": {"name": "sweet", "label": "甜妹风", "desc": "粉色卫衣甜心"},
-        }
-        for filename, info in ref_config.items():
-            filepath = os.path.join(ref_dir, filename)
-            if os.path.exists(filepath):
-                refs.append({
-                    "filename": filename,
-                    "url": f"/refs/{filename}",
-                    "style": info["name"],
-                    "label": info["label"],
-                    "desc": info["desc"],
-                })
-        return web.json_response(refs)
+        """返回参考图列表（只返回用户上传的自定义参考图）"""
+        # 只返回上传的参考图，不再返回内置底模
+        return web.json_response([])
 
     async def handle_uploaded_refs(self, request: web.Request):
         """列出已上传的自定义参考图"""
@@ -581,6 +571,99 @@ class GalleryServer:
         except Exception as e:
             logger.error(f"Load entries error: {e}")
             return []
+
+    def _load_version(self) -> str:
+        """读取版本文件"""
+        version_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "VERSION")
+        if os.path.exists(version_file):
+            with open(version_file, "r") as f:
+                return f.read().strip()
+        return "unknown"
+
+    async def handle_version(self, request: web.Request):
+        """返回当前版本信息"""
+        version = self._load_version()
+        return web.json_response({"version": version})
+
+    async def handle_check_update(self, request: web.Request):
+        """检查更新（从 GitHub API 获取最新版本）"""
+        import aiohttp
+        import json
+
+        github_api = "https://api.github.com/repos/i-kirito/portrait-gallery/releases/latest"
+        current_version = self._load_version()
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(github_api) as resp:
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        logger.error(f"GitHub API error: {resp.status}, {error_text}")
+                        return web.json_response(
+                            {"error": f"GitHub API 请求失败: {resp.status}"},
+                            status=500
+                        )
+
+                    data = await resp.json()
+                    latest_version = data.get("tag_name", "").lstrip("v")
+                    if not latest_version:
+                        return web.json_response(
+                            {"error": "无法获取最新版本号"},
+                            status=500
+                        )
+
+                    if latest_version == current_version:
+                        return web.json_response({"message": "已是最新版本"})
+
+                    # 返回更新信息
+                    return web.json_response({
+                        "current": current_version,
+                        "latest": latest_version,
+                        "update_available": True,
+                        "changelog": data.get("body", ""),
+                        "html_url": data.get("html_url", ""),
+                    })
+        except Exception as e:
+            logger.error(f"Check update error: {e}")
+            return web.json_response(
+                {"error": f"检查更新失败: {e}"},
+                status=500
+            )
+
+    async def handle_update(self, request: web.Request):
+        """执行更新（git pull + 重启）"""
+        try:
+            # 1. git pull
+            result = subprocess.run(
+                ["git", "pull", "origin", "main"],
+                cwd=os.path.dirname(os.path.dirname(__file__)),
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+
+            if result.returncode != 0:
+                return web.json_response(
+                    {"error": f"git pull 失败: {result.stderr}"},
+                    status=500
+                )
+
+            # 2. 重启服务
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+
+            return web.json_response({"message": "更新成功，服务已重启"})
+        except subprocess.TimeoutExpired:
+            logger.error("Update timeout")
+            return web.json_response(
+                {"error": "更新超时"},
+                status=500
+            )
+        except Exception as e:
+            logger.error(f"Update error: {e}")
+            return web.json_response(
+                {"error": f"更新失败: {e}"},
+                status=500
+            )
 
     def run(self):
         """启动服务器"""

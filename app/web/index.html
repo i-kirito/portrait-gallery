@@ -1285,7 +1285,7 @@ body {
 
 <div class="header">
   <div class="header-left">
-    <h1>🐷 猪猪穿搭画廊</h1>
+    <h1>🐷 猪猪穿搭画廊 <span style="font-size:12px;color:#999;font-weight:400;" id="versionTag">v1.0.0</span></h1>
   </div>
   <div class="header-right">
     <div class="tabs">
@@ -1361,6 +1361,13 @@ body {
       <button class="btn btn-secondary" onclick="closeSettings()">关闭</button>
       <button class="btn btn-primary" id="skSaveBtn" onclick="saveSettings()">💾 保存</button>
     </div>
+    <div style="margin-top:20px;padding-top:20px;border-top:1px solid #eee;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+        <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
+        <span style="font-size:12px;color:#999;">当前版本 <span id="settingsVersion">v1.0.0</span></span>
+      </div>
+      <div id="updateResult"></div>
+    </div>
   </div>
 </div>
 
@@ -1386,17 +1393,17 @@ body {
       </div>
     </div>
     <div class="cg-field">
-      <label>参考图（可选）</label>
+      <label>参考图（可选，用于图生图）</label>
       <div class="cg-ref-grid" id="cgRefGrid">
         <div class="cg-ref-item active" data-ref="">
           <div class="cg-ref-none">📸</div>
         </div>
       </div>
       <div class="hint" style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-        <span style="color:#999">选本地底模作为参考风格（脸型/穿搭）</span>
+        <span style="color:#999">选择上传的参考图（脸型/穿搭风格），或上传新图</span>
         <label class="cg-upload-label">
           <input type="file" id="cgRefUpload" accept="image/*" style="display:none" onchange="uploadRefImage(event)">
-          <span class="cg-upload-btn">📤 上传自定义</span>
+          <span class="cg-upload-btn">📤 上传参考图</span>
         </label>
       </div>
     </div>
@@ -2189,22 +2196,13 @@ let uploadedRefs = [];
 async function loadRefImages() {
   const grid = document.getElementById("cgRefGrid");
   try {
-    const [refsRes, uploadedRes] = await Promise.all([
-      fetch(`${API}/api/ref-list`),
-      fetch(`${API}/api/uploaded-refs`)
-    ]);
-    const refs = await refsRes.json();
+    const uploadedRes = await fetch(`${API}/api/uploaded-refs`);
     const uploadedRefsFromServer = await uploadedRes.json();
-    // Update local uploadedRefs array (merge: keep local uploads + add server ones)
     uploadedRefs = uploadedRefsFromServer;
-    // Build grid: "none" option + 3 base models + uploaded refs
+    
+    // Build grid: "none" option + uploaded refs only
     let html = `<div class="cg-ref-item active" data-ref=""><div class="cg-ref-none">📸</div></div>`;
-    refs.forEach(r => {
-      const label = r.label || r.style;
-      html += `<div class="cg-ref-item" data-ref="${r.url}" title="${r.desc || label}">
-        <img src="${r.url}" alt="${label}" loading="lazy">
-      </div>`;
-    });
+    
     // Add uploaded refs from server
     uploadedRefs.forEach((u, idx) => {
       html += `<div class="cg-ref-item uploaded" data-ref="${u.url}" data-idx="${idx}" title="${u.label}">
@@ -2212,6 +2210,12 @@ async function loadRefImages() {
         <button class="cg-ref-del" onclick="event.stopPropagation();deleteUploadedRef(${idx})">✕</button>
       </div>`;
     });
+    
+    // If no uploaded refs, show a hint
+    if (uploadedRefs.length === 0) {
+      html += `<div style="padding:10px;color:#999;font-size:13px;">暂无参考图，点击"📤 上传参考图"添加</div>`;
+    }
+    
     grid.innerHTML = html;
     grid.querySelectorAll(".cg-ref-item").forEach(item => {
       item.addEventListener("click", () => {
@@ -2418,6 +2422,83 @@ async function saveSettings() {
     btn.textContent = "💾 保存";
   }
 }
+
+// ===== Version & Update =====
+async function loadVersion() {
+  try {
+    const res = await fetch(`${API}/api/version`);
+    const data = await res.json();
+    const versionTag = document.getElementById("versionTag");
+    if (versionTag && data.version) {
+      versionTag.textContent = `v${data.version}`;
+    }
+  } catch(e) {
+    console.error("load version:", e);
+  }
+}
+
+async function checkUpdate() {
+  const btn = document.getElementById("checkUpdateBtn");
+  const resultDiv = document.getElementById("updateResult");
+  if (!btn || !resultDiv) return;
+  
+  btn.disabled = true;
+  btn.textContent = "⏳ 检查中...";
+  resultDiv.innerHTML = "";
+  
+  try {
+    const res = await fetch(`${API}/api/check-update`, { method: "POST" });
+    const data = await res.json();
+    
+    if (data.error) {
+      resultDiv.innerHTML = `<div style="color:#f44336;padding:10px;">❌ ${data.error}</div>`;
+    } else if (data.update_available) {
+      resultDiv.innerHTML = `
+        <div style="background:#e8f5e9;padding:12px;border-radius:8px;margin-top:10px;">
+          <div style="font-weight:600;color:#2e7d32;margin-bottom:8px;">🎉 发现新版本 v${data.latest}</div>
+          <div style="font-size:13px;color:#555;margin-bottom:10px;">${data.changelog || '更新内容详见 GitHub'}</div>
+          ${data.html_url ? `<a href="${data.html_url}" target="_blank" style="font-size:12px;color:#1976d2;">查看完整更新日志</a><br>` : ''}
+          <button onclick="applyUpdate()" style="margin-top:8px;padding:8px 16px;background:#4caf50;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;">🔄 更新到 v${data.latest}</button>
+        </div>`;
+    } else {
+      resultDiv.innerHTML = `<div style="color:#4caf50;padding:10px;">✅ 已是最新版本</div>`;
+    }
+  } catch(e) {
+    resultDiv.innerHTML = `<div style="color:#f44336;padding:10px;">❌ 检查失败: ${e.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🔍 检查更新";
+  }
+}
+
+async function applyUpdate() {
+  const resultDiv = document.getElementById("updateResult");
+  if (!resultDiv) return;
+  
+  if (!confirm("确定要更新吗？更新后服务会自动重启。")) return;
+  
+  resultDiv.innerHTML = `<div style="color:#1976d2;padding:10px;">⏳ 正在更新，请稍候...</div>`;
+  
+  try {
+    const res = await fetch(`${API}/api/update`, { method: "POST" });
+    const data = await res.json();
+    
+    if (data.error) {
+      resultDiv.innerHTML = `<div style="color:#f44336;padding:10px;">❌ ${data.error}</div>`;
+    } else {
+      resultDiv.innerHTML = `<div style="color:#4caf50;padding:10px;">✅ ${data.message || '更新成功，服务已重启'}</div>`;
+      // Reload page after 3 seconds
+      setTimeout(() => {
+        location.reload();
+      }, 3000);
+    }
+  } catch(e) {
+    resultDiv.innerHTML = `<div style="color:#f44336;padding:10px;">❌ 更新失败: ${e.message}</div>`;
+  }
+}
+
+// Load version on page load
+loadVersion();
 
 // Close settings on Escape key
 document.addEventListener("keydown", e => {
