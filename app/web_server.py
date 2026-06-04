@@ -82,6 +82,8 @@ class GalleryServer:
         self.app.router.add_get("/api/version", self.handle_version)
         self.app.router.add_post("/api/check-update", self.handle_check_update)
         self.app.router.add_post("/api/update", self.handle_update)
+        # 日程彩蛋
+        self.app.router.add_get("/api/schedule-detail", self.handle_schedule_detail)
 
         # 图片服务
         self.app.router.add_static("/images", self.image_dir, show_index=False)
@@ -263,6 +265,70 @@ class GalleryServer:
         except Exception as e:
             logger.error(f"Load today error: {e}")
         return web.json_response({"status": "error", "date": today_str})
+
+    async def handle_schedule_detail(self, request: web.Request):
+        """返回今日日程详情（彩蛋弹窗用）"""
+        today_str = date.today().isoformat()
+        try:
+            store = ScheduleStore(self.data_dir)
+            all_data = store.load()
+            if not all_data:
+                return web.json_response({"status": "no_data"})
+
+            # 查找今日日程（日期 key 或图片条目）
+            schedule_entry = None
+            # 优先找日期 key
+            if today_str in all_data and all_data[today_str].get("schedule"):
+                schedule_entry = all_data[today_str]
+            # 再找有 schedule 的图片条目
+            if not schedule_entry:
+                for key, e in all_data.items():
+                    if e.get("date") == today_str and e.get("schedule") and e.get("status") == "ok":
+                        schedule_entry = e
+                        break
+
+            if not schedule_entry:
+                return web.json_response({"status": "no_schedule"})
+
+            # 解析 outfit 字段为结构化数据
+            outfit_raw = schedule_entry.get("outfit", "")
+            outfit_parts = {}
+            for line in outfit_raw.split("\n"):
+                line = line.strip()
+                if "：" in line:
+                    k, v = line.split("：", 1)
+                    outfit_parts[k.strip()] = v.strip()
+                elif ":" in line:
+                    k, v = line.split(":", 1)
+                    outfit_parts[k.strip()] = v.strip()
+
+            # 解析 schedule 字段为列表
+            schedule_raw = schedule_entry.get("schedule", "")
+            schedule_items = []
+            import re
+            for line in schedule_raw.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                m = re.match(r'(\d{1,2}:\d{2})\s*(.*)', line)
+                if m:
+                    schedule_items.append({
+                        "time": m.group(1),
+                        "activity": m.group(2).strip()
+                    })
+
+            return web.json_response({
+                "status": "ok",
+                "date": today_str,
+                "outfit_style": schedule_entry.get("outfit_style", ""),
+                "outfit": outfit_parts,
+                "schedule": schedule_items,
+                "caption": schedule_entry.get("caption", ""),
+                "prompt": schedule_entry.get("prompt", ""),
+            })
+        except Exception as e:
+            logger.error(f"Schedule detail error: {e}")
+            return web.json_response({"status": "error", "detail": str(e)})
 
     async def handle_ref_list(self, request: web.Request):
         """返回参考图列表（只返回用户上传的自定义参考图）"""

@@ -1379,9 +1379,53 @@ body {
 .gallery-grid.cols-4 .gallery-card .card-body .card-actions .ca-btn { font-size: 14px; padding: 9px 0; border-radius: 12px; }
 .gallery-grid.cols-4 .gallery-card .card-date-tag { font-size: 12px; padding: 3px 9px; }
 
+/* 🐷 日程彩蛋弹窗 */
+.egg-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(6px); z-index: 9999; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+.egg-overlay.show { opacity: 1; pointer-events: auto; }
+.egg-card { background: #fff; border-radius: 24px; width: 480px; max-height: 85vh; overflow-y: auto; box-shadow: 0 30px 80px rgba(100,50,120,0.3); transform: scale(0.9) translateY(20px); transition: transform 0.35s cubic-bezier(0.34,1.56,0.64,1); }
+.egg-overlay.show .egg-card { transform: scale(1) translateY(0); }
+.egg-header { background: linear-gradient(135deg, #ff6b9d, #c084fc, #818cf8); padding: 28px 28px 22px; border-radius: 24px 24px 0 0; position: relative; }
+.egg-header h2 { color: #fff; font-size: 22px; margin: 0; font-family: 'ZCOOL KuaiLe', cursive; text-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+.egg-header .egg-date { color: rgba(255,255,255,0.85); font-size: 13px; margin-top: 6px; }
+.egg-close { position: absolute; top: 16px; right: 18px; background: rgba(255,255,255,0.2); border: none; color: #fff; width: 32px; height: 32px; border-radius: 50%; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }
+.egg-close:hover { background: rgba(255,255,255,0.4); }
+.egg-body { padding: 24px 28px; }
+.egg-section { margin-bottom: 22px; }
+.egg-section:last-child { margin-bottom: 0; }
+.egg-section-title { font-size: 14px; font-weight: 700; color: #c084fc; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+.egg-section-title .icon { font-size: 16px; }
+.egg-outfit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.egg-outfit-item { background: linear-gradient(135deg, #fdf2f8, #f5f3ff); border-radius: 14px; padding: 12px 14px; }
+.egg-outfit-label { font-size: 11px; color: #a78bfa; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+.egg-outfit-value { font-size: 14px; color: #333; line-height: 1.5; }
+.egg-schedule-list { position: relative; padding-left: 24px; }
+.egg-schedule-list::before { content: ''; position: absolute; left: 8px; top: 4px; bottom: 4px; width: 2px; background: linear-gradient(to bottom, #ff6b9d, #c084fc, #818cf8); border-radius: 1px; }
+.egg-sched-item { position: relative; padding: 8px 0; }
+.egg-sched-item::before { content: ''; position: absolute; left: -20px; top: 14px; width: 10px; height: 10px; border-radius: 50%; background: #fff; border: 2.5px solid #c084fc; }
+.egg-sched-time { font-size: 13px; font-weight: 700; color: #ff6b9d; font-variant-numeric: tabular-nums; }
+.egg-sched-activity { font-size: 14px; color: #444; margin-top: 2px; line-height: 1.5; }
+.egg-caption { background: linear-gradient(135deg, #fdf2f8, #f5f3ff); border-radius: 14px; padding: 14px 16px; font-size: 14px; color: #6b21a8; line-height: 1.6; font-style: italic; }
+.egg-empty { text-align: center; padding: 40px 20px; color: #aaa; }
+.egg-empty .icon { font-size: 48px; margin-bottom: 12px; }
+.egg-loading { text-align: center; padding: 40px; color: #c084fc; }
+
 </style>
 </head>
 <body>
+<!-- 🐷 日程彩蛋弹窗 -->
+<div class="egg-overlay" id="eggOverlay" onclick="if(event.target===this)closeScheduleEgg()">
+  <div class="egg-card">
+    <div class="egg-header">
+      <h2>🐷 今日日程秘密</h2>
+      <div class="egg-date" id="eggDate"></div>
+      <button class="egg-close" onclick="closeScheduleEgg()">✕</button>
+    </div>
+    <div class="egg-body" id="eggBody">
+      <div class="egg-loading">加载中...</div>
+    </div>
+  </div>
+</div>
+
 <script>
 // Immediately restore saved tab to prevent flash
 (function() {
@@ -1405,7 +1449,7 @@ body {
 
 <div class="header">
   <div class="header-left">
-    <h1>🐷 猪猪穿搭画廊 <span style="font-size:12px;color:#999;font-weight:400;" id="versionTag">v1.0.0</span></h1>
+    <h1 style="cursor:pointer;user-select:none;" onclick="openScheduleEgg()" title="点击查看今日日程～">🐷 猪猪穿搭画廊 <span style="font-size:12px;color:#999;font-weight:400;" id="versionTag">v1.0.0</span></h1>
   </div>
   <div class="header-right">
     <div class="tabs">
@@ -2692,6 +2736,76 @@ document.addEventListener("keydown", e => {
     }
   });
 })();
+
+// 🐷 日程彩蛋弹窗
+function openScheduleEgg() {
+  const overlay = document.getElementById('eggOverlay');
+  const body = document.getElementById('eggBody');
+  const dateEl = document.getElementById('eggDate');
+  overlay.classList.add('show');
+  body.innerHTML = '<div class="egg-loading">🔮 正在窥探猪猪的日程秘密...</div>';
+
+  fetch('/api/schedule-detail' + (window.__API_KEY ? '?key=' + window.__API_KEY : ''))
+    .then(r => r.json())
+    .then(data => {
+      if (data.status !== 'ok') {
+        body.innerHTML = '<div class="egg-empty"><div class="icon">😴</div><p>今天还没有生成日程哦～<br>每天早上 7 点自动生成！</p></div>';
+        return;
+      }
+
+      dateEl.textContent = data.date + ' · ' + (data.outfit_style || '');
+
+      let html = '';
+
+      // 服饰详情
+      const outfit = data.outfit || {};
+      const outfitKeys = ['风格', '发型', '穿搭', '动作'];
+      const outfitIcons = { '风格': '✨', '发型': '💇‍♀️', '穿搭': '👗', '动作': '💃' };
+      const hasOutfit = outfitKeys.some(k => outfit[k]);
+      if (hasOutfit) {
+        html += '<div class="egg-section"><div class="egg-section-title"><span class="icon">👗</span>今日穿搭方案</div>';
+        html += '<div class="egg-outfit-grid">';
+        for (const k of outfitKeys) {
+          if (outfit[k]) {
+            html += '<div class="egg-outfit-item"><div class="egg-outfit-label">' + (outfitIcons[k]||'') + ' ' + k + '</div><div class="egg-outfit-value">' + outfit[k] + '</div></div>';
+          }
+        }
+        html += '</div></div>';
+      }
+
+      // 日程时间线
+      const schedule = data.schedule || [];
+      if (schedule.length > 0) {
+        html += '<div class="egg-section"><div class="egg-section-title"><span class="icon">📅</span>今日美照时刻表</div>';
+        html += '<div class="egg-schedule-list">';
+        for (const item of schedule) {
+          html += '<div class="egg-sched-item"><div class="egg-sched-time">' + item.time + '</div><div class="egg-sched-activity">' + item.activity + '</div></div>';
+        }
+        html += '</div></div>';
+      }
+
+      // 心情文案
+      if (data.caption) {
+        html += '<div class="egg-section"><div class="egg-section-title"><span class="icon">💭</span>猪猪的心思</div><div class="egg-caption">' + data.caption + '</div></div>';
+      }
+
+      if (!html) {
+        html = '<div class="egg-empty"><div class="icon">🫥</div><p>日程数据还在酝酿中...</p></div>';
+      }
+
+      body.innerHTML = html;
+    })
+    .catch(function() {
+      body.innerHTML = '<div class="egg-empty"><div class="icon">😵</div><p>加载失败了...</p></div>';
+    });
+}
+
+function closeScheduleEgg() {
+  document.getElementById('eggOverlay').classList.remove('show');
+}
+
+// ESC 关闭
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeScheduleEgg(); });
 </script>
 </body>
 </html>
