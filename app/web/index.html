@@ -1833,7 +1833,7 @@ function renderToday() {
           </div>
           <div class="modal-outfit">${outfitText ? `<span class="outfit-label">穿搭</span><span class="outfit-divider">|</span><span class="outfit-text">${outfitText}</span>` : '--'}</div>
           ${schedHtml ? `<div class="modal-schedule">${schedHtml}</div>` : ""}
-          ${captionHtml ? `<div class="modal-caption">${captionHtml}</div>` : ""}
+          ${captionHtml ? `<div class="modal-caption">💭 ${captionHtml}</div>` : ""}
           <div class="modal-actions" onclick="event.stopPropagation()">
             <button class="mbtn" onclick="event.stopPropagation();toggleFavorite('${today.image_filename}');">${today.favorite ? '🩷' : '🤍'} 收藏</button>
             <button class="mbtn" onclick="event.stopPropagation();shareImage('${today.image_filename}');">📤 分享</button>
