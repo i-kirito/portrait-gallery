@@ -666,9 +666,9 @@ body {
   transform: translateY(-2px);
 }
 .today-compact .tc-image {
-  flex: 0 0 30%;
-  max-width: 30%;
-  min-height: 220px;
+  flex: 0 0 34%;
+  max-width: 34%;
+  min-height: 170px;
   background: linear-gradient(135deg, #fce4ec, #f3d4e0);
   overflow: hidden;
   position: relative;
@@ -699,7 +699,7 @@ body {
 }
 .today-compact .tc-info {
   flex: 1;
-  padding: 12px 16px;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -711,12 +711,12 @@ body {
 .tc-top {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
-  row-gap: 4px;
+  row-gap: 3px;
 }
 .tc-date {
-  font-size: 13px;
+  font-size: 12px;
   color: #888;
   font-weight: 500;
   letter-spacing: 0.3px;
@@ -726,7 +726,7 @@ body {
   border-radius: 0;
   backdrop-filter: none;
   width: 100%;
-  margin-bottom: 2px;
+  margin-bottom: 1px;
 }
 .tc-date::before {
   content: '';
@@ -785,12 +785,22 @@ body {
   content: '';
   font-size: 0;
 }
+.tc-outfit {
+  display: block;
+  white-space: normal;
+  word-break: break-word;
+  font-size: 13px;
+  color: #444;
+  line-height: 1.5;
+  padding: 2px 0;
+  margin: 0;
+}
 .tc-thought {
   font-size: 13px;
   color: #d02090;
   font-style: normal;
-  line-height: 1.6;
-  padding: 2px 0;
+  line-height: 1.5;
+  padding: 1px 0;
   background: transparent;
   border-radius: 0;
   border-left: none;
@@ -888,7 +898,7 @@ body {
 .tc-actions {
   display: flex;
   gap: 10px;
-  padding-top: 6px;
+  padding-top: 4px;
   margin-top: auto;
 }
 .tc-actions .tc-btn {
@@ -1837,7 +1847,7 @@ function renderToday() {
         <div class="tc-image">
           <img src="/images/${today.image_filename}" alt="今日穿搭" onclick="openViewer('/images/${today.image_filename}')" style="cursor:pointer;">
         </div>
-        <div class="modal-info" style="flex:1;padding:16px 18px;border-radius:20px;">
+        <div class="modal-info" style="flex:1;padding:14px 16px;border-radius:20px;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
             <span class="modal-date" style="margin:0;padding:0;background:none;">${dateText} ${timeLabel}</span>
             ${today.outfit_style ? `<span class="modal-style" onclick="event.stopPropagation();filterByTag('${today.outfit_style}');">${today.outfit_style}</span>` : ""}
@@ -2054,6 +2064,15 @@ function renderGallery() {
         }).join("")
     }</div>`
   );
+  requestAnimationFrame(() => {
+    try {
+      const grid = content.querySelector('.gallery-grid');
+      const saved = localStorage.getItem('gallery_cols');
+      if (grid && saved) {
+        grid.style.gridTemplateColumns = `repeat(${saved}, 1fr)`;
+      }
+    } catch (e) { console.error('applyCols after render:', e); }
+  });
 }
 // ===== Fullscreen Image Viewer =====
 const viewerOverlay = document.createElement("div");
