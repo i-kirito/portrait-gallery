@@ -27,6 +27,9 @@ META_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "plugin_config.json")
 OPENCLAW_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "openclaw_config.json")
 REFERENCE_IMAGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "references", "reference_face.jpg")
+# Only set if file actually exists, otherwise empty string
+if not os.path.isfile(REFERENCE_IMAGE_PATH):
+    REFERENCE_IMAGE_PATH = ""
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 # CPA API key: read from environment variable first, then fall back to config file
 _API_KEYS_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "api_keys_config.json")

@@ -21,13 +21,17 @@ _GEMINI_CPA_MODEL = "gemini-3.1-flash-image"
 DAILY_THEMES = {"morning", "noon", "evening", "bedtime"}
 ALL_THEMES = sorted(DAILY_THEMES | {"sexy", "custom"})
 
-# 风格底模参考图路径映射（容器内路径）
+# 风格底模参考图路径映射（用户可自行放入参考图到 references/ 目录）
 _REF_DIR = os.path.join(os.path.dirname(__file__), "..", "references")
-STYLE_REF_MAP = {
-    "cool":   os.path.join(_REF_DIR, "reference_face.jpg"),
-    "girly":  os.path.join(_REF_DIR, "ref_style_girly.jpg"),
-    "sweet":  os.path.join(_REF_DIR, "ref_style_sweet.jpg"),
-}
+STYLE_REF_MAP = {}
+for _style, _fname in [
+    ("cool", "reference_face.jpg"),
+    ("girly", "ref_style_girly.jpg"),
+    ("sweet", "ref_style_sweet.jpg"),
+]:
+    _path = os.path.join(_REF_DIR, _fname)
+    if os.path.isfile(_path):
+        STYLE_REF_MAP[_style] = _path
 
 _OPENCODE_API = "https://opencode.ai/zen/go/v1/chat/completions"
 
@@ -378,6 +382,7 @@ def generate(
 
     # Resolve style to ref_image path (only supported by gptimage engine)
     ref_image = None
+    auto_style = None
     explicit_style = style  # remember if user explicitly set --style
     if style:
         if engine != "gptimage":
@@ -385,19 +390,19 @@ def generate(
             return None
         ref_image = STYLE_REF_MAP.get(style)
         if not ref_image:
-            print(f"ERROR: unknown style '{style}', choices: {list(STYLE_REF_MAP.keys())}", file=sys.stderr)
-            return None
+            print(f"⚠️ style '{style}' 参考图不存在，将使用纯文生图", file=sys.stderr)
 
     # Auto-pick a style for GPT Image via LLM to keep face consistent
-    if engine == "gptimage" and not explicit_style and theme != "sexy":
+    if engine == "gptimage" and not explicit_style and theme != "sexy" and STYLE_REF_MAP:
         # Use the user's prompt (before appearance injection) for classification
         classify_input = prompt_override or resolved_prompt
         auto_style = _classify_style(classify_input)
-        ref_image = STYLE_REF_MAP[auto_style]
-        print(f"🧠 LLM selected style: {auto_style} (use --style to override)", file=sys.stderr)
+        ref_image = STYLE_REF_MAP.get(auto_style)
+        if ref_image:
+            print(f"🧠 LLM selected style: {auto_style} (use --style to override)", file=sys.stderr)
 
     # Track the actual style used (explicit or auto) for filename
-    actual_style = explicit_style or (auto_style if engine == "gptimage" and not explicit_style and theme != "sexy" else None)
+    actual_style = explicit_style or (auto_style if engine == "gptimage" and not explicit_style and theme != "sexy" and STYLE_REF_MAP else None)
 
     if theme == "sexy":
         path = generate_with_gitee(theme, send=False, caption=caption, prompt_override=resolved_prompt)
