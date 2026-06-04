@@ -27,7 +27,6 @@ META_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "plugin_config.json")
 OPENCLAW_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "openclaw_config.json")
 REFERENCE_IMAGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "references", "reference_face.jpg")
-CPA_BASE_URL = "http://127.0.0.1:8327/v1"
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 # CPA API key: read from environment variable first, then fall back to config file
 _API_KEYS_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "api_keys_config.json")
@@ -53,6 +52,27 @@ def _read_cpa_key() -> str:
 
 
 PRIMARY_API_KEY = _read_cpa_key()
+
+
+def _read_cpa_url() -> str:
+    """Read CPA base URL from environment or config file."""
+    env_url = os.getenv("CPA_BASE_URL", "")
+    if env_url:
+        return env_url
+    if os.path.exists(_API_KEYS_CONFIG_PATH):
+        try:
+            with open(_API_KEYS_CONFIG_PATH, "r", encoding="utf-8") as f:
+                config = json.load(f)
+                url = config.get("cpa_url", "")
+                if url:
+                    return url
+        except Exception:
+            pass
+    return "http://127.0.0.1:8327/v1"
+
+
+CPA_BASE_URL = _read_cpa_url()
+
 
 APPEARANCE = "18-year-old Chinese girl, fair skin, delicate features. dusty rose pink hair, wispy air bangs. large round doll-like deep-set natural dark brown eyes. beautiful hourglass figure, slim waist, natural breasts, realistic body proportions, emphasizing a natural soft tissue silhouette."
 SEXY_APPEARANCE = "18-year-old Chinese girl, fair skin, delicate features. dusty rose pink hair, wispy air bangs. large round doll-like deep-set natural dark brown eyes. beautiful hourglass figure, slim waist, natural breasts, realistic body proportions, emphasizing a natural soft tissue silhouette."

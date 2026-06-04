@@ -5,12 +5,9 @@ config:
   # 日程生成时间（24小时制）
   schedule_time: "07:00"
 
-# LLM 配置（走 CPA）- 顶层，供 scheduler.py 直接读取
+# LLM 配置 - CPA URL 和 Key 通过 Web UI ⚙️ 设置面板管理
 llm:
-  base_url: "http://127.0.0.1:8327/v1"
-  api_key: ""  
   model: "deepseek-v4-flash"
-  # 备用模型
   fallback_model: "mimo-v2.5"
 
 # 生图配置 - 顶层，供 main.py 直接读取

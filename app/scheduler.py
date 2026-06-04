@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import os
 import random
 from datetime import datetime, date, timedelta
 from typing import Optional
@@ -38,10 +39,27 @@ class DailyScheduler:
         self._llm_config = config.get("llm", {})
         self._char = config.get("character", {})
 
+    def _read_config_key(self, key: str) -> str:
+        """Read a value from api_keys_config.json (set via Web UI)."""
+        config_path = os.path.join(self.data_dir, "api_keys_config.json")
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    val = data.get(key, "")
+                    if val:
+                        return val
+            except Exception:
+                pass
+        # Fallback: environment variable
+        env_map = {"cpa_url": "CPA_BASE_URL", "cpa_key": "CPA_API_KEY"}
+        return os.getenv(env_map.get(key, ""), "")
+
     async def _call_llm(self, prompt: str, timeout: int = 60) -> Optional[str]:
         """调用 CPA LLM（异步，不阻塞事件循环）"""
-        base_url = self._llm_config.get("base_url", "http://127.0.0.1:8327/v1")
-        api_key = self._llm_config.get("api_key", "")
+        # 优先从前端设置的 api_keys_config.json 读取，fallback 到 config.yaml
+        base_url = self._read_config_key("cpa_url") or self._llm_config.get("base_url", "http://127.0.0.1:8327/v1")
+        api_key = self._read_config_key("cpa_key") or self._llm_config.get("api_key", "")
         model = self._llm_config.get("model", "deepseek-v4-flash")
 
         headers = {
