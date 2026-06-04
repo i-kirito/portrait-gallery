@@ -449,16 +449,20 @@ def _translate_outfit(prompt: str, style_name: str) -> str:
     try:
         api_key = get_cpa_key()
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+        sys_prompt = (
+            "你是一个穿搭关键词提取器。从英文AI生图prompt中提取服装，用中文列出3-5个关键词，用顿号分隔。\n"
+            "规则：\n"
+            "1. 只提取最外层/最显眼的服装，不要同时列出内搭和外搭（如吊带+睡袍只写睡袍）\n"
+            "2. 颜色和材质融入服装名（如'粉色蕾丝睡裙'而非'蕾丝、睡裙'分开列）\n"
+            "3. 配饰最多1个（项链/发夹等）\n"
+            "4. 避免矛盾组合（如'吊带背心'和'睡袍'不能同时出现）\n"
+            "例如: \"sheer camisole, silk robe, lace trim\" → 丝绸睡袍、蕾丝边\n"
+            "只输出关键词，不要其他文字。"
+        )
         payload = {
             "model": "gemini-3.5-flash",
             "messages": [
-                {"role": "system", "content": (
-                    "你是一个穿搭关键词提取器。从英文AI生图prompt中提取服装相关的关键词（衣服、鞋子、配饰、颜色、材质），"
-                    "用中文列出5-8个关键词，用顿号分隔。\n"
-                    "例如输入: \"... wearing a light blue denim jacket, white crop top, high-waisted jeans, sneakers...\"\n"
-                    "输出: 浅蓝牛仔外套、白色短上衣、高腰牛仔裤、运动鞋\n"
-                    "只输出关键词，不要其他文字。"
-                )},
+                {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": extraction_input[:500]},
             ],
             "max_tokens": 150,

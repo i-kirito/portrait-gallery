@@ -1995,7 +1995,7 @@ function renderGallery() {
                   ${metaHtml ? `<div class="tc-meta">${metaHtml}</div>` : ''}
                 </div>
                 <div class="tc-outfit">${e.outfit || '--'}</div>
-                <div class="tc-thought">${e.caption ? e.caption.replace(/#([^\s#]+)/g, '<a class="tag-link" href="#" onclick="filterByTag(\'$1\'); return false;">' + '#' + '$1</a>') : ''}</div>
+                <div class="tc-thought">${e.caption ? '💭 ' + e.caption.replace(/#([^\s#]+)/g, '<a class="tag-link" href="#" onclick="filterByTag(\'$1\'); return false;">' + '#' + '$1</a>') : ''}</div>
                 ${periodHtml}
                 <div class="tc-actions">
                   <button class="tc-btn ${e.favorite ? 'liked' : ''}" onclick="toggleFavorite('${e.image_filename}', event)" data-img="${e.image_filename}">${e.favorite ? '🩷' : '♡'} 收藏</button>
