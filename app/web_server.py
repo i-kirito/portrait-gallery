@@ -715,7 +715,7 @@ class GalleryServer:
         current_version = self._load_version()
 
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.get(github_api) as resp:
                     if resp.status != 200:
                         error_text = await resp.text()
@@ -754,13 +754,17 @@ class GalleryServer:
     async def handle_update(self, request: web.Request):
         """执行更新（git pull + 重启）"""
         try:
-            # 1. git pull
+            # 1. git pull（注入代理环境变量）
+            env = os.environ.copy()
+            env.setdefault("HTTP_PROXY", "http://192.168.31.213:7890")
+            env.setdefault("HTTPS_PROXY", "http://192.168.31.213:7890")
             result = subprocess.run(
                 ["git", "pull", "origin", "main"],
                 cwd=os.path.dirname(os.path.dirname(__file__)),
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=60,
+                env=env
             )
 
             if result.returncode != 0:
