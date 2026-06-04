@@ -306,16 +306,15 @@ class GalleryServer:
             if schedule_entry:
                 outfit_style = schedule_entry.get("outfit_style", "")
                 caption = schedule_entry.get("caption", "")
-                # 解析 outfit
+                # 解析 outfit（支持单行多 key：风格：xx 穿搭：xx 发型：xx 动作：xx）
                 outfit_raw = schedule_entry.get("outfit", "")
-                for line in outfit_raw.split("\n"):
-                    line = line.strip()
-                    if "：" in line:
-                        k, v = line.split("：", 1)
-                        outfit_parts[k.strip()] = v.strip()
-                    elif ":" in line:
-                        k, v = line.split(":", 1)
-                        outfit_parts[k.strip()] = v.strip()
+                pairs = re.split(r'(?=风格[：:]|穿搭[：:]|发型[：:]|动作[：:])', outfit_raw)
+                for seg in pairs:
+                    seg = seg.strip()
+                    if not seg: continue
+                    m2 = re.match(r'(风格|穿搭|发型|动作)[：:]\s*(.*)', seg)
+                    if m2:
+                        outfit_parts[m2.group(1)] = m2.group(2).strip()
                 # 解析 schedule
                 for line in schedule_entry.get("schedule", "").split("\n"):
                     line = line.strip()
@@ -338,14 +337,13 @@ class GalleryServer:
                 best = today_photos[0]
                 outfit_raw = best.get("outfit", "")
                 outfit_style = outfit_style or best.get("outfit_style", "")
-                for line in outfit_raw.split("\n"):
-                    line = line.strip()
-                    if "：" in line:
-                        k, v = line.split("：", 1)
-                        outfit_parts[k.strip()] = v.strip()
-                    elif ":" in line:
-                        k, v = line.split(":", 1)
-                        outfit_parts[k.strip()] = v.strip()
+                pairs = re.split(r'(?=风格[：:]|穿搭[：:]|发型[：:]|动作[：:])', outfit_raw)
+                for seg in pairs:
+                    seg = seg.strip()
+                    if not seg: continue
+                    m2 = re.match(r'(风格|穿搭|发型|动作)[：:]\s*(.*)', seg)
+                    if m2:
+                        outfit_parts[m2.group(1)] = m2.group(2).strip()
 
             # 最终 fallback：从当前时间生成占位日程
             if not schedule_items:
