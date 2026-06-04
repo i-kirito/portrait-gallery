@@ -1,6 +1,6 @@
 ---
 name: portrait-gallery
-description: AI outfit generation & portrait gallery system — daily schedule-driven image generation with GPT Image + Gitee engines, web gallery UI, and REST API. Use when: (1) generate AI outfit/portrait images, (2) view/manage gallery photos, (3) set up schedule-driven image generation, (4) interact with portrait gallery API.
+description: "AI outfit generation & portrait gallery system. Daily schedule-driven image generation with GPT Image + Gitee engines, web gallery UI, and REST API. Use when: (1) generate AI outfit/portrait images, (2) view/manage gallery photos, (3) set up schedule-driven image generation, (4) interact with portrait gallery API."
 ---
 
 # Portrait Gallery — AI 穿搭生图 & 画廊系统
