@@ -275,9 +275,12 @@ class GalleryServer:
             if not all_data:
                 return web.json_response({"status": "no_data"})
 
+            import re
+            from datetime import datetime
+
             # 查找今日日程（日期 key 或图片条目）
             schedule_entry = None
-            # 优先找日期 key
+            # 优先找日期 key（有 schedule 内容的）
             if today_str in all_data and all_data[today_str].get("schedule"):
                 schedule_entry = all_data[today_str]
             # 再找有 schedule 的图片条目
@@ -287,44 +290,94 @@ class GalleryServer:
                         schedule_entry = e
                         break
 
-            if not schedule_entry:
-                return web.json_response({"status": "no_schedule"})
+            # 收集今日所有图片条目的 outfit 和 schedule_time
+            today_photos = []
+            for key, e in all_data.items():
+                if key == "_meta": continue
+                if e.get("date") == today_str and e.get("status") == "ok":
+                    today_photos.append(e)
 
-            # 解析 outfit 字段为结构化数据
-            outfit_raw = schedule_entry.get("outfit", "")
+            # 如果有日程条目，用它；否则从图片条目拼凑
             outfit_parts = {}
-            for line in outfit_raw.split("\n"):
-                line = line.strip()
-                if "：" in line:
-                    k, v = line.split("：", 1)
-                    outfit_parts[k.strip()] = v.strip()
-                elif ":" in line:
-                    k, v = line.split(":", 1)
-                    outfit_parts[k.strip()] = v.strip()
-
-            # 解析 schedule 字段为列表
-            schedule_raw = schedule_entry.get("schedule", "")
             schedule_items = []
-            import re
-            for line in schedule_raw.split("\n"):
-                line = line.strip()
-                if not line:
-                    continue
-                m = re.match(r'(\d{1,2}:\d{2})\s*(.*)', line)
-                if m:
-                    schedule_items.append({
-                        "time": m.group(1),
-                        "activity": m.group(2).strip()
-                    })
+            outfit_style = ""
+            caption = ""
+
+            if schedule_entry:
+                outfit_style = schedule_entry.get("outfit_style", "")
+                caption = schedule_entry.get("caption", "")
+                # 解析 outfit
+                outfit_raw = schedule_entry.get("outfit", "")
+                for line in outfit_raw.split("\n"):
+                    line = line.strip()
+                    if "：" in line:
+                        k, v = line.split("：", 1)
+                        outfit_parts[k.strip()] = v.strip()
+                    elif ":" in line:
+                        k, v = line.split(":", 1)
+                        outfit_parts[k.strip()] = v.strip()
+                # 解析 schedule
+                for line in schedule_entry.get("schedule", "").split("\n"):
+                    line = line.strip()
+                    if not line: continue
+                    m = re.match(r'(\d{1,2}:\d{2})\s*(.*)', line)
+                    if m:
+                        schedule_items.append({"time": m.group(1), "activity": m.group(2).strip()})
+
+            # 从图片条目补充 schedule_time（如果日程为空或不完整）
+            if not schedule_items and today_photos:
+                for p in sorted(today_photos, key=lambda x: x.get("time", "")):
+                    st = p.get("schedule_time", "")
+                    if st:
+                        m = re.match(r'(\d{1,2}:\d{2})\s*(.*)', st)
+                        if m:
+                            schedule_items.append({"time": m.group(1), "activity": m.group(2).strip()})
+
+            # 从图片条目补充 outfit（如果日程条目没有）
+            if not outfit_parts and today_photos:
+                best = today_photos[0]
+                outfit_raw = best.get("outfit", "")
+                outfit_style = outfit_style or best.get("outfit_style", "")
+                for line in outfit_raw.split("\n"):
+                    line = line.strip()
+                    if "：" in line:
+                        k, v = line.split("：", 1)
+                        outfit_parts[k.strip()] = v.strip()
+                    elif ":" in line:
+                        k, v = line.split(":", 1)
+                        outfit_parts[k.strip()] = v.strip()
+
+            # 最终 fallback：从当前时间生成占位日程
+            if not schedule_items:
+                now = datetime.now()
+                h = now.hour
+                fallback_map = {
+                    (6, 11): ("morning", ["晨间护肤routine", "喝咖啡看日出", "整理穿搭出门"]),
+                    (11, 14): ("noon", ["午后小憩", "咖啡厅办公", "和闺蜜约饭"]),
+                    (14, 18): ("noon", ["逛街shopping", "公园散步拍照", "喝下午茶吃甜点"]),
+                    (18, 21): ("evening", ["下班后放松时刻", "健身房运动", "弹琴唱歌"]),
+                    (21, 24): ("bedtime", ["睡前护肤敷面膜", "窝在被窝看小说", "泡澡放松"]),
+                    (0, 6): ("bedtime", ["深夜emo时间", "和主人说晚安"]),
+                }
+                for (lo, hi), (theme, activities) in fallback_map.items():
+                    if lo <= h < hi:
+                        import random
+                        schedule_items.append({
+                            "time": f"{h:02d}:{now.minute:02d}",
+                            "activity": random.choice(activities)
+                        })
+                        break
+
+            if not schedule_items and not outfit_parts:
+                return web.json_response({"status": "no_schedule"})
 
             return web.json_response({
                 "status": "ok",
                 "date": today_str,
-                "outfit_style": schedule_entry.get("outfit_style", ""),
+                "outfit_style": outfit_style,
                 "outfit": outfit_parts,
                 "schedule": schedule_items,
-                "caption": schedule_entry.get("caption", ""),
-                "prompt": schedule_entry.get("prompt", ""),
+                "caption": caption,
             })
         except Exception as e:
             logger.error(f"Schedule detail error: {e}")
