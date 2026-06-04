@@ -10,7 +10,7 @@
 - 🎨 **双引擎生图** — GPT Image 高质量 + Gitee z-image-turbo 极速，自动降级
 - 🖼️ **Web 画廊** — 今日/全部/收藏三 Tab，横版大卡 + 网格双布局
 - 🎀 **穿搭生成** — 自定义 prompt + 参考图 + 尺寸选择
-- ⏰ **定时调度** — APScheduler 内置 5 个时段自动生图（早/午/晚/睡前）
+- ⏰ **动态调度** — LLM 日程驱动，根据 HH:mm 时间动态创建一次性生图任务
 - 🔧 **REST API** — 完整 CRUD 接口，支持集成到任何 AI Agent
 
 ## 🚀 快速开始
@@ -55,6 +55,67 @@ python3 main.py
 
 访问 **http://localhost:18889** 即可使用画廊。
 
+### 5. 部署方式
+
+#### 方式一：直接运行（开发/测试）
+
+```bash
+cd app
+python3 main.py
+```
+
+#### 方式二：launchd 原生运行（macOS 推荐）
+
+1. 创建 plist 文件：
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.hermes.portrait-gallery</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/path/to/portrait-gallery/app/main.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/path/to/portrait-gallery</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/path/to/portrait-gallery/logs/gallery.log</string>
+    <key>StandardErrorPath</key>
+    <string>/path/to/portrait-gallery/logs/gallery.log</string>
+</dict>
+</plist>
+```
+
+2. 加载服务：
+
+```bash
+# 创建日志目录
+mkdir -p /path/to/portrait-gallery/logs
+
+# 加载服务
+launchctl load ~/Library/LaunchAgents/com.hermes.portrait-gallery.plist
+
+# 启动服务
+launchctl start com.hermes.portrait-gallery
+
+# 查看日志
+tail -f /path/to/portrait-gallery/logs/gallery.log
+```
+
+#### 方式三：Docker（可选）
+
+```bash
+docker compose up -d
+```
+
 ## 📐 架构
 
 ```
@@ -91,17 +152,18 @@ portrait-gallery/
 
 ## ⏰ 调度说明
 
-APScheduler 内置 5 个定时任务：
+**日程驱动动态调度**：
 
-| 时间 | 主题 | 风格 |
-|------|------|------|
-| 07:00 | 📅 日程生成 | LLM 生成当日穿搭日程 |
-| 07:01 | 🌅 morning | 甜妹风 |
-| 12:00 | ☀️ noon | 少女风 |
-| 18:00 | 🌆 evening | 冷御风 |
-| 22:00 | 🌙 bedtime | 慵懒风 |
+1. **07:00** — LLM 自动生成当日穿搭日程（HH:mm 格式，如 `09:30 逛街`、`14:00 下午茶`）
+2. **解析日程** — 提取所有 HH:mm 时间，根据小时映射主题：
+   - `< 12` → `morning`（甜妹风）
+   - `12-17` → `noon`（少女风）
+   - `18-20` → `evening`（冷御风）
+   - `≥ 21` → `bedtime`（慵懒风）
+3. **动态创建任务** — 为每个时间点创建一次性 APScheduler 任务
+4. **按时生图** — 到达指定时间后自动执行：读取日程 → LLM 选风格/发型 → 调用引擎 → 保存图片 → 推送微信
 
-生图流程：读取日程 → LLM 选风格/发型 → 调用引擎 → 保存图片 + 元数据 → 更新画廊
+**优势**：不再固定 4 个时段，完全由 LLM 日程决定生图时间和数量，每天可能 2-5 张不等。
 
 ## 🔌 API 端点
 
@@ -164,7 +226,14 @@ curl -X POST http://localhost:18889/api/config/keys \
 | `GPT_IMAGE_API_KEY` | GPT Image API Key（覆盖 config） |
 | `GPT_IMAGE_BASE_URL` | GPT Image 端点（覆盖 config） |
 | `GALLERY_API_KEY` | Web UI 认证密钥（留空则不认证） |
-| `TELEGRAM_CHAT_ID` | Telegram 通知 Chat ID（可选） |
+
+## 📱 微信推送
+
+生图完成后自动通过 `hermes send --to weixin` 推送到微信：
+- 先发送图片（`MEDIA:/path/to/image.png`）
+- 再发送文案（caption）
+
+无需额外配置，确保 hermes CLI 已登录微信即可。
 
 ## 🖥️ 前端功能
 
