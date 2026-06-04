@@ -1,0 +1,12 @@
+services:
+  portrait-gallery:
+    build: .
+    container_name: hermes-portrait-gallery
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro
+      - ./app/web:/app/web
+    environment:
+      - TZ=Asia/Shanghai

@@ -1,0 +1,2436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>猪猪的每日穿搭画廊</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐷</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700;800&amp;family=Noto+Sans+SC:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "M PLUS Rounded 1c", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", -apple-system, sans-serif;
+  background: #f8f6fc;
+  min-height: 100vh;
+  color: #333;
+  font-size: 17px;
+  line-height: 1.8;
+  letter-spacing: 0.5px;
+  font-weight: 700;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ===== Header ===== */
+.header {
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  padding: 20px 32px;
+  border-bottom: 1px solid rgba(0,0,0,0.05);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.header-left h1 {
+  font-size: 28px;
+  background: linear-gradient(135deg, #e91e63, #9c27b0);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 700;
+}
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.btn {
+  padding: 10px 24px;
+  border-radius: 22px;
+  border: none;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-primary {
+  background: linear-gradient(135deg, #e91e63, #9c27b0);
+  color: #fff;
+}
+.btn-primary:hover { opacity: 0.88; transform: translateY(-1px); box-shadow: 0 4px 16px rgba(233,30,99,0.3); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+/* ===== Tabs ===== */
+.tabs {
+  display: flex;
+  gap: 4px;
+  background: #f0ecf4;
+  padding: 3px;
+  border-radius: 14px;
+}
+.tab {
+  padding: 10px 20px;
+  border-radius: 14px;
+  border: none;
+  background: transparent;
+  font-size: 15px;
+  color: #888;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.tab.active {
+  background: #fff;
+  color: #e91e63;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  border-radius: 8px;
+  background: #ff4757;
+  color: #fff;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+/* ===== Settings Button ===== */
+.settings-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+.settings-btn:hover {
+  border-color: #e91e63;
+  background: #fce4ec;
+  transform: rotate(30deg);
+}
+
+/* ===== Settings Modal ===== */
+.sk-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(12px);
+  z-index: 999;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.sk-overlay.open { display: flex; }
+.sk-modal {
+  background: #fff;
+  border-radius: 24px;
+  max-width: 500px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 32px 36px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+  animation: slideUp 0.25s ease;
+}
+.sk-modal h2 {
+  font-size: 22px;
+  font-weight: 700;
+  color: #e91e63;
+  margin-bottom: 20px;
+}
+.sk-field {
+  margin-bottom: 18px;
+}
+.sk-field label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 6px;
+}
+.sk-field .sk-desc {
+  font-size: 12px;
+  color: #999;
+  margin-bottom: 6px;
+}
+.sk-field input[type="password"],
+.sk-field input[type="text"] {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid #e0e0e0;
+  font-size: 14px;
+  font-family: monospace;
+  outline: none;
+  transition: border 0.2s;
+  color: #333;
+  background: #fafafa;
+}
+.sk-field input:focus {
+  border-color: #e91e63;
+  box-shadow: 0 0 0 3px rgba(233,30,99,0.08);
+  background: #fff;
+}
+.sk-field .sk-status {
+  font-size: 11px;
+  color: #999;
+  margin-top: 4px;
+}
+.sk-field .sk-status.set { color: #4caf50; }
+.sk-field .sk-status.unset { color: #ff9800; }
+.sk-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid #f0f0f0;
+  justify-content: flex-end;
+}
+.sk-actions .btn {
+  padding: 10px 24px;
+  font-size: 14px;
+  min-width: 100px;
+  justify-content: center;
+}
+.sk-actions .btn-secondary {
+  background: #f5f5f5;
+  color: #888;
+  border: 1px solid #e0e0e0;
+}
+.sk-actions .btn-secondary:hover { background: #eee; }
+
+/* ===== Container ===== */
+.container { max-width: 1400px; margin: 0 auto; padding: 24px 20px; }
+
+/* ===== Big Card - Shared (hero + gallery) ===== */
+.big-card {
+  display: flex;
+  flex-direction: row;
+  background: #fff;
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+  transition: all 0.25s ease;
+  cursor: pointer;
+}
+.big-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 16px 40px rgba(233,30,99,0.12);
+}
+.big-card-image {
+  flex: 0 0 36%;
+  min-height: 340px;
+  background: #f5f5f5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  position: relative;
+}
+.big-card-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.4s;
+}
+.big-card:hover .big-card-image img { transform: scale(1.04); }
+.big-card-image .placeholder {
+  color: #ccc;
+  font-size: 56px;
+  text-align: center;
+  padding: 20px;
+}
+.big-card-image .placeholder small {
+  display: block;
+  font-size: 12px;
+  margin-top: 4px;
+  color: #ccc;
+}
+.big-card-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: linear-gradient(135deg, #e91e63, #9c27b0);
+  color: #fff;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  z-index: 2;
+  letter-spacing: 0.5px;
+}
+.big-card-style-tag {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: linear-gradient(135deg, #e91e63, #9c27b0);
+  color: #fff;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  z-index: 2;
+  cursor: pointer;
+  opacity: 0.92;
+  transition: opacity 0.15s;
+}
+.big-card-style-tag:hover { opacity: 1; }
+.big-card-info {
+  flex: 1;
+  padding: 22px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 200px;
+  justify-content: center;
+}
+.big-card-info .bc-date {
+  font-size: 12px;
+  font-weight: 600;
+  color: #999;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+.big-card-info .bc-meta {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.big-card-info .bc-meta-tag {
+  font-size: 10px;
+  color: #999;
+  background: #f5f3f7;
+  padding: 2px 8px;
+  border-radius: 5px;
+}
+.big-card-info .bc-desc {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #444;
+  flex: 1;
+}
+.big-card-info .bc-schedule {
+  background: linear-gradient(135deg, #faf8fc, #fdf6f8);
+  border-radius: 12px;
+  padding: 10px 14px;
+  border-left: 3px solid #e91e63;
+  margin-top: 2px;
+}
+.big-card-info .bc-schedule .sched-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.big-card-info .bc-schedule .sched-row .sched-time {
+  font-weight: 700;
+  color: #e91e63;
+  min-width: 38px;
+  font-size: 13px;
+}
+.big-card-info .bc-schedule .sched-row .sched-text { color: #555; }
+.big-card-info .bc-note {
+  font-size: 12px;
+  color: #e91e63;
+  font-style: italic;
+  padding: 6px 0 0;
+  border-top: 1px solid #f0ecf4;
+  line-height: 1.4;
+}
+.big-card-info .bc-note::before { content: "💬 "; font-style: normal; }
+.big-card-info .bc-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid #f0ecf4;
+}
+.big-card-info .bc-actions .bc-btn {
+  flex: 1;
+  padding: 8px 0;
+  border-radius: 10px;
+  border: 1.5px solid #eee;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #888;
+  transition: all 0.18s;
+  line-height: 1.3;
+}
+.big-card-info .bc-actions .bc-btn:hover {
+  border-color: #e91e63;
+  color: #e91e63;
+  background: #fce4ec;
+  transform: translateY(-1px);
+}
+.big-card-info .bc-actions .bc-btn.danger:hover {
+  border-color: #e53935;
+  color: #e53935;
+  background: #ffebee;
+}
+
+/* ===== Today Section ===== */
+.today-section { display: none; }
+.today-section.visible { display: block; }
+
+.today-hero-title {
+  text-align: center;
+  padding: 0 0 24px;
+}
+.today-hero-title h2 {
+  font-size: 28px;
+  font-weight: 800;
+  color: #e91e63;
+  letter-spacing: 2px;
+}
+.today-hero-title h2 .pig-emoji { font-size: 26px; }
+.today-hero-title .subtitle {
+  font-size: 15px;
+  color: #888;
+  margin-top: 4px;
+}
+.today-hero-title .subtitle .heart { color: #e91e63; }
+.today-hero-title .gen-today-btn {
+  margin-top: 16px;
+  padding: 12px 32px;
+  border-radius: 26px;
+  border: none;
+  background: linear-gradient(135deg, #e91e63, #9c27b0);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s;
+  box-shadow: 0 4px 16px rgba(233,30,99,0.25);
+}
+.today-hero-title .gen-today-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 24px rgba(233,30,99,0.35);
+}
+.today-hero-title .gen-today-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.today-hero { display: none; }
+.today-hero.visible { display: block; }
+
+.today-empty {
+  text-align: center;
+  padding: 80px 20px;
+  background: #fff;
+  border-radius: 20px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+}
+.today-empty .icon { font-size: 64px; margin-bottom: 12px; }
+.today-empty p { font-size: 14px; color: #bbb; }
+
+/* ===== Gallery Section ===== */
+.gallery-section { display: block; }
+.gallery-section.hidden { display: none; }
+
+.gallery-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+/* ===== Gallery Grid (original, for full gallery) ===== */
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 12px;
+}
+
+.gallery-card {
+  background: #fff;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+  transition: all 0.25s ease;
+  cursor: pointer;
+  position: relative;
+}
+.gallery-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 32px rgba(233,30,99,0.12);
+}
+.gallery-card .card-img-wrap {
+  width: 100%;
+  aspect-ratio: 3/4;
+  overflow: hidden;
+  background: #f5f5f5;
+  position: relative;
+}
+.gallery-card .card-img-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.4s;
+}
+.gallery-card:hover .card-img-wrap img { transform: scale(1.06); }
+.gallery-card .card-img-wrap .img-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ddd;
+  font-size: 48px;
+}
+.gallery-card .card-date-tag {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(8px);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 500;
+  z-index: 2;
+}
+.gallery-card .card-style-tag {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: linear-gradient(135deg, #e91e63, #9c27b0);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 500;
+  z-index: 2;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.gallery-card .card-style-tag:hover { opacity: 0.8; }
+.gallery-card .card-body {
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.gallery-card .card-body .card-row1 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.gallery-card .card-body .card-row1 .date {
+  font-size: 12px;
+  color: #bbb;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.gallery-card .card-body .card-meta {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.gallery-card .card-body .card-meta .meta-tag {
+  font-size: 10px;
+  color: #999;
+  background: #f5f3f7;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.gallery-card .card-body .card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #f0f0f0;
+}
+.gallery-card .card-body .card-actions .ca-btn {
+  flex: 1;
+  padding: 8px 0;
+  border-radius: 10px;
+  border: 1.5px solid #eee;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #888;
+  transition: all 0.18s;
+  line-height: 1.3;
+}
+.gallery-card .card-body .card-actions .ca-btn:hover {
+  border-color: #e91e63;
+  color: #e91e63;
+  background: #fce4ec;
+  transform: translateY(-1px);
+}
+.gallery-card .card-body .card-actions .ca-btn.danger:hover {
+  border-color: #e53935;
+  color: #e53935;
+  background: #ffebee;
+}
+.gallery-list .big-card {
+  cursor: default;
+}
+
+/* ===== Today card: compact card (redesigned v2) ===== */
+.gallery-list .today-compact {
+  display: flex;
+  flex-direction: row;
+  background: #fff;
+  border-radius: 18px;
+  overflow: visible;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  border: 1px solid #f0e8ee;
+  transition: box-shadow 0.3s, transform 0.3s;
+  position: relative;
+  isolation: isolate;
+  min-height: 200px;
+}
+.gallery-list .today-compact::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 20px;
+  background: transparent;
+  z-index: -1;
+}
+.gallery-list .today-compact::after {
+  content: '';
+  position: absolute;
+  top: 0; right: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+.gallery-list .today-compact:hover {
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+  transform: translateY(-2px);
+}
+.today-compact .tc-image {
+  flex: 0 0 35%;
+  max-width: 35%;
+  min-height: 280px;
+  background: linear-gradient(135deg, #fce4ec, #f3d4e0);
+  overflow: hidden;
+  position: relative;
+  border-radius: 16px 0 0 16px;
+  margin: 6px 0 6px 6px;
+}
+.today-compact .tc-image::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 40px;
+  background: linear-gradient(to right, transparent, rgba(255,240,245,0.85));
+  pointer-events: none;
+}
+.today-compact .tc-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+  transition: transform 0.5s ease;
+  border-radius: 16px 0 0 16px;
+}
+.today-compact:hover .tc-image img {
+  transform: scale(1.05);
+}
+.today-compact .tc-info {
+  flex: 1;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  position: relative;
+  z-index: 1;
+  justify-content: center;
+}
+.tc-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.tc-date {
+  font-size: 13px;
+  color: #888;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  backdrop-filter: none;
+  width: 100%;
+  margin-bottom: 2px;
+}
+.tc-date::before {
+  content: '';
+  font-size: 0;
+}
+.tc-style {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: #c0007a;
+  color: #fff;
+  padding: 3px 12px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  box-shadow: none;
+  border: none;
+}
+.tc-style::before {
+  content: '';
+  font-size: 0;
+}
+.tc-style:hover { opacity: 0.85; transform: translateY(-1px); }
+.tc-meta {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+.tc-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.tc-meta-row .tc-meta-tag {
+  font-size: 11px;
+  color: #888;
+  background: #f5f5f5;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+.tc-outfit {
+  font-size: 14px;
+  color: #333;
+  line-height: 1.7;
+  padding: 4px 0;
+  margin: 0;
+}
+.tc-outfit::before {
+  content: '';
+  font-size: 0;
+}
+.tc-thought {
+  font-size: 13px;
+  color: #d02090;
+  font-style: normal;
+  line-height: 1.6;
+  padding: 2px 0;
+  background: transparent;
+  border-radius: 0;
+  border-left: none;
+  box-shadow: none;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+}
+.tc-thought:empty { display: none; }
+.tc-schedule {
+  font-size: 13px;
+  color: #666;
+  line-height: 1.6;
+  padding: 4px 0;
+}
+.tc-schedule .sched-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.tc-schedule .sched-label {
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.tc-schedule .sched-text {
+  color: #555;
+}
+.tc-period {
+  font-size: 13px;
+  color: #b8a0c8;
+  line-height: 1.5;
+  padding: 2px 0;
+  border-top: 1px solid rgba(200,170,210,0.15);
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tc-period .tc-period-label {
+  font-weight: 700;
+  color: #d4a0b0;
+  white-space: nowrap;
+}
+.tc-period .tc-period-text {
+  color: #b8a0c8;
+}
+.tc-period.tc-period-time {
+  color: #b8a0c8;
+  border-top-color: rgba(200,170,210,0.1);
+}
+.tc-schedule {
+  font-size: 13px;
+  color: #555;
+  background: linear-gradient(135deg, #faf8fc, #fdf6f8);
+  border-radius: 10px;
+  padding: 8px 12px;
+  border-left: 3px solid #e91e63;
+  margin: 2px 0;
+  line-height: 1.6;
+}
+.tc-schedule .tc-sched-label {
+  font-weight: 700;
+  color: #e91e63;
+  margin-right: 4px;
+}
+.tc-schedule .tc-sched-text {
+  color: #555;
+}
+.today-schedule-block {
+  background: linear-gradient(135deg, #faf8fc, #fdf6f8);
+  border-radius: 16px;
+  padding: 16px 20px;
+  border-left: 4px solid #e91e63;
+  margin: 0 auto 16px;
+  max-width: 960px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.today-schedule-block .sched-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.today-schedule-block .sched-label {
+  font-weight: 700;
+  color: #e91e63;
+  min-width: 32px;
+  font-size: 13px;
+}
+.today-schedule-block .sched-text {
+  color: #555;
+}
+.tc-actions {
+  display: flex;
+  gap: 10px;
+  padding-top: 6px;
+  margin-top: auto;
+}
+.tc-actions .tc-btn {
+  flex: 1;
+  padding: 8px 0;
+  border-radius: 8px;
+  border: none;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #555;
+  transition: all 0.2s ease;
+  line-height: 1.2;
+  white-space: nowrap;
+  box-shadow: none;
+}
+.tc-actions .tc-btn:hover {
+  background: #f5f5f5;
+  color: #333;
+  transform: translateY(-1px);
+}
+.tc-actions .tc-btn.danger:hover {
+  background: #fef2f2;
+  color: #e53935;
+}
+.tc-actions .tc-btn.liked {
+  color: #e91e63;
+  background: #fef0f5;
+}
+
+@media (max-width: 700px) {
+  .gallery-list .today-compact { flex-direction: column; border-radius: 20px; }
+  .gallery-list .today-compact .tc-image { flex: unset; width: 100%; min-height: 180px; border-radius: 14px 14px 0 0; margin: 0; }
+  .gallery-list .today-compact .tc-image img { border-radius: 14px 14px 0 0; }
+  .gallery-list .today-compact .tc-info { padding: 14px 16px; }
+}
+
+/* ===== Filter Bar ===== */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  margin-bottom: 16px;
+  background: linear-gradient(135deg, #fce4ec, #f3e5f5);
+  border-radius: 14px;
+  font-size: 14px;
+  color: #9c27b0;
+  font-weight: 600;
+}
+.filter-bar .filter-clear {
+  margin-left: auto;
+  padding: 4px 12px;
+  border-radius: 16px;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  color: #888;
+  transition: all 0.15s;
+}
+.filter-bar .filter-clear:hover {
+  border-color: #e53935;
+  color: #e53935;
+}
+
+/* ===== Style Filter Bar ===== */
+.style-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 0 6px;
+  margin-bottom: 12px;
+}
+.style-pill {
+  padding: 5px 14px;
+  border-radius: 20px;
+  border: 1.5px solid #e8d5e8;
+  background: #fff;
+  font-size: 13px;
+  color: #9c27b0;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-weight: 500;
+}
+.style-pill:hover {
+  border-color: #e91e63;
+  color: #e91e63;
+  background: #fce4ec;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(233,30,99,0.12);
+}
+.style-pill.active {
+  border-color: #e91e63;
+  color: #fff;
+  background: linear-gradient(135deg, #e91e63, #9c27b0);
+  box-shadow: 0 2px 8px rgba(233,30,99,0.2);
+}
+.style-pill.clear {
+  border-color: #e0e0e0;
+  color: #888;
+  background: #f5f5f5;
+}
+.style-pill.clear:hover {
+  border-color: #e53935;
+  color: #e53935;
+  background: #ffebee;
+}
+
+/* ===== Loading / Empty / Error ===== */
+.loading-state, .empty-state, .error-state {
+  text-align: center;
+  padding: 80px 20px;
+  color: #999;
+}
+.loading-state .spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #f0ecf4;
+  border-top: 4px solid #e91e63;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 16px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.empty-state .icon { font-size: 64px; margin-bottom: 12px; }
+.empty-state p { font-size: 14px; color: #bbb; }
+.error-state { color: #f44336; }
+
+/* ===== Toast ===== */
+.toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #323232;
+  color: #fff;
+  padding: 12px 28px;
+  border-radius: 12px;
+  font-size: 14px;
+  z-index: 9999;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+}
+.toast.show { opacity: 1; }
+
+/* ===== Custom Gen Modal ===== */
+.cg-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(12px);
+  z-index: 999;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.cg-overlay.open { display: flex; }
+.cg-modal {
+  background: #fff;
+  border-radius: 24px;
+  max-width: 620px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 32px 36px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+  animation: slideUp 0.25s ease;
+}
+.cg-modal h2 {
+  font-size: 26px;
+  font-weight: 700;
+  color: #e91e63;
+  margin-bottom: 20px;
+}
+.cg-field { margin-bottom: 20px; }
+.cg-field label {
+  display: block;
+  font-size: 16px;
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 8px;
+}
+.cg-field textarea {
+  width: 100%;
+  padding: 14px 18px;
+  border-radius: 14px;
+  border: 1px solid #e0e0e0;
+  font-size: 16px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 100px;
+  outline: none;
+  transition: border 0.2s;
+  color: #333;
+}
+.cg-field textarea:focus {
+  border-color: #e91e63;
+  box-shadow: 0 0 0 3px rgba(233,30,99,0.08);
+}
+.cg-field .hint {
+  font-size: 13px;
+  color: #999;
+  margin-top: 4px;
+}
+.cg-size-group {
+  display: flex;
+  gap: 10px;
+  flex-wrap: nowrap;
+}
+.cg-size-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 8px;
+  border-radius: 14px;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  font-size: 15px;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #888;
+  text-align: center;
+}
+.cg-size-btn:hover { border-color: #e91e63; color: #e91e63; }
+.cg-size-btn.active { border-color: #e91e63; background: #fce4ec; color: #e91e63; }
+.cg-size-btn small {
+  display: block;
+  font-size: 12px;
+  color: #bbb;
+  margin-top: 2px;
+}
+.cg-size-btn.active small { color: #e91e63; }
+.cg-ref-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.cg-ref-item {
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  position: relative;
+  width: calc((100% - 24px) / 4);
+  aspect-ratio: 3/4;
+  flex-shrink: 0;
+  border: 3px solid transparent;
+  transition: border-color 0.2s;
+}
+.cg-ref-item:hover { border-color: rgba(233,30,99,0.4); }
+.cg-ref-item.active { border-color: #e91e63; }
+.cg-ref-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cg-ref-item .cg-ref-none {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  background: #f5f5f5; color: #ccc; font-size: 24px;
+}
+.cg-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid #f0f0f0;
+  justify-content: flex-end;
+}
+.cg-actions .btn { padding: 10px 24px; font-size: 14px; min-width: 100px; justify-content: center; }
+.cg-actions .btn-secondary {
+  background: #f5f5f5;
+  color: #888;
+  border: 1px solid #e0e0e0;
+}
+.cg-actions .btn-secondary:hover { background: #eee; }
+.cg-upload-label { cursor: pointer; display: inline-flex; }
+.cg-ref-item .upload-badge {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  background: rgba(233,30,99,0.8); color: #fff;
+  font-size: 9px; text-align: center; padding: 1px 0;
+}
+.cg-ref-del {
+  position: absolute; top: 2px; right: 2px;
+  width: 18px; height: 18px; border-radius: 50%;
+  border: none; background: rgba(0,0,0,0.5); color: #fff;
+  font-size: 10px; cursor: pointer; display: flex;
+  align-items: center; justify-content: center;
+  opacity: 0; transition: opacity 0.2s;
+  line-height: 1; padding: 0;
+}
+.cg-ref-item:hover .cg-ref-del { opacity: 1; }
+.cg-ref-del:hover { background: rgba(233,30,99,0.8); }
+.cg-upload-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 7px 16px; border-radius: 18px;
+  border: 1px solid #e0e0e0; background: #fff;
+  font-size: 14px; color: #e91e63; cursor: pointer;
+  transition: all 0.2s;
+}
+.cg-upload-btn:hover { border-color: #e91e63; background: #fce4ec; }
+
+/* Meta info row (model + base style) */
+.card-meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.card-meta .meta-tag {
+  font-size: 10px;
+  color: #999;
+  background: #f5f3f7;
+  padding: 1px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.3px;
+}
+
+/* Today meta info */
+.th-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.th-meta .th-meta-tag {
+  font-size: 13px;
+  color: #888;
+  background: #f5f3f7;
+  padding: 2px 10px;
+  border-radius: 6px;
+}
+
+/* Modal meta info */
+.modal-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: -4px;
+}
+.modal-meta .meta-tag {
+  font-size: 11px;
+  color: #999;
+  background: #f5f3f7;
+  padding: 2px 8px;
+  border-radius: 5px;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 1200px) {
+  .gallery-list { gap: 14px; }
+  .gallery-grid { grid-template-columns: repeat(5, 1fr); gap: 10px; }
+  .big-card-image { flex: 0 0 38%; min-height: 280px; }
+  .big-card-info { padding: 18px 22px; }
+  .big-card-info .bc-desc { font-size: 14px; }
+  .big-card-info .bc-schedule { padding: 10px 14px; }
+  .big-card-info .bc-schedule .sched-row { font-size: 13px; }
+}
+@media (max-width: 900px) {
+  .gallery-grid { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 700px) {
+  .gallery-list { gap: 12px; }
+  .gallery-grid { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .big-card { flex-direction: column; }
+  .big-card-image { flex: unset; width: 100%; min-height: 260px; aspect-ratio: 3/4; }
+  .big-card-info { padding: 16px 18px; }
+  .big-card-info .bc-desc { font-size: 14px; }
+  .big-card-info .bc-schedule { padding: 10px 12px; }
+  .big-card-info .bc-actions .bc-btn { padding: 8px 0; font-size: 13px; }
+  .today-hero-title h2 { font-size: 22px; }
+  .today-hero-title .subtitle { font-size: 13px; }
+  .today-hero-title .gen-today-btn { font-size: 14px; padding: 10px 24px; }
+}
+@media (max-width: 500px) {
+  .gallery-list { gap: 10px; }
+  .gallery-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .big-card-image { min-height: 200px; }
+  .big-card-info { padding: 12px 14px; gap: 5px; }
+  .big-card-info .bc-date { font-size: 11px; }
+  .big-card-info .bc-desc { font-size: 13px; }
+  .big-card-info .bc-schedule { padding: 8px 10px; }
+  .big-card-info .bc-schedule .sched-row { font-size: 12px; }
+  .big-card-info .bc-actions .bc-btn { font-size: 12px; padding: 6px 0; }
+  .big-card-info .bc-actions { gap: 6px; padding-top: 8px; margin-top: 4px; }
+  .header { padding: 14px 16px; }
+  .header-left h1 { font-size: 18px; }
+  .container { padding: 16px 14px; }
+  .gallery-list .today-compact .tc-image { min-height: 160px; }
+  .gallery-list .today-compact .tc-info { padding: 12px 14px; gap: 6px; }
+  .gallery-list .today-compact .tc-outfit { font-size: 13px; line-height: 1.6; }
+  .gallery-list .today-compact .tc-thought { font-size: 12px; }
+  .gallery-list .today-compact .tc-schedule { font-size: 12px; padding: 6px 10px; }
+  .gallery-list .today-compact .tc-actions .tc-btn { font-size: 12px; padding: 6px 0; }
+  .gallery-list .today-compact .tc-date { font-size: 12px; }
+  .gallery-list .today-compact .tc-meta-row .tc-meta-tag { font-size: 10px; }
+  .gallery-list .today-compact .tc-style { font-size: 10px; padding: 2px 10px; }
+}
+
+/* ===== Today badge on gallery cards ===== */
+.gallery-card.today-card .big-card-image {
+  box-shadow: inset 0 0 0 3px #e91e63;
+}
+
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <h1>🐷 猪猪穿搭画廊</h1>
+  </div>
+  <div class="header-right">
+    <div class="tabs">
+      <button class="tab" data-tab="gallery" onclick="switchTab('gallery')">✨ 全部 <span class="tab-badge" id="badge-all">0</span></button>
+      <button class="tab active" data-tab="today" onclick="switchTab('today')">🌸 今日 <span class="tab-badge" id="badge-today">0</span></button>
+      <button class="tab" data-tab="favorites" onclick="switchTab('favorites')">❤️ 收藏 <span class="tab-badge" id="badge-favorites">0</span></button>
+    </div>
+    <button class="btn btn-primary" onclick="openCustomGen()">🎀 穿搭生成</button>
+    <button class="settings-btn" onclick="openSettings()" title="API 密钥设置">⚙️</button>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- Today Card -->
+  <div class="today-section visible" id="todaySection">
+    <div class="today-hero-title">
+      <h2><span class="pig-emoji">🐷</span> 猪猪的每日穿搭画廊</h2>
+      <div class="subtitle">每一天，都是不一样的猪猪 <span class="heart">💞</span></div>
+      <button class="gen-today-btn" onclick="triggerGenerate()">💭 现在在干嘛</button>
+    </div>
+    <div class="today-empty" id="todayEmpty" style="display:none;">
+      <div class="icon">🌸</div>
+      <p>今天还没有穿搭记录呢～让猪猪生成一个吧！</p>
+    </div>
+    <div class="gallery-list" id="todayList"></div>
+  </div>
+
+  <!-- Gallery Grid -->
+  <div class="gallery-section hidden" id="gallerySection">
+    <div id="galleryContent">
+      <div class="loading-state"><div class="spinner"></div>猪猪在整理衣橱...</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Settings Modal -->
+<div class="sk-overlay" id="skOverlay" onclick="if(event.target===this)closeSettings()">
+  <div class="sk-modal" onclick="event.stopPropagation()">
+    <h2>🔑 API 密钥设置</h2>
+    <div class="sk-field">
+      <label for="skGiteeKey">Gitee API Key</label>
+      <div class="sk-desc">z-image-turbo 生图密钥</div>
+      <input type="password" id="skGiteeKey" placeholder="输入新密钥（留空则不修改）">
+      <div class="sk-status" id="skGiteeStatus">加载中...</div>
+    </div>
+    <div class="sk-field">
+      <label for="skGptBaseUrl">GPT Image Base URL</label>
+      <div class="sk-desc">jiuuij.de5.net 直连地址（含 /v1/chat/completions）</div>
+      <input type="text" id="skGptBaseUrl" placeholder="留空则不修改">
+      <div class="sk-status" id="skGptBaseUrlStatus">加载中...</div>
+    </div>
+    <div class="sk-field">
+      <label for="skGptKey">GPT Image Key</label>
+      <div class="sk-desc">jiuuij.de5.net 直连密钥</div>
+      <input type="password" id="skGptKey" placeholder="输入新密钥（留空则不修改）">
+      <div class="sk-status" id="skGptStatus">加载中...</div>
+    </div>
+    <div class="sk-field">
+      <label for="skCpaUrl">CPA Base URL</label>
+      <div class="sk-desc">Gemini 等备用引擎地址</div>
+      <input type="text" id="skCpaUrl" placeholder="输入新地址（留空则不修改）">
+      <div class="sk-status" id="skCpaUrlStatus">加载中...</div>
+    </div>
+    <div class="sk-field">
+      <label for="skCpaKey">CPA API Key</label>
+      <div class="sk-desc">CPA 认证密钥</div>
+      <input type="password" id="skCpaKey" placeholder="输入新密钥（留空则不修改）">
+      <div class="sk-status" id="skCpaKeyStatus">加载中...</div>
+    </div>
+    <div class="sk-actions">
+      <button class="btn btn-secondary" onclick="closeSettings()">关闭</button>
+      <button class="btn btn-primary" id="skSaveBtn" onclick="saveSettings()">💾 保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- Custom Gen Modal -->
+<div class="cg-overlay" id="cgOverlay" onclick="if(event.target===this)closeCustomGen()">
+  <div class="cg-modal" onclick="event.stopPropagation()">
+    <h2>🎀 穿搭生成</h2>
+    <div class="cg-field">
+      <label for="cgPrompt">穿搭描述</label>
+      <textarea id="cgPrompt" placeholder="描述你想看到的猪猪穿搭，比如：穿着粉色JK制服在樱花树下吃团子~" rows="3"></textarea>
+      <div class="hint">支持中英文，越详细效果越好哦～</div>
+    </div>
+    <div class="cg-field">
+      <label>图片尺寸</label>
+      <div class="cg-size-group" id="cgSizeGroup">
+        <button class="cg-size-btn active" data-size="1024x1024">1:1 <small>1024x1024</small></button>
+        <button class="cg-size-btn" data-size="768x1024">3:4 <small>768x1024</small></button>
+        <button class="cg-size-btn" data-size="1024x768">4:3 <small>1024x768</small></button>
+        <button class="cg-size-btn" data-size="1024x1536">2:3 <small>1024x1536</small></button>
+        <button class="cg-size-btn" data-size="768x1366">9:16 <small>768x1366</small></button>
+      </div>
+    </div>
+    <div class="cg-field">
+      <label>参考图（可选）</label>
+      <div class="cg-ref-grid" id="cgRefGrid">
+        <div class="cg-ref-item active" data-ref="">
+          <div class="cg-ref-none">📸</div>
+        </div>
+      </div>
+      <div class="hint" style="margin-top:8px;display:flex;align-items:center;gap:10px;">
+        <span style="color:#999">选本地底模作为参考风格（脸型/穿搭）</span>
+        <label class="cg-upload-label">
+          <input type="file" id="cgRefUpload" accept="image/*" style="display:none" onchange="uploadRefImage(event)">
+          <span class="cg-upload-btn">📤 上传自定义</span>
+        </label>
+      </div>
+    </div>
+    <div class="cg-actions">
+      <button class="btn btn-secondary" onclick="closeCustomGen()">取消</button>
+      <button class="btn btn-primary" id="cgSubmitBtn" onclick="submitCustomGen()">✨ 开始生成</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = "";
+let allEntries = [];
+let todayData = null;  // {date, photos: [...], schedule, outfit_style}
+let currentTagFilter = "";
+let showFavoritesOnly = false;
+let showTodayOnly = false;
+
+function clearFilter() {
+  currentTagFilter = "";
+  switchTab('gallery');
+}
+
+function filterByTag(tag) {
+  currentTagFilter = tag.replace(/^#/, '');
+  switchTab('gallery');
+}
+
+function showToast(msg, d = 3000) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove("show"), d);
+}
+
+function formatDate(dateStr) {
+  const d = new Date(dateStr + "T00:00:00+08:00");
+  return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`;
+}
+
+function shortDate(dateStr) {
+  const d = new Date(dateStr + "T00:00:00+08:00");
+  return `${d.getMonth()+1}.${d.getDate()}`;
+}
+
+// ===== Tab Badges =====
+function updateBadges() {
+  const today = new Date().toISOString().slice(0, 10);
+  // Only count image entries (exclude date-keyed entries that have no image_filename)
+  const imageEntries = allEntries.filter(e => e.image_filename);
+  const allCount = imageEntries.length;
+  const favCount = imageEntries.filter(e => e.favorite === true).length;
+  // Today badge: only count web and cron sources (not import)
+  const todayCount = imageEntries.filter(e => e.date === today && (e.source === 'web' || e.source === 'cron')).length;
+  const bAll = document.getElementById("badge-all");
+  const bFav = document.getElementById("badge-favorites");
+  const bToday = document.getElementById("badge-today");
+  if (bAll) bAll.textContent = allCount;
+  if (bFav) bFav.textContent = favCount;
+  if (bToday) bToday.textContent = todayCount;
+}
+
+// ===== Tab switching =====
+function switchTab(tab) {
+  const todaySec = document.getElementById("todaySection");
+  const gallerySec = document.getElementById("gallerySection");
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.querySelector(`.tab[data-tab="${tab}"]`).classList.add("active");
+  
+  if (tab === "today") {
+    todaySec.classList.add("visible");
+    gallerySec.classList.add("hidden");
+    showFavoritesOnly = false;
+    showTodayOnly = true;
+    renderToday();
+  } else if (tab === "favorites") {
+    todaySec.classList.remove("visible");
+    gallerySec.classList.remove("hidden");
+    showFavoritesOnly = true;
+    showTodayOnly = false;
+    renderGallery();
+  } else {
+    todaySec.classList.remove("visible");
+    gallerySec.classList.remove("hidden");
+    showFavoritesOnly = false;
+    showTodayOnly = false;
+    renderGallery();
+  }
+}
+
+// ===== Trigger Generate (💭 现在在干嘛) =====
+async function triggerGenerate() {
+  const btn = document.querySelector(".gen-today-btn");
+  btn.disabled = true;
+  btn.textContent = "⏳ 猪猪在打扮...";
+  showToast("💭 正在根据现在的时间段生图～");
+  
+  try {
+    const res = await fetch(`${API}/api/generate-now`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+    });
+    const data = await res.json();
+    if (data.error) {
+      showToast("❌ " + data.error);
+    } else {
+      showToast("✨ 猪猪来啦～");
+      await loadGallery();
+    }
+  } catch(e) {
+    showToast("❌ " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "💭 现在在干嘛";
+  }
+}
+
+// ===== Parse schedule =====
+function parseSchedule(schedule) {
+  if (!schedule) return { items: [], hasTime: false };
+  let lines = schedule.split('\n').map(s => s.trim()).filter(Boolean);
+  if (lines.length <= 1 && schedule.length > 20) {
+    const parts = schedule.split(/(?=[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{2700}-\u{27BF}]|☕|🖼|🎹|🎵|🎶|💃|🎭|📚|🎨|🛒|🍰|☀️|🌙|🌅|🌇|🌆|🌃|🌤️)/u)
+      .map(s => s.trim()).filter(Boolean);
+    if (parts.length > 1) lines = parts;
+  }
+  const hasTime = lines.length > 0 && /^\d{1,2}:\d{2}/.test(lines[0]);
+  const items = lines.map(line => {
+    const tm = line.match(/^(\d{1,2}:\d{2})\s*(.*)/);
+    if (tm) return { time: tm[1], text: tm[2].replace(/^[·\-—~]\s*/, '') };
+    const em = line.match(/^(\S{1,2})\s*(.*)/);
+    if (em && /[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}]/u.test(em[1])) {
+      return { time: '', icon: em[1], text: em[2].replace(/^[：:\s]+/, '') };
+    }
+    return { time: '', icon: '⏰', text: line };
+  });
+  return { items, hasTime };
+}
+
+const timeEmoji = {
+  "00":"🌙","01":"🌙","02":"🌙","03":"🌙","04":"🌙","05":"🌙",
+  "06":"🌅","07":"🌅","08":"☀️","09":"☀️","10":"☀️","11":"☀️",
+  "12":"🌤️","13":"🌤️","14":"🌤️","15":"🌤️","16":"🌤️","17":"🌇",
+  "18":"🌇","19":"🌆","20":"🌃","21":"🌃","22":"🌃","23":"🌃"
+};
+
+// Map time string (HH:mm) to period label
+function getPeriodFromTime(timeStr) {
+  if (!timeStr) return '上午';
+  const hour = parseInt(String(timeStr).split(':')[0], 10);
+  if (isNaN(hour)) return '上午';
+  if (hour >= 6 && hour < 12) return '上午';
+  if (hour >= 12 && hour < 14) return '中午';
+  if (hour >= 14 && hour < 18) return '下午';
+  if (hour >= 18 && hour < 24) return '晚上';
+  return '深夜';
+}
+
+// Extract outfit text from full outfit string (removes "风格：xxx 穿搭：" prefix)
+function extractOutfitText(outfit) {
+  if (!outfit) return '';
+  const m = outfit.match(/穿搭[:：]\s*(.*)/);
+  return m ? m[1].trim() : outfit;
+}
+
+function openTodayModal(filename) {
+  // Find the entry from todayData photos or allEntries
+  const photos = (todayData && todayData.photos) ? todayData.photos : [];
+  const entry = photos.find(p => p.image_filename === filename)
+    || allEntries.find(e => e.image_filename === filename);
+  if (entry) openModal(entry);
+}
+
+// ===== Today Card =====
+function renderToday() {
+  const listEl = document.getElementById("todayList") || document.querySelector(".gallery-list");
+  const empty = document.getElementById("todayEmpty");
+
+  // Use todayData from API (has photos array + schedule)
+  const photos = (todayData && todayData.photos) ? todayData.photos : [];
+  const schedule = todayData ? (todayData.schedule || "") : "";
+  const todayStr = new Date().toISOString().slice(0,10);
+
+  if (!photos.length) {
+    if (listEl) listEl.style.display = "none";
+    empty.style.display = "block";
+    return;
+  }
+
+  if (listEl) listEl.style.display = "flex";
+  empty.style.display = "none";
+
+  // Render each photo as a card (same structure as modal)
+  let html = "";
+  for (const today of photos) {
+    const timeLabel = today.time || "";
+
+    // Date + weekday
+    const d = new Date((today.date || todayStr) + "T00:00:00+08:00");
+    const weekdays = ["日","一","二","三","四","五","六"];
+    const dateText = `${today.date || todayStr} 星期${weekdays[d.getDay()]}`;
+
+    // Outfit text (extract from "风格：xxx 穿搭：yyy")
+    const outfitText = extractOutfitText(today.outfit || "");
+
+    // Schedule items — prefer schedule_time field, fallback to parsing full schedule
+    let schedHtml = "";
+    const schedSource = today.schedule_time || today.schedule || "";
+    if (schedSource && schedSource !== "生成失败") {
+      let slots = [];
+      if (today.schedule_time) {
+        // New format: schedule_time is the matched activity text
+        slots = today.schedule_time.split(/[；;。\n]+/).map(s => s.trim()).filter(Boolean);
+      } else {
+        // Legacy: parse full schedule by time patterns
+        let normalized = schedSource
+          .replace(/(?:早上|清晨|上午)\s*(\d{1,2})点/g, '$1:00')
+          .replace(/(?:中午)\s*(\d{1,2})点/g, '$1:00')
+          .replace(/(?:下午|午后)\s*(\d{1,2})点/g, (_, h) => `${parseInt(h)+12}:00`)
+          .replace(/(?:晚上|傍晚|晚间)\s*(\d{1,2})点/g, (_, h) => `${parseInt(h)+12}:00`)
+          .replace(/(\d{1,2})点/g, '$1:00');
+        const allSlots = normalized.match(/\d{1,2}:\d{2}.*?(?=\d{1,2}:\d{2}|$)/g) || [];
+        const photoHour = today.time ? parseInt(today.time.split(":")[0], 10) : -1;
+        const photoPeriod = photoHour < 12 ? 'morning' : photoHour < 18 ? 'afternoon' : 'evening';
+        const relevant = allSlots.filter(slot => {
+          const m = slot.match(/^(\d{1,2}):\d{2}/);
+          if (!m) return true;
+          const h = parseInt(m[1], 10);
+          if (photoPeriod === 'morning') return h < 12;
+          if (photoPeriod === 'afternoon') return h >= 12 && h < 18;
+          return h >= 18;
+        });
+        slots = (relevant.length ? relevant : allSlots).map(s => s.trim());
+      }
+      if (slots.length) {
+        schedHtml = slots.map(slot => {
+          const m = slot.match(/^(\d{1,2}:\d{2})\s*(.*)/);
+          if (m) return `<div class="sched-item"><span class="sched-label">${m[1]}</span><span class="sched-text">${m[2].trim()}</span></div>`;
+          return `<div class="sched-item"><span class="sched-text">${slot}</span></div>`;
+        }).join('');
+      }
+    }
+
+    // Caption with hashtag links (same as modal)
+    let captionHtml = "";
+    if (today.caption) {
+      captionHtml = today.caption.replace(/#([^\s#]+)/g, '<a class="tag-link" href="#" onclick="filterByTag(\'$1\'); return false;">' + '#' + '$1</a>');
+    }
+
+    html += `
+      <div class="today-compact" style="cursor:default;">
+        <div class="tc-image">
+          <img src="/images/${today.image_filename}" alt="今日穿搭" onclick="openViewer('/images/${today.image_filename}')" style="cursor:pointer;">
+        </div>
+        <div class="modal-info" style="flex:1;padding:20px 24px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <span class="modal-date" style="margin:0;padding:0;background:none;">${dateText} ${timeLabel}</span>
+            ${today.outfit_style ? `<span class="modal-style" onclick="event.stopPropagation();filterByTag('${today.outfit_style}');">${today.outfit_style}</span>` : ""}
+          </div>
+          <div>
+            <span class="modal-meta" style="margin:0;padding:0;background:none;">${today.model_name ? `<span class="meta-tag">🤖 ${today.model_name}</span>` : ""}${today.base_style ? `<span class="meta-tag">🎨 ${today.base_style}</span>` : ""}</span>
+          </div>
+          <div class="modal-outfit">${outfitText ? `<span class="outfit-label">穿搭</span><span class="outfit-divider">|</span><span class="outfit-text">${outfitText}</span>` : '--'}</div>
+          ${schedHtml ? `<div class="modal-schedule">${schedHtml}</div>` : ""}
+          ${captionHtml ? `<div class="modal-caption">${captionHtml}</div>` : ""}
+          <div class="modal-actions" onclick="event.stopPropagation()">
+            <button class="mbtn" onclick="event.stopPropagation();toggleFavorite('${today.image_filename}');">${today.favorite ? '🩷' : '🤍'} 收藏</button>
+            <button class="mbtn" onclick="event.stopPropagation();shareImage('${today.image_filename}');">📤 分享</button>
+            <button class="mbtn danger" onclick="event.stopPropagation();deleteImage('${today.image_filename}');">🗑 删除</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  listEl.innerHTML = html;
+  listEl.style.display = "flex";
+  listEl.style.flexDirection = "column";
+  listEl.style.gap = "16px";
+}
+
+// ===== Gallery Grid =====
+function renderGallery() {
+  const content = document.getElementById("galleryContent");
+  if (!allEntries.length) {
+    content.innerHTML = `<div class="empty-state"><div class="icon">👗</div><p>还没有穿搭记录呢～</p></div>`;
+    return;
+  }
+  
+  const sorted = [...allEntries].sort((a, b) => {
+    const dateCmp = (b.date || '').localeCompare(a.date || '');
+    if (dateCmp !== 0) return dateCmp;
+    return (b.time || '').localeCompare(a.time || '');
+  });
+  
+  // Apply filters
+  let filtered = sorted;
+  if (showTodayOnly) {
+    // Find the latest date that has entries (web/cron sources only)
+    const sortedDates = [...new Set(sorted.filter(e => e.source === 'web' || e.source === 'cron').map(e => e.date))].sort().reverse();
+    const latestDate = sortedDates.length > 0 ? sortedDates[0] : '';
+    filtered = sorted.filter(e => e.date === latestDate && (e.source === 'web' || e.source === 'cron'));
+    // Dedup by image_filename (keep first)
+    const seen = new Set();
+    filtered = filtered.filter(e => {
+      if (!e.image_filename) return false;
+      if (seen.has(e.image_filename)) return false;
+      seen.add(e.image_filename);
+      return true;
+    });
+  }
+  if (showFavoritesOnly) {
+    filtered = filtered.filter(e => e.favorite === true);
+  }
+  if (currentTagFilter) {
+    const filterLower = currentTagFilter.toLowerCase();
+    filtered = filtered.filter(e => {
+      // Match against outfit_style field
+      if (e.outfit_style && e.outfit_style.toLowerCase() === filterLower) return true;
+      // Also match against caption hashtags as fallback
+      if (e.caption) {
+        const tags = e.caption.match(/#[^\s#]+/g) || [];
+        if (tags.some(t => t.toLowerCase() === filterLower || t.slice(1).toLowerCase() === filterLower)) return true;
+      }
+      return false;
+    });
+  }
+  
+  let headerHtml = '';
+  let todayScheduleHtml = '';
+  let periodMap = {};
+  if (showTodayOnly) {
+    const sortedDates = [...new Set(allEntries.filter(e => e.source === 'web' || e.source === 'cron').map(e => e.date))].sort().reverse();
+    const latestDate = sortedDates.length > 0 ? sortedDates[0] : '';
+    headerHtml = `<div class="filter-bar">🌸 ${latestDate || '暂无'} <button class="filter-clear" onclick="switchTab('gallery')">✕ 查看全部</button></div>`;
+    // Parse daily schedule into period→text map (per-card display, not separate block)
+    periodMap = {};
+    // Get schedule from image entries (date-key entries are filtered out from API)
+    const schedEntry = allEntries.find(e => e.date === latestDate && e.schedule);
+    if (schedEntry && schedEntry.schedule) {
+      const schedText = schedEntry.schedule;
+      // Try structured format first: "上午：xxx 下午：xxx"
+      const parts = schedText.split(/\s+(?=(?:上午|中午|下午|晚上|深夜)[：:])/);
+      if (parts.length > 1) {
+        for (const part of parts) {
+          const m = part.match(/^(上午|中午|下午|晚上|深夜)[：:]\s*(.*)/);
+          if (m) periodMap[m[1]] = m[2].trim();
+        }
+      } else {
+        // Free-text schedule: split by sentences/clauses and classify by time keywords
+        const periodKeywords = {
+          '上午': /(?:早上|清晨|上午|起床|早[餐饭]|9点|10点|11点|8点|7点)/,
+          '中午': /(?:中午|午餐|午[饭餐]|12点|13点|午饭)/,
+          '下午': /(?:下午|午后|14点|15点|16点|17点|喝下午茶)/,
+          '晚上': /(?:晚上|傍晚|晚间|晚[餐饭]|18点|19点|20点|21点|直播|回家|护肤)/,
+          '深夜': /(?:深夜|22点|23点|睡觉|凌晨)/
+        };
+        // Split by Chinese/English punctuation
+        const clauses = schedText.split(/[；。；\n]+/).map(c => c.trim()).filter(Boolean);
+        for (const clause of clauses) {
+          for (const [period, kw] of Object.entries(periodKeywords)) {
+            if (kw.test(clause)) {
+              periodMap[period] = (periodMap[period] ? periodMap[period] + ' ' : '') + clause;
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+  if (showFavoritesOnly) {
+    headerHtml = `<div class="filter-bar">🩷 只看收藏 <button class="filter-clear" onclick="switchTab('gallery')">✕ 查看全部</button></div>`;
+  }
+  // Style filter bar for gallery tab
+  if (!showTodayOnly && !showFavoritesOnly) {
+    const styles = [...new Set(allEntries.map(e => e.outfit_style).filter(Boolean))].sort();
+    if (styles.length) {
+      const stylePills = styles.map(s => {
+        const active = currentTagFilter && currentTagFilter.toLowerCase() === s.toLowerCase();
+        return `<button class="style-pill${active ? ' active' : ''}" onclick="filterByTag('${s}')">${s}</button>`;
+      }).join('');
+      const clearBtn = currentTagFilter ? `<button class="style-pill clear" onclick="clearFilter()">✕ 清除</button>` : '';
+      headerHtml += `<div class="style-filter-bar">${stylePills}${clearBtn}</div>`;
+    }
+  }
+  if (currentTagFilter) {
+    headerHtml += `<div class="filter-bar">🏷️ 筛选: #${currentTagFilter} <button class="filter-clear" onclick="clearFilter()">✕ 清除</button></div>`;
+  }
+  
+  if (!filtered.length) {
+    content.innerHTML = headerHtml + `<div class="empty-state"><div class="icon">🔍</div><p>没有匹配的结果～</p></div>`;
+    return;
+  }
+  
+  content.innerHTML = headerHtml + (showTodayOnly
+    ? `<div class="gallery-list">${
+        filtered.map(e => {
+          const imgHtml = e.image_filename
+            ? `<img src="/images/${e.image_filename}" alt="${e.date}" loading="lazy">`
+            : `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#ddd;font-size:32px;">📸</div>`;
+          const timeDisplay = e.time ? e.time : "";
+          let metaHtml = "";
+          if (e.model_name) metaHtml += `<span class="tc-meta-tag">🤖 ${e.model_name}</span>`;
+          if (e.base_style) metaHtml += `<span class="tc-meta-tag">🎨 ${e.base_style}</span>`;
+          // Period row: show matching schedule period or fallback to time
+          let periodHtml = '';
+          if (showTodayOnly) {
+            const pLabel = getPeriodFromTime(e.time);
+            const pText = periodMap[pLabel];
+            if (pText) {
+              periodHtml = `<div class="tc-period"><span class="tc-period-label">💫 ${pLabel}</span><span class="tc-period-text">${pText}</span></div>`;
+            } else if (e.time) {
+              periodHtml = `<div class="tc-period tc-period-time">⏰ ${e.time}</div>`;
+            }
+          }
+          return `
+            <div class="today-compact">
+              <div class="tc-image" onclick="event.stopPropagation();openViewer('/images/${e.image_filename}')" style="cursor:zoom-in;">
+                ${imgHtml}
+              </div>
+              <div class="tc-info">
+                <div class="tc-top">
+                  <span class="tc-date">${formatDate(e.date)}${timeDisplay ? ' ' + timeDisplay : ''}</span>
+                  ${e.outfit_style ? `<span class="tc-style" onclick="event.stopPropagation();filterByTag('${e.outfit_style}')">${e.outfit_style}</span>` : ''}
+                  ${metaHtml ? `<div class="tc-meta">${metaHtml}</div>` : ''}
+                </div>
+                <div class="tc-outfit">${e.outfit || '--'}</div>
+                <div class="tc-thought">${e.caption ? e.caption.replace(/#([^\s#]+)/g, '<a class="tag-link" href="#" onclick="filterByTag(\'$1\'); return false;">' + '#' + '$1</a>') : ''}</div>
+                ${periodHtml}
+                <div class="tc-actions">
+                  <button class="tc-btn ${e.favorite ? 'liked' : ''}" onclick="toggleFavorite('${e.image_filename}', event)" data-img="${e.image_filename}">${e.favorite ? '🩷' : '♡'} 收藏</button>
+                  <button class="tc-btn" onclick="shareImage('${e.image_filename}', event)">📤 分享</button>
+                  <button class="tc-btn danger" onclick="deleteImage('${e.image_filename || e.date}', event)">🗑 删除</button>
+                </div>
+              </div>
+            </div>`;
+        }).join("")
+    }</div>`
+    : `<div class="gallery-grid">${
+        filtered.map(e => {
+          const imgHtml = e.image_filename
+            ? `<img src="/images/${e.image_filename}" alt="${e.date}" loading="lazy">`
+            : `<div class="img-placeholder">📸</div>`;
+          const styleTag = e.outfit_style ? `<span class="card-style-tag" onclick="event.stopPropagation();filterByTag('${e.outfit_style}');">${e.outfit_style}</span>` : "";
+          const timeDisplay = e.time ? e.time : "";
+          let metaHtml = "";
+          if (e.model_name) metaHtml += `<span class="meta-tag">🤖 ${e.model_name}</span>`;
+          if (e.base_style) metaHtml += `<span class="meta-tag">🎨 ${e.base_style}</span>`;
+          return `
+            <div class="gallery-card" onclick="event.stopPropagation();openModal(allEntries.find(x=>x.image_filename==='${e.image_filename}'))">
+              <div class="card-img-wrap">
+                ${imgHtml}
+                <span class="card-date-tag">${shortDate(e.date)}${timeDisplay ? ' ' + timeDisplay : ''}</span>
+                ${styleTag}
+              </div>
+              <div class="card-body">
+                <div class="card-row1">
+                  <span class="date">${formatDate(e.date)}${timeDisplay ? ' ' + timeDisplay : ''}</span>
+                </div>
+                ${metaHtml ? `<div class="card-meta">${metaHtml}</div>` : ''}
+                <div class="card-actions">
+                  <button class="ca-btn" onclick="event.stopPropagation();toggleFavorite('${e.image_filename}', event)" data-img="${e.image_filename}" style="${e.favorite ? 'color:#e91e63;border-color:#e91e63;' : ''}">${e.favorite ? '🩷' : '♡'} 收藏</button>
+                  <button class="ca-btn" onclick="event.stopPropagation();shareImage('${e.image_filename}', event)">📤 分享</button>
+                  <button class="ca-btn danger" onclick="event.stopPropagation();deleteImage('${e.image_filename || e.date}', event)">🗑 删除</button>
+                </div>
+              </div>
+            </div>`;
+        }).join("")
+    }</div>`
+  );
+}
+// ===== Fullscreen Image Viewer =====
+const viewerOverlay = document.createElement("div");
+viewerOverlay.className = "viewer-overlay";
+viewerOverlay.id = "viewerOverlay";
+viewerOverlay.innerHTML = `
+  <button class="viewer-close" onclick="closeViewer()">✕</button>
+  <div class="viewer-image-wrap" id="viewerImageWrap" onclick="if(event.target===this)closeViewer()">
+    <img id="viewerImage" src="" alt="放大查看">
+  </div>`;
+viewerOverlay.onclick = (e) => { if (e.target === viewerOverlay) closeViewer(); };
+document.body.appendChild(viewerOverlay);
+
+// Viewer styles
+const vs = document.createElement("style");
+vs.textContent = `
+.viewer-overlay {
+  position:fixed;top:0;left:0;right:0;bottom:0;
+  background:rgba(0,0,0,0.85);backdrop-filter:blur(20px);
+  z-index:9999;display:none;align-items:center;justify-content:center;
+  padding:40px;animation:fadeIn 0.25s;
+}
+.viewer-overlay.open { display:flex; }
+.viewer-close {
+  position:absolute;top:20px;right:20px;width:44px;height:44px;
+  border-radius:50%;border:none;
+  background:rgba(255,255,255,0.15);color:#fff;
+  font-size:24px;cursor:pointer;z-index:10;
+  display:flex;align-items:center;justify-content:center;
+  transition:background 0.2s;
+}
+.viewer-close:hover { background:rgba(255,255,255,0.3); }
+.viewer-image-wrap {
+  display:flex;align-items:center;justify-content:center;
+  max-width:95vw;max-height:95vh;cursor:zoom-out;
+}
+.viewer-image-wrap img {
+  max-width:100%;max-height:95vh;object-fit:contain;
+  border-radius:12px;box-shadow:0 20px 80px rgba(0,0,0,0.5);
+  animation:zoomIn 0.3s ease;
+}
+@keyframes zoomIn { from{opacity:0;transform:scale(0.9)} to{opacity:1;transform:scale(1)} }
+@media(max-width:768px){
+  .viewer-overlay { padding:16px; }
+  .viewer-close { top:12px;right:12px;width:36px;height:36px;font-size:20px; }
+}`;
+document.head.appendChild(vs);
+
+function openViewer(imgSrc) {
+  document.getElementById("viewerImage").src = imgSrc;
+  document.getElementById("viewerOverlay").classList.add("open");
+  document.body.style.overflow = "hidden";
+}
+function closeViewer() {
+  document.getElementById("viewerOverlay").classList.remove("open");
+  document.body.style.overflow = "";
+}
+
+// Modal styles
+const ms = document.createElement("style");
+ms.textContent = `
+.modal-overlay {
+  position:fixed;top:0;left:0;right:0;bottom:0;
+  background:rgba(20,10,30,0.55);backdrop-filter:blur(16px);
+  z-index:999;display:none;align-items:center;justify-content:center;padding:24px;
+  animation:fadeIn 0.25s;
+}
+.modal-overlay.open { display:flex; }
+@keyframes fadeIn { from{opacity:0} to{opacity:1} }
+.modal-content {
+  background:#fff;border-radius:24px;max-width:1100px;width:100%;
+  max-height:88vh;overflow-y:auto;display:flex;flex-direction:row;
+  box-shadow:0 25px 80px rgba(20,10,30,0.25);animation:slideUp 0.3s cubic-bezier(0.16,1,0.3,1);position:relative;
+  border:1px solid rgba(255,255,255,0.3);
+}
+@keyframes slideUp { from{opacity:0;transform:translateY(24px) scale(0.98)} to{opacity:1;transform:translateY(0) scale(1)} }
+.modal-image { flex:0 0 42%;background:#f0ecf4;display:flex;min-height:480px;overflow:hidden;border-radius:24px 0 0 24px;cursor:pointer; }
+.modal-image img { width:100%;height:100%;object-fit:cover;transition:transform 0.4s; }
+.modal-image img:hover { transform:scale(1.03); }
+/* Fullscreen image viewer */
+.img-fullscreen { position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.92);z-index:9999;display:none;align-items:center;justify-content:center;cursor:zoom-out;animation:fadeIn 0.2s; }
+.img-fullscreen.open { display:flex; }
+.img-fullscreen img { max-width:92vw;max-height:92vh;object-fit:contain;border-radius:8px;box-shadow:0 0 60px rgba(0,0,0,0.5); }
+.modal-info { flex:1;padding:32px 32px 24px;display:flex;flex-direction:column;gap:14px;background:linear-gradient(180deg,#fcfaff 0%,#fff 100%); }
+.modal-info-top { display:flex;align-items:center;justify-content:space-between;gap:12px; }
+.modal-date { font-size:15px;color:#999;font-weight:500;letter-spacing:0.3px; }
+.modal-style { display:inline-block;background:linear-gradient(135deg,#e91e63,#9c27b0);color:#fff;padding:4px 14px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:0.5px;width:fit-content;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(233,30,99,0.2);flex-shrink:0; }
+.modal-style:hover { opacity:0.9; transform:translateY(-1px); box-shadow:0 4px 12px rgba(233,30,99,0.3); }
+.modal-outfit { display:flex;align-items:center;gap:10px;font-size:15px;line-height:1.8;color:#555;padding:6px 0;flex-wrap:wrap; }
+.modal-outfit .outfit-label { background:#fff;color:#e91e63;padding:3px 14px;border-radius:14px;font-size:13px;font-weight:600;letter-spacing:0.5px;white-space:nowrap;border:1.5px solid #e91e63;box-shadow:0 2px 6px rgba(233,30,99,0.12); }
+.modal-outfit .outfit-divider { color:#ccc;font-size:14px; }
+.modal-outfit .outfit-text { color:#555;flex:1;min-width:200px; }
+.today-compact .modal-outfit .outfit-text { white-space:normal;overflow:visible;text-overflow:clip;max-width:none;-webkit-line-clamp:unset;display:block; }
+.modal-schedule { background:linear-gradient(135deg,#faf5ff,#fce4ec20);border-radius:14px;padding:12px 18px;font-size:15px;line-height:1.8;color:#555;max-height:200px;overflow-y:auto;border:1px solid #f0e8f4; }
+.modal-schedule .sched-item { padding: 5px 0; display: flex; align-items: baseline; gap: 10px; }
+.modal-schedule .sched-item .sched-label { font-weight: 700; color: #e91e63; white-space: nowrap; font-size: 15px; min-width: 56px; }
+.modal-schedule .sched-item .sched-text { color: #555; }
+.modal-caption { font-size:15px;color:#d81b60;font-style:italic;padding:12px 0 0;line-height:1.8; }
+.modal-caption .tag-link { color: #7b1fa2; text-decoration: none; font-weight: 600; cursor: pointer; transition:color 0.15s; }
+.modal-caption .tag-link:hover { color: #e91e63; text-decoration: underline; }
+.modal-actions { display: flex; gap: 10px; margin-top: auto; padding-top: 16px; }
+.modal-actions .mbtn { flex: 1; padding: 13px 0; border-radius: 14px; border: 1.5px solid #ede5f0; background: #fff; font-size: 16px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; color: #777; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+.modal-actions .mbtn:hover { border-color: #e91e63; color: #e91e63; background: #fce4ec; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(233,30,99,0.15); }
+.modal-actions .mbtn.danger:hover { border-color: #e53935; color: #e53935; background: #ffebee; box-shadow: 0 6px 16px rgba(229,57,53,0.12); }
+.modal-actions .mbtn.active { border-color: #e91e63; color: #e91e63; background: #fce4ec; box-shadow: 0 2px 8px rgba(233,30,99,0.12); }
+.modal-actions .mbtn .fav-icon { font-size: 18px; line-height: 1; display:inline-block; }
+@keyframes zoomIn { from{opacity:0;transform:scale(0.9)} to{opacity:1;transform:scale(1)} }
+@media(max-width:768px){
+  .modal-content { flex-direction:column;max-height:95vh;border-radius:20px; }
+  .modal-image { flex:unset;min-height:280px;border-radius:20px 20px 0 0; }
+  .modal-info { padding:20px; }
+}
+}`;
+document.head.appendChild(ms);
+
+// ===== Modal =====
+const modalOverlay = document.createElement("div");
+modalOverlay.className = "modal-overlay";
+modalOverlay.id = "modalOverlay";
+modalOverlay.onclick = (e) => { if (e.target === modalOverlay) closeModal(); };
+modalOverlay.innerHTML = `
+  <div class="modal-content" onclick="event.stopPropagation()">
+    <div class="modal-image" id="modalImageWrap"></div>
+    <div class="modal-info">
+      <div class="modal-info-top">
+        <span class="modal-date" id="modalDate"></span>
+        <span class="modal-style" id="modalStyle" onclick="event.stopPropagation();filterByTag(this.textContent);"></span>
+      </div>
+      <div class="modal-meta" id="modalMeta"></div>
+      <div class="modal-outfit" id="modalOutfit"></div>
+      <div class="modal-schedule" id="modalSchedule"></div>
+      <div class="modal-caption" id="modalCaption"></div>
+      <div class="modal-actions">
+        <button class="mbtn" id="modalFav" onclick="modalToggleFav()">♡ 收藏</button>
+        <button class="mbtn" onclick="modalShare()">📤 分享</button>
+        <button class="mbtn danger" onclick="modalDelete()">🗑 删除</button>
+      </div>
+    </div>
+  </div>`;
+document.body.appendChild(modalOverlay);
+
+// Fullscreen image viewer
+const imgFs = document.createElement("div");
+imgFs.className = "img-fullscreen";
+imgFs.id = "imgFullscreen";
+imgFs.onclick = () => { imgFs.classList.remove("open"); };
+document.body.appendChild(imgFs);
+
+function openFullscreenImg(src) {
+  imgFs.innerHTML = `<img src="${src}" alt="放大查看">`;
+  imgFs.classList.add("open");
+}
+
+let currentModalImg = '';
+function openModal(e) {
+  if (!e.image_filename) return;
+  currentModalImg = e.image_filename;
+  document.getElementById("modalImageWrap").innerHTML = `<img src="/images/${e.image_filename}" alt="${e.caption || '猪猪穿搭'}" onclick="openFullscreenImg('/images/${e.image_filename}')">`;
+  document.getElementById("modalDate").textContent = formatDate(e.date) + (e.time ? ' ' + e.time : '');
+  const styleEl = document.getElementById("modalStyle");
+  if (e.outfit_style) { styleEl.textContent = e.outfit_style; styleEl.style.display = "inline-block"; }
+  else { styleEl.style.display = "none"; }
+  // Meta tags (model + base_style)
+  let metaHtml = "";
+  if (e.model_name) metaHtml += `<span class="meta-tag">🤖 ${e.model_name}</span>`;
+  if (e.base_style) metaHtml += `<span class="meta-tag">🎨 ${e.base_style}</span>`;
+  document.getElementById("modalMeta").innerHTML = metaHtml;
+  document.getElementById("modalMeta").style.display = metaHtml ? "flex" : "none";
+  document.getElementById("modalOutfit").innerHTML = e.outfit
+    ? `<span class="outfit-label">穿搭</span><span class="outfit-divider">|</span><span class="outfit-text">${extractOutfitText(e.outfit)}</span>`
+    : '--';
+  // Schedule
+  const schedEl = document.getElementById("modalSchedule");
+  if (e.schedule) {
+    const parsed = parseSchedule(e.schedule);
+    if (parsed.items.length) {
+      schedEl.innerHTML = parsed.items.map(item => {
+        const label = item.time || item.icon;
+        const text = item.text;
+        if (label) return `<div class="sched-item"><span class="sched-label">${label}</span><span class="sched-text">${text}</span></div>`;
+        return `<div class="sched-item"><span class="sched-text">${text}</span></div>`;
+      }).join('');
+      schedEl.style.display = "block";
+    } else { schedEl.style.display = "none"; }
+  } else { schedEl.style.display = "none"; }
+  // Caption
+  const capEl = document.getElementById("modalCaption");
+  if (e.caption) {
+    capEl.innerHTML = '💭 ' + e.caption.replace(/#([^\s#]+)/g, '<a class="tag-link" href="#" onclick="filterByTag(\'$1\'); return false;">' + '#' + '$1</a>');
+    capEl.style.display = "block";
+  } else { capEl.style.display = "none"; }
+  // Fav button state
+  updateModalFavBtn(e.favorite === true);
+  modalOverlay.classList.add("open");
+  document.body.style.overflow = "hidden";
+}
+function closeModal() {
+  modalOverlay.classList.remove("open");
+  document.body.style.overflow = "";
+}
+function updateModalFavBtn(isFav) {
+  const btn = document.getElementById("modalFav");
+  if (isFav) { btn.innerHTML = '<span class="fav-icon">🩷</span> 已收藏'; btn.classList.add("active"); }
+  else { btn.innerHTML = '<span class="fav-icon">♡</span> 收藏'; btn.classList.remove("active"); }
+}
+async function modalToggleFav() {
+  if (!currentModalImg) return;
+  const entry = allEntries.find(x => x.image_filename === currentModalImg);
+  if (!entry) return;
+  entry.favorite = !entry.favorite;
+  updateModalFavBtn(entry.favorite === true);
+  // Sync backend
+  try {
+    await fetch(`${API}/api/images/${encodeURIComponent(currentModalImg)}/favorite`, {
+      method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({favorite: entry.favorite})
+    });
+  } catch(e) { console.error(e); }
+  renderGallery();
+  updateBadges();
+}
+function modalShare() { if (currentModalImg) shareImage(currentModalImg); }
+function modalDelete() {
+  if (!currentModalImg) return;
+  closeModal();
+  deleteImage(currentModalImg);
+}
+
+// ===== Delete & Share =====
+async function deleteImage(imgId, event) {
+  if (event) event.stopPropagation();
+  if (!imgId) {
+    showToast("❌ 无法删除：缺少标识");
+    return;
+  }
+  if (!confirm('确定要删除这条穿搭吗？🫣')) return;
+
+  try {
+    const res = await fetch(`${API}/api/images/${encodeURIComponent(imgId)}`, { method: "DELETE" });
+    let data;
+    try {
+      data = await res.json();
+    } catch (jsonErr) {
+      if (!res.ok) {
+        showToast(`❌ 删除失败: ${res.status} ${res.statusText}`);
+        return;
+      }
+      data = { success: res.ok };
+    }
+    if (data.success) {
+      // Remove from local entries: match by image_filename OR by date key
+      allEntries = allEntries.filter(e => e.image_filename !== imgId && e.date !== imgId);
+      renderGallery();
+      updateBadges();
+      showToast("🗑 已删除");
+    } else {
+      showToast("❌ 删除失败" + (data.error ? ": " + data.error : ""));
+    }
+  } catch(e) {
+    showToast("❌ " + e.message);
+  }
+}
+
+async function toggleFavorite(imgId, event) {
+  if (event) event.stopPropagation();
+  if (!imgId) {
+    showToast("❌ 无法收藏：缺少图片");
+    return;
+  }
+  const entry = allEntries.find(x => x.image_filename === imgId);
+  if (!entry) return;
+  entry.favorite = !entry.favorite;
+  // Sync backend
+  try {
+    await fetch(`${API}/api/images/${encodeURIComponent(imgId)}/favorite`, {
+      method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({favorite: entry.favorite})
+    });
+  } catch(e) { console.error(e); }
+  renderGallery();
+  updateBadges();
+}
+
+function shareImage(imgId, event) {
+  if (event) event.stopPropagation();
+  const url = `${location.origin}/images/${imgId}`;
+  if (navigator.share) {
+    navigator.share({ title: '猪猪穿搭', url }).catch(() => {});
+  } else {
+    navigator.clipboard.writeText(url).then(() => {
+      showToast("📤 链接已复制到剪贴板");
+    }).catch(() => {
+      showToast("📤 " + url);
+    });
+  }
+}
+
+// ===== Custom Gen Modal =====
+function openCustomGen() {
+  document.getElementById("cgOverlay").classList.add("open");
+  document.body.style.overflow = "hidden";
+  // Load gallery images as reference options
+  loadRefImages();
+}
+function closeCustomGen() {
+  document.getElementById("cgOverlay").classList.remove("open");
+  document.body.style.overflow = "";
+}
+// Size selector
+document.addEventListener("DOMContentLoaded", () => {
+  const sizeGroup = document.getElementById("cgSizeGroup");
+  if (sizeGroup) {
+    sizeGroup.addEventListener("click", e => {
+      const btn = e.target.closest(".cg-size-btn");
+      if (!btn) return;
+      sizeGroup.querySelectorAll(".cg-size-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+    });
+  }
+});
+// Reference image selector
+let uploadedRefs = [];
+async function loadRefImages() {
+  const grid = document.getElementById("cgRefGrid");
+  try {
+    const [refsRes, uploadedRes] = await Promise.all([
+      fetch(`${API}/api/ref-list`),
+      fetch(`${API}/api/uploaded-refs`)
+    ]);
+    const refs = await refsRes.json();
+    const uploadedRefsFromServer = await uploadedRes.json();
+    // Update local uploadedRefs array (merge: keep local uploads + add server ones)
+    uploadedRefs = uploadedRefsFromServer;
+    // Build grid: "none" option + 3 base models + uploaded refs
+    let html = `<div class="cg-ref-item active" data-ref=""><div class="cg-ref-none">📸</div></div>`;
+    refs.forEach(r => {
+      const label = r.label || r.style;
+      html += `<div class="cg-ref-item" data-ref="${r.url}" title="${r.desc || label}">
+        <img src="${r.url}" alt="${label}" loading="lazy">
+      </div>`;
+    });
+    // Add uploaded refs from server
+    uploadedRefs.forEach((u, idx) => {
+      html += `<div class="cg-ref-item uploaded" data-ref="${u.url}" data-idx="${idx}" title="${u.label}">
+        <img src="${u.url}" alt="${u.label}" loading="lazy" style="object-fit:cover;width:100%;height:100%;">
+        <button class="cg-ref-del" onclick="event.stopPropagation();deleteUploadedRef(${idx})">✕</button>
+      </div>`;
+    });
+    grid.innerHTML = html;
+    grid.querySelectorAll(".cg-ref-item").forEach(item => {
+      item.addEventListener("click", () => {
+        grid.querySelectorAll(".cg-ref-item").forEach(x => x.classList.remove("active"));
+        item.classList.add("active");
+      });
+    });
+  } catch(e) {
+    console.error("load refs:", e);
+    // Fallback to empty grid
+    grid.innerHTML = `<div class="cg-ref-item active" data-ref=""><div class="cg-ref-none">📸</div></div>`;
+  }
+}
+async function uploadRefImage(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const formData = new FormData();
+  formData.append("file", file);
+  try {
+    const res = await fetch(`${API}/api/upload-ref`, { method: "POST", body: formData });
+    const data = await res.json();
+    if (data.error) { showToast("❌ " + data.error); return; }
+    uploadedRefs.push(data);
+    // Rebuild grid and select the new one
+    await loadRefImages();
+    const grid = document.getElementById("cgRefGrid");
+    const items = grid.querySelectorAll(".cg-ref-item");
+    if (items.length > 0) {
+      items[items.length - 1].click(); // select last (newly uploaded)
+    }
+    showToast("✅ 参考图已上传");
+  } catch(e) { showToast("❌ " + e.message); }
+  event.target.value = "";
+}
+function deleteUploadedRef(idx) {
+  const ref = uploadedRefs[idx];
+  if (!ref || !confirm(`确定删除"${ref.label}"参考图吗？`)) return;
+  const filename = ref.filename;
+  fetch(`${API}/api/uploaded-refs/${encodeURIComponent(filename)}`, { method: "DELETE" })
+    .then(res => res.json())
+    .then(data => {
+      if (data.success) {
+        showToast("🗑 已删除");
+      } else {
+        showToast("❌ 删除失败");
+      }
+      loadRefImages();
+    })
+    .catch(e => {
+      showToast("❌ " + e.message);
+      loadRefImages();
+    });
+}
+async function submitCustomGen() {
+  const prompt = document.getElementById("cgPrompt").value.trim();
+  if (!prompt) { showToast("✍️ 先输入穿搭描述呀～"); return; }
+  const sizeBtn = document.querySelector("#cgSizeGroup .cg-size-btn.active");
+  const size = sizeBtn ? sizeBtn.dataset.size : "1024x1024";
+  const refItem = document.querySelector("#cgRefGrid .cg-ref-item.active");
+  const refImage = refItem ? refItem.dataset.ref : "";
+  
+  const btn = document.getElementById("cgSubmitBtn");
+  btn.disabled = true; btn.textContent = "⏳ 猪猪在打扮...";
+  showToast("🌸 按主人要求打扮去啦～");
+  
+  try {
+    const body = { prompt, size };
+    if (refImage) body.ref_image = refImage;
+    const res = await fetch(`${API}/api/generate-custom`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (data.error) showToast("❌ " + data.error);
+    else {
+      showToast("✨ 主人定制的猪猪出炉啦！");
+      closeCustomGen();
+      document.getElementById("cgPrompt").value = "";
+      await loadGallery();
+    }
+  } catch(e) { showToast("❌ " + e.message); }
+  finally { btn.disabled = false; btn.textContent = "✨ 开始生成"; }
+}
+
+// ===== Load =====
+async function loadGallery() {
+  try {
+    const [todayRes, galleryRes] = await Promise.all([
+      fetch(`${API}/api/today`),
+      fetch(`${API}/api/gallery`)
+    ]);
+    todayData = await todayRes.json();
+    allEntries = await galleryRes.json();
+    // Dedup by image_filename (keep first occurrence), but allow date-keyed entries (no image_filename)
+    const seen = new Set();
+    allEntries = allEntries.filter(e => {
+      if (!e.image_filename) return true; // date-keyed entries pass through
+      if (seen.has(e.image_filename)) return false;
+      seen.add(e.image_filename);
+      return true;
+    });
+    // Merge today photos into allEntries (avoid duplicates)
+    if (todayData && todayData.photos) {
+      for (const p of todayData.photos) {
+        if (p.image_filename && !seen.has(p.image_filename)) {
+          allEntries.push(p);
+          seen.add(p.image_filename);
+        }
+      }
+    }
+    // Default to today tab
+    switchTab('today');
+    updateBadges();
+  } catch(e) {
+    document.getElementById("galleryContent").innerHTML =
+      `<div class="error-state">❌ 加载失败：${e.message}</div>`;
+  }
+}
+
+loadGallery();
+
+// ===== Settings Modal =====
+function openSettings() {
+  document.getElementById("skOverlay").classList.add("open");
+  document.body.style.overflow = "hidden";
+  // Clear input fields
+  document.getElementById("skGiteeKey").value = "";
+  document.getElementById("skGptKey").value = "";
+  document.getElementById("skCpaUrl").value = "";
+  document.getElementById("skCpaKey").value = "";
+  // Load current status
+  loadSettingsStatus();
+}
+
+function closeSettings() {
+  document.getElementById("skOverlay").classList.remove("open");
+  document.body.style.overflow = "";
+}
+
+async function loadSettingsStatus() {
+  try {
+    const res = await fetch(`${API}/api/config/keys`);
+    const data = await res.json();
+    // Update status indicators
+    updateStatus("skGiteeStatus", data.gitee_key);
+    updateStatus("skGptStatus", data.gpt_key);
+    updateStatus("skGptBaseUrlStatus", data.gpt_base_url);
+    updateStatus("skCpaUrlStatus", data.cpa_url);
+    updateStatus("skCpaKeyStatus", data.cpa_key);
+  } catch(e) {
+    console.error("Load settings error:", e);
+  }
+}
+
+function updateStatus(elementId, value) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  if (value && value !== "") {
+    el.textContent = "✓ 已设置";
+    el.className = "sk-status set";
+  } else {
+    el.textContent = "○ 未设置";
+    el.className = "sk-status unset";
+  }
+}
+
+async function saveSettings() {
+  const giteeKey = document.getElementById("skGiteeKey").value.trim();
+  const gptKey = document.getElementById("skGptKey").value.trim();
+  const gptBaseUrl = document.getElementById("skGptBaseUrl").value.trim();
+  const cpaUrl = document.getElementById("skCpaUrl").value.trim();
+  const cpaKey = document.getElementById("skCpaKey").value.trim();
+  
+  const btn = document.getElementById("skSaveBtn");
+  btn.disabled = true;
+  btn.textContent = "⏳ 保存中...";
+  
+  try {
+    const body = {};
+    if (giteeKey) body.gitee_key = giteeKey;
+    if (gptKey) body.gpt_key = gptKey;
+    if (gptBaseUrl) body.gpt_base_url = gptBaseUrl;
+    if (cpaUrl) body.cpa_url = cpaUrl;
+    if (cpaKey) body.cpa_key = cpaKey;
+    
+    const res = await fetch(`${API}/api/config/keys`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    
+    if (data.success) {
+      showToast("✅ 密钥已保存");
+      closeSettings();
+    } else {
+      showToast("❌ " + (data.error || "保存失败"));
+    }
+  } catch(e) {
+    showToast("❌ " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "💾 保存";
+  }
+}
+
+// Close settings on Escape key
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") {
+    if (document.getElementById("imgFullscreen").classList.contains("open")) {
+      document.getElementById("imgFullscreen").classList.remove("open");
+    } else if (modalOverlay.classList.contains("open")) {
+      closeModal();
+    } else if (document.getElementById("skOverlay").classList.contains("open")) {
+      closeSettings();
+    }
+  }
+});
+</script>
+</body>
+</html>

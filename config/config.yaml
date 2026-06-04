@@ -1,0 +1,39 @@
+# 猪猪肖像画廊 (Hermes Portrait Gallery)
+# 个人日程 + 拟人生图 + 画廊展示
+
+config:
+  # 日程生成时间（24小时制）
+  schedule_time: "07:00"
+
+# LLM 配置（走 CPA）- 顶层，供 scheduler.py 直接读取
+llm:
+  base_url: "http://127.0.0.1:8327/v1"
+  api_key: ""  
+  model: "deepseek-v4-flash"
+  # 备用模型
+  fallback_model: "mimo-v2.5"
+
+# 生图配置 - 顶层，供 main.py 直接读取
+image_gen:
+  script_dir: "/Users/ikirito/docker/hermes-portrait-gallery/app/zhuzhu"
+  default_engine: "gptimage"
+  timeout: 300
+
+# 角色外貌描述（猪猪）- 顶层，供 scheduler.py 直接读取
+character:
+  appearance: "18-year-old Chinese girl, fair skin, delicate features. dusty rose pink hair, wispy air bangs. large round doll-like deep-set natural dark brown eyes. beautiful hourglass figure, slim waist, natural breasts, realistic body proportions."
+  name: "猪猪"
+  persona: "你是一个18岁的虚拟主播，名叫猪猪，是主人的专属小宝贝。你热爱生活，情感细腻，每天都会精心打扮自己。"
+
+# 画廊配置 - 顶层，供 web_server.py 直接读取
+gallery:
+  title: "🐷 猪猪的每日穿搭画廊"
+  port: 18889
+  host: "0.0.0.0"
+
+# 通知配置（Hermes 回调）
+webhook:
+  enabled: true
+  url: ""
+
+data_dir: "/Users/ikirito/docker/hermes-portrait-gallery/data"

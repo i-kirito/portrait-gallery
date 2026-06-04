@@ -1,0 +1,6 @@
+aiohttp>=3.9.0
+apscheduler>=3.10.0
+pyyaml>=6.0
+aiofiles>=23.0.0
+Pillow>=10.0.0
+requests>=2.31.0

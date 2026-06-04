@@ -1,0 +1,45 @@
+# Data & secrets
+data/
+app/data/
+logs/
+*.log
+.env
+
+# Backups
+*.bak
+*.bak2
+*.backup-*
+*.bak.*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+*.tmp
+.tmp/
+
+# Generated images
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# Docker
+docker-compose.override.yml
