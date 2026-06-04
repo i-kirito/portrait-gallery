@@ -137,7 +137,8 @@ class GalleryServer:
             "gpt_key": self._mask_key(keys_config.get("gpt_key", "")),
             "gpt_base_url": keys_config.get("gpt_base_url", ""),
             "cpa_url": keys_config.get("cpa_url", ""),
-            "cpa_key": self._mask_key(keys_config.get("cpa_key", ""))
+            "cpa_key": self._mask_key(keys_config.get("cpa_key", "")),
+            "appearance": keys_config.get("appearance", "")
         })
     
     def _mask_key(self, key: str) -> str:
@@ -167,6 +168,9 @@ class GalleryServer:
                 keys_config["cpa_url"] = body["cpa_url"]
             if "cpa_key" in body and body["cpa_key"]:
                 keys_config["cpa_key"] = body["cpa_key"]
+            # appearance: always update (empty string = reset to default)
+            if "appearance" in body:
+                keys_config["appearance"] = body["appearance"]
             
             # 写入 api_keys_config.json
             with open(api_keys_path, 'w', encoding='utf-8') as f:

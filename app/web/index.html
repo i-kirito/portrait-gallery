@@ -1545,6 +1545,12 @@ body {
       <input type="password" id="skCpaKey" placeholder="输入新密钥（留空则不修改）">
       <div class="sk-status" id="skCpaKeyStatus">加载中...</div>
     </div>
+    <div class="sk-field">
+      <label for="skAppearance">🧬 人物外貌提示词</label>
+      <div class="sk-desc">覆盖内置 Appearance 前缀，留空则使用默认值。写英文效果最佳</div>
+      <textarea id="skAppearance" rows="4" placeholder="留空则使用内置默认外貌描述..." style="width:100%;padding:10px;border:1.5px solid #e0d0e8;border-radius:10px;font-size:13px;line-height:1.5;resize:vertical;font-family:inherit;"></textarea>
+      <div class="sk-status" id="skAppearanceStatus">加载中...</div>
+    </div>
     <div class="sk-actions">
       <button class="btn btn-secondary" onclick="closeSettings()">关闭</button>
       <button class="btn btn-primary" id="skSaveBtn" onclick="saveSettings()">💾 保存</button>
@@ -2554,6 +2560,7 @@ function openSettings() {
   document.getElementById("skGptKey").value = "";
   document.getElementById("skCpaUrl").value = "";
   document.getElementById("skCpaKey").value = "";
+  document.getElementById("skAppearance").value = "";
   // Load current status
   loadSettingsStatus();
 }
@@ -2573,6 +2580,18 @@ async function loadSettingsStatus() {
     updateStatus("skGptBaseUrlStatus", data.gpt_base_url);
     updateStatus("skCpaUrlStatus", data.cpa_url);
     updateStatus("skCpaKeyStatus", data.cpa_key);
+    // Appearance: show as textarea content (not masked)
+    const appEl = document.getElementById("skAppearance");
+    const appStatus = document.getElementById("skAppearanceStatus");
+    if (data.appearance && data.appearance.trim()) {
+      appEl.value = data.appearance;
+      appStatus.textContent = "✓ 已自定义";
+      appStatus.className = "sk-status set";
+    } else {
+      appEl.value = "";
+      appStatus.textContent = "○ 使用内置默认";
+      appStatus.className = "sk-status unset";
+    }
   } catch(e) {
     console.error("Load settings error:", e);
   }
@@ -2596,6 +2615,7 @@ async function saveSettings() {
   const gptBaseUrl = document.getElementById("skGptBaseUrl").value.trim();
   const cpaUrl = document.getElementById("skCpaUrl").value.trim();
   const cpaKey = document.getElementById("skCpaKey").value.trim();
+  const appearance = document.getElementById("skAppearance").value.trim();
   
   const btn = document.getElementById("skSaveBtn");
   btn.disabled = true;
@@ -2608,6 +2628,8 @@ async function saveSettings() {
     if (gptBaseUrl) body.gpt_base_url = gptBaseUrl;
     if (cpaUrl) body.cpa_url = cpaUrl;
     if (cpaKey) body.cpa_key = cpaKey;
+    // appearance: always send (empty = reset to default)
+    body.appearance = appearance;
     
     const res = await fetch(`${API}/api/config/keys`, {
       method: "POST",

@@ -307,11 +307,29 @@ def get_reference_image_b64() -> Optional[str]:
         return base64.b64encode(f.read()).decode("utf-8")
 
 
+def _read_custom_appearance() -> str:
+    """从 api_keys_config.json 读取自定义 appearance，覆盖内置常量"""
+    try:
+        with open(_API_KEYS_CONFIG_PATH, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        val = cfg.get("appearance", "").strip()
+        return val
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return ""
+
+
 def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activity: str = "",
                  outfit_keywords: str = "", scene_keywords: str = "") -> str:
     is_sexy = theme == "sexy"
-    appearance = SEXY_APPEARANCE if is_sexy else APPEARANCE
     quality = SEXY_QUALITY_PREFIX if is_sexy else QUALITY_PREFIX
+
+    # ★ 读取自定义 appearance（Web UI 设置），覆盖内置常量
+    custom_appearance = _read_custom_appearance()
+    if custom_appearance:
+        appearance = custom_appearance
+        print(f"🧬 Using custom appearance from settings", file=sys.stderr)
+    else:
+        appearance = SEXY_APPEARANCE if is_sexy else APPEARANCE
 
     if extra_prompt:
         return f"{quality} {appearance} {extra_prompt}".strip()
