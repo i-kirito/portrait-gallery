@@ -307,7 +307,8 @@ def get_reference_image_b64() -> Optional[str]:
         return base64.b64encode(f.read()).decode("utf-8")
 
 
-def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activity: str = "") -> str:
+def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activity: str = "",
+                 outfit_keywords: str = "", scene_keywords: str = "") -> str:
     is_sexy = theme == "sexy"
     appearance = SEXY_APPEARANCE if is_sexy else APPEARANCE
     quality = SEXY_QUALITY_PREFIX if is_sexy else QUALITY_PREFIX
@@ -352,34 +353,49 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
                    {"clothing": [0, 1, 4], "pose": [0, 3], "env": [0, 2]}),
     }
     
-    if is_sexy:
-        hair = random.choice(theme_cfg["hair"])
+    # ★ LLM 关键词优先：如果有 outfit_keywords，直接用，不从池子选
+    if outfit_keywords:
+        clothing = outfit_keywords
+        matched = True
+        print(f"👔 Using LLM outfit keywords: {clothing[:60]}", file=sys.stderr)
+    elif is_sexy:
         clothing = random.choice(theme_cfg["clothing"])
-        pose = random.choice(theme_cfg["pose"])
-        environment = random.choice(theme_cfg["environment"])
-        lighting = random.choice(theme_cfg["lighting"])
     else:
-        # Try to match schedule activity to pool elements
+        # Fallback: keyword matching from pool
         matched = False
         for act_type, (kw_list, idx_map) in _ACTIVITY_KEYWORDS.items():
             if any(kw in schedule_activity.lower() for kw in kw_list):
                 clothing_pool = theme_cfg["clothing"]
-                pose_pool = theme_cfg["pose"]
-                env_pool = theme_cfg["env"]
-                hair = random.choice(theme_cfg["hair"])
                 clothing = random.choice([clothing_pool[i] for i in idx_map.get("clothing", []) if i < len(clothing_pool)] or [random.choice(clothing_pool)])
-                pose = random.choice([pose_pool[i] for i in idx_map.get("pose", []) if i < len(pose_pool)] or [random.choice(pose_pool)])
-                environment = random.choice([env_pool[i] for i in idx_map.get("env", []) if i < len(env_pool)] or [random.choice(env_pool)])
-                lighting = random.choice(theme_cfg["light"])
                 matched = True
                 break
-        
         if not matched:
-            hair = random.choice(theme_cfg["hair"])
             clothing = random.choice(theme_cfg["clothing"])
-            pose = random.choice(theme_cfg["pose"])
-            environment = random.choice(theme_cfg["env"])
-            lighting = random.choice(theme_cfg["light"])
+
+    if is_sexy:
+        hair = random.choice(theme_cfg["hair"])
+        pose = random.choice(theme_cfg["pose"])
+        environment = random.choice(theme_cfg["environment"])
+        lighting = random.choice(theme_cfg["lighting"])
+    else:
+        hair = random.choice(theme_cfg["hair"])
+        pose = random.choice(theme_cfg["pose"])
+        environment = random.choice(theme_cfg["env"])
+        lighting = random.choice(theme_cfg["light"])
+        
+        # ★ LLM 关键词优先：如果有 scene_keywords，替换 environment
+        if scene_keywords:
+            environment = scene_keywords
+            print(f"🏠 Using LLM scene keywords: {environment[:60]}", file=sys.stderr)
+        elif matched:
+            # Pool-based matching for pose and env
+            for act_type, (kw_list, idx_map) in _ACTIVITY_KEYWORDS.items():
+                if any(kw in schedule_activity.lower() for kw in kw_list):
+                    pose_pool = theme_cfg["pose"]
+                    env_pool = theme_cfg["env"]
+                    pose = random.choice([pose_pool[i] for i in idx_map.get("pose", []) if i < len(pose_pool)] or [random.choice(pose_pool)])
+                    environment = random.choice([env_pool[i] for i in idx_map.get("env", []) if i < len(env_pool)] or [random.choice(env_pool)])
+                    break
 
     return (
         f"{quality} {appearance}. "
@@ -387,7 +403,7 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
         f"She is {pose}. "
         f"She is wearing {clothing}. "
         f"Background: {environment}. "
-        f"Lighting: {lighting}."
+        f"{lighting}"
     )
 
 

@@ -16,6 +16,8 @@ class DailyEntry:
     caption: str = ""
     status: str = "ok"  # ok / failed / generating
     source: str = ""  # cron / web / custom
+    outfit_keywords: str = ""  # LLM 提取的穿搭关键词（英文，逗号分隔）
+    scene_keywords: str = ""   # LLM 提取的场景关键词（英文，逗号分隔）
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -33,4 +35,6 @@ class DailyEntry:
             caption=data.get("caption", ""),
             status=data.get("status", "ok"),
             source=data.get("source", ""),
+            outfit_keywords=data.get("outfit_keywords", ""),
+            scene_keywords=data.get("scene_keywords", ""),
         )

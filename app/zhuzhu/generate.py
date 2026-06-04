@@ -248,25 +248,29 @@ _THEME_PERIODS = {
 
 
 def _get_schedule_context(theme: str) -> tuple:
-    """Read daily schedule and return (context_string, raw_time_slot) for the matching period."""
+    """Read daily schedule and return (context_string, raw_time_slot, outfit_keywords, scene_keywords)."""
     if theme not in _THEME_PERIODS or not _THEME_PERIODS[theme]:
-        return "", ""
+        return "", "", "", ""
     today_str = date.today().isoformat()
     if not os.path.exists(_SCHEDULE_PATH):
-        return "", ""
+        return "", "", "", ""
     try:
         with open(_SCHEDULE_PATH, encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
-        return "", ""
+        return "", "", "", ""
     
     # Search for schedule: first try date key, then scan all entries for today
     schedule = ""
     outfit_info = ""
+    outfit_kw = ""
+    scene_kw = ""
     daily = data.get(today_str)
     if daily and daily.get("schedule") and daily["schedule"] not in ("生成失败", ""):
         schedule = daily["schedule"]
         outfit_info = daily.get("outfit", "")
+        outfit_kw = daily.get("outfit_keywords", "")
+        scene_kw = daily.get("scene_keywords", "")
     
     # If date-keyed entry has no schedule, scan ALL entries for today
     if not schedule:
@@ -274,6 +278,8 @@ def _get_schedule_context(theme: str) -> tuple:
             if entry.get("date") == today_str and entry.get("schedule") and entry["schedule"] not in ("生成失败", ""):
                 schedule = entry["schedule"]
                 outfit_info = entry.get("outfit", "")
+                outfit_kw = entry.get("outfit_keywords", "")
+                scene_kw = entry.get("scene_keywords", "")
                 break
     
     if not schedule:
@@ -293,7 +299,7 @@ def _get_schedule_context(theme: str) -> tuple:
         ctx = f"Today's plan: {activity}"
         raw_slot = f"{time_str} {activity}"
         print(f"📋 Schedule fallback: {ctx}", file=sys.stderr)
-        return ctx, raw_slot
+        return ctx, raw_slot, "", ""
     
     import re
     # Time-based schedule format: "HH:MM activity" or "period：activity"
@@ -321,7 +327,7 @@ def _get_schedule_context(theme: str) -> tuple:
                     if style_hint:
                         ctx += f". Style: {style_hint}"
                     print(f"📋 Schedule context: {ctx}", file=sys.stderr)
-                    return ctx, activity
+                    return ctx, activity, outfit_kw, scene_kw
     
     # Time-based matching: "HH:MM activity" format
     # Theme → hour ranges
@@ -352,9 +358,9 @@ def _get_schedule_context(theme: str) -> tuple:
                     ctx += f". Style: {style_hint}"
                 print(f"📋 Schedule context: {ctx}", file=sys.stderr)
                 # Return both context (for prompt) and raw time slot (for display)
-                return ctx, f"{h_str}:{m_str} {activity}"
+                return ctx, f"{h_str}:{m_str} {activity}", outfit_kw, scene_kw
     # If we get here, no time slot matched - return empty
-    return "", ""
+    return "", "", "", ""
 
 
 def generate(
@@ -380,7 +386,7 @@ def generate(
     resolved_prompt = resolve_prompt(theme, prompt_override, enhance)
 
     # Inject daily schedule context for timed photos (not custom/sexy)
-    schedule_ctx, schedule_raw = _get_schedule_context(theme)
+    schedule_ctx, schedule_raw, outfit_kw, scene_kw = _get_schedule_context(theme)
     schedule_activity = ""
     if schedule_ctx and theme in DAILY_THEMES and not prompt_override:
         # Extract activity text for schedule-aware prompt building
@@ -393,9 +399,10 @@ def generate(
     
     # Re-build prompt with schedule-aware element selection if we have activity
     if schedule_activity and theme in DAILY_THEMES and not prompt_override:
-        resolved_prompt = build_prompt(theme, schedule_activity=schedule_activity)
+        resolved_prompt = build_prompt(theme, schedule_activity=schedule_activity,
+                                       outfit_keywords=outfit_kw, scene_keywords=scene_kw)
         resolved_prompt = f"{resolved_prompt}. {schedule_ctx}"
-        print(f"🎨 Rebuilt prompt with schedule-matched elements", file=sys.stderr)
+        print(f"🎨 Rebuilt prompt with schedule-matched elements (outfit_kw={outfit_kw[:40]}, scene_kw={scene_kw[:40]})", file=sys.stderr)
 
     # Resolve style to ref_image path (only supported by gptimage engine)
     ref_image = None

@@ -176,14 +176,52 @@ class DailyScheduler:
 
 caption 要用猪猪的语气，带颜文字和～波浪号，根据穿搭和日程写出今日心情。
 
+⚠️ outfit_keywords 字段：从 prompt 中提取穿搭相关英文关键词（服装+鞋子+配饰），逗号分隔，5-10个词。必须和 prompt 中的穿搭描述完全一致。
+⚠️ scene_keywords 字段：从 prompt 中提取场景相关英文关键词（环境+道具+光线），逗号分隔，3-6个词。必须和 prompt 中的场景描述完全一致。
+
 JSON 格式（字段名固定，value 替换为实际内容）：
 {{
     "outfit_style": "风格名",
     "outfit": "风格：xxx \\n发型：xxx \\n穿搭：xxx \\n动作：xxx",
     "schedule": "HH:mm 活动描述\\nHH:mm 活动描述\\n...",
     "prompt": "English prompt with hairstyle, outfit details, pose, scene, lighting...",
-    "caption": "猪猪的今日心情文案～"
+    "caption": "猪猪的今日心情文案～",
+    "outfit_keywords": "JK uniform, pleated skirt, white blouse, red ribbon, loafers",
+    "scene_keywords": "coffee shop, cafe counter, warm ambient light"
 }}"""
+
+    def _extract_outfit_keywords(self, prompt: str) -> str:
+        """从英文 prompt 中提取穿搭关键词（fallback）"""
+        import re
+        # 提取 "She is wearing ..." 部分
+        m = re.search(r'She is wearing (.+?)\.?\s*(?:Background|She is|Her hair|$)', prompt)
+        if m:
+            return m.group(1).strip().rstrip('.')
+        # fallback: 提取常见服装词
+        outfit_words = re.findall(
+            r'\b(?:dress|skirt|blouse|top|jeans|shorts|hoodie|cardigan|jacket|coat|'
+            r'pants|trousers|sweater|t-shirt|crop|camisole|slip|robe|pajama|'
+            r'bikini|swimsuit|lingerie|stockings|heels|sneakers|boots|sandals|loafers|'
+            r'ribbon|necklace|earrings|bracelet|scrunchie|choker)\w*\b',
+            prompt, re.IGNORECASE
+        )
+        return ', '.join(dict.fromkeys(outfit_words)) if outfit_words else ''
+
+    def _extract_scene_keywords(self, prompt: str) -> str:
+        """从英文 prompt 中提取场景关键词（fallback）"""
+        import re
+        # 提取 "Background: ..." 部分
+        m = re.search(r'Background:\s*(.+?)\.?\s*(?:$)', prompt)
+        if m:
+            return m.group(1).strip().rstrip('.')
+        # fallback: 提取常见场景词
+        scene_words = re.findall(
+            r'\b(?:bedroom|bathroom|kitchen|cafe|coffee|shop|park|street|rooftop|'
+            r'balcony|window|mirror|desk|sofa|couch|beach|pool|garden|studio|'
+            r'office|restaurant|bar|club|library|bookstore|mall|market)\w*\b',
+            prompt, re.IGNORECASE
+        )
+        return ', '.join(dict.fromkeys(scene_words)) if scene_words else ''
 
     def _get_history(self, today: date, days: int = 7) -> str:
         """获取最近几天的历史日程"""
@@ -245,16 +283,27 @@ JSON 格式（字段名固定，value 替换为实际内容）：
                 logger.warning(f"解析失败 (attempt {attempt+1})")
                 continue
 
+            # 提取关键词（LLM 输出优先，fallback 从 prompt 提取）
+            outfit_kw = data.get("outfit_keywords", "").strip()
+            scene_kw = data.get("scene_keywords", "").strip()
+            llm_prompt = data.get("prompt", "")
+            if not outfit_kw and llm_prompt:
+                outfit_kw = self._extract_outfit_keywords(llm_prompt)
+            if not scene_kw and llm_prompt:
+                scene_kw = self._extract_scene_keywords(llm_prompt)
+
             entry = DailyEntry(
                 date=date_str,
                 outfit_style=data.get("outfit_style", ""),
                 outfit=data.get("outfit", ""),
                 schedule=data.get("schedule", ""),
-                prompt=data.get("prompt", ""),
+                prompt=llm_prompt,
                 caption=data.get("caption", ""),
                 status="ok",
+                outfit_keywords=outfit_kw,
+                scene_keywords=scene_kw,
             )
-            logger.info(f"日程生成成功: {entry.outfit_style}")
+            logger.info(f"日程生成成功: {entry.outfit_style} | outfit_kw={outfit_kw[:50]} | scene_kw={scene_kw[:50]}")
             return entry
 
         logger.error(f"日程生成失败: 重试 {3} 次均未成功")
