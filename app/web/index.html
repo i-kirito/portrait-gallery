@@ -2853,15 +2853,24 @@ function closePrompt() {
 
 function copyPrompt() {
   var text = document.getElementById('promptText').textContent;
-  navigator.clipboard.writeText(text).then(function() {
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  try {
+    document.execCommand('copy');
     showToast('已复制到剪贴板 ✅');
-  }).catch(function() {
-    // fallback
-    var ta = document.createElement('textarea');
-    ta.value = text; document.body.appendChild(ta); ta.select();
-    document.execCommand('copy'); document.body.removeChild(ta);
-    showToast('已复制到剪贴板 ✅');
-  });
+  } catch(err) {
+    // fallback to clipboard API
+    navigator.clipboard.writeText(text).then(function() {
+      showToast('已复制到剪贴板 ✅');
+    }).catch(function() {
+      showToast('复制失败，请手动选择复制 🥺');
+    });
+  }
+  document.body.removeChild(ta);
 }
 
 // ESC 关闭
