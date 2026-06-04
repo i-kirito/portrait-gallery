@@ -43,7 +43,7 @@ def _classify_style(prompt_text: str) -> str:
         from core import get_cpa_key
         api_key = get_cpa_key()
         if not api_key:
-            return random.choice(list(STYLE_REF_MAP.keys()))
+            return random.choice(["cool", "girly", "sweet"])
 
     system = (
         "You are a style classifier for character portrait generation. "
@@ -90,7 +90,7 @@ def _classify_style(prompt_text: str) -> str:
     except Exception as e:
         print(f"[style_classify] LLM failed: {e}", file=sys.stderr)
 
-    return random.choice(list(STYLE_REF_MAP.keys()))
+    return random.choice(["cool", "girly", "sweet"])
 
 
 # 发型池 — LLM 从这个池子里根据场景选最搭的发型
@@ -393,16 +393,17 @@ def generate(
             print(f"⚠️ style '{style}' 参考图不存在，将使用纯文生图", file=sys.stderr)
 
     # Auto-pick a style for GPT Image via LLM to keep face consistent
-    if engine == "gptimage" and not explicit_style and theme != "sexy" and STYLE_REF_MAP:
+    # Note: LLM classification works even without reference images (for style label)
+    if engine == "gptimage" and not explicit_style and theme != "sexy":
         # Use the user's prompt (before appearance injection) for classification
         classify_input = prompt_override or resolved_prompt
         auto_style = _classify_style(classify_input)
-        ref_image = STYLE_REF_MAP.get(auto_style)
-        if ref_image:
-            print(f"🧠 LLM selected style: {auto_style} (use --style to override)", file=sys.stderr)
+        ref_image = STYLE_REF_MAP.get(auto_style)  # None if no ref images
+        if auto_style:
+            print(f"🧠 LLM selected style: {auto_style} (ref_image={'✓' if ref_image else '✗'})", file=sys.stderr)
 
-    # Track the actual style used (explicit or auto) for filename
-    actual_style = explicit_style or (auto_style if engine == "gptimage" and not explicit_style and theme != "sexy" and STYLE_REF_MAP else None)
+    # Track the actual style used (explicit or auto) for filename and metadata
+    actual_style = explicit_style or auto_style
 
     if theme == "sexy":
         path = generate_with_gitee(theme, send=False, caption=caption, prompt_override=resolved_prompt)

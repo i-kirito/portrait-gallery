@@ -477,7 +477,7 @@ body {
 /* ===== Gallery Grid (original, for full gallery) ===== */
 .gallery-grid {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 12px;
 }
 
@@ -564,15 +564,32 @@ body {
 }
 .gallery-card .card-body .card-meta {
   display: flex;
+  justify-content: space-between;
+  align-items: center;
   gap: 4px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 .gallery-card .card-body .card-meta .meta-tag {
   font-size: 10px;
   color: #999;
   background: #f5f3f7;
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: 10px;
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gallery-card .card-body .card-sched {
+  font-size: 11px;
+  color: #e91e63;
+  background: linear-gradient(135deg, #fce4ec, #f3e5f5);
+  padding: 4px 10px;
+  border-radius: 8px;
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .gallery-card .card-body .card-actions {
   display: flex;
@@ -1279,9 +1296,112 @@ body {
   box-shadow: inset 0 0 0 3px #e91e63;
 }
 
+/* ===== Column Slider ===== */
+#colSliderWrap {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: blur(12px);
+  padding: 10px 18px;
+  border-radius: 28px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+  border: 1px solid rgba(233,30,99,0.15);
+  transition: opacity 0.3s;
+  user-select: none;
+}
+#colSliderWrap.hidden { opacity: 0; pointer-events: none; }
+#colSliderWrap .col-icon { font-size: 16px; }
+#colSliderWrap .col-val {
+  min-width: 20px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #e91e63;
+}
+#colSlider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100px;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg,#fce4ec,#e91e63);
+  outline: none;
+  cursor: pointer;
+}
+#colSlider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #e91e63;
+  box-shadow: 0 2px 8px rgba(233,30,99,0.3);
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+#colSlider::-webkit-slider-thumb:hover { transform: scale(1.2); }
+
+/* ===== Column-responsive card scaling ===== */
+/* 8 columns: smallest */
+.gallery-grid.cols-8 .gallery-card .card-body { padding: 6px 8px; }
+.gallery-grid.cols-8 .gallery-card .card-body .card-row1 .date { font-size: 11px; }
+.gallery-grid.cols-8 .gallery-card .card-body .card-meta .meta-tag { font-size: 9px; padding: 1px 5px; border-radius: 8px; }
+.gallery-grid.cols-8 .gallery-card .card-body .card-sched { font-size: 9px; padding: 3px 6px; border-radius: 6px; }
+.gallery-grid.cols-8 .gallery-card .card-body .card-actions .ca-btn { font-size: 10px; padding: 5px 0; border-radius: 6px; }
+.gallery-grid.cols-8 .gallery-card .card-date-tag { font-size: 10px; padding: 2px 5px; }
+
+/* 7 columns */
+.gallery-grid.cols-7 .gallery-card .card-body { padding: 7px 9px; }
+.gallery-grid.cols-7 .gallery-card .card-body .card-row1 .date { font-size: 11px; }
+.gallery-grid.cols-7 .gallery-card .card-body .card-meta .meta-tag { font-size: 10px; padding: 1px 6px; border-radius: 9px; }
+.gallery-grid.cols-7 .gallery-card .card-body .card-sched { font-size: 10px; padding: 3px 8px; border-radius: 7px; }
+.gallery-grid.cols-7 .gallery-card .card-body .card-actions .ca-btn { font-size: 11px; padding: 6px 0; border-radius: 7px; }
+.gallery-grid.cols-7 .gallery-card .card-date-tag { font-size: 10px; padding: 2px 6px; }
+
+/* 6 columns */
+.gallery-grid.cols-6 .gallery-card .card-body { padding: 8px 10px; }
+.gallery-grid.cols-6 .gallery-card .card-body .card-row1 .date { font-size: 12px; }
+.gallery-grid.cols-6 .gallery-card .card-body .card-meta .meta-tag { font-size: 11px; padding: 2px 7px; border-radius: 10px; }
+.gallery-grid.cols-6 .gallery-card .card-body .card-sched { font-size: 10px; padding: 3px 8px; border-radius: 7px; }
+.gallery-grid.cols-6 .gallery-card .card-body .card-actions .ca-btn { font-size: 12px; padding: 7px 0; border-radius: 8px; }
+
+/* 5 columns (default) — no override needed, uses base CSS */
+
+/* 4 columns: largest */
+.gallery-grid.cols-4 .gallery-card .card-body { padding: 10px 14px; }
+.gallery-grid.cols-4 .gallery-card .card-body .card-row1 .date { font-size: 14px; }
+.gallery-grid.cols-4 .gallery-card .card-body .card-meta .meta-tag { font-size: 13px; padding: 2px 10px; border-radius: 12px; }
+.gallery-grid.cols-4 .gallery-card .card-body .card-sched { font-size: 12px; padding: 5px 12px; border-radius: 10px; }
+.gallery-grid.cols-4 .gallery-card .card-body .card-actions .ca-btn { font-size: 14px; padding: 9px 0; border-radius: 12px; }
+.gallery-grid.cols-4 .gallery-card .card-date-tag { font-size: 12px; padding: 3px 9px; }
+
 </style>
 </head>
 <body>
+<script>
+// Immediately restore saved tab to prevent flash
+(function() {
+  const savedTab = localStorage.getItem('active_tab') || 'today';
+  document.addEventListener('DOMContentLoaded', function() {
+    const todaySec = document.getElementById('todaySection');
+    const gallerySec = document.getElementById('gallerySection');
+    if (savedTab === 'today') {
+      todaySec.classList.add('visible');
+      gallerySec.classList.add('hidden');
+    } else {
+      todaySec.classList.remove('visible');
+      gallerySec.classList.remove('hidden');
+    }
+    document.querySelectorAll('.tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.tab === savedTab);
+    });
+  });
+})();
+</script>
 
 <div class="header">
   <div class="header-left">
@@ -1290,7 +1410,7 @@ body {
   <div class="header-right">
     <div class="tabs">
       <button class="tab" data-tab="gallery" onclick="switchTab('gallery')">✨ 全部 <span class="tab-badge" id="badge-all">0</span></button>
-      <button class="tab active" data-tab="today" onclick="switchTab('today')">🌸 今日 <span class="tab-badge" id="badge-today">0</span></button>
+      <button class="tab" data-tab="today" onclick="switchTab('today')">🌸 今日 <span class="tab-badge" id="badge-today">0</span></button>
       <button class="tab" data-tab="favorites" onclick="switchTab('favorites')">❤️ 收藏 <span class="tab-badge" id="badge-favorites">0</span></button>
     </div>
     <button class="btn btn-primary" onclick="openCustomGen()">🎀 穿搭生成</button>
@@ -1301,7 +1421,7 @@ body {
 <div class="container">
 
   <!-- Today Card -->
-  <div class="today-section visible" id="todaySection">
+  <div class="today-section" id="todaySection">
     <div class="today-hero-title">
       <h2><span class="pig-emoji">🐷</span> 猪猪的每日穿搭画廊</h2>
       <div class="subtitle">每一天，都是不一样的猪猪 <span class="heart">💞</span></div>
@@ -1472,6 +1592,7 @@ function switchTab(tab) {
   const gallerySec = document.getElementById("gallerySection");
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
   document.querySelector(`.tab[data-tab="${tab}"]`).classList.add("active");
+  localStorage.setItem('active_tab', tab);
   
   if (tab === "today") {
     todaySec.classList.add("visible");
@@ -1658,7 +1779,7 @@ function renderToday() {
         <div class="tc-image">
           <img src="/images/${today.image_filename}" alt="今日穿搭" onclick="openViewer('/images/${today.image_filename}')" style="cursor:pointer;">
         </div>
-        <div class="modal-info" style="flex:1;padding:20px 24px;">
+        <div class="modal-info" style="flex:1;padding:20px 24px;border-radius:20px;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
             <span class="modal-date" style="margin:0;padding:0;background:none;">${dateText} ${timeLabel}</span>
             ${today.outfit_style ? `<span class="modal-style" onclick="event.stopPropagation();filterByTag('${today.outfit_style}');">${today.outfit_style}</span>` : ""}
@@ -1855,7 +1976,7 @@ function renderGallery() {
             <div class="gallery-card" onclick="event.stopPropagation();openModal(allEntries.find(x=>x.image_filename==='${e.image_filename}'))">
               <div class="card-img-wrap">
                 ${imgHtml}
-                <span class="card-date-tag">${shortDate(e.date)}${timeDisplay ? ' ' + timeDisplay : ''}</span>
+                <span class="card-date-tag">${shortDate(e.date)}</span>
                 ${styleTag}
               </div>
               <div class="card-body">
@@ -2046,7 +2167,10 @@ function openModal(e) {
     : '--';
   // Schedule
   const schedEl = document.getElementById("modalSchedule");
-  if (e.schedule) {
+  if (e.schedule_time) {
+    schedEl.innerHTML = `<div class="sched-item"><span class="sched-label">⏰</span><span class="sched-text">${e.schedule_time}</span></div>`;
+    schedEl.style.display = "block";
+  } else if (e.schedule) {
     const parsed = parseSchedule(e.schedule);
     if (parsed.items.length) {
       schedEl.innerHTML = parsed.items.map(item => {
@@ -2327,8 +2451,9 @@ async function loadGallery() {
         }
       }
     }
-    // Default to today tab
-    switchTab('today');
+    // Default to saved tab or today
+    const savedTab = localStorage.getItem('active_tab') || 'today';
+    switchTab(savedTab);
     updateBadges();
   } catch(e) {
     document.getElementById("galleryContent").innerHTML =
@@ -2512,6 +2637,61 @@ document.addEventListener("keydown", e => {
     }
   }
 });
+</script>
+<!-- Column Slider -->
+<div id="colSliderWrap" class="hidden">
+  <span class="col-icon">🖼️</span>
+  <input type="range" id="colSlider" min="4" max="8" step="1" value="5">
+  <span class="col-val" id="colVal">5</span>
+</div>
+
+<script>
+// Column slider logic
+(function() {
+  const slider = document.getElementById('colSlider');
+  const valEl = document.getElementById('colVal');
+  const wrap = document.getElementById('colSliderWrap');
+  const saved = localStorage.getItem('gallery_cols');
+  if (saved) { slider.value = saved; valEl.textContent = saved; }
+
+  function applyCols(n) {
+    document.querySelectorAll('.gallery-grid').forEach(g => {
+      g.style.gridTemplateColumns = `repeat(${n}, 1fr)`;
+      // Remove old cols-N classes and add new one
+      for (let i = 4; i <= 8; i++) g.classList.remove('cols-' + i);
+      if (n !== 5) g.classList.add('cols-' + n); // 5 is default, no class needed
+    });
+    valEl.textContent = n;
+    localStorage.setItem('gallery_cols', n);
+  }
+
+  // Apply saved value on load
+  if (saved) applyCols(parseInt(saved));
+
+  slider.addEventListener('input', () => applyCols(parseInt(slider.value)));
+
+  // Show/hide based on active tab
+  const origSwitchTab = window.switchTab;
+  window.switchTab = function(tab) {
+    origSwitchTab(tab);
+    if (tab === 'gallery' || tab === 'favorites') {
+      wrap.classList.remove('hidden');
+      // Re-apply columns after render
+      requestAnimationFrame(() => applyCols(parseInt(slider.value)));
+    } else {
+      wrap.classList.add('hidden');
+    }
+  };
+
+  // Show on initial load if gallery tab
+  document.addEventListener('DOMContentLoaded', () => {
+    const activeTab = document.querySelector('.tab.active');
+    if (activeTab && (activeTab.dataset.tab === 'gallery' || activeTab.dataset.tab === 'favorites')) {
+      wrap.classList.remove('hidden');
+      applyCols(parseInt(slider.value));
+    }
+  });
+})();
 </script>
 </body>
 </html>

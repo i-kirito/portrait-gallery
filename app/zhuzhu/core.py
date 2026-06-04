@@ -431,11 +431,26 @@ def _extract_time_from_filename(filename: str) -> str:
 
 def _translate_outfit(prompt: str, style_name: str) -> str:
     """Use LLM to extract Chinese outfit keywords from English image prompt."""
+    # First try to extract the clothing line directly from the prompt
+    outfit_line = ""
+    import re
+    m = re.search(r'She is wearing (.+?)\.\s', prompt)
+    if m:
+        outfit_line = m.group(1).strip()
+
+    # If we found the outfit line, use it; otherwise use the tail of the prompt
+    # (clothing description is typically in the middle-to-end portion)
+    if outfit_line:
+        extraction_input = outfit_line
+    else:
+        # Skip the first 300 chars (appearance) and use the rest where clothing lives
+        extraction_input = prompt[200:] if len(prompt) > 200 else prompt
+
     try:
         api_key = get_cpa_key()
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
         payload = {
-            "model": "deepseek-v4-flash",
+            "model": "gemini-3.5-flash",
             "messages": [
                 {"role": "system", "content": (
                     "你是一个穿搭关键词提取器。从英文AI生图prompt中提取服装相关的关键词（衣服、鞋子、配饰、颜色、材质），"
@@ -444,7 +459,7 @@ def _translate_outfit(prompt: str, style_name: str) -> str:
                     "输出: 浅蓝牛仔外套、白色短上衣、高腰牛仔裤、运动鞋\n"
                     "只输出关键词，不要其他文字。"
                 )},
-                {"role": "user", "content": prompt[:300]},
+                {"role": "user", "content": extraction_input[:500]},
             ],
             "max_tokens": 150,
             "temperature": 0.3,
@@ -482,10 +497,11 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
     elif style == "sweet":
         style_name = "甜妹风"
     else:
-        # Map theme to a style name
-        theme_style = {"morning": "元气风", "noon": "活泼风", "evening": "优雅风",
-                       "bedtime": "温柔风", "sexy": "性感风", "custom": "慵懒风"}
-        style_name = theme_style.get(theme, "元气风")
+        # Map theme to a fallback style (both base_style and outfit_style)
+        theme_style_map = {"morning": ("sweet", "甜妹风"), "noon": ("girly", "少女风"),
+                           "evening": ("cool", "冷御风"), "bedtime": ("sweet", "甜妹风"),
+                           "sexy": ("cool", "冷御风"), "custom": ("sweet", "甜妹风")}
+        base_style, style_name = theme_style_map.get(theme, ("sweet", "甜妹风"))
 
     # Extract time from filename timestamp
     img_time = _extract_time_from_filename(filename)
@@ -522,7 +538,7 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
         "outfit": f"风格：{style_name} 穿搭：{outfit_desc}",
         "image_path": f"/images/{filename}",
         "image_filename": filename,
-        "prompt": prompt[:500],
+        "prompt": prompt,
         "caption": caption,
         "favorite": False,
         "status": "ok",
