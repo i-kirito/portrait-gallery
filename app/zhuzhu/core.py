@@ -83,6 +83,11 @@ def _read_cpa_url() -> str:
 CPA_BASE_URL = _read_cpa_url()
 
 
+def get_cpa_base_url() -> str:
+    """Read current CPA base URL from environment or api_keys_config.json."""
+    return _read_cpa_url().rstrip("/")
+
+
 APPEARANCE = "18-year-old Chinese girl, fair skin, delicate features. dusty rose pink hair, wispy air bangs. large round doll-like deep-set natural dark brown eyes. beautiful hourglass figure, slim waist, natural breasts, realistic body proportions, emphasizing a natural soft tissue silhouette."
 SEXY_APPEARANCE = "18-year-old Chinese girl, fair skin, delicate features. dusty rose pink hair, wispy air bangs. large round doll-like deep-set natural dark brown eyes. beautiful hourglass figure, slim waist, natural breasts, realistic body proportions, emphasizing a natural soft tissue silhouette."
 
@@ -562,14 +567,13 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
         else:
             model_label = model_name
 
-    # Build outfit description — use LLM to extract Chinese keywords from English prompt
-    outfit_desc = caption or ""
-    if not outfit_desc and prompt:
+    # Build outfit description — always translate from prompt, never use caption
+    outfit_desc = ""
+    if prompt:
         keywords = _translate_outfit(prompt, style_name)
         if keywords:
             outfit_desc = keywords
         else:
-            # Fallback to Chinese description instead of English prompt
             outfit_desc = f"精心搭配的{style_name}造型"
 
     entry = {

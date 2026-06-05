@@ -14,8 +14,7 @@ from core import build_caption, build_prompt, enhance_prompt, send_photo
 from generate_gitee import generate as generate_with_gitee
 from generate_gptimage import generate as generate_with_gptimage
 
-# CPA endpoint for Gemini image generation
-_GEMINI_CPA_URL = "http://127.0.0.1:8327/v1/chat/completions"
+# Gemini image generation always uses the CPA Base URL config.
 _GEMINI_CPA_MODEL = "gemini-3.1-flash-image"
 
 DAILY_THEMES = {"morning", "noon", "evening", "bedtime"}
@@ -179,7 +178,7 @@ def _generate_with_gemini_cpa(theme: str, prompt: str):
     import re
     import time
     import requests
-    from core import get_cpa_key, save_image, update_metadata, sync_to_gallery
+    from core import get_cpa_base_url, get_cpa_key, save_image, update_metadata, sync_to_gallery
 
     headers = {
         "Content-Type": "application/json",
@@ -190,9 +189,11 @@ def _generate_with_gemini_cpa(theme: str, prompt: str):
         "stream": False,
         "messages": [{"role": "user", "content": prompt}],
     }
+    base_url = get_cpa_base_url()
+    chat_url = base_url if base_url.endswith("/chat/completions") else f"{base_url}/chat/completions"
     start = time.time()
     try:
-        resp = requests.post(_GEMINI_CPA_URL, headers=headers, json=payload, timeout=180)
+        resp = requests.post(chat_url, headers=headers, json=payload, timeout=180)
         if resp.status_code != 200:
             print(f"Gemini CPA error {resp.status_code}: {resp.text[:200]}", file=sys.stderr)
             return None
@@ -421,12 +422,32 @@ def generate(
     # Auto-pick a style for GPT Image via LLM to keep face consistent
     # Note: LLM classification works even without reference images (for style label)
     if engine == "gptimage" and not explicit_style and not requested_ref_image and theme != "sexy":
-        # Use the user's prompt (before appearance injection) for classification
-        classify_input = prompt_override or resolved_prompt
-        auto_style = _classify_style(classify_input)
-        ref_image = STYLE_REF_MAP.get(auto_style)  # None if no ref images
-        if auto_style:
-            print(f"🧠 LLM selected style: {auto_style} (ref_image={'✓' if ref_image else '✗'})", file=sys.stderr)
+        # 先检查当天是否已有风格，保持一天一致
+        today_str = date.today().isoformat()
+        today_style = ""
+        if os.path.exists(_SCHEDULE_PATH):
+            try:
+                with open(_SCHEDULE_PATH, encoding="utf-8") as f:
+                    sched_data = json.load(f)
+                for k, v in sched_data.items():
+                    if isinstance(v, dict) and v.get("date") == today_str and v.get("base_style"):
+                        today_style = v["base_style"]
+                        break
+            except Exception:
+                pass
+        
+        if today_style:
+            # 复用当天已有风格
+            auto_style = today_style
+            ref_image = STYLE_REF_MAP.get(auto_style)
+            print(f"📅 Reusing today's style: {auto_style} (ref_image={'✓' if ref_image else '✗'})", file=sys.stderr)
+        else:
+            # Use the user's prompt (before appearance injection) for classification
+            classify_input = prompt_override or resolved_prompt
+            auto_style = _classify_style(classify_input)
+            ref_image = STYLE_REF_MAP.get(auto_style)  # None if no ref images
+            if auto_style:
+                print(f"🧠 LLM selected style: {auto_style} (ref_image={'✓' if ref_image else '✗'})", file=sys.stderr)
     elif requested_ref_image:
         ref_image = requested_ref_image
 

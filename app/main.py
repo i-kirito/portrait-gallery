@@ -96,6 +96,7 @@ class PortraitGalleryApp:
 
     def __init__(self, config_path: str):
         self.config = load_config(config_path)
+        self.config_path = config_path
         self.data_dir = self.config.get("data_dir", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data"))
         os.makedirs(self.data_dir, exist_ok=True)
 
@@ -105,7 +106,7 @@ class PortraitGalleryApp:
         self.image_gen = ImageGenerator(script_dir, self.data_dir)
 
         # Web 服务器
-        self.web_server = GalleryServer(self.config, self.data_dir)
+        self.web_server = GalleryServer(self.config, self.data_dir, config_path)
         self.web_server.on_generate_today = self.generate_and_save
         self.web_server.on_generate_custom = self.generate_custom
         self.web_server.on_list_photo_jobs = self.list_photo_jobs

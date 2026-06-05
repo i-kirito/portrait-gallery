@@ -23,9 +23,10 @@ DATE_KEY_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 class GalleryServer:
     """猪猪画廊 Web 服务器"""
 
-    def __init__(self, config: dict, data_dir: str):
+    def __init__(self, config: dict, data_dir: str, config_path: str = ""):
         self.config = config
         self.data_dir = data_dir
+        self.config_path = config_path
         self.gallery_config = config.get("gallery", {})
         self.host = self.gallery_config.get("host", "0.0.0.0")
         self.port = self.gallery_config.get("port", 18888)
@@ -85,6 +86,7 @@ class GalleryServer:
         self.app.router.add_get("/api/health", self.handle_health)
         self.app.router.add_get("/api/config/keys", self.handle_get_keys)
         self.app.router.add_post("/api/config/keys", self.handle_save_keys)
+        self.app.router.add_get("/api/models", self.handle_models)
         # 版本管理
         self.app.router.add_get("/api/version", self.handle_version)
         self.app.router.add_post("/api/check-update", self.handle_check_update)
@@ -177,6 +179,17 @@ class GalleryServer:
             except Exception as e:
                 logger.error(f"Load plugin config error: {e}")
         
+        # 读取 config.yaml 的 llm.model
+        llm_model = ""
+        if self.config_path and os.path.exists(self.config_path):
+            try:
+                import yaml
+                with open(self.config_path, 'r') as f:
+                    full_config = yaml.safe_load(f) or {}
+                llm_model = full_config.get("llm", {}).get("model", "")
+            except Exception as e:
+                logger.error(f"Load config.yaml error: {e}")
+
         # 返回 masked 状态
         return web.json_response({
             "gitee_key": self._mask_key(gitee_key),
@@ -184,7 +197,8 @@ class GalleryServer:
             "gpt_base_url": keys_config.get("gpt_base_url", ""),
             "cpa_url": keys_config.get("cpa_url", ""),
             "cpa_key": self._mask_key(keys_config.get("cpa_key", "")),
-            "appearance": keys_config.get("appearance", "")
+            "appearance": keys_config.get("appearance", ""),
+            "llm_model": llm_model
         })
     
     def _mask_key(self, key: str) -> str:
@@ -306,11 +320,60 @@ class GalleryServer:
                 finally:
                     fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
             
+            # 保存 llm_model 到 config.yaml
+            if "llm_model" in body and self.config_path and os.path.exists(self.config_path):
+                try:
+                    import yaml
+                    with open(self.config_path, 'r') as f:
+                        full_config = yaml.safe_load(f) or {}
+                    if "llm" not in full_config:
+                        full_config["llm"] = {}
+                    full_config["llm"]["model"] = body["llm_model"]
+                    with open(self.config_path, 'w', encoding='utf-8') as f:
+                        yaml.dump(full_config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                    # 更新内存中的 config
+                    self.config["llm"] = full_config["llm"]
+                    logger.info(f"LLM model updated to: {body['llm_model']}")
+                except Exception as e:
+                    logger.error(f"Save llm_model error: {e}")
+
             return web.json_response({"success": True})
-            
+
         except Exception as e:
             logger.error(f"Save keys error: {e}")
             return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_models(self, request: web.Request):
+        """获取 CPA 可用模型列表"""
+        try:
+            import requests
+            # 从 config.yaml 读取 CPA URL
+            cpa_url = "http://127.0.0.1:8327"
+            if self.config_path and os.path.exists(self.config_path):
+                try:
+                    import yaml
+                    with open(self.config_path, 'r') as f:
+                        full_config = yaml.safe_load(f) or {}
+                    # 从 api_keys_config.json 读取 cpa_url
+                    api_keys_path = os.path.join(self.data_dir, "api_keys_config.json")
+                    if os.path.exists(api_keys_path):
+                        with open(api_keys_path, 'r') as f:
+                            keys = json.load(f)
+                        if keys.get("cpa_url"):
+                            cpa_url = keys["cpa_url"].rstrip("/").replace("/v1", "")
+                except Exception:
+                    pass
+
+            resp = requests.get(f"{cpa_url}/v1/models", timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                models = sorted([m["id"] for m in data.get("data", [])])
+                return web.json_response({"models": models})
+            else:
+                return web.json_response({"models": [], "error": f"CPA returned {resp.status_code}"})
+        except Exception as e:
+            logger.error(f"Get models error: {e}")
+            return web.json_response({"models": [], "error": str(e)})
 
     async def handle_today(self, request: web.Request):
         """获取今日数据 - 返回今日所有照片 + 日程信息"""

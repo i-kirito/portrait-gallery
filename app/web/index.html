@@ -1568,7 +1568,7 @@ body {
     </div>
     <div class="sk-field">
       <label for="skGptBaseUrl">GPT Image Base URL</label>
-      <div class="sk-desc">jiuuij.de5.net 直连地址（含 /v1/chat/completions）</div>
+      <div class="sk-desc">GPT 生图端点；只有需要走 CPA 的 GPT 生图时才替换</div>
       <input type="text" id="skGptBaseUrl" placeholder="留空则不修改">
       <div class="sk-status" id="skGptBaseUrlStatus">加载中...</div>
     </div>
@@ -1580,7 +1580,7 @@ body {
     </div>
     <div class="sk-field">
       <label for="skCpaUrl">CPA Base URL</label>
-      <div class="sk-desc">Gemini 等备用引擎地址</div>
+      <div class="sk-desc">Gemini 生图和 LLM 调度使用，填 CPA 的 /v1 地址</div>
       <input type="text" id="skCpaUrl" placeholder="输入新地址（留空则不修改）">
       <div class="sk-status" id="skCpaUrlStatus">加载中...</div>
     </div>
@@ -1595,6 +1595,14 @@ body {
       <div class="sk-desc">覆盖内置 Appearance 前缀，留空则使用默认值。写英文效果最佳</div>
       <textarea id="skAppearance" rows="4" placeholder="留空则使用内置默认外貌描述..." style="width:100%;padding:10px;border:1.5px solid #e0d0e8;border-radius:10px;font-size:13px;line-height:1.5;resize:vertical;font-family:inherit;"></textarea>
       <div class="sk-status" id="skAppearanceStatus">加载中...</div>
+    </div>
+    <div class="sk-field">
+      <label for="skLlmModel">🧠 日程生成模型</label>
+      <div class="sk-desc">用于每日日程生成和穿搭翻译的 LLM 模型</div>
+      <select id="skLlmModel" style="width:100%;padding:10px 14px;border:1.5px solid #e0d0e8;border-radius:10px;font-size:14px;background:#fafafa;cursor:pointer;outline:none;">
+        <option value="">加载中...</option>
+      </select>
+      <div class="sk-status" id="skLlmModelStatus">加载中...</div>
     </div>
     <div class="sk-actions">
       <button class="btn btn-secondary" onclick="closeSettings()">关闭</button>
@@ -2621,14 +2629,21 @@ function closeSettings() {
 
 async function loadSettingsStatus() {
   try {
-    const res = await fetch(`${API}/api/config/keys`);
-    const data = await res.json();
+    // 并行获取配置和模型列表
+    const [configRes, modelsRes] = await Promise.all([
+      fetch(`${API}/api/config/keys`),
+      fetch(`${API}/api/models`)
+    ]);
+    const data = await configRes.json();
+    const modelsData = await modelsRes.json();
+
     // Update status indicators
     updateStatus("skGiteeStatus", data.gitee_key);
     updateStatus("skGptStatus", data.gpt_key);
     updateStatus("skGptBaseUrlStatus", data.gpt_base_url);
     updateStatus("skCpaUrlStatus", data.cpa_url);
     updateStatus("skCpaKeyStatus", data.cpa_key);
+
     // Appearance: show as textarea content (not masked)
     const appEl = document.getElementById("skAppearance");
     const appStatus = document.getElementById("skAppearanceStatus");
@@ -2640,6 +2655,45 @@ async function loadSettingsStatus() {
       appEl.value = "";
       appStatus.textContent = "○ 使用内置默认";
       appStatus.className = "sk-status unset";
+    }
+
+    // LLM Model: 填充下拉框
+    const llmEl = document.getElementById("skLlmModel");
+    const llmStatus = document.getElementById("skLlmModelStatus");
+    const models = modelsData.models || [];
+
+    // 清空并填充选项
+    llmEl.innerHTML = "";
+    if (models.length > 0) {
+      models.forEach(m => {
+        const opt = document.createElement("option");
+        opt.value = m;
+        opt.textContent = m;
+        llmEl.appendChild(opt);
+      });
+    } else {
+      // fallback：至少有几个常用选项
+      ["gemini-3.5-flash", "deepseek-v4-flash", "mimo-v2.5-pro"].forEach(m => {
+        const opt = document.createElement("option");
+        opt.value = m;
+        opt.textContent = m;
+        llmEl.appendChild(opt);
+      });
+    }
+
+    // 设置当前值
+    if (data.llm_model && models.includes(data.llm_model)) {
+      llmEl.value = data.llm_model;
+      llmStatus.textContent = "✓ 当前: " + data.llm_model;
+      llmStatus.className = "sk-status set";
+    } else if (data.llm_model) {
+      // 当前模型不在列表中，仍然选中
+      llmEl.value = data.llm_model;
+      llmStatus.textContent = "⚠️ " + data.llm_model + "（不在可用列表中）";
+      llmStatus.className = "sk-status unset";
+    } else {
+      llmStatus.textContent = "○ 使用默认";
+      llmStatus.className = "sk-status unset";
     }
   } catch(e) {
     console.error("Load settings error:", e);
@@ -2665,7 +2719,8 @@ async function saveSettings() {
   const cpaUrl = document.getElementById("skCpaUrl").value.trim();
   const cpaKey = document.getElementById("skCpaKey").value.trim();
   const appearance = document.getElementById("skAppearance").value.trim();
-  
+  const llmModel = document.getElementById("skLlmModel").value;
+
   const btn = document.getElementById("skSaveBtn");
   btn.disabled = true;
   btn.textContent = "⏳ 保存中...";
@@ -2679,7 +2734,9 @@ async function saveSettings() {
     if (cpaKey) body.cpa_key = cpaKey;
     // appearance: always send (empty = reset to default)
     body.appearance = appearance;
-    
+    // llm_model: always send
+    body.llm_model = llmModel;
+
     const res = await fetch(`${API}/api/config/keys`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
