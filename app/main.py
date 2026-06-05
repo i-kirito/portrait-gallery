@@ -210,8 +210,38 @@ class PortraitGalleryApp:
     async def refresh_schedule(self):
         """Regenerate today's schedule and rebuild dynamic photo jobs."""
         today_str = datetime.now().strftime("%Y-%m-%d")
+        now_hour = datetime.now().hour
+        now_minute = datetime.now().minute
+        now_minutes = now_hour * 60 + now_minute
         
-        # 只清除当天的日程（日期 key），保留图片
+        # 生成新日程
+        entry = await self.scheduler_gen.generate_today()
+        
+        if not entry or entry.status != "ok":
+            logger.error("日程生成失败")
+            if entry:
+                save_schedule_entry(self.data_dir, entry)
+            return entry
+        
+        # 检查新日程里是否还有当前时间之后的计划
+        schedule_text = entry.schedule or ""
+        has_future_plan = False
+        
+        for line in schedule_text.strip().split("\n"):
+            line = line.strip()
+            if not line or ":" not in line[:5]:
+                continue
+            try:
+                time_part = line[:5]
+                h, m = map(int, time_part.split(":"))
+                plan_minutes = h * 60 + m
+                if plan_minutes > now_minutes:
+                    has_future_plan = True
+                    break
+            except:
+                continue
+        
+        # 清除旧日程（日期 key）
         store = ScheduleStore(self.data_dir)
         all_data = store.load()
         if today_str in all_data:
@@ -219,17 +249,18 @@ class PortraitGalleryApp:
             store.save(all_data)
             logger.info("已清除今日日程数据")
         
-        # 重新生成日程
-        entry = await self.scheduler_gen.generate_today()
-        if entry and entry.status == "ok":
+        if has_future_plan:
+            # 还有未来计划，保存新日程
             save_schedule_entry(self.data_dir, entry)
             logger.info(f"日程生成成功: {entry.outfit_style}")
-            # 根据日程时间动态创建生图任务
             self._schedule_dynamic_photos(entry.schedule)
         else:
-            logger.error("日程生成失败")
-            if entry:
-                save_schedule_entry(self.data_dir, entry)
+            # 所有计划都已过期，不保存日程
+            logger.info("今天的日程已全部过期，等待明天刷新")
+            entry.schedule = ""
+            entry.outfit = "今天的日程已结束～明天见哦 💕"
+            save_schedule_entry(self.data_dir, entry)
+        
         return entry
 
     def _get_photo_job_limit(self) -> int:
