@@ -452,9 +452,9 @@ def generate(
             path = generate_with_gptimage(theme, send=False, caption=caption, prompt_override=resolved_prompt, ref_image=ref_image, size=size, style=actual_style)
 
     caption_text = None
-    if path and send:
-        caption_text = build_caption(theme) if caption else None
-        if caption_text:
+    if path and caption:
+        caption_text = build_caption(theme)
+        if caption_text and send:
             send_photo(path, caption_text)
             print(f"CAPTION:{caption_text}")
 

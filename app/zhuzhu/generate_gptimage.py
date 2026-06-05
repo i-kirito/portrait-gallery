@@ -143,15 +143,26 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size:
             return None
 
         data = resp.json()
-        response_content = data["choices"][0]["message"]["content"]
+        msg = data["choices"][0]["message"]
 
-        # Extract base64 image from markdown: ![image](data:image/png;base64,...)
-        b64_match = re.search(r'!\[[^\]]*\]\(data:image/[^;]+;base64,([^)]+)\)', response_content)
-        if not b64_match:
-            print(f"Direct GPT API: no base64 image in response: {response_content[:300]}", file=sys.stderr)
-            return None
-
-        img_data = base64.b64decode(b64_match.group(1))
+        # CPA format: image in message.images[0].image_url.url (data:image/...;base64,...)
+        images = msg.get("images", [])
+        if images and isinstance(images, list) and len(images) > 0:
+            img_url = images[0].get("image_url", {}).get("url", "")
+            if img_url and img_url.startswith("data:image/"):
+                b64_data = img_url.split(",", 1)[1]
+                img_data = base64.b64decode(b64_data)
+            else:
+                print(f"CPA: unexpected image_url format: {str(img_url)[:100]}", file=sys.stderr)
+                return None
+        else:
+            # Fallback: try markdown format from jiuuij.de5.net
+            response_content = msg.get("content", "") or ""
+            b64_match = re.search(r'!\[[^\]]*\]\(data:image/[^;]+;base64,([^)]+)\)', response_content)
+            if not b64_match:
+                print(f"Direct GPT API: no base64 image in response: {response_content[:300]}", file=sys.stderr)
+                return None
+            img_data = base64.b64decode(b64_match.group(1))
         elapsed = round(time.time() - start, 2)
 
         return img_data, elapsed
