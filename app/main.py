@@ -209,6 +209,29 @@ class PortraitGalleryApp:
 
     async def refresh_schedule(self):
         """Regenerate today's schedule and rebuild dynamic photo jobs."""
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        
+        # 先清除当天的所有旧数据（日期 key + 图片 key）
+        store = ScheduleStore(self.data_dir)
+        all_data = store.load()
+        keys_to_remove = []
+        for key, val in all_data.items():
+            if not isinstance(val, dict):
+                continue
+            # 日期 key
+            if key == today_str:
+                keys_to_remove.append(key)
+            # 图片 key（今天的）
+            elif val.get("date") == today_str:
+                keys_to_remove.append(key)
+        
+        if keys_to_remove:
+            for k in keys_to_remove:
+                del all_data[k]
+            store.save(all_data)
+            logger.info(f"已清除 {len(keys_to_remove)} 条今日旧数据")
+        
+        # 重新生成日程
         entry = await self.scheduler_gen.generate_today()
         if entry and entry.status == "ok":
             save_schedule_entry(self.data_dir, entry)

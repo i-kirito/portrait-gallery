@@ -41,6 +41,8 @@ class ImageGenerator:
             cmd.extend(["--style", style])
         if ref_image:
             cmd.extend(["--ref-image", ref_image])
+        if size:
+            cmd.extend(["--size", size])
         cmd.extend(["--prompt", prompt])
 
         try:

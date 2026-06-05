@@ -368,8 +368,11 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
         # 运动/瑜伽/跑步
         "sport": (["运动", "瑜伽", "跑步", "健身", "拉伸", "散步", "公园", "yoga", "run", "jog", "stretch"],
                   {"clothing": [0, 4], "pose": [0, 1, 5], "env": [3, 4]}),
+        # 直播/聊天。放在创作前面，避免“直播”被当成泛创作场景。
+        "stream": (["直播", "开播", "粉丝", "好物", "聊天", "stream", "livestream", "live stream", "chat"],
+                   {"clothing": [0, 1, 4], "pose": [0, 3], "env": [0, 2]}),
         # 创作/画画/写作/阅读
-        "creative": (["画", "写", "读", "书", "创作", "直播", "直播画画", "journal", "write", "read", "paint", "sketch"],
+        "creative": (["画", "写", "读", "书", "创作", "journal", "write", "read", "paint", "sketch"],
                      {"clothing": [0, 1, 3], "pose": [0, 8], "env": [0, 2, 4]}),
         # 散步/外出/逛街
         "outdoor": (["出门", "散步", "逛街", "拍摄", "vlog", "外", "街", "walk", "shop", "photo", "stroll"],
@@ -377,10 +380,37 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
         # 护肤/洗澡/睡前
         "skincare": (["护肤", "洗", "澡", "面膜", "泡脚", "skincare", "bath", "shower", "lotion"],
                      {"clothing": [2, 3, 4], "pose": [4, 6, 9], "env": [1, 3, 5]}),
-        # 直播/聊天
-        "stream": (["直播", "聊天", "stream", "chat"],
-                   {"clothing": [0, 1, 4], "pose": [0, 3], "env": [0, 2]}),
     }
+
+    def _slot_scene_override(activity: str):
+        """High-confidence per-slot scenes that should beat generic theme pools."""
+        act = (activity or "").lower()
+
+        def has_any(words):
+            return any(word in act for word in words)
+
+        if has_any(["直播", "开播", "粉丝", "好物", "livestream", "live stream", "stream"]):
+            return (
+                "sitting at a cozy home livestream desk, holding up today's shopping finds toward the phone camera, smiling brightly as if chatting with fans",
+                "cozy home livestream corner with a ring light, phone tripod, neatly arranged shopping bags, small product display shelf, warm room decor",
+                "soft ring light mixed with warm indoor evening lamp light, realistic smartphone livestream ambience",
+            )
+
+        if has_any(["日料", "拉面", "餐", "吃", "饭", "面", "ramen", "restaurant", "noodle"]):
+            return (
+                "sitting at a restaurant table, holding chopsticks near a steaming ramen bowl, smiling warmly at the camera",
+                "top-floor Japanese ramen restaurant with warm wooden booths, a steaming ramen bowl, menu cards, city lights beyond the window",
+                "warm restaurant lighting with gentle evening window glow, natural smartphone photo ambience",
+            )
+
+        if has_any(["回家", "居家", "家里", "home"]):
+            return (
+                "sitting casually at home after coming back, looking relaxed and smiling at the camera",
+                "cozy apartment living room in the evening with a sofa, warm lamp, tidy shopping bags by the wall",
+                "warm indoor evening lamp light, relaxed home atmosphere, natural smartphone photo ambience",
+            )
+
+        return None
     
     # ★ LLM 关键词优先：如果有 outfit_keywords，直接用，不从池子选
     if outfit_keywords:
@@ -425,6 +455,11 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
                     pose = random.choice([pose_pool[i] for i in idx_map.get("pose", []) if i < len(pose_pool)] or [random.choice(pose_pool)])
                     environment = random.choice([env_pool[i] for i in idx_map.get("env", []) if i < len(env_pool)] or [random.choice(env_pool)])
                     break
+
+        slot_scene = _slot_scene_override(schedule_activity)
+        if slot_scene:
+            pose, environment, lighting = slot_scene
+            print(f"🎬 Using slot-specific scene for activity: {schedule_activity[:40]}", file=sys.stderr)
 
     return (
         f"{quality} {appearance}. "

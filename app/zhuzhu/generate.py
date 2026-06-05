@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import random
+import re
 import sys
 from datetime import date
 from typing import Optional
@@ -11,7 +12,9 @@ from typing import Optional
 import requests
 
 from core import build_caption, build_prompt, enhance_prompt, send_photo
+from generate_gitee import MODEL_NAME as GITEE_MODEL_NAME
 from generate_gitee import generate as generate_with_gitee
+from generate_gptimage import GPTIMAGE_DIRECT_MODEL
 from generate_gptimage import generate as generate_with_gptimage
 
 # Gemini image generation always uses the CPA Base URL config.
@@ -248,18 +251,32 @@ _THEME_PERIODS = {
 }
 
 
-def _get_schedule_context(theme: str) -> tuple:
+def _normalize_schedule_slot(value: str) -> tuple:
+    """Return (HH:mm activity, activity) for a schedule override."""
+    m = re.match(r'\s*(\d{1,2}):(\d{2})\s*(.*)', value or "")
+    if not m:
+        activity = (value or "").strip()
+        return activity, activity
+    hour = int(m.group(1))
+    minute = int(m.group(2))
+    activity = m.group(3).strip()
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return activity, activity
+    return f"{hour:02d}:{minute:02d} {activity}".strip(), activity
+
+
+def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple:
     """Read daily schedule and return (context_string, raw_time_slot, outfit_keywords, scene_keywords)."""
     if theme not in _THEME_PERIODS or not _THEME_PERIODS[theme]:
         return "", "", "", ""
     today_str = date.today().isoformat()
-    if not os.path.exists(_SCHEDULE_PATH):
-        return "", "", "", ""
-    try:
-        with open(_SCHEDULE_PATH, encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return "", "", "", ""
+    data = {}
+    if os.path.exists(_SCHEDULE_PATH):
+        try:
+            with open(_SCHEDULE_PATH, encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            data = {}
     
     # Search for schedule: first try date key, then scan all entries for today
     schedule = ""
@@ -282,6 +299,23 @@ def _get_schedule_context(theme: str) -> tuple:
                 outfit_kw = entry.get("outfit_keywords", "")
                 scene_kw = entry.get("scene_keywords", "")
                 break
+
+    if schedule_time_override:
+        raw_slot, activity = _normalize_schedule_slot(schedule_time_override)
+        if activity:
+            style_hint = ""
+            if outfit_info:
+                m = re.search(r'风格[：:]\s*(\S+)', outfit_info)
+                if m:
+                    style_hint = m.group(1)
+            ctx = f"Today's plan: {activity}"
+            if style_hint:
+                ctx += f". Style: {style_hint}"
+            print(f"📋 Schedule override: {ctx}", file=sys.stderr)
+            # A daily scene keyword can describe only one moment of the day
+            # (for example a shopping mall), so explicit time slots should
+            # rematch their own scene from the activity text.
+            return ctx, raw_slot, outfit_kw, ""
     
     if not schedule:
         # Fallback: no schedule found, generate context from current time + theme
@@ -302,7 +336,6 @@ def _get_schedule_context(theme: str) -> tuple:
         print(f"📋 Schedule fallback: {ctx}", file=sys.stderr)
         return ctx, raw_slot, "", ""
     
-    import re
     # Time-based schedule format: "HH:MM activity" or "period：activity"
     # Try period-based matching first (上午/中午/下午/晚上/深夜)
     periods = _THEME_PERIODS[theme]
@@ -334,32 +367,43 @@ def _get_schedule_context(theme: str) -> tuple:
     # Theme → hour ranges
     _THEME_HOURS = {
         "morning": (6, 11),
-        "noon": (12, 13),
-        "evening": (18, 21),
-        "bedtime": (22, 23),
+        "noon": (12, 17),
+        "evening": (18, 20),
+        "bedtime": (21, 23),
     }
     hour_min, hour_max = _THEME_HOURS.get(theme, (0, 0))
     
     # Split schedule into time slots: "HH:MM activity" → [(hour, min, activity), ...]
     times = re.findall(r'(\d{1,2}):(\d{2})', schedule)
     parts = re.split(r'\d{1,2}:\d{2}\s*', schedule)
+    candidates = []
+    from datetime import datetime
+    now = datetime.now()
+    now_minutes = now.hour * 60 + now.minute
+
     # parts[0] is empty (before first time), parts[1:] are activities
     for (h_str, m_str), activity in zip(times, parts[1:]):
         hour = int(h_str)
+        minute = int(m_str)
         if hour_min <= hour <= hour_max:
             activity = activity.strip().rstrip('～').strip()
             if activity:
-                style_hint = ""
-                if outfit_info:
-                    m = re.search(r'风格[：:]\s*(\S+)', outfit_info)
-                    if m:
-                        style_hint = m.group(1)
-                ctx = f"Today's plan: {activity}"
-                if style_hint:
-                    ctx += f". Style: {style_hint}"
-                print(f"📋 Schedule context: {ctx}", file=sys.stderr)
-                # Return both context (for prompt) and raw time slot (for display)
-                return ctx, f"{h_str}:{m_str} {activity}", outfit_kw, scene_kw
+                slot_minutes = hour * 60 + minute
+                candidates.append((abs(slot_minutes - now_minutes), slot_minutes, h_str, m_str, activity))
+
+    if candidates:
+        _, _, h_str, m_str, activity = min(candidates, key=lambda item: (item[0], item[1]))
+        style_hint = ""
+        if outfit_info:
+            m = re.search(r'风格[：:]\s*(\S+)', outfit_info)
+            if m:
+                style_hint = m.group(1)
+        ctx = f"Today's plan: {activity}"
+        if style_hint:
+            ctx += f". Style: {style_hint}"
+        print(f"📋 Schedule context: {ctx}", file=sys.stderr)
+        # Return both context (for prompt) and raw time slot (for display)
+        return ctx, f"{h_str}:{m_str} {activity}", outfit_kw, ""
     # If we get here, no time slot matched - return empty
     return "", "", "", ""
 
@@ -375,6 +419,7 @@ def generate(
     source: str = "chat",
     ref_image: Optional[str] = None,
     size: Optional[str] = None,
+    schedule_time: str = "",
 ):
     # If user didn't specify a hairstyle, let LLM pick one
     if prompt_override and engine == "gptimage" and theme != "sexy":
@@ -389,7 +434,7 @@ def generate(
     resolved_prompt = resolve_prompt(theme, prompt_override, enhance)
 
     # Inject daily schedule context for timed photos (not custom/sexy)
-    schedule_ctx, schedule_raw, outfit_kw, scene_kw = _get_schedule_context(theme)
+    schedule_ctx, schedule_raw, outfit_kw, scene_kw = _get_schedule_context(theme, schedule_time)
     schedule_activity = ""
     if schedule_ctx and theme in DAILY_THEMES and not prompt_override:
         # Extract activity text for schedule-aware prompt building
@@ -454,23 +499,38 @@ def generate(
     # Track the actual style used (explicit or auto) for filename and metadata
     actual_style = explicit_style or auto_style
 
+    used_model = ""
     if theme == "sexy":
         path = generate_with_gitee(theme, send=False, caption=caption, prompt_override=resolved_prompt)
+        if path:
+            used_model = GITEE_MODEL_NAME
     elif engine == "gptimage":
         path = generate_with_gptimage(theme, send=False, caption=caption, prompt_override=resolved_prompt, ref_image=ref_image, size=size, style=actual_style)
+        if path:
+            used_model = GPTIMAGE_DIRECT_MODEL
         if not path:
             print("GPT Image failed, falling back to Gitee", file=sys.stderr)
             path = generate_with_gitee(theme, send=False, caption=caption, prompt_override=resolved_prompt)
+            if path:
+                used_model = GITEE_MODEL_NAME
     elif engine == "gemini":
         path = _generate_with_gemini_cpa(theme, resolved_prompt)
+        if path:
+            used_model = _GEMINI_CPA_MODEL
         if not path:
             print("Gemini CPA failed, falling back to Gitee", file=sys.stderr)
             path = generate_with_gitee(theme, send=False, caption=caption, prompt_override=resolved_prompt)
+            if path:
+                used_model = GITEE_MODEL_NAME
     else:  # engine == "gitee"
         path = generate_with_gitee(theme, send=False, caption=caption, prompt_override=resolved_prompt)
+        if path:
+            used_model = GITEE_MODEL_NAME
         if not path:
             print("Gitee failed, falling back to GPT Image", file=sys.stderr)
             path = generate_with_gptimage(theme, send=False, caption=caption, prompt_override=resolved_prompt, ref_image=ref_image, size=size, style=actual_style)
+            if path:
+                used_model = GPTIMAGE_DIRECT_MODEL
 
     caption_text = None
     if path and caption:
@@ -482,14 +542,6 @@ def generate(
     # Sync to Docker portrait gallery
     if path:
         from core import sync_to_gallery
-        # Determine which model was used based on path or engine
-        used_model = ""
-        if "gpt-image" in path or engine == "gptimage":
-            used_model = "gpt-image-2"
-        elif "z-image" in path or engine == "gitee":
-            used_model = "z-image-turbo"
-        elif "gemini" in path or engine == "gemini":
-            used_model = "gemini-3.1-flash-image"
         sync_to_gallery(path, os.path.basename(path), theme, actual_style,
                         prompt=prompt_override or resolved_prompt,
                         caption=caption_text or "",
@@ -512,6 +564,7 @@ if __name__ == "__main__":
     parser.add_argument("--source", choices=["cron", "web", "chat"], default="chat", help="来源标识: cron(定时)/web(现在在干嘛)/chat(聊天生图)")
     parser.add_argument("--ref-image", type=str, default=None, help="参考图本地路径（图生图/img2img 模式）")
     parser.add_argument("--size", type=str, default=None, help="图片尺寸")
+    parser.add_argument("--schedule-time", type=str, default="", help="定时任务对应的日程时间和活动，如 '20:30 晚间直播'")
     args = parser.parse_args()
 
     effective_theme = args.theme or ("custom" if args.prompt else "morning")
@@ -527,6 +580,7 @@ if __name__ == "__main__":
         source=args.source,
         ref_image=args.ref_image,
         size=args.size,
+        schedule_time=args.schedule_time,
     )
     if not path:
         print("ERROR: generation failed", file=sys.stderr)

@@ -430,8 +430,32 @@ class GalleryServer:
 
         model_name = (entry.get("model_name") or "").strip()
         if model_name:
-            return f"{model_name} 生图完成"
+            return f"{GalleryServer._display_model_name(model_name)} 生图完成"
         return "生图完成"
+
+    @staticmethod
+    def _display_model_name(model_name: str) -> str:
+        """Normalize stored model ids to stable gallery display labels."""
+        name = (model_name or "").strip()
+        lower = name.lower()
+        if "gpt-image" in lower or lower == "gpt image":
+            return "GPT Image"
+        if "z-image" in lower or "gitee" in lower:
+            return "Gitee"
+        if "gemini" in lower:
+            return "Gemini"
+        return name
+
+    @classmethod
+    def _normalize_entry_display(cls, entry: dict) -> dict:
+        if not isinstance(entry, dict):
+            return entry
+        model_label = cls._display_model_name(entry.get("model_name", ""))
+        if not model_label or model_label == entry.get("model_name"):
+            return entry
+        normalized = dict(entry)
+        normalized["model_name"] = model_label
+        return normalized
 
     def _photo_schedule_item(self, entry: dict) -> dict:
         """Build a schedule item from a generated photo entry."""
@@ -450,7 +474,10 @@ class GalleryServer:
 
     def _enrich_photo_schedule_time(self, entry: dict) -> dict:
         """Return a copy with schedule_time filled from image time when missing."""
-        if not isinstance(entry, dict) or entry.get("schedule_time"):
+        if not isinstance(entry, dict):
+            return entry
+        entry = self._normalize_entry_display(entry)
+        if entry.get("schedule_time"):
             return entry
 
         item = self._photo_schedule_item(entry)
@@ -861,7 +888,7 @@ class GalleryServer:
             all_data = store.load()
             for entry in all_data.values():
                 if isinstance(entry, dict) and entry.get("date") == date_str:
-                    return entry
+                    return self._enrich_photo_schedule_time(entry)
         except Exception as e:
             logger.error(f"Load entry error: {e}")
         return None
@@ -887,14 +914,14 @@ class GalleryServer:
             from datetime import datetime
             current_hour = datetime.now().hour
             
-            # Time period mapping (6-11 morning, 11-14 noon, 14-19 evening, else bedtime)
-            if 6 <= current_hour < 11:
+            # Keep manual "now" generation aligned with dynamic photo jobs.
+            if current_hour < 12:
                 theme = "morning"
-            elif 11 <= current_hour < 14:
+            elif current_hour < 18:
                 theme = "noon"
-            elif 14 <= current_hour < 19:
+            elif current_hour <= 20:
                 theme = "evening"
-            else:  # 19-23 or any other time
+            else:
                 theme = "bedtime"
             
             logger.info(f"Generate now: hour={current_hour}, theme={theme}")
