@@ -462,15 +462,14 @@ class GalleryServer:
         if not isinstance(entry, dict):
             return {}
 
+        # 只用 schedule_time 字段，不用 time（time 是图片生成时间，不是日程时间）
         schedule_time, activity = self._parse_time_activity(entry.get("schedule_time", ""))
-        photo_time, _ = self._parse_time_activity(entry.get("time", ""))
-        time_text = schedule_time or photo_time
-        if not time_text:
+        if not schedule_time:
             return {}
 
         if not activity:
             activity = self._photo_schedule_activity(entry)
-        return {"time": time_text, "activity": activity}
+        return {"time": schedule_time, "activity": activity}
 
     def _enrich_photo_schedule_time(self, entry: dict) -> dict:
         """Return a copy with schedule_time filled from image time when missing."""
