@@ -2687,6 +2687,10 @@ async function loadVersion() {
     if (versionTag && data.version) {
       versionTag.textContent = `v${data.version}`;
     }
+    const settingsVersion = document.getElementById("settingsVersion");
+    if (settingsVersion && data.version) {
+      settingsVersion.textContent = `v${data.version}`;
+    }
   } catch(e) {
     console.error("load version:", e);
   }
