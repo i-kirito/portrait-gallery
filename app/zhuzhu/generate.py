@@ -372,6 +372,8 @@ def generate(
     send: bool = False,
     style: Optional[str] = None,
     source: str = "chat",
+    ref_image: Optional[str] = None,
+    size: Optional[str] = None,
 ):
     # If user didn't specify a hairstyle, let LLM pick one
     if prompt_override and engine == "gptimage" and theme != "sexy":
@@ -405,26 +407,28 @@ def generate(
         print(f"🎨 Rebuilt prompt with schedule-matched elements (outfit_kw={outfit_kw[:40]}, scene_kw={scene_kw[:40]})", file=sys.stderr)
 
     # Resolve style to ref_image path (only supported by gptimage engine)
-    ref_image = None
+    requested_ref_image = ref_image
     auto_style = None
     explicit_style = style  # remember if user explicitly set --style
     if style:
         if engine != "gptimage":
             print(f"ERROR: --style 需要 --engine gptimage (当前引擎: {engine})", file=sys.stderr)
             return None
-        ref_image = STYLE_REF_MAP.get(style)
+        ref_image = requested_ref_image or STYLE_REF_MAP.get(style)
         if not ref_image:
             print(f"⚠️ style '{style}' 参考图不存在，将使用纯文生图", file=sys.stderr)
 
     # Auto-pick a style for GPT Image via LLM to keep face consistent
     # Note: LLM classification works even without reference images (for style label)
-    if engine == "gptimage" and not explicit_style and theme != "sexy":
+    if engine == "gptimage" and not explicit_style and not requested_ref_image and theme != "sexy":
         # Use the user's prompt (before appearance injection) for classification
         classify_input = prompt_override or resolved_prompt
         auto_style = _classify_style(classify_input)
         ref_image = STYLE_REF_MAP.get(auto_style)  # None if no ref images
         if auto_style:
             print(f"🧠 LLM selected style: {auto_style} (ref_image={'✓' if ref_image else '✗'})", file=sys.stderr)
+    elif requested_ref_image:
+        ref_image = requested_ref_image
 
     # Track the actual style used (explicit or auto) for filename and metadata
     actual_style = explicit_style or auto_style
@@ -432,7 +436,7 @@ def generate(
     if theme == "sexy":
         path = generate_with_gitee(theme, send=False, caption=caption, prompt_override=resolved_prompt)
     elif engine == "gptimage":
-        path = generate_with_gptimage(theme, send=False, caption=caption, prompt_override=resolved_prompt, ref_image=ref_image, style=actual_style)
+        path = generate_with_gptimage(theme, send=False, caption=caption, prompt_override=resolved_prompt, ref_image=ref_image, size=size, style=actual_style)
         if not path:
             print("GPT Image failed, falling back to Gitee", file=sys.stderr)
             path = generate_with_gitee(theme, send=False, caption=caption, prompt_override=resolved_prompt)
@@ -445,7 +449,7 @@ def generate(
         path = generate_with_gitee(theme, send=False, caption=caption, prompt_override=resolved_prompt)
         if not path:
             print("Gitee failed, falling back to GPT Image", file=sys.stderr)
-            path = generate_with_gptimage(theme, send=False, caption=caption, prompt_override=resolved_prompt)
+            path = generate_with_gptimage(theme, send=False, caption=caption, prompt_override=resolved_prompt, ref_image=ref_image, size=size, style=actual_style)
 
     caption_text = None
     if path and send:
@@ -485,11 +489,24 @@ if __name__ == "__main__":
     parser.add_argument("--enhance", action="store_true", help="用 LLM 扩写描述后再自动注入")
     parser.add_argument("--style", choices=["cool", "girly", "sweet"], default=None, help="风格底模: cool(冷御风)/girly(少女风)/sweet(甜妹风), 仅 gptimage 引擎支持")
     parser.add_argument("--source", choices=["cron", "web", "chat"], default="chat", help="来源标识: cron(定时)/web(现在在干嘛)/chat(聊天生图)")
+    parser.add_argument("--ref-image", type=str, default=None, help="参考图本地路径（图生图/img2img 模式）")
+    parser.add_argument("--size", type=str, default=None, help="图片尺寸")
     args = parser.parse_args()
 
     effective_theme = args.theme or ("custom" if args.prompt else "morning")
 
-    path = generate(effective_theme, args.engine, args.caption, args.prompt, args.enhance, args.send, args.style, source=args.source)
+    path = generate(
+        effective_theme,
+        args.engine,
+        args.caption,
+        args.prompt,
+        args.enhance,
+        args.send,
+        args.style,
+        source=args.source,
+        ref_image=args.ref_image,
+        size=args.size,
+    )
     if not path:
         print("ERROR: generation failed", file=sys.stderr)
         sys.exit(1)

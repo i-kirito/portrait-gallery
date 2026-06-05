@@ -108,6 +108,8 @@ class PortraitGalleryApp:
         self.web_server = GalleryServer(self.config, self.data_dir)
         self.web_server.on_generate_today = self.generate_and_save
         self.web_server.on_generate_custom = self.generate_custom
+        self.web_server.on_list_photo_jobs = self.list_photo_jobs
+        self.web_server.on_refresh_schedule = self.refresh_schedule
 
         # APScheduler
         self.aps = AsyncIOScheduler(timezone="Asia/Shanghai")
@@ -201,6 +203,10 @@ class PortraitGalleryApp:
     async def daily_job(self):
         """每日自动任务 - 生成日程并根据日程时间动态安排生图"""
         logger.info("执行每日日程生成...")
+        await self.refresh_schedule()
+
+    async def refresh_schedule(self):
+        """Regenerate today's schedule and rebuild dynamic photo jobs."""
         entry = await self.scheduler_gen.generate_today()
         if entry and entry.status == "ok":
             save_schedule_entry(self.data_dir, entry)
@@ -211,6 +217,7 @@ class PortraitGalleryApp:
             logger.error("日程生成失败")
             if entry:
                 save_schedule_entry(self.data_dir, entry)
+        return entry
 
     def _schedule_dynamic_photos(self, schedule_text: str):
         """Parse HH:mm times from schedule and create one-shot photo jobs."""
@@ -237,15 +244,7 @@ class PortraitGalleryApp:
             if h < 0 or h > 23 or m < 0 or m > 59:
                 continue
 
-            # Determine theme based on hour
-            if h < 12:
-                theme = "morning"
-            elif h < 18:
-                theme = "noon"
-            elif h <= 20:
-                theme = "evening"
-            else:
-                theme = "bedtime"
+            theme = self._theme_for_hour(h)
 
             job_id = f"photo_dynamic_{h}_{m}"
 
@@ -273,6 +272,76 @@ class PortraitGalleryApp:
             logger.info(f"添加动态生图任务: {h:02d}:{m:02d} theme={theme} activity={activity[:30]}")
 
         logger.info(f"动态生图任务已创建: {scheduled_count} 个")
+
+    @staticmethod
+    def _theme_for_hour(hour: int) -> str:
+        if hour < 12:
+            return "morning"
+        if hour < 18:
+            return "noon"
+        if hour <= 20:
+            return "evening"
+        return "bedtime"
+
+    def _today_schedule_activity_map(self) -> dict:
+        """Return {HH:mm: activity} for today's persisted schedule."""
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        activity_by_time = {}
+        try:
+            all_data = ScheduleStore(self.data_dir).load()
+            schedule_text = ""
+            if today_str in all_data and all_data[today_str].get("schedule"):
+                schedule_text = all_data[today_str].get("schedule", "")
+            if not schedule_text:
+                for entry in all_data.values():
+                    if (
+                        isinstance(entry, dict)
+                        and entry.get("date") == today_str
+                        and entry.get("schedule")
+                        and entry.get("schedule") != "生成失败"
+                    ):
+                        schedule_text = entry.get("schedule", "")
+                        break
+            for h_str, m_str, activity in re.findall(r'(\d{1,2}):(\d{2})\s*(.*)', schedule_text):
+                h, m = int(h_str), int(m_str)
+                if 0 <= h <= 23 and 0 <= m <= 59:
+                    activity_by_time[f"{h:02d}:{m:02d}"] = activity.strip()
+        except Exception as e:
+            logger.error(f"读取今日生图活动映射失败: {e}")
+        return activity_by_time
+
+    def list_photo_jobs(self) -> list:
+        """List actual pending APScheduler photo jobs for the Web UI."""
+        activity_by_time = self._today_schedule_activity_map()
+        jobs = []
+        for job in self.aps.get_jobs():
+            if not job.id.startswith("photo_dynamic_"):
+                continue
+
+            run_at = getattr(job, "next_run_time", None)
+            if not run_at:
+                continue
+
+            try:
+                local_run_at = run_at.astimezone(self.aps.timezone) if run_at.tzinfo else run_at
+            except Exception:
+                local_run_at = run_at
+
+            time_text = f"{local_run_at.hour:02d}:{local_run_at.minute:02d}"
+            theme = job.args[0] if getattr(job, "args", None) else self._theme_for_hour(local_run_at.hour)
+            jobs.append({
+                "id": job.id,
+                "type": "photo",
+                "status": "scheduled",
+                "theme": theme,
+                "time": time_text,
+                "run_at": local_run_at.isoformat(),
+                "activity": activity_by_time.get(time_text, ""),
+                "source": "apscheduler",
+            })
+
+        jobs.sort(key=lambda item: item["time"])
+        return jobs
 
     async def photo_job(self, theme: str):
         """定时生图任务 - 调用 generate.py 完整链路"""
@@ -366,24 +435,28 @@ class PortraitGalleryApp:
         await site.start()
         logger.info(f"画廊启动: http://{self.web_server.host}:{self.web_server.port}")
 
-        # 检查今天是否已有数据，没有则后台生成
+        # 检查今天是否已有完整日程；启动后需要恢复内存里的动态生图任务
         today_str = datetime.now().strftime("%Y-%m-%d")
-        data_path = os.path.join(self.data_dir, "schedule_data.json")
+        today_schedule = ""
         need_generate = True
-        if os.path.exists(data_path):
-            with open(data_path) as f:
-                all_data = json.load(f)
-            # 检查是否有今日的日程条目（日期 key 或图片 key 都算）
-            for key, entry in all_data.items():
-                if (key == today_str or entry.get("date") == today_str) and entry.get("status") == "ok":
-                    need_generate = False
-                    break
+        all_data = ScheduleStore(self.data_dir).load()
+        for key, entry in all_data.items():
+            if not isinstance(entry, dict):
+                continue
+            if key != today_str and entry.get("date") != today_str:
+                continue
+            schedule = entry.get("schedule", "")
+            if schedule and schedule != "生成失败":
+                today_schedule = schedule
+                need_generate = False
+                break
 
         if need_generate:
-            logger.info("今日尚未生成，后台生成中...")
+            logger.info("今日尚未生成完整日程，后台生成中...")
             asyncio.create_task(self.daily_job())
         else:
             logger.info("今日已有数据")
+            self._schedule_dynamic_photos(today_schedule)
 
         # 保持运行
         await asyncio.Event().wait()

@@ -84,12 +84,13 @@ def _compress_image_for_img2img(image_path: str, max_size: int = 512, quality: i
     return f"data:image/jpeg;base64,{b64}"
 
 
-def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None) -> Optional[tuple]:
+def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size: Optional[str] = None) -> Optional[tuple]:
     """Call jiuuij.de5.net directly for GPT Image generation (text2img + img2img)
 
     Args:
         prompt: Generation prompt
         ref_image: Optional reference image path for img2img mode
+        size: Optional output image size
 
     Returns:
         (img_data, elapsed_time) tuple or None on failure
@@ -123,6 +124,8 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None) -> Op
         "stream": False,
         "messages": [{"role": "user", "content": content}],
     }
+    if size:
+        payload["size"] = size
 
     timeout = IMG2IMG_TIMEOUT if ref_image else TEXT2IMG_TIMEOUT
     start = time.time()
@@ -160,7 +163,7 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None) -> Op
 
 def generate(theme: str, send: bool = False, caption: bool = False,
              prompt_override: Optional[str] = None, ref_image: Optional[str] = None,
-             style: Optional[str] = None):
+             style: Optional[str] = None, size: Optional[str] = None):
     """GPT Image 生成入口 — 统一走 jiuuij.de5.net 直连
 
     Args:
@@ -170,12 +173,13 @@ def generate(theme: str, send: bool = False, caption: bool = False,
         prompt_override: 自定义提示词（自动注入画质前缀+外貌）
         ref_image: 参考图本地路径，传入则启用图生图模式（img2img）
         style: 风格名 (cool/girly/sweet)，用于文件名标注
+        size: 图片尺寸
     """
     prompt = build_prompt(theme, prompt_override)
     mode = "img2img" if ref_image else "text2img"
     print(f"🎨 GPT Image via jiuuij.de5.net ({mode})...", file=sys.stderr)
 
-    result = _generate_via_direct_gpt(prompt, ref_image)
+    result = _generate_via_direct_gpt(prompt, ref_image, size)
 
     if not result:
         print("ERROR: jiuuij.de5.net failed", file=sys.stderr)

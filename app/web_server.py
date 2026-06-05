@@ -36,6 +36,8 @@ class GalleryServer:
         # 回调：外部注入
         self.on_generate_today = None
         self.on_generate_custom = None
+        self.on_list_photo_jobs = None
+        self.on_refresh_schedule = None
 
         self.app = web.Application(middlewares=[self.api_key_middleware])
         self._setup_routes()
@@ -75,6 +77,7 @@ class GalleryServer:
         self.app.router.add_post("/api/upload-ref", self.handle_upload_ref)
         self.app.router.add_delete("/api/uploaded-refs/{filename}", self.handle_delete_uploaded_ref)
         self.app.router.add_post("/api/generate", self.handle_generate)
+        self.app.router.add_post("/api/refresh-schedule", self.handle_refresh_schedule)
         self.app.router.add_post("/api/generate-now", self.handle_generate_now)
         self.app.router.add_post("/api/generate-custom", self.handle_generate_custom)
         self.app.router.add_post("/api/images/{img_id}/favorite", self.handle_toggle_favorite)
@@ -88,6 +91,7 @@ class GalleryServer:
         self.app.router.add_post("/api/update", self.handle_update)
         # 日程彩蛋
         self.app.router.add_get("/api/schedule-detail", self.handle_schedule_detail)
+        self.app.router.add_get("/api/photo-jobs", self.handle_photo_jobs)
 
         # 图片服务
         self.app.router.add_static("/images", self.image_dir, show_index=False)
@@ -108,6 +112,44 @@ class GalleryServer:
 
     async def handle_health(self, request: web.Request):
         return web.json_response({"status": "ok"})
+
+    async def handle_photo_jobs(self, request: web.Request):
+        """Return actual pending APScheduler image-generation jobs."""
+        if not self.on_list_photo_jobs:
+            return web.json_response({
+                "status": "unavailable",
+                "date": date.today().isoformat(),
+                "jobs": [],
+            })
+        try:
+            jobs = self.on_list_photo_jobs()
+            return web.json_response({
+                "status": "ok",
+                "date": date.today().isoformat(),
+                "jobs": jobs,
+            })
+        except Exception as e:
+            logger.error(f"Load photo jobs error: {e}")
+            return web.json_response({"error": str(e), "jobs": []}, status=500)
+
+    async def handle_refresh_schedule(self, request: web.Request):
+        """Regenerate today's schedule without generating an image."""
+        if not self.on_refresh_schedule:
+            return web.json_response({"error": "no_scheduler"}, status=500)
+        try:
+            entry = await self.on_refresh_schedule()
+            if entry and entry.status == "ok":
+                return web.json_response({
+                    "status": "ok",
+                    "entry": entry.to_dict(),
+                })
+            return web.json_response({
+                "error": "schedule_generate_failed",
+                "entry": entry.to_dict() if entry else None,
+            }, status=500)
+        except Exception as e:
+            logger.error(f"Refresh schedule error: {e}")
+            return web.json_response({"error": str(e)}, status=500)
 
     async def handle_get_keys(self, request: web.Request):
         """获取 API 密钥配置状态（返回 masked 值）"""
@@ -150,6 +192,59 @@ class GalleryServer:
         if not key or len(key) < 8:
             return ""
         return f"{key[:4]}{'*' * (len(key) - 8)}{key[-4:]}"
+
+    def _parse_outfit_parts(self, outfit_raw: str) -> dict:
+        """Parse 风格/发型/穿搭/动作/场景 blocks from stored outfit text."""
+        parts = {}
+        if not outfit_raw:
+            return parts
+        segments = re.split(r'(?=风格[：:]|穿搭[：:]|发型[：:]|动作[：:]|场景[：:])', outfit_raw)
+        for seg in segments:
+            seg = seg.strip()
+            if not seg:
+                continue
+            match = re.match(r'(风格|穿搭|发型|动作|场景)[：:]\s*(.*)', seg)
+            if match:
+                parts[match.group(1)] = match.group(2).strip()
+        return parts
+
+    def _enrich_outfit_parts_from_entry(self, parts: dict, entry: dict) -> dict:
+        """Fill missing outfit details from a generated image prompt."""
+        if not isinstance(entry, dict):
+            return parts
+
+        if not parts.get("风格") and entry.get("outfit_style"):
+            parts["风格"] = entry.get("outfit_style", "")
+
+        prompt = entry.get("prompt", "") or ""
+        if not prompt:
+            return parts
+
+        def _extract(pattern: str) -> str:
+            match = re.search(pattern, prompt, re.IGNORECASE | re.DOTALL)
+            if not match:
+                return ""
+            return re.sub(r'\s+', ' ', match.group(1)).strip().rstrip(".")
+
+        hair = _extract(r'Her hair is\s+(.+?)\.\s+She is\s+')
+        action = _extract(r'Her hair is.+?\.\s+She is\s+(.+?)\.\s+She is wearing\s+')
+        clothing = _extract(r'She is wearing\s+(.+?)\.\s+Background:\s+')
+        scene = _extract(r'Background:\s+(.+?)(?:\.\s+Today\'s plan:|$)')
+
+        if hair and not parts.get("发型"):
+            parts["发型"] = hair
+        if action and not parts.get("动作"):
+            parts["动作"] = action
+        current_clothing = parts.get("穿搭", "")
+        if clothing and (
+            not current_clothing
+            or "精心搭配" in current_clothing
+            or len(current_clothing) < 10
+        ):
+            parts["穿搭"] = clothing
+        if scene and not parts.get("场景"):
+            parts["场景"] = scene
+        return parts
 
     async def handle_save_keys(self, request: web.Request):
         """保存 API 密钥配置"""
@@ -302,7 +397,7 @@ class GalleryServer:
             # 再找有 schedule 的图片条目
             if not schedule_entry:
                 for key, e in all_data.items():
-                    if e.get("date") == today_str and e.get("schedule") and e.get("status") == "ok":
+                    if isinstance(e, dict) and e.get("date") == today_str and e.get("schedule") and e.get("status") == "ok":
                         schedule_entry = e
                         break
 
@@ -310,7 +405,7 @@ class GalleryServer:
             today_photos = []
             for key, e in all_data.items():
                 if key == "_meta": continue
-                if e.get("date") == today_str and e.get("status") == "ok":
+                if isinstance(e, dict) and e.get("date") == today_str and e.get("status") == "ok":
                     today_photos.append(e)
 
             # 如果有日程条目，用它；否则从图片条目拼凑
@@ -322,15 +417,8 @@ class GalleryServer:
             if schedule_entry:
                 outfit_style = schedule_entry.get("outfit_style", "")
                 caption = schedule_entry.get("caption", "")
-                # 解析 outfit（支持单行多 key：风格：xx 穿搭：xx 发型：xx 动作：xx）
-                outfit_raw = schedule_entry.get("outfit", "")
-                pairs = re.split(r'(?=风格[：:]|穿搭[：:]|发型[：:]|动作[：:])', outfit_raw)
-                for seg in pairs:
-                    seg = seg.strip()
-                    if not seg: continue
-                    m2 = re.match(r'(风格|穿搭|发型|动作)[：:]\s*(.*)', seg)
-                    if m2:
-                        outfit_parts[m2.group(1)] = m2.group(2).strip()
+                outfit_parts.update(self._parse_outfit_parts(schedule_entry.get("outfit", "")))
+                self._enrich_outfit_parts_from_entry(outfit_parts, schedule_entry)
                 # 解析 schedule
                 for line in schedule_entry.get("schedule", "").split("\n"):
                     line = line.strip()
@@ -350,16 +438,14 @@ class GalleryServer:
 
             # 从图片条目补充 outfit（如果日程条目没有）
             if not outfit_parts and today_photos:
-                best = today_photos[0]
+                best = sorted(today_photos, key=lambda x: x.get("time", ""), reverse=True)[0]
                 outfit_raw = best.get("outfit", "")
                 outfit_style = outfit_style or best.get("outfit_style", "")
-                pairs = re.split(r'(?=风格[：:]|穿搭[：:]|发型[：:]|动作[：:])', outfit_raw)
-                for seg in pairs:
-                    seg = seg.strip()
-                    if not seg: continue
-                    m2 = re.match(r'(风格|穿搭|发型|动作)[：:]\s*(.*)', seg)
-                    if m2:
-                        outfit_parts[m2.group(1)] = m2.group(2).strip()
+                outfit_parts.update(self._parse_outfit_parts(outfit_raw))
+                self._enrich_outfit_parts_from_entry(outfit_parts, best)
+            elif today_photos and not schedule_entry:
+                best = sorted(today_photos, key=lambda x: x.get("time", ""), reverse=True)[0]
+                self._enrich_outfit_parts_from_entry(outfit_parts, best)
 
             # 最终 fallback：从当前时间生成占位日程
             if not schedule_items:
@@ -494,6 +580,20 @@ class GalleryServer:
             return web.json_response(entry)
         return web.json_response({"error": "not_found"}, status=404)
 
+    def _load_entry(self, date_str: str):
+        """按 entry.date 查找单日条目。"""
+        if not date_str:
+            return None
+        try:
+            store = ScheduleStore(self.data_dir)
+            all_data = store.load()
+            for entry in all_data.values():
+                if isinstance(entry, dict) and entry.get("date") == date_str:
+                    return entry
+        except Exception as e:
+            logger.error(f"Load entry error: {e}")
+        return None
+
     async def handle_generate(self, request: web.Request):
         """手动触发今日生成 (根据当前时段+日程)"""
         if self.on_generate_today:
@@ -509,6 +609,7 @@ class GalleryServer:
 
     async def handle_generate_now(self, request: web.Request):
         """根据当前时段+日程生图 (💭 现在在干嘛)"""
+        proc = None
         try:
             # Determine theme based on current time
             from datetime import datetime
@@ -580,6 +681,9 @@ class GalleryServer:
             })
         except asyncio.TimeoutError:
             logger.error("Generate now timeout")
+            if proc and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
             return web.json_response({"error": "timeout"}, status=504)
         except Exception as e:
             logger.error(f"Generate now error: {e}")

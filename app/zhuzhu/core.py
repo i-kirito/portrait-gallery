@@ -13,6 +13,12 @@ from typing import Optional
 import requests
 from PIL import Image
 
+_APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _APP_DIR not in sys.path:
+    sys.path.insert(0, _APP_DIR)
+
+from store import ScheduleStore
+
 requests.packages.urllib3.disable_warnings()
 
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
@@ -585,13 +591,8 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
     }
 
     # 3. Load schedule_data.json
-    data = {}
-    if os.path.exists(SECRETARY_SCHEDULE_PATH):
-        try:
-            with open(SECRETARY_SCHEDULE_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            data = {}
+    store = ScheduleStore(os.path.dirname(SECRETARY_SCHEDULE_PATH))
+    data = store.load()
 
     # Ensure date-keyed entry exists for today (holds the daily schedule, shared by all images)
     if today not in data:
@@ -620,11 +621,8 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
                 entry[field] = existing[field]
     
     data[filename] = entry
-    tmp = f"{SECRETARY_SCHEDULE_PATH}.tmp"
     try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, SECRETARY_SCHEDULE_PATH)
+        store.save(data)
         print(f"🖼️ Synced to gallery: {filename}", file=sys.stderr)
     except Exception as e:
         print(f"[gallery_sync] Failed: {e}", file=sys.stderr)
