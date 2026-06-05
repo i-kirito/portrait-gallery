@@ -1,4 +1,5 @@
 """Web 画廊服务器 - aiohttp"""
+import fcntl
 import json
 import logging
 import os
@@ -14,6 +15,9 @@ from aiohttp import web
 from store import ScheduleStore
 
 logger = logging.getLogger(__name__)
+
+# 日期 key 正则：匹配 YYYY-MM-DD 格式
+DATE_KEY_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 
 
 class GalleryServer:
@@ -152,51 +156,60 @@ class GalleryServer:
         try:
             body = await request.json()
             
-            # 读取现有配置
-            api_keys_path = os.path.join(self.data_dir, "api_keys_config.json")
-            keys_config = {}
-            if os.path.exists(api_keys_path):
-                with open(api_keys_path, 'r') as f:
-                    keys_config = json.load(f)
+            # 使用 ScheduleStore 的文件锁保护写入
+            store = ScheduleStore(self.data_dir)
+            lock_path = store.lock_path
             
-            # 更新配置（只更新提供的字段）
-            if "gpt_key" in body and body["gpt_key"]:
-                keys_config["gpt_key"] = body["gpt_key"]
-            if "gpt_base_url" in body and body["gpt_base_url"]:
-                keys_config["gpt_base_url"] = body["gpt_base_url"]
-            if "cpa_url" in body and body["cpa_url"]:
-                keys_config["cpa_url"] = body["cpa_url"]
-            if "cpa_key" in body and body["cpa_key"]:
-                keys_config["cpa_key"] = body["cpa_key"]
-            # appearance: always update (empty string = reset to default)
-            if "appearance" in body:
-                keys_config["appearance"] = body["appearance"]
-            
-            # 写入 api_keys_config.json
-            with open(api_keys_path, 'w', encoding='utf-8') as f:
-                json.dump(keys_config, f, ensure_ascii=False, indent=2)
-            
-            # 更新 plugin_config.json 的 gitee_config.api_keys[0]
-            if "gitee_key" in body and body["gitee_key"]:
-                plugin_config_path = os.path.join(self.data_dir, "plugin_config.json")
-                plugin_config = {}
-                if os.path.exists(plugin_config_path):
-                    with open(plugin_config_path, 'r') as f:
-                        plugin_config = json.load(f)
-                
-                if "gitee_config" not in plugin_config:
-                    plugin_config["gitee_config"] = {}
-                if "api_keys" not in plugin_config["gitee_config"]:
-                    plugin_config["gitee_config"]["api_keys"] = []
-                
-                # 更新或添加第一个 key
-                if plugin_config["gitee_config"]["api_keys"]:
-                    plugin_config["gitee_config"]["api_keys"][0] = body["gitee_key"]
-                else:
-                    plugin_config["gitee_config"]["api_keys"].append(body["gitee_key"])
-                
-                with open(plugin_config_path, 'w', encoding='utf-8') as f:
-                    json.dump(plugin_config, f, ensure_ascii=False, indent=2)
+            with open(lock_path, "w") as lf:
+                fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+                try:
+                    # 读取现有配置
+                    api_keys_path = os.path.join(self.data_dir, "api_keys_config.json")
+                    keys_config = {}
+                    if os.path.exists(api_keys_path):
+                        with open(api_keys_path, 'r') as f:
+                            keys_config = json.load(f)
+                    
+                    # 更新配置（只更新提供的字段）
+                    if "gpt_key" in body and body["gpt_key"]:
+                        keys_config["gpt_key"] = body["gpt_key"]
+                    if "gpt_base_url" in body and body["gpt_base_url"]:
+                        keys_config["gpt_base_url"] = body["gpt_base_url"]
+                    if "cpa_url" in body and body["cpa_url"]:
+                        keys_config["cpa_url"] = body["cpa_url"]
+                    if "cpa_key" in body and body["cpa_key"]:
+                        keys_config["cpa_key"] = body["cpa_key"]
+                    # appearance: always update (empty string = reset to default)
+                    if "appearance" in body:
+                        keys_config["appearance"] = body["appearance"]
+                    
+                    # 写入 api_keys_config.json
+                    with open(api_keys_path, 'w', encoding='utf-8') as f:
+                        json.dump(keys_config, f, ensure_ascii=False, indent=2)
+                    
+                    # 更新 plugin_config.json 的 gitee_config.api_keys[0]
+                    if "gitee_key" in body and body["gitee_key"]:
+                        plugin_config_path = os.path.join(self.data_dir, "plugin_config.json")
+                        plugin_config = {}
+                        if os.path.exists(plugin_config_path):
+                            with open(plugin_config_path, 'r') as f:
+                                plugin_config = json.load(f)
+                        
+                        if "gitee_config" not in plugin_config:
+                            plugin_config["gitee_config"] = {}
+                        if "api_keys" not in plugin_config["gitee_config"]:
+                            plugin_config["gitee_config"]["api_keys"] = []
+                        
+                        # 更新或添加第一个 key
+                        if plugin_config["gitee_config"]["api_keys"]:
+                            plugin_config["gitee_config"]["api_keys"][0] = body["gitee_key"]
+                        else:
+                            plugin_config["gitee_config"]["api_keys"].append(body["gitee_key"])
+                        
+                        with open(plugin_config_path, 'w', encoding='utf-8') as f:
+                            json.dump(plugin_config, f, ensure_ascii=False, indent=2)
+                finally:
+                    fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
             
             return web.json_response({"success": True})
             
@@ -207,7 +220,6 @@ class GalleryServer:
     async def handle_today(self, request: web.Request):
         """获取今日数据 - 返回今日所有照片 + 日程信息"""
         today_str = date.today().isoformat()
-        DATE_KEY_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
         try:
             store = ScheduleStore(self.data_dir)
             all_data = store.load()
@@ -657,7 +669,6 @@ class GalleryServer:
 
     def _load_all_entries(self) -> list:
         """加载所有条目（按 image_filename 去重，包含日期 key 条目用于日程共享）"""
-        DATE_KEY_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
         try:
             store = ScheduleStore(self.data_dir)
             all_data = store.load()

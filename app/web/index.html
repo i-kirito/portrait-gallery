@@ -1443,6 +1443,13 @@ body {
 .egg-photo-status-badge.past { background: #e5e7eb; color: #6b7280; }
 .egg-photo-time { font-weight: 600; color: #ff6b9d; min-width: 48px; }
 .egg-photo-theme { font-size: 11px; color: #888; background: #f5f3f7; padding: 2px 8px; border-radius: 6px; }
+.egg-header .egg-date-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.egg-refresh-btn { background: rgba(255,255,255,0.2); border: none; color: #fff; width: 28px; height: 28px; border-radius: 50%; font-size: 15px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background 0.2s; padding: 0; line-height: 1; flex-shrink: 0; }
+.egg-refresh-btn:hover { background: rgba(255,255,255,0.4); }
+.egg-refresh-btn.spinning .egg-refresh-icon { animation: eggSpin 0.8s linear infinite; }
+@keyframes eggSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.egg-refresh-icon { display: inline-block; }
+.egg-slot-empty { opacity: 0.5; font-style: italic; }
 
 /* 📝 提示词弹窗 */
 .prompt-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(6px); z-index: 10000; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
@@ -1466,7 +1473,12 @@ body {
   <div class="egg-card">
     <div class="egg-header">
       <h2>🐷 今日日程秘密</h2>
-      <div class="egg-date" id="eggDate"></div>
+      <div class="egg-date-row">
+        <div class="egg-date" id="eggDate"></div>
+        <button class="egg-refresh-btn" onclick="refreshScheduleEgg()" title="刷新">
+          <span class="egg-refresh-icon">🔄</span>
+        </button>
+      </div>
       <button class="egg-close" onclick="closeScheduleEgg()">✕</button>
     </div>
     <div class="egg-body" id="eggBody">
@@ -2831,6 +2843,8 @@ document.addEventListener("keydown", e => {
 })();
 
 // 🐷 日程彩蛋弹窗（左上角 logo 点击触发）
+function escapeHtml(s) { var d=document.createElement('div'); d.appendChild(document.createTextNode(s)); return d.innerHTML; }
+
 function inferTheme(timeStr) {
   // 根据 HH:mm 推断主题：<12=morning, 12-17=noon, 18-20=evening, >20=bedtime
   var h = parseInt(timeStr.split(':')[0], 10);
@@ -2843,16 +2857,9 @@ function themeLabel(t) {
   return { morning: '☀️ 晨间', noon: '🌤 午后', evening: '🌆 傍晚', bedtime: '🌙 睡前' }[t] || t;
 }
 
-function openScheduleEgg() {
-  var overlay = document.getElementById('eggOverlay');
-  // 再次点击关闭
-  if (overlay.classList.contains('show')) {
-    closeScheduleEgg();
-    return;
-  }
+function loadScheduleEggData() {
   var body = document.getElementById('eggBody');
   var dateEl = document.getElementById('eggDate');
-  overlay.classList.add('show');
   body.innerHTML = '<div class="egg-loading">🔮 正在窥探猪猪的日程秘密...</div>';
 
   // 并行拉两个接口
@@ -2869,7 +2876,7 @@ function openScheduleEgg() {
       return;
     }
 
-    dateEl.textContent = detail.date + (detail.outfit_style ? ' · ' + detail.outfit_style : '');
+    dateEl.textContent = detail.date + (detail.outfit_style ? ' · ' + escapeHtml(detail.outfit_style) : '');
 
     var html = '';
 
@@ -2893,8 +2900,8 @@ function openScheduleEgg() {
         var statusIcon = isPast ? '✅' : '⏳';
         var statusCls = isPast ? 'past' : 'future';
         html += '<div class="egg-sched-item ' + statusCls + '">';
-        html += '<div class="egg-sched-time">' + statusIcon + ' ' + item.time + '<span class="egg-sched-theme ' + theme + '">' + themeLabel(theme) + '</span></div>';
-        html += '<div class="egg-sched-activity">' + item.activity + '</div>';
+        html += '<div class="egg-sched-time">' + statusIcon + ' ' + escapeHtml(item.time) + '<span class="egg-sched-theme ' + theme + '">' + themeLabel(theme) + '</span></div>';
+        html += '<div class="egg-sched-activity">' + escapeHtml(item.activity) + '</div>';
         html += '</div>';
       }
       html += '</div></div>';
@@ -2917,59 +2924,69 @@ function openScheduleEgg() {
       }
     }
 
-    // 显示完整的全天生图计划（基于日程条目）
-    if (schedule.length > 0) {
-      html += '<div class="egg-photo-status">';
-      html += '<div class="egg-photo-status-title"><span class="icon">📸</span>今日生图计划</div>';
-      html += '<div class="egg-photo-list">';
-      for (var k = 0; k < schedule.length; k++) {
-        var schedItem = schedule[k];
-        var schedTime = schedItem.time;
-        var schedTheme = inferTheme(schedTime);
-        var schedParts = schedTime.split(':');
-        var schedH = parseInt(schedParts[0], 10);
-        var schedM = parseInt(schedParts[1] || '0', 10);
-        var schedPast = (nowH > schedH) || (nowH === schedH && nowM >= schedM);
+    // 定义 4 个时段
+    var timeSlots = [
+      { key: 'morning', label: '☀️ 晨间', range: '<12:00', test: function(h) { return h < 12; } },
+      { key: 'noon', label: '🌤 午后', range: '12:00-17:59', test: function(h) { return h >= 12 && h < 18; } },
+      { key: 'evening', label: '🌆 傍晚', range: '18:00-20:59', test: function(h) { return h >= 18 && h <= 20; } },
+      { key: 'bedtime', label: '🌙 睡前', range: '>21:00', test: function(h) { return h >= 21; } }
+    ];
 
-        // 检查是否有对应的照片
-        var hasPhoto = photoTimeMap[schedTime];
-        var isDone = !!hasPhoto;
+    // 显示完整的全天生图计划（4 个时段）
+    html += '<div class="egg-photo-status">';
+    html += '<div class="egg-photo-status-title"><span class="icon">📸</span>今日生图计划</div>';
+    html += '<div class="egg-photo-list">';
 
-        var statusCls2 = isDone ? 'done' : (schedPast ? 'past' : 'pending');
-        var statusText = isDone ? '✅ 已完成' : (schedPast ? '✅ 已过' : '⏳ 待执行');
+    for (var s = 0; s < timeSlots.length; s++) {
+      var slot = timeSlots[s];
+      // 找到属于此时段的所有日程条目
+      var slotItems = [];
+      if (schedule.length > 0) {
+        for (var si = 0; si < schedule.length; si++) {
+          var sItem = schedule[si];
+          var sH = parseInt(sItem.time.split(':')[0], 10);
+          if (slot.test(sH)) {
+            slotItems.push(sItem);
+          }
+        }
+      }
 
-        html += '<div class="egg-photo-item">';
-        html += '<span class="egg-photo-status-badge ' + statusCls2 + '">' + statusText + '</span>';
-        html += '<span class="egg-photo-time">' + schedTime + '</span>';
-        html += '<span class="egg-photo-theme">' + themeLabel(schedTheme) + '</span>';
-        if (schedItem.activity) html += '<span style="font-size:12px;color:#666;margin-left:8px;">' + schedItem.activity + '</span>';
-        if (hasPhoto && hasPhoto.outfit_style) html += '<span style="font-size:11px;color:#888;margin-left:auto;">' + hasPhoto.outfit_style + '</span>';
+      if (slotItems.length > 0) {
+        // 显示此时段的所有条目
+        for (var sk = 0; sk < slotItems.length; sk++) {
+          var schedItem = slotItems[sk];
+          var schedTime = schedItem.time;
+          var schedParts = schedTime.split(':');
+          var schedH = parseInt(schedParts[0], 10);
+          var schedM = parseInt(schedParts[1] || '0', 10);
+          var schedPast = (nowH > schedH) || (nowH === schedH && nowM >= schedM);
+
+          // 检查是否有对应的照片
+          var hasPhoto = photoTimeMap[schedTime];
+          var isDone = !!hasPhoto;
+
+          var statusCls2 = isDone ? 'done' : (schedPast ? 'past' : 'pending');
+          var statusText = isDone ? '✅ 已完成' : (schedPast ? '⏳ 已过' : '⏳ 待执行');
+
+          html += '<div class="egg-photo-item">';
+          html += '<span class="egg-photo-status-badge ' + statusCls2 + '">' + statusText + '</span>';
+          html += '<span class="egg-photo-time">' + escapeHtml(schedTime) + '</span>';
+          html += '<span class="egg-photo-theme">' + slot.label + '</span>';
+          if (schedItem.activity) html += '<span style="font-size:12px;color:#666;margin-left:8px;">' + escapeHtml(schedItem.activity) + '</span>';
+          if (hasPhoto && hasPhoto.outfit_style) html += '<span style="font-size:11px;color:#888;margin-left:auto;">' + escapeHtml(hasPhoto.outfit_style) + '</span>';
+          html += '</div>';
+        }
+      } else {
+        // 此时段没有日程，显示为"计划中"
+        html += '<div class="egg-photo-item egg-slot-empty">';
+        html += '<span class="egg-photo-status-badge pending">⏳ 计划中</span>';
+        html += '<span class="egg-photo-time">' + slot.range + '</span>';
+        html += '<span class="egg-photo-theme">' + slot.label + '</span>';
         html += '</div>';
       }
-      html += '</div></div>';
-    } else if (photos.length > 0) {
-      // fallback: 如果没有日程数据但有照片，只显示照片
-      photos.sort(function(a, b) { return (a.time || a.schedule_time || '').localeCompare(b.time || b.schedule_time || ''); });
-      html += '<div class="egg-photo-status">';
-      html += '<div class="egg-photo-status-title"><span class="icon">📸</span>今日生图计划</div>';
-      html += '<div class="egg-photo-list">';
-      for (var j2 = 0; j2 < photos.length; j2++) {
-        var p2 = photos[j2];
-        var pTime2 = p2.time || p2.schedule_time || '';
-        var pStatus2 = p2.status || '';
-        var isDone2 = (pStatus2 === 'ok' || pStatus2 === 'done' || !!p2.image);
-        var statusCls2 = isDone2 ? 'done' : 'pending';
-        var statusText2 = isDone2 ? '✅ 已完成' : '⏳ 待执行';
-        var pTheme2 = pTime2 ? inferTheme(pTime2) : '';
-        html += '<div class="egg-photo-item">';
-        html += '<span class="egg-photo-status-badge ' + statusCls2 + '">' + statusText2 + '</span>';
-        if (pTime2) html += '<span class="egg-photo-time">' + pTime2 + '</span>';
-        if (pTheme2) html += '<span class="egg-photo-theme">' + themeLabel(pTheme2) + '</span>';
-        if (p2.outfit_style) html += '<span style="font-size:11px;color:#888;margin-left:auto;">' + p2.outfit_style + '</span>';
-        html += '</div>';
-      }
-      html += '</div></div>';
     }
+
+    html += '</div></div>';
 
     // ===== 服饰详情 =====
     var outfit = detail.outfit || {};
@@ -2981,7 +2998,7 @@ function openScheduleEgg() {
       html += '<div class="egg-outfit-grid">';
       for (var m = 0; m < outfitKeys.length; m++) {
         if (outfit[outfitKeys[m]]) {
-          html += '<div class="egg-outfit-item"><div class="egg-outfit-label">' + (outfitIcons[outfitKeys[m]]||'') + ' ' + outfitKeys[m] + '</div><div class="egg-outfit-value">' + outfit[outfitKeys[m]] + '</div></div>';
+          html += '<div class="egg-outfit-item"><div class="egg-outfit-label">' + (outfitIcons[outfitKeys[m]]||'') + ' ' + outfitKeys[m] + '</div><div class="egg-outfit-value">' + escapeHtml(outfit[outfitKeys[m]]) + '</div></div>';
         }
       }
       html += '</div></div>';
@@ -2989,7 +3006,7 @@ function openScheduleEgg() {
 
     // ===== 心情文案 =====
     if (detail.caption) {
-      html += '<div class="egg-section"><div class="egg-section-title"><span class="icon">💭</span>猪猪的心思</div><div class="egg-caption">' + detail.caption + '</div></div>';
+      html += '<div class="egg-section"><div class="egg-section-title"><span class="icon">💭</span>猪猪的心思</div><div class="egg-caption">' + escapeHtml(detail.caption) + '</div></div>';
     }
 
     if (!html) {
@@ -3000,6 +3017,26 @@ function openScheduleEgg() {
   }).catch(function() {
     body.innerHTML = '<div class="egg-empty"><div class="icon">😵</div><p>加载失败了...</p></div>';
   });
+}
+
+function openScheduleEgg() {
+  var overlay = document.getElementById('eggOverlay');
+  // 再次点击关闭
+  if (overlay.classList.contains('show')) {
+    closeScheduleEgg();
+    return;
+  }
+  overlay.classList.add('show');
+  loadScheduleEggData();
+}
+
+function refreshScheduleEgg() {
+  var btn = document.querySelector('.egg-refresh-btn');
+  if (btn && !btn.classList.contains('spinning')) {
+    btn.classList.add('spinning');
+    setTimeout(function() { btn.classList.remove('spinning'); }, 800);
+  }
+  loadScheduleEggData();
 }
 
 function closeScheduleEgg() {
