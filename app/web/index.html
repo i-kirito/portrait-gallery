@@ -3008,10 +3008,10 @@ function loadScheduleEggData() {
       }
     }
 
-    // 过滤：显示已完成/当前时段，以及真实待执行 job 对应的未来日程
+    // 过滤：只显示已完成 + 当前时段 + 下一个准备触发的计划
     var visibleSchedule = [];
     var lastPastIdx = -1;
-    var nextFutureIncluded = false;
+    var nextFutureAdded = false;
     for (var i = 0; i < schedule.length; i++) {
       var normalizedTime = extractJobTime(schedule[i].time);
       if (!normalizedTime) continue;
@@ -3022,15 +3022,19 @@ function loadScheduleEggData() {
         hasJob: !!jobTimeMap[normalizedTime],
       };
       var itemPast = isPastOrNow(normalizedTime);
-      var shouldShow = itemPast || normalizedItem.hasPhoto || normalizedItem.hasJob || !nextFutureIncluded;
-      if (shouldShow) {
-        normalizedItem.isPast = itemPast;
-        visibleSchedule.push(normalizedItem);
-        if (!itemPast) nextFutureIncluded = true;
-      }
+      
       if (itemPast) {
+        // 已完成/当前时段：显示
+        normalizedItem.isPast = true;
+        visibleSchedule.push(normalizedItem);
         lastPastIdx = visibleSchedule.length - 1;
+      } else if (!nextFutureAdded) {
+        // 下一个未来计划：显示
+        normalizedItem.isPast = false;
+        visibleSchedule.push(normalizedItem);
+        nextFutureAdded = true;
       }
+      // 其他未来计划：不显示
     }
     var activeScheduleIdx = -1;
     for (var ai = 0; ai < visibleSchedule.length; ai++) {

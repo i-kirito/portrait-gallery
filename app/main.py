@@ -386,6 +386,8 @@ class PortraitGalleryApp:
 
     @staticmethod
     def _theme_for_hour(hour: int) -> str:
+        if 0 <= hour < 6:
+            return "bedtime"  # 凌晨 0-5 点算深夜
         if hour < 12:
             return "morning"
         if hour < 18:

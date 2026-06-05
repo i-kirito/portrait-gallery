@@ -369,16 +369,23 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple
         "morning": (6, 11),
         "noon": (12, 17),
         "evening": (18, 20),
-        "bedtime": (21, 23),
+        "bedtime": (21, 23),  # 21-23 晚上
+        "bedtime_late": (0, 5),  # 0-5 凌晨
     }
     hour_min, hour_max = _THEME_HOURS.get(theme, (0, 0))
+    # bedtime 包含凌晨 0-5 点
+    from datetime import datetime
+    now = datetime.now()
+    if theme == "bedtime":
+        hour_min, hour_max = 21, 23  # 晚上
+        # 凌晨 0-5 点单独处理
+        if 0 <= now.hour < 6:
+            hour_min, hour_max = 0, 5
     
     # Split schedule into time slots: "HH:MM activity" → [(hour, min, activity), ...]
     times = re.findall(r'(\d{1,2}):(\d{2})', schedule)
     parts = re.split(r'\d{1,2}:\d{2}\s*', schedule)
     candidates = []
-    from datetime import datetime
-    now = datetime.now()
     now_minutes = now.hour * 60 + now.minute
 
     # parts[0] is empty (before first time), parts[1:] are activities
