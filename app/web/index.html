@@ -1444,11 +1444,12 @@ body {
 .egg-photo-time { font-weight: 600; color: #ff6b9d; min-width: 48px; }
 .egg-photo-theme { font-size: 11px; color: #888; background: #f5f3f7; padding: 2px 8px; border-radius: 6px; }
 .egg-header .egg-date-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-.egg-refresh-btn { background: rgba(255,255,255,0.2); border: none; color: #fff; width: 28px; height: 28px; border-radius: 50%; font-size: 15px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background 0.2s; padding: 0; line-height: 1; flex-shrink: 0; }
-.egg-refresh-btn:hover { background: rgba(255,255,255,0.4); }
-.egg-refresh-btn.spinning .egg-refresh-icon { animation: eggSpin 0.8s linear infinite; }
-@keyframes eggSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.egg-refresh-btn { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.2); color: #fff; width: 32px; height: 32px; border-radius: 10px; font-size: 15px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: all 0.25s ease; padding: 0; line-height: 1; flex-shrink: 0; backdrop-filter: blur(4px); }
+.egg-refresh-btn:hover { background: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.4); transform: scale(1.08); }
+.egg-refresh-btn:active { transform: scale(0.95); }
+.egg-refresh-btn.spinning .egg-refresh-icon { animation: eggSpin 0.8s ease-in-out; }
 .egg-refresh-icon { display: inline-block; }
+@keyframes eggSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .egg-slot-empty { opacity: 0.5; font-style: italic; }
 
 /* 📝 提示词弹窗 */
@@ -1476,7 +1477,7 @@ body {
       <div class="egg-date-row">
         <div class="egg-date" id="eggDate"></div>
         <button class="egg-refresh-btn" onclick="refreshScheduleEgg()" title="刷新">
-          <span class="egg-refresh-icon">🔄</span>
+          <svg class="egg-refresh-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         </button>
       </div>
       <button class="egg-close" onclick="closeScheduleEgg()">✕</button>
@@ -2977,11 +2978,13 @@ function loadScheduleEggData() {
           html += '</div>';
         }
       } else {
-        // 此时段没有日程，显示为"计划中"
+        // 此时段没有日程，显示穿搭风格作为空占位
+        var emptyHint = (detail.outfit && detail.outfit['穿搭']) ? detail.outfit['穿搭'] : ((detail.outfit_style || '') + '造型');
         html += '<div class="egg-photo-item egg-slot-empty">';
         html += '<span class="egg-photo-status-badge pending">⏳ 计划中</span>';
         html += '<span class="egg-photo-time">' + slot.range + '</span>';
         html += '<span class="egg-photo-theme">' + slot.label + '</span>';
+        html += '<span style="font-size:12px;color:#999;margin-left:8px;">' + escapeHtml(emptyHint) + '</span>';
         html += '</div>';
       }
     }
