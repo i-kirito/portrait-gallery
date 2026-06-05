@@ -390,10 +390,12 @@ class PortraitGalleryApp:
     def _send_to_wechat(self, image_path: str, caption: str):
         """Send image and caption to WeChat via hermes CLI."""
         import subprocess as sp
+        # 使用 hermes 完整路径，避免 launchd 环境找不到命令
+        hermes_cmd = "/Users/ikirito/.hermes/hermes-agent/venv/bin/hermes"
         try:
             # 发送图片
             logger.info(f"发送图片到微信: {image_path}")
-            r1 = sp.run(["hermes", "send", "--to", "weixin", f"MEDIA:{image_path}"],
+            r1 = sp.run([hermes_cmd, "send", "--to", "weixin", f"MEDIA:{image_path}"],
                         capture_output=True, text=True, timeout=60)
             if r1.returncode != 0:
                 logger.error(f"发送图片失败: {r1.stderr[:200]}")
@@ -402,7 +404,7 @@ class PortraitGalleryApp:
             # 发送文案
             if caption:
                 logger.info(f"发送文案到微信: {caption[:50]}...")
-                r2 = sp.run(["hermes", "send", "--to", "weixin", caption],
+                r2 = sp.run([hermes_cmd, "send", "--to", "weixin", caption],
                             capture_output=True, text=True, timeout=60)
                 if r2.returncode != 0:
                     logger.error(f"发送文案失败: {r2.stderr[:200]}")
