@@ -347,24 +347,25 @@ class GalleryServer:
         """获取 CPA 可用模型列表"""
         try:
             import requests
-            # 从 config.yaml 读取 CPA URL
+            # 从 api_keys_config.json 读取 CPA 配置
             cpa_url = "http://127.0.0.1:8327"
-            if self.config_path and os.path.exists(self.config_path):
+            cpa_key = ""
+            api_keys_path = os.path.join(self.data_dir, "api_keys_config.json")
+            if os.path.exists(api_keys_path):
                 try:
-                    import yaml
-                    with open(self.config_path, 'r') as f:
-                        full_config = yaml.safe_load(f) or {}
-                    # 从 api_keys_config.json 读取 cpa_url
-                    api_keys_path = os.path.join(self.data_dir, "api_keys_config.json")
-                    if os.path.exists(api_keys_path):
-                        with open(api_keys_path, 'r') as f:
-                            keys = json.load(f)
-                        if keys.get("cpa_url"):
-                            cpa_url = keys["cpa_url"].rstrip("/").replace("/v1", "")
+                    with open(api_keys_path, 'r') as f:
+                        keys = json.load(f)
+                    if keys.get("cpa_url"):
+                        cpa_url = keys["cpa_url"].rstrip("/").replace("/v1", "")
+                    cpa_key = keys.get("cpa_key", "")
                 except Exception:
                     pass
-
-            resp = requests.get(f"{cpa_url}/v1/models", timeout=5)
+            
+            headers = {}
+            if cpa_key:
+                headers["Authorization"] = f"Bearer {cpa_key}"
+            
+            resp = requests.get(f"{cpa_url}/v1/models", headers=headers, timeout=5)
             if resp.status_code == 200:
                 data = resp.json()
                 models = sorted([m["id"] for m in data.get("data", [])])
