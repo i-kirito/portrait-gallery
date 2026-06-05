@@ -729,6 +729,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         "让主人充满期待和代入感。"
         "不要提任何技术术语、英文提示词、模型名称。可以适当用 emoji。"
         "直接输出配文内容，不要加引号或标题。"
+        "绝对不要在末尾加「网页版」「查看详情」「点击查看」等任何引导性后缀。"
     )
 
     if img_b64:

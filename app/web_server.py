@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 # 日期 key 正则：匹配 YYYY-MM-DD 格式
 DATE_KEY_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+DEFAULT_PHOTO_JOB_LIMIT = 6
+MIN_PHOTO_JOB_LIMIT = 1
+MAX_PHOTO_JOB_LIMIT = 6
 
 
 class GalleryServer:
@@ -39,6 +42,7 @@ class GalleryServer:
         self.on_generate_custom = None
         self.on_list_photo_jobs = None
         self.on_refresh_schedule = None
+        self.on_rebuild_photo_jobs = None
 
         self.app = web.Application(middlewares=[self.api_key_middleware])
         self._setup_routes()
@@ -94,6 +98,8 @@ class GalleryServer:
         # 日程彩蛋
         self.app.router.add_get("/api/schedule-detail", self.handle_schedule_detail)
         self.app.router.add_get("/api/photo-jobs", self.handle_photo_jobs)
+        self.app.router.add_get("/api/photo-job-limit", self.handle_photo_job_limit)
+        self.app.router.add_post("/api/photo-job-limit", self.handle_photo_job_limit)
 
         # 图片服务
         self.app.router.add_static("/images", self.image_dir, show_index=False)
@@ -115,6 +121,77 @@ class GalleryServer:
     async def handle_health(self, request: web.Request):
         return web.json_response({"status": "ok"})
 
+    def _plugin_config_path(self) -> str:
+        return os.path.join(self.data_dir, "plugin_config.json")
+
+    @staticmethod
+    def _clamp_photo_job_limit(value) -> int:
+        try:
+            limit = int(value)
+        except (TypeError, ValueError):
+            limit = DEFAULT_PHOTO_JOB_LIMIT
+        return max(MIN_PHOTO_JOB_LIMIT, min(MAX_PHOTO_JOB_LIMIT, limit))
+
+    def get_photo_job_limit(self) -> int:
+        """Read daily dynamic photo-job limit from plugin_config.json."""
+        path = self._plugin_config_path()
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                return self._clamp_photo_job_limit(data.get("photo_job_limit", DEFAULT_PHOTO_JOB_LIMIT))
+        except Exception as e:
+            logger.error(f"Load photo job limit error: {e}")
+        return DEFAULT_PHOTO_JOB_LIMIT
+
+    def _save_photo_job_limit(self, limit: int) -> int:
+        """Persist daily dynamic photo-job limit to plugin_config.json."""
+        limit = self._clamp_photo_job_limit(limit)
+        store = ScheduleStore(self.data_dir)
+        lock_path = store.lock_path
+        path = self._plugin_config_path()
+
+        with open(lock_path, "w") as lf:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+            try:
+                data = {}
+                if os.path.exists(path):
+                    try:
+                        with open(path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                    except (json.JSONDecodeError, OSError):
+                        data = {}
+                data["photo_job_limit"] = limit
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+            finally:
+                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+        return limit
+
+    def _today_completed_photo_count(self) -> int:
+        today_str = date.today().isoformat()
+        seen = set()
+        try:
+            store = ScheduleStore(self.data_dir)
+            all_data = store.load()
+            for key, entry in all_data.items():
+                if key == "_meta" or not isinstance(entry, dict):
+                    continue
+                if DATE_KEY_RE.match(key):
+                    continue
+                if entry.get("date") != today_str or entry.get("status") != "ok":
+                    continue
+                if entry.get("source") == "custom":
+                    continue
+                img_file = entry.get("image_filename", "")
+                if not img_file or img_file in seen:
+                    continue
+                if os.path.exists(os.path.join(self.image_dir, img_file)):
+                    seen.add(img_file)
+        except Exception as e:
+            logger.error(f"Count completed photos error: {e}")
+        return len(seen)
+
     async def handle_photo_jobs(self, request: web.Request):
         """Return actual pending APScheduler image-generation jobs."""
         if not self.on_list_photo_jobs:
@@ -122,17 +199,62 @@ class GalleryServer:
                 "status": "unavailable",
                 "date": date.today().isoformat(),
                 "jobs": [],
+                "max_daily": self.get_photo_job_limit(),
+                "min": MIN_PHOTO_JOB_LIMIT,
+                "max": MAX_PHOTO_JOB_LIMIT,
+                "completed_today": self._today_completed_photo_count(),
             })
         try:
             jobs = self.on_list_photo_jobs()
+            max_daily = self.get_photo_job_limit()
+            completed_today = self._today_completed_photo_count()
             return web.json_response({
                 "status": "ok",
                 "date": date.today().isoformat(),
                 "jobs": jobs,
+                "max_daily": max_daily,
+                "min": MIN_PHOTO_JOB_LIMIT,
+                "max": MAX_PHOTO_JOB_LIMIT,
+                "completed_today": completed_today,
+                "remaining_today": max(0, max_daily - completed_today - len(jobs)),
             })
         except Exception as e:
             logger.error(f"Load photo jobs error: {e}")
             return web.json_response({"error": str(e), "jobs": []}, status=500)
+
+    async def handle_photo_job_limit(self, request: web.Request):
+        """Read or update the daily dynamic photo-job limit."""
+        if request.method == "GET":
+            max_daily = self.get_photo_job_limit()
+            return web.json_response({
+                "status": "ok",
+                "date": date.today().isoformat(),
+                "max_daily": max_daily,
+                "min": MIN_PHOTO_JOB_LIMIT,
+                "max": MAX_PHOTO_JOB_LIMIT,
+                "completed_today": self._today_completed_photo_count(),
+            })
+
+        try:
+            body = await request.json()
+            limit = self._save_photo_job_limit(body.get("max_daily", body.get("limit")))
+            jobs = []
+            if self.on_rebuild_photo_jobs:
+                jobs = self.on_rebuild_photo_jobs() or []
+            completed_today = self._today_completed_photo_count()
+            return web.json_response({
+                "status": "ok",
+                "date": date.today().isoformat(),
+                "max_daily": limit,
+                "min": MIN_PHOTO_JOB_LIMIT,
+                "max": MAX_PHOTO_JOB_LIMIT,
+                "completed_today": completed_today,
+                "remaining_today": max(0, limit - completed_today - len(jobs)),
+                "jobs": jobs,
+            })
+        except Exception as e:
+            logger.error(f"Save photo job limit error: {e}")
+            return web.json_response({"error": str(e)}, status=500)
 
     async def handle_refresh_schedule(self, request: web.Request):
         """Regenerate today's schedule without generating an image."""
@@ -259,6 +381,85 @@ class GalleryServer:
         if scene and not parts.get("场景"):
             parts["场景"] = scene
         return parts
+
+    @staticmethod
+    def _parse_time_activity(value: str) -> tuple[str, str]:
+        """Parse "HH:mm activity" into normalized time and activity."""
+        match = re.match(r'\s*(\d{1,2}):(\d{2})\s*(.*)', str(value or ""))
+        if not match:
+            return "", str(value or "").strip()
+
+        hour = int(match.group(1))
+        minute = int(match.group(2))
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            return "", match.group(3).strip()
+        return f"{hour:02d}:{minute:02d}", match.group(3).strip()
+
+    @staticmethod
+    def _time_sort_value(time_text: str) -> int:
+        time_value, _ = GalleryServer._parse_time_activity(time_text)
+        if not time_value:
+            return 24 * 60
+        hour, minute = time_value.split(":")
+        return int(hour) * 60 + int(minute)
+
+    @staticmethod
+    def _photo_schedule_activity(entry: dict) -> str:
+        prompt = (entry.get("prompt") or "").strip()
+        plan_match = re.search(r"Today's plan:\s*(.+?)(?:\.\s*Style:|\.|$)", prompt, re.IGNORECASE | re.DOTALL)
+        if plan_match:
+            return re.sub(r'\s+', ' ', plan_match.group(1)).strip()
+
+        prompt_lower = prompt.lower()
+        if "night market" in prompt_lower or "street food" in prompt_lower:
+            return "在夜市街头借着日落余晖拍照"
+        if "city lights" in prompt_lower and "railing" in prompt_lower:
+            return "站在栏杆边欣赏城市夜景"
+        if "sunset" in prompt_lower or "golden hour" in prompt_lower:
+            return "趁着日落余晖在户外拍照"
+        if "cafe" in prompt_lower or "coffee" in prompt_lower:
+            return "在咖啡馆享受悠闲时光"
+        if "restaurant" in prompt_lower:
+            return "在餐厅享用今天的美食"
+        if "park" in prompt_lower:
+            return "在公园里散步拍照"
+        if "bed" in prompt_lower or "bedroom" in prompt_lower:
+            return "在卧室里放松休息"
+        if "bathroom" in prompt_lower or "vanity" in prompt_lower:
+            return "在浴室做护肤放松"
+
+        model_name = (entry.get("model_name") or "").strip()
+        if model_name:
+            return f"{model_name} 生图完成"
+        return "生图完成"
+
+    def _photo_schedule_item(self, entry: dict) -> dict:
+        """Build a schedule item from a generated photo entry."""
+        if not isinstance(entry, dict):
+            return {}
+
+        schedule_time, activity = self._parse_time_activity(entry.get("schedule_time", ""))
+        photo_time, _ = self._parse_time_activity(entry.get("time", ""))
+        time_text = schedule_time or photo_time
+        if not time_text:
+            return {}
+
+        if not activity:
+            activity = self._photo_schedule_activity(entry)
+        return {"time": time_text, "activity": activity}
+
+    def _enrich_photo_schedule_time(self, entry: dict) -> dict:
+        """Return a copy with schedule_time filled from image time when missing."""
+        if not isinstance(entry, dict) or entry.get("schedule_time"):
+            return entry
+
+        item = self._photo_schedule_item(entry)
+        if not item:
+            return entry
+
+        enriched = dict(entry)
+        enriched["schedule_time"] = f"{item['time']} {item['activity']}"
+        return enriched
 
     async def handle_save_keys(self, request: web.Request):
         """保存 API 密钥配置"""
@@ -409,7 +610,7 @@ class GalleryServer:
                         img_path = os.path.join(self.image_dir, img_file)
                         if os.path.exists(img_path):
                             seen.add(img_file)
-                            photos.append(e)
+                            photos.append(self._enrich_photo_schedule_time(e))
 
             if photos:
                 # Sort by timestamp in filename (newest first)
@@ -469,8 +670,13 @@ class GalleryServer:
             today_photos = []
             for key, e in all_data.items():
                 if key == "_meta": continue
-                if isinstance(e, dict) and e.get("date") == today_str and e.get("status") == "ok":
-                    today_photos.append(e)
+                if (
+                    isinstance(e, dict)
+                    and e.get("date") == today_str
+                    and e.get("status") == "ok"
+                    and e.get("source") != "custom"
+                ):
+                    today_photos.append(self._enrich_photo_schedule_time(e))
 
             # 如果有日程条目，用它；否则从图片条目拼凑
             outfit_parts = {}
@@ -487,18 +693,20 @@ class GalleryServer:
                 for line in schedule_entry.get("schedule", "").split("\n"):
                     line = line.strip()
                     if not line: continue
-                    m = re.match(r'(\d{1,2}:\d{2})\s*(.*)', line)
-                    if m:
-                        schedule_items.append({"time": m.group(1), "activity": m.group(2).strip()})
+                    time_text, activity = self._parse_time_activity(line)
+                    if time_text:
+                        schedule_items.append({"time": time_text, "activity": activity})
 
-            # 从图片条目补充 schedule_time（如果日程为空或不完整）
-            if not schedule_items and today_photos:
-                for p in sorted(today_photos, key=lambda x: x.get("time", "")):
-                    st = p.get("schedule_time", "")
-                    if st:
-                        m = re.match(r'(\d{1,2}:\d{2})\s*(.*)', st)
-                        if m:
-                            schedule_items.append({"time": m.group(1), "activity": m.group(2).strip()})
+            # 从图片条目补充 schedule_time：日程原文可能缺少手动/补生成的照片
+            if today_photos:
+                seen_times = {item.get("time") for item in schedule_items}
+                for p in sorted(today_photos, key=lambda x: self._time_sort_value(x.get("schedule_time") or x.get("time", ""))):
+                    item = self._photo_schedule_item(p)
+                    if not item or item["time"] in seen_times:
+                        continue
+                    schedule_items.append(item)
+                    seen_times.add(item["time"])
+                schedule_items.sort(key=lambda item: self._time_sort_value(item.get("time", "")))
 
             # 从图片条目补充 outfit（如果日程条目没有）
             if not outfit_parts and today_photos:
@@ -866,7 +1074,7 @@ class GalleryServer:
                     else:
                         # Non-date-key entry without image_filename is broken, skip
                         continue
-                    result.append(entry)
+                    result.append(self._enrich_photo_schedule_time(entry))
             return result
         except Exception as e:
             logger.error(f"Load entries error: {e}")

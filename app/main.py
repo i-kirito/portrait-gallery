@@ -111,6 +111,7 @@ class PortraitGalleryApp:
         self.web_server.on_generate_custom = self.generate_custom
         self.web_server.on_list_photo_jobs = self.list_photo_jobs
         self.web_server.on_refresh_schedule = self.refresh_schedule
+        self.web_server.on_rebuild_photo_jobs = self.rebuild_photo_jobs
 
         # APScheduler
         self.aps = AsyncIOScheduler(timezone="Asia/Shanghai")
@@ -220,6 +221,56 @@ class PortraitGalleryApp:
                 save_schedule_entry(self.data_dir, entry)
         return entry
 
+    def _get_photo_job_limit(self) -> int:
+        if hasattr(self.web_server, "get_photo_job_limit"):
+            return self.web_server.get_photo_job_limit()
+        return 6
+
+    def _today_completed_photo_count(self) -> int:
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        seen = set()
+        try:
+            all_data = ScheduleStore(self.data_dir).load()
+            for key, entry in all_data.items():
+                if not isinstance(entry, dict):
+                    continue
+                if re.match(r'^\d{4}-\d{2}-\d{2}$', key):
+                    continue
+                if entry.get("date") != today_str or entry.get("status") != "ok":
+                    continue
+                if entry.get("source") == "custom":
+                    continue
+                img_file = entry.get("image_filename", "")
+                if img_file:
+                    seen.add(img_file)
+        except Exception as e:
+            logger.error(f"统计今日已完成生图失败: {e}")
+        return len(seen)
+
+    def _today_schedule_text(self) -> str:
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        try:
+            all_data = ScheduleStore(self.data_dir).load()
+            if today_str in all_data and all_data[today_str].get("schedule"):
+                return all_data[today_str].get("schedule", "")
+            for entry in all_data.values():
+                if (
+                    isinstance(entry, dict)
+                    and entry.get("date") == today_str
+                    and entry.get("schedule")
+                    and entry.get("schedule") != "生成失败"
+                ):
+                    return entry.get("schedule", "")
+        except Exception as e:
+            logger.error(f"读取今日日程失败: {e}")
+        return ""
+
+    def rebuild_photo_jobs(self) -> list:
+        """Rebuild dynamic photo jobs from today's saved schedule."""
+        schedule_text = self._today_schedule_text()
+        self._schedule_dynamic_photos(schedule_text)
+        return self.list_photo_jobs()
+
     def _schedule_dynamic_photos(self, schedule_text: str):
         """Parse HH:mm times from schedule and create one-shot photo jobs."""
         if not schedule_text:
@@ -239,8 +290,22 @@ class PortraitGalleryApp:
 
         # Parse "HH:mm activity" lines
         time_matches = re.findall(r'(\d{1,2}):(\d{2})\s*(.*)', schedule_text)
+        max_daily = self._get_photo_job_limit()
+        completed_count = self._today_completed_photo_count()
+        remaining_slots = max(0, max_daily - completed_count)
+        if remaining_slots <= 0:
+            logger.info(f"今日生图已达上限: completed={completed_count}, max={max_daily}")
+            return
+
         scheduled_count = 0
         for h_str, m_str, activity in time_matches:
+            if scheduled_count >= remaining_slots:
+                logger.info(
+                    f"已达到今日剩余生图上限: scheduled={scheduled_count}, "
+                    f"completed={completed_count}, max={max_daily}"
+                )
+                break
+
             h, m = int(h_str), int(m_str)
             if h < 0 or h > 23 or m < 0 or m > 59:
                 continue
@@ -266,13 +331,16 @@ class PortraitGalleryApp:
                 self.photo_job,
                 'date',
                 run_date=run_time,
-                args=[theme],
+                args=[theme, f"{h:02d}:{m:02d} {activity.strip()}"],
                 id=job_id,
             )
             scheduled_count += 1
             logger.info(f"添加动态生图任务: {h:02d}:{m:02d} theme={theme} activity={activity[:30]}")
 
-        logger.info(f"动态生图任务已创建: {scheduled_count} 个")
+        logger.info(
+            f"动态生图任务已创建: {scheduled_count} 个 "
+            f"(completed={completed_count}, max_daily={max_daily})"
+        )
 
     @staticmethod
     def _theme_for_hour(hour: int) -> str:
@@ -344,9 +412,9 @@ class PortraitGalleryApp:
         jobs.sort(key=lambda item: item["time"])
         return jobs
 
-    async def photo_job(self, theme: str):
+    async def photo_job(self, theme: str, schedule_time: str = ""):
         """定时生图任务 - 调用 generate.py 完整链路"""
-        logger.info(f"开始定时生图: theme={theme}")
+        logger.info(f"开始定时生图: theme={theme}, schedule_time={schedule_time}")
         cmd = [
             "python3",
             os.path.join(os.path.dirname(os.path.abspath(__file__)), "zhuzhu", "generate.py"),
@@ -354,6 +422,8 @@ class PortraitGalleryApp:
             "--caption",
             "--source", "cron",
         ]
+        if schedule_time:
+            cmd.extend(["--schedule-time", schedule_time])
         try:
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(

@@ -1439,6 +1439,11 @@ body {
 .egg-sched-theme.bedtime { background: linear-gradient(135deg, #e0e7ff, #c7d2fe); color: #3730a3; }
 .egg-photo-status { margin-top: 18px; padding: 14px 16px; background: linear-gradient(135deg, #fff7fb, #f7f4ff); border: 1px solid rgba(240,226,255,0.9); border-radius: 14px; box-shadow: 0 10px 22px rgba(168,85,247,0.06); }
 .egg-photo-status-title { font-size: 14px; font-weight: 700; color: #8b5cf6; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+.egg-limit-control { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: -2px 0 11px; padding: 9px 10px; border: 1px solid rgba(244,232,255,0.9); border-radius: 10px; background: rgba(255,255,255,0.72); font-size: 12px; color: #666; }
+.egg-limit-input { width: 52px; height: 28px; border: 1px solid rgba(216,180,254,0.9); border-radius: 8px; text-align: center; color: #7c3aed; font-weight: 700; background: #fff; box-sizing: border-box; }
+.egg-limit-btn { height: 28px; border: 0; border-radius: 8px; padding: 0 12px; background: #8b5cf6; color: #fff; font-size: 12px; font-weight: 700; cursor: pointer; }
+.egg-limit-btn:disabled { opacity: 0.55; cursor: default; }
+.egg-limit-used { color: #999; margin-left: auto; }
 .egg-photo-list { display: flex; flex-direction: column; gap: 8px; }
 .egg-photo-item { display: flex; align-items: center; gap: 10px; row-gap: 7px; flex-wrap: wrap; font-size: 13px; padding: 9px 12px; background: rgba(255,255,255,0.82); border: 1px solid rgba(244,232,255,0.85); border-radius: 10px; box-shadow: 0 1px 4px rgba(86,45,120,0.05); }
 .egg-photo-status-badge { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 10px; white-space: nowrap; }
@@ -2937,6 +2942,10 @@ function loadScheduleEggData() {
     var detail = results[0];
     var today  = results[1];
     var jobsData = results[2];
+    var maxDaily = Math.max(1, Math.min(6, parseInt((jobsData && jobsData.max_daily) || 6, 10) || 6));
+    var minDaily = Math.max(1, parseInt((jobsData && jobsData.min) || 1, 10) || 1);
+    var maxCap = Math.max(minDaily, Math.min(6, parseInt((jobsData && jobsData.max) || 6, 10) || 6));
+    var completedToday = Math.max(0, parseInt((jobsData && jobsData.completed_today) || 0, 10) || 0);
 
     if (!detail || (detail.status !== 'ok' && detail.status !== 'no_schedule')) {
       body.innerHTML = '<div class="egg-empty"><div class="icon">😴</div><p>今天还没有生成日程哦～<br>每天早上 7 点自动生成！</p></div>';
@@ -2952,39 +2961,6 @@ function loadScheduleEggData() {
     var now = new Date();
     var nowH = now.getHours();
     var nowM = now.getMinutes();
-
-    // 过滤：只显示已完成 + 当前时段的日程
-    var visibleSchedule = [];
-    var lastPastIdx = -1;
-    for (var i = 0; i < schedule.length; i++) {
-      var itemParts = schedule[i].time.split(':');
-      var itemH = parseInt(itemParts[0], 10);
-      var itemM = parseInt(itemParts[1] || '0', 10);
-      if ((nowH > itemH) || (nowH === itemH && nowM >= itemM)) {
-        visibleSchedule.push(schedule[i]);
-        lastPastIdx = visibleSchedule.length - 1;
-      }
-    }
-
-    if (visibleSchedule.length > 0) {
-      html += '<div class="egg-section"><div class="egg-section-title"><span class="icon">📅</span>今日日程</div>';
-      html += '<div class="egg-schedule-list">';
-      for (var i = 0; i < visibleSchedule.length; i++) {
-        var item = visibleSchedule[i];
-        var theme = inferTheme(item.time);
-        // 最后一个已完成的 = 当前时段（now），更早的 = past
-        var statusCls = (i === lastPastIdx) ? 'now' : 'past';
-        var statusIcon = (statusCls === 'now') ? '💫' : '✅';
-        html += '<div class="egg-sched-item ' + statusCls + '">';
-        html += '<div class="egg-sched-time">' + statusIcon + ' ' + escapeHtml(item.time) + '<span class="egg-sched-theme ' + theme + '">' + themeLabel(theme) + '</span></div>';
-        html += '<div class="egg-sched-activity">' + escapeHtml(item.activity) + '</div>';
-        html += '</div>';
-      }
-      html += '</div></div>';
-    } else {
-      html += '<div class="egg-section"><div class="egg-section-title"><span class="icon">📅</span>今日日程</div>';
-      html += '<div class="egg-empty" style="padding:20px 0;font-size:13px;color:#aaa;">还没有已完成的日程哦～</div></div>';
-    }
 
     // ===== 生图 job 状态（来自真实 APScheduler jobs + 已完成照片记录）=====
     var photos = (today && today.photos) ? today.photos : [];
@@ -3006,7 +2982,14 @@ function loadScheduleEggData() {
       return (parseInt(parts[0], 10) || 0) * 60 + (parseInt(parts[1], 10) || 0);
     }
 
-    // 构建 photo 时间索引（用于匹配日程条目是否已生图）
+    function isPastOrNow(timeText) {
+      var parts = timeText.split(':');
+      var itemH = parseInt(parts[0], 10);
+      var itemM = parseInt(parts[1] || '0', 10);
+      return (nowH > itemH) || (nowH === itemH && nowM >= itemM);
+    }
+
+    // 构建 photo/job 时间索引，用于让日程区和生图计划区按同一批时间对齐
     var photoTimeMap = {};
     for (var j = 0; j < photos.length; j++) {
       var p = photos[j];
@@ -3016,7 +2999,69 @@ function loadScheduleEggData() {
       }
     }
 
-    // 生图计划只展示真实 job：待执行项来自 /api/photo-jobs，完成项来自图片记录。
+    var jobTimeMap = {};
+    for (var jj = 0; jj < jobs.length; jj++) {
+      var jobForMap = jobs[jj];
+      var jobTime = extractJobTime(jobForMap.time) || extractJobTime(jobForMap.run_at);
+      if (jobTime) {
+        jobTimeMap[jobTime] = jobForMap;
+      }
+    }
+
+    // 过滤：显示已完成/当前时段，以及真实待执行 job 对应的未来日程
+    var visibleSchedule = [];
+    var lastPastIdx = -1;
+    var nextFutureIncluded = false;
+    for (var i = 0; i < schedule.length; i++) {
+      var normalizedTime = extractJobTime(schedule[i].time);
+      if (!normalizedTime) continue;
+      var normalizedItem = {
+        time: normalizedTime,
+        activity: schedule[i].activity || '',
+        hasPhoto: !!photoTimeMap[normalizedTime],
+        hasJob: !!jobTimeMap[normalizedTime],
+      };
+      var itemPast = isPastOrNow(normalizedTime);
+      var shouldShow = itemPast || normalizedItem.hasPhoto || normalizedItem.hasJob || !nextFutureIncluded;
+      if (shouldShow) {
+        normalizedItem.isPast = itemPast;
+        visibleSchedule.push(normalizedItem);
+        if (!itemPast) nextFutureIncluded = true;
+      }
+      if (itemPast) {
+        lastPastIdx = visibleSchedule.length - 1;
+      }
+    }
+    var activeScheduleIdx = -1;
+    for (var ai = 0; ai < visibleSchedule.length; ai++) {
+      if (!visibleSchedule[ai].isPast) {
+        activeScheduleIdx = ai;
+        break;
+      }
+    }
+    if (activeScheduleIdx < 0) activeScheduleIdx = lastPastIdx;
+
+    if (visibleSchedule.length > 0) {
+      html += '<div class="egg-section"><div class="egg-section-title"><span class="icon">📅</span>今日日程</div>';
+      html += '<div class="egg-schedule-list">';
+      for (var i = 0; i < visibleSchedule.length; i++) {
+        var item = visibleSchedule[i];
+        var theme = inferTheme(item.time);
+        // 红点标记下一条可执行日程；已过日程保持完成态。
+        var statusCls = (i === activeScheduleIdx) ? 'now' : (item.isPast ? 'past' : 'future');
+        var statusIcon = statusCls === 'now' ? '💫' : (statusCls === 'future' ? '⏳' : '✅');
+        html += '<div class="egg-sched-item ' + statusCls + '">';
+        html += '<div class="egg-sched-time">' + statusIcon + ' ' + escapeHtml(item.time) + '<span class="egg-sched-theme ' + theme + '">' + themeLabel(theme) + '</span></div>';
+        html += '<div class="egg-sched-activity">' + escapeHtml(item.activity) + '</div>';
+        html += '</div>';
+      }
+      html += '</div></div>';
+    } else {
+      html += '<div class="egg-section"><div class="egg-section-title"><span class="icon">📅</span>今日日程</div>';
+      html += '<div class="egg-empty" style="padding:20px 0;font-size:13px;color:#aaa;">还没有已完成的日程哦～</div></div>';
+    }
+
+    // 生图计划：待执行项来自真实 job，完成项来自图片记录，当前错过项来自日程。
     var planItems = [];
     var planSeen = {};
     for (var ji = 0; ji < jobs.length; ji++) {
@@ -3046,11 +3091,32 @@ function loadScheduleEggData() {
         photo: photo,
       });
     }
+    if (lastPastIdx >= 0) {
+      var currentItem = visibleSchedule[lastPastIdx];
+      if (currentItem && !currentItem.hasPhoto && !currentItem.hasJob && !planSeen[currentItem.time]) {
+        planSeen[currentItem.time] = true;
+        planItems.push({
+          time: currentItem.time,
+          activity: currentItem.activity,
+          theme: inferTheme(currentItem.time),
+          status: 'skipped',
+          scheduleOnly: true,
+        });
+      }
+    }
     planItems.sort(function(a, b) { return timeSortValue(a.time) - timeSortValue(b.time); });
 
     // 显示今日真实生图计划
     html += '<div class="egg-photo-status">';
     html += '<div class="egg-photo-status-title"><span class="icon">📸</span>今日生图计划</div>';
+    var plannedToday = completedToday + jobs.length;
+    html += '<div class="egg-limit-control">';
+    html += '<span>每日上限</span>';
+    html += '<input class="egg-limit-input" id="eggPhotoLimit" type="number" min="' + minDaily + '" max="' + maxCap + '" step="1" value="' + maxDaily + '">';
+    html += '<span>/ ' + maxCap + '</span>';
+    html += '<button class="egg-limit-btn" id="eggPhotoLimitBtn" onclick="savePhotoJobLimit()">保存</button>';
+    html += '<span class="egg-limit-used">已用 ' + plannedToday + '/' + maxDaily + '</span>';
+    html += '</div>';
     html += '<div class="egg-photo-list">';
 
     if (planItems.length > 0) {
@@ -3064,9 +3130,10 @@ function loadScheduleEggData() {
         var planDone = !!planPhoto || plan.status === 'done';
         var planTheme = plan.theme || inferTheme(plan.time);
         var planScheduled = plan.status === 'scheduled';
+        var planSkipped = plan.status === 'skipped';
 
-        var planStatusCls = planDone ? 'done' : (planScheduled ? 'pending' : (planPast ? 'past' : 'pending'));
-        var planStatusText = planDone ? '✅ 已完成' : (planScheduled ? '⏳ 待执行' : (planPast ? '⏳ 已过' : '⏳ 待执行'));
+        var planStatusCls = planDone ? 'done' : ((planSkipped || (planPast && !planScheduled)) ? 'past' : 'pending');
+        var planStatusText = planDone ? '✅ 已完成' : (planSkipped ? '⌛ 已过未排' : (planScheduled ? '⏳ 待执行' : (planPast ? '⏳ 已过' : '⏳ 待执行')));
 
         html += '<div class="egg-photo-item">';
         html += '<span class="egg-photo-status-badge ' + planStatusCls + '">' + planStatusText + '</span>';
@@ -3075,6 +3142,7 @@ function loadScheduleEggData() {
         if (plan.activity) html += '<span style="font-size:12px;color:#666;margin-left:8px;">' + escapeHtml(plan.activity) + '</span>';
         if (planPhoto && planPhoto.outfit_style) html += '<span style="font-size:11px;color:#888;margin-left:auto;">' + escapeHtml(planPhoto.outfit_style) + '</span>';
         else if (plan.job && plan.job.id) html += '<span style="font-size:11px;color:#aaa;margin-left:auto;">' + escapeHtml(plan.job.id) + '</span>';
+        else if (plan.scheduleOnly) html += '<span style="font-size:11px;color:#aaa;margin-left:auto;">刷新时已过</span>';
         html += '</div>';
       }
     } else {
@@ -3114,6 +3182,44 @@ function loadScheduleEggData() {
     body.innerHTML = html;
   }).catch(function() {
     body.innerHTML = '<div class="egg-empty"><div class="icon">😵</div><p>加载失败了...</p></div>';
+  });
+}
+
+function savePhotoJobLimit() {
+  var input = document.getElementById('eggPhotoLimit');
+  var btn = document.getElementById('eggPhotoLimitBtn');
+  if (!input) return;
+
+  var minVal = parseInt(input.getAttribute('min') || '1', 10);
+  var maxVal = parseInt(input.getAttribute('max') || '6', 10);
+  var value = parseInt(input.value, 10);
+  if (isNaN(value)) value = maxVal;
+  value = Math.max(minVal, Math.min(maxVal, value));
+  input.value = value;
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '保存中';
+  }
+
+  var apiSuffix = window.__API_KEY ? '?key=' + window.__API_KEY : '';
+  fetch('/api/photo-job-limit' + apiSuffix, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ max_daily: value })
+  }).then(function(r) {
+    if (!r.ok) throw new Error('save_failed');
+    return r.json();
+  }).then(function() {
+    showToast('已更新每日生图上限');
+    return loadScheduleEggData();
+  }).catch(function() {
+    showToast('保存失败，请稍后再试');
+  }).finally(function() {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '保存';
+    }
   });
 }
 
