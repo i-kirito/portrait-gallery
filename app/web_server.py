@@ -782,9 +782,42 @@ class GalleryServer:
             return web.json_response({"status": "error", "detail": str(e)})
 
     async def handle_ref_list(self, request: web.Request):
-        """返回参考图列表（只返回用户上传的自定义参考图）"""
-        # 只返回上传的参考图，不再返回内置底模
-        return web.json_response([])
+        """返回参考图列表（内置底模 + 用户上传）"""
+        ref_dir = os.path.join(os.path.dirname(__file__), "references")
+        upload_dir = os.path.join(ref_dir, "uploads")
+        refs = []
+
+        # 内置底模参考图
+        _BUILTIN_MAP = {
+            "reference_face.jpg": {"style": "cool", "label": "冷御风"},
+            "ref_style_girly.jpg": {"style": "girly", "label": "少女风"},
+            "ref_style_sweet.jpg": {"style": "sweet", "label": "甜妹风"},
+        }
+        for fname, info in _BUILTIN_MAP.items():
+            fpath = os.path.join(ref_dir, fname)
+            if os.path.isfile(fpath):
+                refs.append({
+                    "filename": fname,
+                    "url": f"/refs/{fname}",
+                    "style": info["style"],
+                    "label": info["label"],
+                    "builtin": True,
+                })
+
+        # 用户上传的参考图
+        if os.path.isdir(upload_dir):
+            for fname in sorted(os.listdir(upload_dir)):
+                fpath = os.path.join(upload_dir, fname)
+                if os.path.isfile(fpath) and fname.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
+                    refs.append({
+                        "filename": fname,
+                        "url": f"/refs/uploads/{fname}",
+                        "style": "upload",
+                        "label": "自定义上传",
+                        "builtin": False,
+                    })
+
+        return web.json_response(refs)
 
     async def handle_uploaded_refs(self, request: web.Request):
         """列出已上传的自定义参考图"""
@@ -906,30 +939,77 @@ class GalleryServer:
         return web.json_response({"error": "no_generator"}, status=500)
 
     async def handle_generate_now(self, request: web.Request):
-        """根据当前时段+日程生图 (💭 现在在干嘛)"""
+        """根据当前精确时间动态生图 (💭 现在在干嘛)"""
         proc = None
         try:
-            # Determine theme based on current time
             from datetime import datetime
-            current_hour = datetime.now().hour
-            
-            # Keep manual "now" generation aligned with dynamic photo jobs.
-            if current_hour < 12:
-                theme = "morning"
-            elif current_hour < 18:
-                theme = "noon"
-            elif current_hour <= 20:
-                theme = "evening"
-            else:
-                theme = "bedtime"
-            
-            logger.info(f"Generate now: hour={current_hour}, theme={theme}")
-            
-            # Run generate.py as subprocess with the determined theme
             import asyncio
+            import json as _json
+
+            now = datetime.now()
+            now_str = now.strftime("%H:%M")
+            logger.info(f"Generate now: time={now_str}, using LLM dynamic prompt")
+
+            # 1) 读取今日日程作为参考
+            schedule_text = ""
+            try:
+                store = ScheduleStore(self.data_dir)
+                all_data = store.load()
+                today_str = now.strftime("%Y-%m-%d")
+                daily = all_data.get(today_str, {})
+                schedule_text = daily.get("schedule", "") if isinstance(daily, dict) else ""
+            except Exception:
+                pass
+
+            # 2) 用 LLM 根据精确时间生成活动描述
+            import urllib.request
+            cpa_url = "http://127.0.0.1:8327/v1/chat/completions"
+            cpa_key = ""
+            try:
+                cfg_path = os.path.join(self.data_dir, "api_keys_config.json")
+                if os.path.exists(cfg_path):
+                    with open(cfg_path) as f:
+                        cpa_key = _json.load(f).get("cpa_key", "")
+            except Exception:
+                pass
+            if not cpa_key:
+                cpa_key = os.environ.get("CPA_API_KEY", "")
+
+            schedule_hint = f"\n今日日程参考：\n{schedule_text}" if schedule_text else ""
+            llm_prompt = (
+                f"现在是 {now_str}。{schedule_hint}\n\n"
+                f"根据当前时间和日程，生成一个最适合这个时间点的活动描述（15-30字中文），"
+                f"要自然、有画面感、贴合时间。直接输出活动描述，不要解释。"
+            )
+
+            activity = ""
+            try:
+                body = _json.dumps({
+                    "model": "gemini-3.5-flash",
+                    "messages": [{"role": "user", "content": llm_prompt}],
+                    "max_tokens": 100,
+                }).encode()
+                req = urllib.request.Request(
+                    cpa_url, data=body,
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {cpa_key}"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    resp_data = _json.loads(resp.read())
+                    activity = resp_data["choices"][0]["message"]["content"].strip().strip('"').strip("'")
+            except Exception as e:
+                logger.warning(f"LLM activity generation failed: {e}")
+
+            if not activity:
+                activity = f"{now_str} 的日常时光"
+
+            logger.info(f"LLM generated activity: {activity}")
+
+            # 3) 调用 generate.py --theme custom --prompt <activity>，用 Gitee 快速出图
             generate_script = os.path.join(os.path.dirname(__file__), "zhuzhu", "generate.py")
             proc = await asyncio.create_subprocess_exec(
-                "python3", generate_script, "--theme", theme, "--caption", "--source", "web",
+                "python3", generate_script, "--theme", "custom", "--caption", "--source", "web",
+                "--prompt", activity, "--engine", "gitee",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=os.path.join(os.path.dirname(__file__), "zhuzhu"),
@@ -971,7 +1051,7 @@ class GalleryServer:
             
             return web.json_response({
                 "status": "ok",
-                "theme": theme,
+                "theme": "custom",
                 "filename": filename,
                 "image_path": f"/images/{filename}",
                 "caption": caption_text,

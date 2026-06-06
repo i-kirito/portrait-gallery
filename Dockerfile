@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制 Python 模块（app/ 下的 .py 文件到 /app/ 根目录）
-COPY app/__init__.py app/main.py app/data.py app/scheduler.py app/image_gen.py app/web_server.py /app/
+COPY app/__init__.py app/main.py app/data.py app/scheduler.py app/image_gen.py app/web_server.py app/store.py app/updater.py /app/
 COPY app/web/ /app/web/
 COPY app/zhuzhu/ /app/zhuzhu/
 COPY app/references/ /app/references/

@@ -1703,7 +1703,8 @@ function shortDate(dateStr) {
 
 // ===== Tab Badges =====
 function updateBadges() {
-  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
   // Only count image entries (exclude date-keyed entries that have no image_filename)
   const imageEntries = allEntries.filter(e => e.image_filename);
   const allCount = imageEntries.length;
@@ -1838,7 +1839,8 @@ function renderToday() {
   // Use todayData from API (has photos array + schedule)
   const photos = (todayData && todayData.photos) ? todayData.photos : [];
   const schedule = todayData ? (todayData.schedule || "") : "";
-  const todayStr = new Date().toISOString().slice(0,10);
+  const _now = new Date();
+  const todayStr = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-${String(_now.getDate()).padStart(2,'0')}`;
 
   if (!photos.length) {
     if (listEl) listEl.style.display = "none";
@@ -2470,26 +2472,37 @@ let uploadedRefs = [];
 async function loadRefImages() {
   const grid = document.getElementById("cgRefGrid");
   try {
-    const uploadedRes = await fetch(`${API}/api/uploaded-refs`);
+    // 同时加载内置底模 + 用户上传
+    const [refListRes, uploadedRes] = await Promise.all([
+      fetch(`${API}/api/ref-list`),
+      fetch(`${API}/api/uploaded-refs`)
+    ]);
+    const refList = await refListRes.json();
     const uploadedRefsFromServer = await uploadedRes.json();
     uploadedRefs = uploadedRefsFromServer;
-    
-    // Build grid: "none" option + uploaded refs only
+
     let html = `<div class="cg-ref-item active" data-ref=""><div class="cg-ref-none">📸</div></div>`;
-    
-    // Add uploaded refs from server
+
+    // 内置底模参考图
+    refList.filter(r => r.builtin).forEach(ref => {
+      html += `<div class="cg-ref-item" data-ref="${ref.url}" title="${ref.label}">
+        <img src="${ref.url}" alt="${ref.label}" loading="lazy" style="object-fit:cover;width:100%;height:100%;">
+        <span style="position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:10px;color:#fff;background:rgba(0,0,0,0.5);border-radius:0 0 8px 8px;">${ref.label}</span>
+      </div>`;
+    });
+
+    // 用户上传的参考图
     uploadedRefs.forEach((u, idx) => {
       html += `<div class="cg-ref-item uploaded" data-ref="${u.url}" data-idx="${idx}" title="${u.label}">
         <img src="${u.url}" alt="${u.label}" loading="lazy" style="object-fit:cover;width:100%;height:100%;">
         <button class="cg-ref-del" onclick="event.stopPropagation();deleteUploadedRef(${idx})">✕</button>
       </div>`;
     });
-    
-    // If no uploaded refs, show a hint
-    if (uploadedRefs.length === 0) {
+
+    if (refList.filter(r => r.builtin).length === 0 && uploadedRefs.length === 0) {
       html += `<div style="padding:10px;color:#999;font-size:13px;">暂无参考图，点击"📤 上传参考图"添加</div>`;
     }
-    
+
     grid.innerHTML = html;
     grid.querySelectorAll(".cg-ref-item").forEach(item => {
       item.addEventListener("click", () => {
@@ -3008,10 +3021,9 @@ function loadScheduleEggData() {
       }
     }
 
-    // 过滤：只显示已完成 + 当前时段 + 下一个准备触发的计划
+    // 过滤：只显示已完成 + 当前时段的日程，不显示未来计划
     var visibleSchedule = [];
     var lastPastIdx = -1;
-    var nextFutureAdded = false;
     for (var i = 0; i < schedule.length; i++) {
       var normalizedTime = extractJobTime(schedule[i].time);
       if (!normalizedTime) continue;
@@ -3028,13 +3040,8 @@ function loadScheduleEggData() {
         normalizedItem.isPast = true;
         visibleSchedule.push(normalizedItem);
         lastPastIdx = visibleSchedule.length - 1;
-      } else if (!nextFutureAdded) {
-        // 下一个未来计划：显示
-        normalizedItem.isPast = false;
-        visibleSchedule.push(normalizedItem);
-        nextFutureAdded = true;
       }
-      // 其他未来计划：不显示
+      // 未来计划：不显示
     }
     var activeScheduleIdx = -1;
     for (var ai = 0; ai < visibleSchedule.length; ai++) {
@@ -3145,7 +3152,6 @@ function loadScheduleEggData() {
         html += '<span class="egg-photo-theme">' + themeLabel(planTheme) + '</span>';
         if (plan.activity) html += '<span style="font-size:12px;color:#666;margin-left:8px;">' + escapeHtml(plan.activity) + '</span>';
         if (planPhoto && planPhoto.outfit_style) html += '<span style="font-size:11px;color:#888;margin-left:auto;">' + escapeHtml(planPhoto.outfit_style) + '</span>';
-        else if (plan.job && plan.job.id) html += '<span style="font-size:11px;color:#aaa;margin-left:auto;">' + escapeHtml(plan.job.id) + '</span>';
         else if (plan.scheduleOnly) html += '<span style="font-size:11px;color:#aaa;margin-left:auto;">刷新时已过</span>';
         html += '</div>';
       }

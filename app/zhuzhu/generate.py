@@ -230,7 +230,7 @@ def _generate_with_gemini_cpa(theme: str, prompt: str):
         elapsed = round(time.time() - start, 2)
         path, filename, ts = save_image(img_data, theme, _GEMINI_CPA_MODEL)
         update_metadata(filename, theme, prompt, _GEMINI_CPA_MODEL, ts, elapsed)
-        sync_to_gallery(path, filename, theme, prompt=prompt, model_name=_GEMINI_CPA_MODEL, source="cron")
+        # sync_to_gallery 由 generate.py 统一处理，此处不重复
         return path
 
     except Exception as e:
@@ -312,16 +312,36 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple
             if style_hint:
                 ctx += f". Style: {style_hint}"
             print(f"📋 Schedule override: {ctx}", file=sys.stderr)
-            # A daily scene keyword can describe only one moment of the day
-            # (for example a shopping mall), so explicit time slots should
-            # rematch their own scene from the activity text.
             return ctx, raw_slot, outfit_kw, ""
+        # 只传了 HH:MM 没有活动文字 → 在日程中精确匹配该时间
+        if schedule and raw_slot:
+            h_match = re.match(r'(\d{1,2}):(\d{2})', raw_slot)
+            if h_match:
+                target_h, target_m = int(h_match.group(1)), int(h_match.group(2))
+                target_min = target_h * 60 + target_m
+                times_all = re.findall(r'(\d{1,2}):(\d{2})', schedule)
+                parts_all = re.split(r'\d{1,2}:\d{2}\s*', schedule)
+                best, best_dist = None, 9999
+                for (hs, ms), act in zip(times_all, parts_all[1:]):
+                    sm = int(hs) * 60 + int(ms)
+                    d = abs(sm - target_min)
+                    if d < best_dist:
+                        best_dist = d
+                        best = act.strip().rstrip('～').strip()
+                if best and best_dist <= 60:
+                    ctx = f"Today's plan: {best}"
+                    print(f"📋 Schedule time-match ({raw_slot}→{best_dist}min): {ctx}", file=sys.stderr)
+                    return ctx, f"{raw_slot} {best}", outfit_kw, ""
     
     if not schedule:
         # Fallback: no schedule found, generate context from current time + theme
         from datetime import datetime
         now = datetime.now()
-        time_str = f"{now.hour:02d}:{now.minute:02d}"
+        # 优先用 schedule_time_override 的精确时间
+        if schedule_time_override:
+            time_str = schedule_time_override.strip()
+        else:
+            time_str = f"{now.hour:02d}:{now.minute:02d}"
         
         _FALLBACK_ACTIVITIES = {
             "morning": ["晨间护肤routine", "喝咖啡看日出", "晨跑后拉伸放松", "做早餐中", "阳台看书晒太阳", "整理穿搭出门"],
@@ -376,6 +396,11 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple
     # bedtime 包含凌晨 0-5 点
     from datetime import datetime
     now = datetime.now()
+    # 优先用 schedule_time_override 的精确时间
+    if schedule_time_override:
+        _tm = re.match(r'(\d{1,2}):(\d{2})', schedule_time_override.strip())
+        if _tm:
+            now = now.replace(hour=int(_tm.group(1)), minute=int(_tm.group(2)))
     if theme == "bedtime":
         hour_min, hour_max = 21, 23  # 晚上
         # 凌晨 0-5 点单独处理

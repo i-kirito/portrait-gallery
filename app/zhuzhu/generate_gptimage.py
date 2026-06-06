@@ -31,38 +31,43 @@ IMG2IMG_TIMEOUT = 300
 
 
 def _get_gpt_key() -> str:
-    """Read GPT key from environment variable or api_keys_config.json"""
-    # 1. Try environment variable
+    """Read GPT key from environment variable or api_keys_config.json."""
     env_key = os.getenv("GPT_IMAGE_API_KEY", "")
     if env_key:
         return env_key
-    # 2. Try config file
-    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "api_keys_config.json")
+
+    config_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "data",
+        "api_keys_config.json",
+    )
     if os.path.exists(config_path):
         try:
-            with open(config_path, 'r') as f:
+            with open(config_path, "r", encoding="utf-8") as f:
                 config = json.load(f)
-                key = config.get("gpt_key", "")
-                if key:
-                    return key
+            return config.get("gpt_key", "")
         except Exception as e:
             print(f"Failed to read api_keys_config.json: {e}", file=sys.stderr)
     return ""
 
 
 def _get_gpt_base_url() -> str:
-    """Read GPT Image base URL from api_keys_config.json, fallback to default"""
+    """Read GPT Image base URL from environment or api_keys_config.json."""
     env_url = os.getenv("GPT_IMAGE_BASE_URL", "")
     if env_url:
         return env_url
-    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "api_keys_config.json")
+
+    config_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "data",
+        "api_keys_config.json",
+    )
     if os.path.exists(config_path):
         try:
-            with open(config_path, 'r') as f:
+            with open(config_path, "r", encoding="utf-8") as f:
                 config = json.load(f)
-                url = config.get("gpt_base_url", "")
-                if url:
-                    return url
+            if config.get("gpt_base_url"):
+                return config["gpt_base_url"]
         except Exception:
             pass
     return GPTIMAGE_DIRECT_URL
@@ -95,9 +100,14 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size:
     Returns:
         (img_data, elapsed_time) tuple or None on failure
     """
+    api_key = _get_gpt_key()
+    if not api_key:
+        print("ERROR: GPT_IMAGE_API_KEY or gpt_key is required", file=sys.stderr)
+        return None
+
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {_get_gpt_key()}",
+        "Authorization": f"Bearer {api_key}",
     }
 
     if ref_image:
@@ -108,7 +118,7 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size:
                 {"type": "text", "text": prompt},
             ]
             # Inject face-only reference instruction so model doesn't copy ref hairstyle or expression
-            face_instruction = "\n[IMPORTANT] Use the reference image ONLY for facial features and face structure as a base. Do NOT copy the hairstyle from the reference image. The hairstyle must strictly follow the text description above. Do NOT copy the facial expression, mouth shape, tongue, or grin from the reference image. The expression must strictly follow the text description."
+            face_instruction = "\n[IMPORTANT] Use the reference image ONLY as a facial reference. Focus on matching the face shape, facial structure, and overall facial features to achieve high similarity with the person in the reference image. Do NOT copy or reference the hairstyle, hair color, hair accessories, clothing, outfit, pose, body posture, hand gestures, background, lighting, or any other non-facial elements from the reference image. All of these must strictly follow the text description above. Do NOT copy the facial expression, mouth shape, tongue, or grin from the reference image — the expression must also strictly follow the text description."
             content = [
                 {"type": "image_url", "image_url": {"url": compressed_img}},
                 {"type": "text", "text": prompt + face_instruction},
@@ -145,18 +155,17 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size:
         data = resp.json()
         msg = data["choices"][0]["message"]
 
-        # CPA format: image in message.images[0].image_url.url (data:image/...;base64,...)
+        # CPA-compatible format: message.images[0].image_url.url
         images = msg.get("images", [])
-        if images and isinstance(images, list) and len(images) > 0:
+        if images and isinstance(images, list):
             img_url = images[0].get("image_url", {}).get("url", "")
-            if img_url and img_url.startswith("data:image/"):
-                b64_data = img_url.split(",", 1)[1]
-                img_data = base64.b64decode(b64_data)
+            if img_url.startswith("data:image/"):
+                img_data = base64.b64decode(img_url.split(",", 1)[1])
             else:
-                print(f"CPA: unexpected image_url format: {str(img_url)[:100]}", file=sys.stderr)
+                print(f"Direct GPT API: unexpected image_url format: {str(img_url)[:100]}", file=sys.stderr)
                 return None
         else:
-            # Fallback: try markdown format from jiuuij.de5.net
+            # jiuuij.de5.net markdown format: ![image](data:image/png;base64,...)
             response_content = msg.get("content", "") or ""
             b64_match = re.search(r'!\[[^\]]*\]\(data:image/[^;]+;base64,([^)]+)\)', response_content)
             if not b64_match:
@@ -199,7 +208,7 @@ def generate(theme: str, send: bool = False, caption: bool = False,
     img_data, gen_time = result
     path, filename, ts = save_image(img_data, theme, GPTIMAGE_DIRECT_MODEL, style=style)
     update_metadata(filename, theme, prompt, GPTIMAGE_DIRECT_MODEL, ts, gen_time)
-    sync_to_gallery(path, filename, theme, style=style, prompt=prompt, model_name=GPTIMAGE_DIRECT_MODEL, source="cron")
+    sync_to_gallery(path, filename, theme, prompt=prompt)
 
     cap_text = None
     if caption:
@@ -220,8 +229,9 @@ if __name__ == "__main__":
     parser.add_argument("--caption", action="store_true")
     parser.add_argument("--prompt", type=str, default=None, help="自定义 prompt")
     parser.add_argument("--ref-image", type=str, default=None, help="参考图本地路径（图生图/img2img 模式）")
+    parser.add_argument("--size", type=str, default=None, help="图片尺寸")
     args = parser.parse_args()
-    path = generate(args.theme, args.send, args.caption, args.prompt, args.ref_image)
+    path = generate(args.theme, args.send, args.caption, args.prompt, args.ref_image, size=args.size)
     if not path:
         print("ERROR: GPT Image generation failed", file=sys.stderr)
         sys.exit(1)
