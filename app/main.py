@@ -25,6 +25,8 @@ from image_gen import ImageGenerator
 from web_server import GalleryServer
 from store import ScheduleStore
 
+TODAY_PHOTO_SOURCES = {"cron", "web"}
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -136,12 +138,7 @@ class PortraitGalleryApp:
                 entry.image_path = f"/images/{filename}"
                 logger.info(f"图片生成成功: {filename}")
             else:
-                logger.warning("图片生成失败，将尝试 Gitee 降级")
-                filename = await self.image_gen.generate(entry.prompt, engine="gitee")
-                if filename:
-                    entry.image_filename = filename
-                    entry.image_path = f"/images/{filename}"
-                    logger.info(f"Gitee 降级生图成功: {filename}")
+                logger.warning("图片生成失败")
 
         # 3. 保存
         save_schedule_entry(self.data_dir, entry)
@@ -165,7 +162,7 @@ class PortraitGalleryApp:
             ref_basename = os.path.basename(ref_image)
             if ref_basename in style_map:
                 style = style_map[ref_basename]
-                ref_path = ""
+                ref_path = ref_image
             else:
                 # Custom uploaded reference - use as --ref-image
                 ref_path = ref_image
@@ -179,7 +176,7 @@ class PortraitGalleryApp:
         filename = await self.image_gen.generate(
             user_prompt,
             style=style,
-            timeout=300,
+            timeout=900,
             **kwargs
         )
         if not filename:
@@ -280,7 +277,7 @@ class PortraitGalleryApp:
                     continue
                 if entry.get("date") != today_str or entry.get("status") != "ok":
                     continue
-                if entry.get("source") == "custom":
+                if entry.get("source", "") not in TODAY_PHOTO_SOURCES:
                     continue
                 img_file = entry.get("image_filename", "")
                 if img_file:
@@ -461,7 +458,7 @@ class PortraitGalleryApp:
         logger.info(f"开始定时生图: theme={theme}, schedule_time={schedule_time}")
         cmd = [
             "python3",
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "zhuzhu", "generate.py"),
+            os.path.join(os.path.expanduser("~"), ".hermes", "skills", "openclaw-imports", "zhuzhu-image-gen", "scripts", "generate.py"),
             "--theme", theme,
             "--caption",
             "--source", "cron",
@@ -473,7 +470,7 @@ class PortraitGalleryApp:
             result = await loop.run_in_executor(
                 None,
                 lambda: subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=300,
+                    cmd, capture_output=True, text=True, timeout=900,
                 )
             )
             if result.returncode == 0:
@@ -497,7 +494,7 @@ class PortraitGalleryApp:
             else:
                 logger.error(f"定时生图失败: theme={theme}, stderr={result.stderr[:500]}")
         except subprocess.TimeoutExpired:
-            logger.error(f"定时生图超时: theme={theme} (300s)")
+            logger.error(f"定时生图超时: theme={theme} (900s)")
         except Exception as e:
             logger.error(f"定时生图异常: theme={theme}, {e}")
 

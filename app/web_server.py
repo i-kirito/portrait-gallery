@@ -3,6 +3,7 @@ import fcntl
 import json
 import logging
 import os
+import shutil
 import sys
 import subprocess
 from datetime import date
@@ -10,6 +11,8 @@ from pathlib import Path
 import time
 import re
 from typing import Optional
+from urllib.parse import unquote
+import uuid
 
 from aiohttp import web
 
@@ -22,6 +25,19 @@ DATE_KEY_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 DEFAULT_PHOTO_JOB_LIMIT = 6
 MIN_PHOTO_JOB_LIMIT = 1
 MAX_PHOTO_JOB_LIMIT = 6
+TODAY_PHOTO_SOURCES = {"cron", "web"}
+REFERENCE_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+REFERENCE_MIME_EXTENSIONS = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+BUILTIN_REFERENCE_MAP = {
+    "reference_face.jpg": {"style": "cool", "label": "冷御风"},
+    "ref_style_girly.jpg": {"style": "girly", "label": "少女风"},
+    "ref_style_sweet.jpg": {"style": "sweet", "label": "甜妹风"},
+}
 
 
 class GalleryServer:
@@ -36,7 +52,14 @@ class GalleryServer:
         self.port = self.gallery_config.get("port", 18888)
         self.token = self.gallery_config.get("token", "")
         self.image_dir = os.path.join(data_dir, "images")
+        self.app_reference_dir = os.path.join(os.path.dirname(__file__), "references")
+        self.reference_dir = os.path.join(data_dir, "references")
+        self.uploaded_reference_dir = os.path.join(self.reference_dir, "uploads")
+        self.legacy_uploaded_reference_dir = os.path.join(self.app_reference_dir, "uploads")
         os.makedirs(self.image_dir, exist_ok=True)
+        os.makedirs(self.reference_dir, exist_ok=True)
+        os.makedirs(self.uploaded_reference_dir, exist_ok=True)
+        self._migrate_legacy_uploaded_refs()
 
         # 回调：外部注入
         self.on_generate_today = None
@@ -67,9 +90,9 @@ class GalleryServer:
         web_dir = os.path.join(os.path.dirname(__file__), "web")
         self.app.router.add_static("/static", web_dir, show_index=False)
 
-        # 参考图静态服务
-        ref_dir = os.path.join(os.path.dirname(__file__), "references")
-        self.app.router.add_static("/refs", ref_dir, show_index=True)
+        # 参考图静态服务：/refs 为内置资源，/local-refs 为 data/ 下的持久化本地图。
+        self.app.router.add_static("/refs", self.app_reference_dir, show_index=False)
+        self.app.router.add_static("/local-refs", self.reference_dir, show_index=False)
 
         # 画廊页面
         self.app.router.add_get("/", self.handle_index)
@@ -182,7 +205,7 @@ class GalleryServer:
                     continue
                 if entry.get("date") != today_str or entry.get("status") != "ok":
                     continue
-                if entry.get("source") == "custom":
+                if not self._is_today_photo_source(entry.get("source", "")):
                     continue
                 img_file = entry.get("image_filename", "")
                 if not img_file or img_file in seen:
@@ -292,6 +315,7 @@ class GalleryServer:
         # 读取 plugin_config.json 获取 gitee_config
         plugin_config_path = os.path.join(self.data_dir, "plugin_config.json")
         gitee_key = ""
+        gitee_fallback_enabled = False
         if os.path.exists(plugin_config_path):
             try:
                 with open(plugin_config_path, 'r') as f:
@@ -299,6 +323,7 @@ class GalleryServer:
                     gitee_keys = plugin_config.get("gitee_config", {}).get("api_keys", [])
                     if gitee_keys:
                         gitee_key = gitee_keys[0]
+                    gitee_fallback_enabled = bool(plugin_config.get("gitee_fallback_enabled", False))
             except Exception as e:
                 logger.error(f"Load plugin config error: {e}")
         
@@ -321,7 +346,8 @@ class GalleryServer:
             "cpa_url": keys_config.get("cpa_url", ""),
             "cpa_key": self._mask_key(keys_config.get("cpa_key", "")),
             "appearance": keys_config.get("appearance", ""),
-            "llm_model": llm_model
+            "llm_model": llm_model,
+            "gitee_fallback_enabled": gitee_fallback_enabled,
         })
     
     def _mask_key(self, key: str) -> str:
@@ -405,6 +431,10 @@ class GalleryServer:
         return int(hour) * 60 + int(minute)
 
     @staticmethod
+    def _is_today_photo_source(source: str) -> bool:
+        return source in TODAY_PHOTO_SOURCES
+
+    @staticmethod
     def _photo_schedule_activity(entry: dict) -> str:
         prompt = (entry.get("prompt") or "").strip()
         plan_match = re.search(r"Today's plan:\s*(.+?)(?:\.\s*Style:|\.|$)", prompt, re.IGNORECASE | re.DOTALL)
@@ -483,7 +513,7 @@ class GalleryServer:
             "This image should look",
             "Masterpiece clarity",
             "high-quality raw photo",
-            "18-year-old Chinese girl",
+            "glowing skin texture",
         )
         return any(marker in outfit for marker in broken_markers)
 
@@ -571,7 +601,7 @@ class GalleryServer:
         return {"time": schedule_time, "activity": activity}
 
     def _enrich_photo_schedule_time(self, entry: dict, metadata: Optional[dict] = None, fallback_caption: str = "") -> dict:
-        """Return a copy with schedule_time filled from image time when missing."""
+        """Return a normalized copy with any parseable schedule_time preserved."""
         if not isinstance(entry, dict):
             return entry
         entry = self._normalize_entry_display(entry, metadata, fallback_caption)
@@ -614,7 +644,7 @@ class GalleryServer:
                         keys_config["cpa_url"] = body["cpa_url"]
                     if "cpa_key" in body and body["cpa_key"]:
                         keys_config["cpa_key"] = body["cpa_key"]
-                    # appearance: always update (empty string = reset to default)
+                    # appearance: always update (empty string = remove local appearance)
                     if "appearance" in body:
                         keys_config["appearance"] = body["appearance"]
                     
@@ -622,24 +652,28 @@ class GalleryServer:
                     with open(api_keys_path, 'w', encoding='utf-8') as f:
                         json.dump(keys_config, f, ensure_ascii=False, indent=2)
                     
-                    # 更新 plugin_config.json 的 gitee_config.api_keys[0]
-                    if "gitee_key" in body and body["gitee_key"]:
+                    # 更新 plugin_config.json 的 Gitee 配置
+                    if "gitee_key" in body or "gitee_fallback_enabled" in body:
                         plugin_config_path = os.path.join(self.data_dir, "plugin_config.json")
                         plugin_config = {}
                         if os.path.exists(plugin_config_path):
                             with open(plugin_config_path, 'r') as f:
                                 plugin_config = json.load(f)
-                        
-                        if "gitee_config" not in plugin_config:
-                            plugin_config["gitee_config"] = {}
-                        if "api_keys" not in plugin_config["gitee_config"]:
-                            plugin_config["gitee_config"]["api_keys"] = []
-                        
-                        # 更新或添加第一个 key
-                        if plugin_config["gitee_config"]["api_keys"]:
-                            plugin_config["gitee_config"]["api_keys"][0] = body["gitee_key"]
-                        else:
-                            plugin_config["gitee_config"]["api_keys"].append(body["gitee_key"])
+
+                        if "gitee_fallback_enabled" in body:
+                            plugin_config["gitee_fallback_enabled"] = bool(body["gitee_fallback_enabled"])
+
+                        if body.get("gitee_key"):
+                            if "gitee_config" not in plugin_config:
+                                plugin_config["gitee_config"] = {}
+                            if "api_keys" not in plugin_config["gitee_config"]:
+                                plugin_config["gitee_config"]["api_keys"] = []
+
+                            # 更新或添加第一个 key
+                            if plugin_config["gitee_config"]["api_keys"]:
+                                plugin_config["gitee_config"]["api_keys"][0] = body["gitee_key"]
+                            else:
+                                plugin_config["gitee_config"]["api_keys"].append(body["gitee_key"])
                         
                         with open(plugin_config_path, 'w', encoding='utf-8') as f:
                             json.dump(plugin_config, f, ensure_ascii=False, indent=2)
@@ -731,7 +765,11 @@ class GalleryServer:
             for key, e in all_data.items():
                 if DATE_KEY_RE.match(key):
                     continue
-                if e.get("date") == today_str and e.get("status") == "ok" and e.get("source") != "custom":
+                if (
+                    e.get("date") == today_str
+                    and e.get("status") == "ok"
+                    and self._is_today_photo_source(e.get("source", ""))
+                ):
                     img_file = e.get("image_filename", "")
                     if img_file and img_file not in seen:
                         img_path = os.path.join(self.image_dir, img_file)
@@ -789,7 +827,13 @@ class GalleryServer:
             # 再找有 schedule 的图片条目
             if not schedule_entry:
                 for key, e in all_data.items():
-                    if isinstance(e, dict) and e.get("date") == today_str and e.get("schedule") and e.get("status") == "ok":
+                    if (
+                        isinstance(e, dict)
+                        and e.get("date") == today_str
+                        and e.get("schedule")
+                        and e.get("status") == "ok"
+                        and self._is_today_photo_source(e.get("source", ""))
+                    ):
                         schedule_entry = e
                         break
 
@@ -801,7 +845,7 @@ class GalleryServer:
                     isinstance(e, dict)
                     and e.get("date") == today_str
                     and e.get("status") == "ok"
-                    and e.get("source") != "custom"
+                    and self._is_today_photo_source(e.get("source", ""))
                 ):
                     today_photos.append(self._enrich_photo_schedule_time(e))
 
@@ -894,107 +938,188 @@ class GalleryServer:
             logger.error(f"Schedule detail error: {e}")
             return web.json_response({"status": "error", "detail": str(e)})
 
+    @staticmethod
+    def _is_reference_image_file(filename: str) -> bool:
+        return filename.lower().endswith(REFERENCE_IMAGE_EXTENSIONS)
+
+    @staticmethod
+    def _reference_response(filename: str, url: str, label: str, style: str = "upload", builtin: bool = False) -> dict:
+        return {
+            "filename": filename,
+            "url": url,
+            "style": style,
+            "label": label,
+            "builtin": builtin,
+        }
+
+    @staticmethod
+    def _safe_reference_path(base_dir: str, relative_path: str) -> str:
+        try:
+            base = Path(base_dir).resolve()
+            candidate = (base / unquote(relative_path).lstrip("/")).resolve()
+            candidate.relative_to(base)
+        except Exception:
+            return ""
+        return str(candidate) if candidate.is_file() else ""
+
+    def _migrate_legacy_uploaded_refs(self):
+        if not os.path.isdir(self.legacy_uploaded_reference_dir):
+            return
+        for fname in os.listdir(self.legacy_uploaded_reference_dir):
+            if not self._is_reference_image_file(fname):
+                continue
+            src = os.path.join(self.legacy_uploaded_reference_dir, fname)
+            dest = os.path.join(self.uploaded_reference_dir, fname)
+            if os.path.isfile(src) and not os.path.exists(dest):
+                try:
+                    shutil.copy2(src, dest)
+                except Exception as e:
+                    logger.warning(f"Migrate uploaded reference failed: {fname}: {e}")
+
+    def _reference_ext(self, filename: str, content_type: str) -> str:
+        ext = os.path.splitext(filename or "")[1].lower()
+        if ext in REFERENCE_IMAGE_EXTENSIONS:
+            return ext
+        return REFERENCE_MIME_EXTENSIONS.get((content_type or "").split(";")[0].strip().lower(), "")
+
+    def _iter_uploaded_refs(self) -> list[dict]:
+        refs = []
+        seen = set()
+        sources = (
+            (self.uploaded_reference_dir, "/local-refs/uploads"),
+            (self.legacy_uploaded_reference_dir, "/refs/uploads"),
+        )
+        for upload_dir, url_prefix in sources:
+            if not os.path.isdir(upload_dir):
+                continue
+            for fname in sorted(os.listdir(upload_dir)):
+                if fname in seen or not self._is_reference_image_file(fname):
+                    continue
+                fpath = os.path.join(upload_dir, fname)
+                if not os.path.isfile(fpath):
+                    continue
+                seen.add(fname)
+                refs.append(self._reference_response(
+                    fname,
+                    f"{url_prefix}/{fname}",
+                    "自定义上传",
+                    builtin=False,
+                ))
+        return refs
+
+    def _resolve_reference_image(self, ref_image: str) -> str:
+        raw = str(ref_image or "").strip()
+        if not raw:
+            return ""
+        ref_path = unquote(raw.split("?", 1)[0].split("#", 1)[0])
+
+        if ref_path.startswith("/local-refs/"):
+            rel_path = ref_path.removeprefix("/local-refs/")
+            local_path = self._safe_reference_path(self.reference_dir, rel_path)
+            if local_path and self._is_reference_image_file(local_path):
+                return local_path
+            return ""
+
+        if ref_path.startswith("/refs/"):
+            rel_path = ref_path.removeprefix("/refs/")
+            for base_dir in (self.app_reference_dir, self.reference_dir):
+                local_path = self._safe_reference_path(base_dir, rel_path)
+                if local_path and self._is_reference_image_file(local_path):
+                    return local_path
+            return ""
+
+        if os.path.isabs(ref_path):
+            for base_dir in (self.reference_dir, self.app_reference_dir):
+                try:
+                    candidate = Path(ref_path).resolve()
+                    candidate.relative_to(Path(base_dir).resolve())
+                except Exception:
+                    continue
+                if candidate.is_file() and self._is_reference_image_file(str(candidate)):
+                    return str(candidate)
+        return ""
+
     async def handle_ref_list(self, request: web.Request):
         """返回参考图列表（内置底模 + 用户上传）"""
-        ref_dir = os.path.join(os.path.dirname(__file__), "references")
-        upload_dir = os.path.join(ref_dir, "uploads")
         refs = []
 
-        # 内置底模参考图
-        _BUILTIN_MAP = {
-            "reference_face.jpg": {"style": "cool", "label": "冷御风"},
-            "ref_style_girly.jpg": {"style": "girly", "label": "少女风"},
-            "ref_style_sweet.jpg": {"style": "sweet", "label": "甜妹风"},
-        }
-        for fname, info in _BUILTIN_MAP.items():
-            fpath = os.path.join(ref_dir, fname)
-            if os.path.isfile(fpath):
-                refs.append({
-                    "filename": fname,
-                    "url": f"/refs/{fname}",
-                    "style": info["style"],
-                    "label": info["label"],
-                    "builtin": True,
-                })
+        for fname, info in BUILTIN_REFERENCE_MAP.items():
+            candidates = (
+                (self.reference_dir, "/local-refs"),
+                (self.app_reference_dir, "/refs"),
+            )
+            for ref_dir, url_prefix in candidates:
+                fpath = os.path.join(ref_dir, fname)
+                if os.path.isfile(fpath):
+                    refs.append(self._reference_response(
+                        fname,
+                        f"{url_prefix}/{fname}",
+                        info["label"],
+                        style=info["style"],
+                        builtin=True,
+                    ))
+                    break
 
-        # 用户上传的参考图
-        if os.path.isdir(upload_dir):
-            for fname in sorted(os.listdir(upload_dir)):
-                fpath = os.path.join(upload_dir, fname)
-                if os.path.isfile(fpath) and fname.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
-                    refs.append({
-                        "filename": fname,
-                        "url": f"/refs/uploads/{fname}",
-                        "style": "upload",
-                        "label": "自定义上传",
-                        "builtin": False,
-                    })
-
+        refs.extend(self._iter_uploaded_refs())
         return web.json_response(refs)
 
     async def handle_uploaded_refs(self, request: web.Request):
         """列出已上传的自定义参考图"""
-        upload_dir = os.path.join(os.path.dirname(__file__), "references", "uploads")
-        os.makedirs(upload_dir, exist_ok=True)
-        refs = []
         try:
-            for fname in sorted(os.listdir(upload_dir)):
-                fpath = os.path.join(upload_dir, fname)
-                if os.path.isfile(fpath) and fname.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
-                    refs.append({
-                        "filename": fname,
-                        "url": f"/refs/uploads/{fname}",
-                        "style": "upload",
-                        "label": "自定义上传",
-                    })
+            return web.json_response(self._iter_uploaded_refs())
         except Exception as e:
             logger.error(f"List uploaded refs error: {e}")
-        return web.json_response(refs)
+            return web.json_response([])
 
     async def handle_upload_ref(self, request: web.Request):
-        """上传自定义参考图"""
+        """上传自定义参考图到 data/references/uploads 持久化目录"""
         reader = await request.multipart()
         field = await reader.next()
         if not field or not field.filename:
             return web.json_response({"error": "no_file"}, status=400)
 
-        # 保存到上传目录
-        upload_dir = os.path.join(os.path.dirname(__file__), "references", "uploads")
-        os.makedirs(upload_dir, exist_ok=True)
+        ext = self._reference_ext(field.filename, field.headers.get("Content-Type", ""))
+        if not ext:
+            return web.json_response({"error": "invalid_image_type"}, status=400)
 
-        # 生成唯一文件名
-        import time
-        ext = os.path.splitext(field.filename)[1] or ".jpg"
-        save_name = f"upload_{int(time.time())}{ext}"
-        save_path = os.path.join(upload_dir, save_name)
+        save_name = f"upload_{int(time.time())}_{uuid.uuid4().hex[:8]}{ext}"
+        save_path = os.path.join(self.uploaded_reference_dir, save_name)
 
-        with open(save_path, "wb") as f:
-            while True:
-                chunk = await field.read_chunk()
-                if not chunk:
-                    break
-                f.write(chunk)
+        try:
+            with open(save_path, "wb") as f:
+                while True:
+                    chunk = await field.read_chunk()
+                    if not chunk:
+                        break
+                    f.write(chunk)
+        except Exception:
+            if os.path.exists(save_path):
+                os.remove(save_path)
+            raise
 
-        return web.json_response({
-            "filename": save_name,
-            "url": f"/refs/uploads/{save_name}",
-            "style": "upload",
-            "label": "自定义上传",
-        })
+        return web.json_response(self._reference_response(
+            save_name,
+            f"/local-refs/uploads/{save_name}",
+            "自定义上传",
+            builtin=False,
+        ))
 
     async def handle_delete_uploaded_ref(self, request: web.Request):
         """删除已上传的自定义参考图"""
         filename = request.match_info.get("filename")
         if not filename:
             return web.json_response({"error": "no_filename"}, status=400)
-        # Prevent path traversal
-        if ".." in filename or "/" in filename:
+        if not re.match(r'^[a-zA-Z0-9_.-]+$', filename) or not self._is_reference_image_file(filename):
             return web.json_response({"error": "invalid_filename"}, status=400)
-        upload_dir = os.path.join(os.path.dirname(__file__), "references", "uploads")
-        filepath = os.path.join(upload_dir, filename)
+
         try:
-            if os.path.exists(filepath):
-                os.remove(filepath)
+            deleted = False
+            for upload_dir in (self.uploaded_reference_dir, self.legacy_uploaded_reference_dir):
+                filepath = os.path.join(upload_dir, filename)
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+                    deleted = True
+            if deleted:
                 return web.json_response({"success": True})
             return web.json_response({"error": "not_found"}, status=404)
         except Exception as e:
@@ -1106,38 +1231,56 @@ class GalleryServer:
             )
 
             activity = ""
-            try:
-                body = _json.dumps({
-                    "model": "gemini-3.5-flash",
-                    "messages": [{"role": "user", "content": llm_prompt}],
-                    "max_tokens": 100,
-                }).encode()
-                req = urllib.request.Request(
-                    cpa_url, data=body,
-                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {cpa_key}"},
-                    method="POST",
-                )
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    resp_data = _json.loads(resp.read())
-                    activity = resp_data["choices"][0]["message"]["content"].strip().strip('"').strip("'")
-            except Exception as e:
-                logger.warning(f"LLM activity generation failed: {e}")
+            llm_config = self.config.get("llm", {})
+            primary_model = (llm_config.get("model") or "deepseek-v4-pro").strip()
+            fallback_model = (llm_config.get("fallback_model") or "deepseek-v4-flash").strip()
+            if primary_model == "gemini-3.5-flash":
+                primary_model = fallback_model or "deepseek-v4-pro"
+            llm_models = []
+            for model_name in (primary_model, fallback_model, "deepseek-v4-pro"):
+                if model_name and model_name not in llm_models:
+                    llm_models.append(model_name)
+
+            for model_name in llm_models:
+                try:
+                    body = _json.dumps({
+                        "model": model_name,
+                        "messages": [{"role": "user", "content": llm_prompt}],
+                        "max_tokens": 100,
+                    }).encode()
+                    req = urllib.request.Request(
+                        cpa_url, data=body,
+                        headers={"Content-Type": "application/json", "Authorization": f"Bearer {cpa_key}"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        resp_data = _json.loads(resp.read())
+                        msg = resp_data["choices"][0]["message"]
+                        activity = (msg.get("content") or msg.get("reasoning_content") or "").strip()
+                        activity = activity.strip('"').strip("'")
+                    if activity:
+                        break
+                except Exception as e:
+                    logger.warning(f"LLM activity generation failed with {model_name}: {e}")
 
             if not activity:
                 activity = f"{now_str} 的日常时光"
+            activity = re.sub(r'\s+', ' ', activity).strip()
+            activity = re.sub(r'^\d{1,2}:\d{2}\s*', '', activity).strip()
+            schedule_time = f"{now_str} {activity}".strip()
 
             logger.info(f"LLM generated activity: {activity}")
 
-            # 3) 调用 generate.py --theme custom --prompt <activity>，用 Gitee 快速出图
+            # 3) 调用 generate.py --theme custom --prompt <activity>，用 GPT Image 直连出图
             generate_script = os.path.join(os.path.dirname(__file__), "zhuzhu", "generate.py")
             proc = await asyncio.create_subprocess_exec(
                 "python3", generate_script, "--theme", "custom", "--caption", "--source", "web",
-                "--prompt", activity, "--engine", "gitee",
+                "--prompt", activity, "--engine", "gptimage", "--schedule-time", schedule_time,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=os.path.join(os.path.dirname(__file__), "zhuzhu"),
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=900)
             
             if proc.returncode != 0:
                 logger.error(f"generate.py failed: {stderr.decode(errors='replace')[-500:]}")
@@ -1164,6 +1307,8 @@ class GalleryServer:
             def _update_source(all_data):
                 if filename in all_data:
                     all_data[filename]["source"] = "web"
+                    all_data[filename]["schedule_time"] = schedule_time
+                    all_data[filename]["time"] = all_data[filename].get("time") or now_str
                     if caption_text:
                         all_data[filename]["caption"] = caption_text
                 return all_data
@@ -1179,6 +1324,7 @@ class GalleryServer:
                 "image_path": f"/images/{filename}",
                 "caption": caption_text,
                 "source": "web",
+                "schedule_time": schedule_time,
             })
         except asyncio.TimeoutError:
             logger.error("Generate now timeout")
@@ -1200,12 +1346,10 @@ class GalleryServer:
             if not user_prompt:
                 return web.json_response({"error": "prompt_required"}, status=400)
             size = body.get("size", "1024x1024")
-            ref_image = body.get("ref_image", "")
-            # 如果 ref_image 是 url 路径，转为本地文件路径
-            if ref_image and ref_image.startswith("/refs/"):
-                ref_image = ref_image.replace("/refs/", "")
-                ref_dir = os.path.join(os.path.dirname(__file__), "references")
-                ref_image = os.path.join(ref_dir, ref_image)
+            raw_ref_image = body.get("ref_image", "")
+            ref_image = self._resolve_reference_image(raw_ref_image)
+            if raw_ref_image and not ref_image:
+                return web.json_response({"error": "invalid_ref_image"}, status=400)
             entry = await self.on_generate_custom(user_prompt, size, ref_image)
             if entry and entry.status == "ok":
                 return web.json_response(entry.to_dict())

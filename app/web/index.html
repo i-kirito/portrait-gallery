@@ -210,6 +210,27 @@ body {
 }
 .sk-field .sk-status.set { color: #4caf50; }
 .sk-field .sk-status.unset { color: #ff9800; }
+.sk-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #ece4f0;
+  border-radius: 12px;
+  background: #faf8fc;
+  cursor: pointer;
+}
+.sk-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: #e91e63;
+  flex-shrink: 0;
+}
+.sk-toggle span {
+  font-size: 14px;
+  color: #555;
+  font-weight: 600;
+}
 .sk-actions {
   display: flex;
   gap: 10px;
@@ -800,19 +821,51 @@ body {
   margin: 0;
 }
 .tc-thought {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   font-size: 13px;
-  color: #d02090;
+  color: #8a245d;
   font-style: normal;
-  line-height: 1.5;
-  padding: 1px 0;
-  background: transparent;
-  border-radius: 0;
-  border-left: none;
-  box-shadow: none;
+  line-height: 1.55;
+  padding: 8px 10px;
+  background: linear-gradient(135deg, #fff6fa, #faf7ff);
+  border-radius: 10px;
+  border-left: 3px solid #e91e63;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
   font-weight: 500;
   letter-spacing: 0.2px;
 }
 .tc-thought:empty { display: none; }
+.tc-thought-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: #e91e63;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  white-space: nowrap;
+}
+.tc-thought-text {
+  flex: 1;
+  min-width: 0;
+  color: #8a245d;
+  word-break: break-word;
+}
+.tc-thought .tag-link {
+  color: #7b1fa2;
+  text-decoration: none;
+  font-weight: 700;
+}
+.tc-thought .tag-link:hover {
+  color: #e91e63;
+  text-decoration: underline;
+}
 .tc-schedule {
   font-size: 13px;
   color: #666;
@@ -1523,7 +1576,7 @@ body {
 
 <div class="header">
   <div class="header-left">
-    <h1 style="user-select:none;" onclick="openScheduleEgg()">🐷 猪猪穿搭画廊 <span style="font-size:12px;color:#999;font-weight:400;" id="versionTag">v1.0.7</span></h1>
+    <h1 style="user-select:none;" onclick="openScheduleEgg()">🐷 猪猪穿搭画廊 <span style="font-size:12px;color:#999;font-weight:400;" id="versionTag">v1.0.9</span></h1>
   </div>
   <div class="header-right">
     <div class="tabs">
@@ -1572,6 +1625,15 @@ body {
       <div class="sk-status" id="skGiteeStatus">加载中...</div>
     </div>
     <div class="sk-field">
+      <label for="skGiteeFallback">Gitee 回退</label>
+      <div class="sk-desc">开启后，GPT Image 多次重试失败才会改用 Gitee</div>
+      <label class="sk-toggle">
+        <input type="checkbox" id="skGiteeFallback">
+        <span>允许 GPT 失败后回退到 Gitee</span>
+      </label>
+      <div class="sk-status" id="skGiteeFallbackStatus">加载中...</div>
+    </div>
+    <div class="sk-field">
       <label for="skGptBaseUrl">GPT Image Base URL</label>
       <div class="sk-desc">GPT 生图端点；只有需要走 CPA 的 GPT 生图时才替换</div>
       <input type="text" id="skGptBaseUrl" placeholder="留空则不修改">
@@ -1597,8 +1659,8 @@ body {
     </div>
     <div class="sk-field">
       <label for="skAppearance">🧬 人物外貌提示词</label>
-      <div class="sk-desc">覆盖内置 Appearance 前缀，留空则使用默认值。写英文效果最佳</div>
-      <textarea id="skAppearance" rows="4" placeholder="留空则使用内置默认外貌描述..." style="width:100%;padding:10px;border:1.5px solid #e0d0e8;border-radius:10px;font-size:13px;line-height:1.5;resize:vertical;font-family:inherit;"></textarea>
+      <div class="sk-desc">本机专属参数，只保存在 data/api_keys_config.json，不写入仓库配置。写英文效果最佳</div>
+      <textarea id="skAppearance" rows="4" placeholder="留空则不注入人物外貌前缀..." style="width:100%;padding:10px;border:1.5px solid #e0d0e8;border-radius:10px;font-size:13px;line-height:1.5;resize:vertical;font-family:inherit;"></textarea>
       <div class="sk-status" id="skAppearanceStatus">加载中...</div>
     </div>
     <div class="sk-field">
@@ -1616,7 +1678,7 @@ body {
     <div style="margin-top:20px;padding-top:20px;border-top:1px solid #eee;">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
         <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
-        <span style="font-size:12px;color:#999;">当前版本 <span id="settingsVersion">v1.0.7</span></span>
+        <span style="font-size:12px;color:#999;">当前版本 <span id="settingsVersion">v1.0.9</span></span>
       </div>
       <div id="updateResult"></div>
     </div>
@@ -1864,6 +1926,17 @@ function extractOutfitText(outfit) {
   return m ? m[1].trim() : outfit;
 }
 
+function renderCaptionLinks(caption) {
+  if (!caption) return "";
+  return String(caption).replace(/#([^\s#]+)/g, '<a class="tag-link" href="#" onclick="filterByTag(\'$1\'); return false;">' + '#' + '$1</a>');
+}
+
+function renderThoughtBlock(caption, className = "tc-thought") {
+  const captionHtml = renderCaptionLinks(caption);
+  if (!captionHtml) return "";
+  return `<div class="${className}"><span class="tc-thought-label" title="思考" aria-label="思考">💭</span><span class="tc-thought-text">${captionHtml}</span></div>`;
+}
+
 function openTodayModal(filename) {
   // Find the entry from todayData photos or allEntries
   const photos = (todayData && todayData.photos) ? todayData.photos : [];
@@ -1943,11 +2016,7 @@ function renderToday() {
       }
     }
 
-    // Caption with hashtag links (same as modal)
-    let captionHtml = "";
-    if (today.caption) {
-      captionHtml = today.caption.replace(/#([^\s#]+)/g, '<a class="tag-link" href="#" onclick="filterByTag(\'$1\'); return false;">' + '#' + '$1</a>');
-    }
+    const captionHtml = renderThoughtBlock(today.caption, "modal-caption tc-thought");
 
     html += `
       <div class="today-compact" style="cursor:default;">
@@ -1964,7 +2033,7 @@ function renderToday() {
           </div>
           <div class="modal-outfit">${outfitText ? `<span class="outfit-label">穿搭</span><span class="outfit-divider">|</span><span class="outfit-text">${outfitText}</span>` : '--'}</div>
           ${schedHtml ? `<div class="modal-schedule">${schedHtml}</div>` : ""}
-          ${captionHtml ? `<div class="modal-caption">💭 ${captionHtml}</div>` : ""}
+          ${captionHtml}
           <div class="modal-actions" onclick="event.stopPropagation()">
             <button class="mbtn" onclick="event.stopPropagation();toggleFavorite('${today.image_filename}');">${today.favorite ? '🩷' : '🤍'} 收藏</button>
             <button class="mbtn" onclick="event.stopPropagation();shareImage('${today.image_filename}');">📤 分享</button>
@@ -2127,7 +2196,7 @@ function renderGallery() {
                   ${metaHtml ? `<div class="tc-meta">${metaHtml}</div>` : ''}
                 </div>
                 <div class="tc-outfit">${e.outfit || '--'}</div>
-                <div class="tc-thought">${e.caption ? '💭 ' + e.caption.replace(/#([^\s#]+)/g, '<a class="tag-link" href="#" onclick="filterByTag(\'$1\'); return false;">' + '#' + '$1</a>') : ''}</div>
+                ${renderThoughtBlock(e.caption)}
                 ${periodHtml}
                 <div class="tc-actions">
                   <button class="tc-btn ${e.favorite ? 'liked' : ''}" onclick="toggleFavorite('${e.image_filename}', event)" data-img="${e.image_filename}">${e.favorite ? '🩷' : '♡'} 收藏</button>
@@ -2282,6 +2351,7 @@ ms.textContent = `
 .modal-schedule .sched-item .sched-label { font-weight: 700; color: #e91e63; white-space: nowrap; font-size: 15px; min-width: 56px; }
 .modal-schedule .sched-item .sched-text { color: #555; }
 .modal-caption { font-size:15px;color:#d81b60;font-style:italic;padding:12px 0 0;line-height:1.8; }
+.modal-caption.tc-thought { padding:8px 10px;font-style:normal;line-height:1.55;color:#8a245d; }
 .modal-caption .tag-link { color: #7b1fa2; text-decoration: none; font-weight: 600; cursor: pointer; transition:color 0.15s; }
 .modal-caption .tag-link:hover { color: #e91e63; text-decoration: underline; }
 .modal-actions { display: flex; gap: 10px; margin-top: auto; padding-top: 16px; }
@@ -2315,7 +2385,7 @@ modalOverlay.innerHTML = `
       <div class="modal-meta" id="modalMeta"></div>
       <div class="modal-outfit" id="modalOutfit"></div>
       <div class="modal-schedule" id="modalSchedule"></div>
-      <div class="modal-caption" id="modalCaption"></div>
+      <div class="modal-caption tc-thought" id="modalCaption"></div>
       <div class="modal-actions">
         <button class="mbtn" id="modalFav" onclick="modalToggleFav()">♡ 收藏</button>
         <button class="mbtn" onclick="modalShare()">📤 分享</button>
@@ -2376,8 +2446,8 @@ function openModal(e) {
   // Caption
   const capEl = document.getElementById("modalCaption");
   if (e.caption) {
-    capEl.innerHTML = '💭 ' + e.caption.replace(/#([^\s#]+)/g, '<a class="tag-link" href="#" onclick="filterByTag(\'$1\'); return false;">' + '#' + '$1</a>');
-    capEl.style.display = "block";
+    capEl.innerHTML = '<span class="tc-thought-label" title="思考" aria-label="思考">💭</span><span class="tc-thought-text">' + renderCaptionLinks(e.caption) + '</span>';
+    capEl.style.display = "flex";
   } else { capEl.style.display = "none"; }
   // Fav button state
   updateModalFavBtn(e.favorite === true);
@@ -2683,6 +2753,7 @@ function openSettings() {
   document.getElementById("skCpaUrl").value = "";
   document.getElementById("skCpaKey").value = "";
   document.getElementById("skAppearance").value = "";
+  document.getElementById("skGiteeFallback").checked = false;
   // Load current status
   loadSettingsStatus();
 }
@@ -2708,6 +2779,11 @@ async function loadSettingsStatus() {
     updateStatus("skGptBaseUrlStatus", data.gpt_base_url);
     updateStatus("skCpaUrlStatus", data.cpa_url);
     updateStatus("skCpaKeyStatus", data.cpa_key);
+    const giteeFallbackEl = document.getElementById("skGiteeFallback");
+    const giteeFallbackStatus = document.getElementById("skGiteeFallbackStatus");
+    giteeFallbackEl.checked = data.gitee_fallback_enabled === true;
+    giteeFallbackStatus.textContent = giteeFallbackEl.checked ? "✓ 已开启" : "○ 已关闭";
+    giteeFallbackStatus.className = "sk-status " + (giteeFallbackEl.checked ? "set" : "unset");
 
     // Appearance: show as textarea content (not masked)
     const appEl = document.getElementById("skAppearance");
@@ -2718,7 +2794,7 @@ async function loadSettingsStatus() {
       appStatus.className = "sk-status set";
     } else {
       appEl.value = "";
-      appStatus.textContent = "○ 使用内置默认";
+      appStatus.textContent = "○ 未设置本机外貌";
       appStatus.className = "sk-status unset";
     }
 
@@ -2738,7 +2814,7 @@ async function loadSettingsStatus() {
       });
     } else {
       // fallback：至少有几个常用选项
-      ["gemini-3.5-flash", "deepseek-v4-flash", "mimo-v2.5-pro"].forEach(m => {
+      ["deepseek-v4-pro", "deepseek-v4-flash", "mimo-v2.5-pro"].forEach(m => {
         const opt = document.createElement("option");
         opt.value = m;
         opt.textContent = m;
@@ -2783,8 +2859,9 @@ async function saveSettings() {
   const gptBaseUrl = document.getElementById("skGptBaseUrl").value.trim();
   const cpaUrl = document.getElementById("skCpaUrl").value.trim();
   const cpaKey = document.getElementById("skCpaKey").value.trim();
-  const appearance = document.getElementById("skAppearance").value.trim();
-  const llmModel = document.getElementById("skLlmModel").value;
+	  const appearance = document.getElementById("skAppearance").value.trim();
+	  const llmModel = document.getElementById("skLlmModel").value;
+	  const giteeFallbackEnabled = document.getElementById("skGiteeFallback").checked;
 
   const btn = document.getElementById("skSaveBtn");
   btn.disabled = true;
@@ -2797,9 +2874,10 @@ async function saveSettings() {
     if (gptBaseUrl) body.gpt_base_url = gptBaseUrl;
     if (cpaUrl) body.cpa_url = cpaUrl;
     if (cpaKey) body.cpa_key = cpaKey;
-    // appearance: always send (empty = reset to default)
-    body.appearance = appearance;
-    // llm_model: always send
+    // appearance: always send (empty = remove local appearance)
+	    body.appearance = appearance;
+	    body.gitee_fallback_enabled = giteeFallbackEnabled;
+	    // llm_model: always send
     body.llm_model = llmModel;
 
     const res = await fetch(`${API}/api/config/keys`, {

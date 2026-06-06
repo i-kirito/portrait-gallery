@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.0.7**
+当前版本：**v1.0.9**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -9,7 +9,7 @@
 ## ✨ 功能亮点
 
 - 📅 **LLM 日程驱动** — DeepSeek 自动生成每日穿搭日程（HH:mm 精度），按时触发生图
-- 🎨 **双引擎生图** — GPT Image 高质量 + Gitee z-image-turbo 极速，自动降级
+- 🎨 **双引擎生图** — GPT Image 高质量 + Gitee z-image-turbo 可选回退
 - 🖼️ **Web 画廊** — 今日/全部/收藏三 Tab，横版大卡 + 网格双布局
 - 🎀 **穿搭生成** — 自定义 prompt + 参考图 + 尺寸选择
 - ⏰ **动态调度** — LLM 日程驱动，根据 HH:mm 时间动态创建一次性生图任务
@@ -120,12 +120,6 @@ launchctl start com.hermes.portrait-gallery
 tail -f /path/to/portrait-gallery/logs/gallery.log
 ```
 
-#### 方式三：Docker（可选）
-
-```bash
-docker compose up -d
-```
-
 ## 📐 架构
 
 ```
@@ -158,7 +152,7 @@ portrait-gallery/
 | **GPT Image** | 40-60s | ⭐⭐⭐⭐⭐ | 日常首选，高质量写真 |
 | **Gitee z-image-turbo** | 12s | ⭐⭐⭐ | 快速出图、性感风格 |
 
-生图失败时自动从 GPT Image 降级到 Gitee，无需手动干预。
+默认优先使用 GPT Image，并按重试机制处理失败；只有在设置里开启 Gitee 回退时，GPT Image 多次失败后才会改用 Gitee。
 
 ## ⏰ 调度说明
 
@@ -262,6 +256,12 @@ curl "http://localhost:18889/api/gallery?key=$GALLERY_API_KEY"
 - **⚙️ 设置** — Web UI 管理 API 密钥
 
 ## 🧾 Release Notes
+
+### v1.0.9
+
+- 参考图上传改为持久化保存到本地 `data/references/uploads/`，Web UI 后续打开会直接从本地文件列表恢复展示。
+- 自定义生图会把 Web UI 选择的参考图 URL 安全解析为本地文件路径，内置参考图和用户上传图都能走同一生成链路。
+- 启动时兼容迁移旧版 `app/references/uploads/` 中的历史上传参考图。
 
 ### v1.0.7
 
