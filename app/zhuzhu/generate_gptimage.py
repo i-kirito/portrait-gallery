@@ -208,11 +208,20 @@ def generate(theme: str, send: bool = False, caption: bool = False,
     img_data, gen_time = result
     path, filename, ts = save_image(img_data, theme, GPTIMAGE_DIRECT_MODEL, style=style)
     update_metadata(filename, theme, prompt, GPTIMAGE_DIRECT_MODEL, ts, gen_time)
-    sync_to_gallery(path, filename, theme, prompt=prompt)
 
     cap_text = None
     if caption:
         cap_text = build_caption(theme)
+    sync_to_gallery(
+        path,
+        filename,
+        theme,
+        style=style,
+        prompt=prompt,
+        caption=cap_text or "",
+        model_name=GPTIMAGE_DIRECT_MODEL,
+        source="cron",
+    )
     if send:
         send_photo(path, cap_text)
 

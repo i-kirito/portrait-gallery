@@ -526,8 +526,58 @@ def _translate_outfit(prompt: str, style_name: str) -> str:
         # Skip the first 300 chars (appearance) and use the rest where clothing lives
         extraction_input = prompt[200:] if len(prompt) > 200 else prompt
 
+    def _fallback_keywords(text: str) -> str:
+        """Deterministic fallback when the LLM translator is unavailable."""
+        text = (text or "").strip()
+        if not text:
+            return ""
+        if re.search(r'[\u4e00-\u9fff]', text):
+            cleaned = re.sub(r'\s+', ' ', text)
+            cleaned = re.sub(r'^(穿着|身穿|她穿着|She is wearing)\s*', '', cleaned, flags=re.IGNORECASE)
+            return cleaned[:80].rstrip("，,。. ")
+
+        lower = text.lower()
+        keywords = []
+        phrase_map = [
+            (["light gray", "knit", "cardigan"], "浅灰色针织开衫"),
+            (["gray", "knit", "cardigan"], "灰色针织开衫"),
+            (["pink", "lace", "camisole dress"], "粉色蕾丝吊带裙"),
+            (["camisole dress"], "吊带裙"),
+            (["mary jane"], "玛丽珍鞋"),
+            (["lace", "ankle socks"], "蕾丝短袜"),
+            (["heart", "necklace"], "爱心项链"),
+            (["crystal", "bracelet"], "水晶手链"),
+            (["pearl", "button"], "珍珠纽扣"),
+            (["oversized hoodie"], "宽松连帽衫"),
+            (["hoodie"], "连帽衫"),
+            (["satin", "slip"], "缎面吊带裙"),
+            (["silk", "nightgown"], "丝绸睡裙"),
+            (["lace", "robe"], "蕾丝睡袍"),
+            (["jk", "uniform"], "JK制服"),
+            (["pleated", "skirt"], "百褶裙"),
+            (["white", "blouse"], "白色衬衫"),
+            (["dress"], "连衣裙"),
+            (["skirt"], "半身裙"),
+            (["sneakers"], "运动鞋"),
+            (["loafers"], "乐福鞋"),
+            (["boots"], "靴子"),
+            (["ribbon"], "蝴蝶结"),
+            (["earrings"], "耳饰"),
+        ]
+        for needles, label in phrase_map:
+            if (
+                all(needle in lower for needle in needles)
+                and not any(label in existing or existing in label for existing in keywords)
+            ):
+                keywords.append(label)
+            if len(keywords) >= 5:
+                break
+        return "、".join(keywords[:5])
+
     try:
         api_key = get_cpa_key()
+        if not api_key:
+            return _fallback_keywords(extraction_input)
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
         sys_prompt = (
             "你是一个穿搭关键词提取器。从英文AI生图prompt中提取服装，用中文列出3-5个关键词，用顿号分隔。\n"
@@ -557,7 +607,7 @@ def _translate_outfit(prompt: str, style_name: str) -> str:
                 return content
     except Exception as e:
         print(f"[translate_outfit] LLM failed: {e}", file=sys.stderr)
-    return ""
+    return _fallback_keywords(extraction_input)
 
 
 def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] = None,

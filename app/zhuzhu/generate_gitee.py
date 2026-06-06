@@ -62,11 +62,19 @@ def generate(theme: str, send: bool = False, caption: bool = False, prompt_overr
     img_data, gen_time = result
     path, filename, ts = save_image(img_data, theme, MODEL_NAME)
     update_metadata(filename, theme, prompt, MODEL_NAME, ts, gen_time)
-    sync_to_gallery(path, filename, theme, prompt=prompt, model_name=MODEL_NAME, source="cron")
 
     caption_text = None
     if caption:
         caption_text = build_caption(theme)
+    sync_to_gallery(
+        path,
+        filename,
+        theme,
+        prompt=prompt,
+        caption=caption_text or "",
+        model_name=MODEL_NAME,
+        source="cron",
+    )
 
     if send:
         send_photo(path, caption_text)

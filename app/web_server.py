@@ -9,6 +9,7 @@ from datetime import date
 from pathlib import Path
 import time
 import re
+from typing import Optional
 
 from aiohttp import web
 
@@ -447,15 +448,113 @@ class GalleryServer:
         return name
 
     @classmethod
-    def _normalize_entry_display(cls, entry: dict) -> dict:
+    def _normalize_entry_display(cls, entry: dict, metadata: Optional[dict] = None, fallback_caption: str = "") -> dict:
         if not isinstance(entry, dict):
             return entry
-        model_label = cls._display_model_name(entry.get("model_name", ""))
-        if not model_label or model_label == entry.get("model_name"):
-            return entry
         normalized = dict(entry)
-        normalized["model_name"] = model_label
+        img_file = normalized.get("image_filename", "")
+
+        if metadata and img_file:
+            meta_prompt = (metadata.get(img_file, {}) or {}).get("prompt", "")
+            current_prompt = normalized.get("prompt", "") or ""
+            if meta_prompt and len(meta_prompt) > len(current_prompt):
+                normalized["prompt"] = meta_prompt
+
+        model_label = cls._display_model_name(normalized.get("model_name", ""))
+        if model_label and model_label != normalized.get("model_name"):
+            normalized["model_name"] = model_label
+
+        if cls._entry_outfit_needs_repair(normalized.get("outfit", "")):
+            repaired = cls._fallback_outfit_keywords_from_prompt(normalized.get("prompt", ""))
+            if repaired:
+                style_name = normalized.get("outfit_style") or "自定义"
+                normalized["outfit"] = f"风格：{style_name} 穿搭：{repaired}"
+
+        if not normalized.get("caption") and fallback_caption and normalized.get("source") != "custom":
+            normalized["caption"] = fallback_caption
         return normalized
+
+    @staticmethod
+    def _entry_outfit_needs_repair(outfit: str) -> bool:
+        outfit = outfit or ""
+        if not outfit.strip():
+            return True
+        broken_markers = (
+            "This image should look",
+            "Masterpiece clarity",
+            "high-quality raw photo",
+            "18-year-old Chinese girl",
+        )
+        return any(marker in outfit for marker in broken_markers)
+
+    @staticmethod
+    def _fallback_outfit_keywords_from_prompt(prompt: str) -> str:
+        prompt = prompt or ""
+        match = re.search(r'She is wearing\s+(.+?)\.\s+Background:', prompt, re.IGNORECASE | re.DOTALL)
+        clothing = match.group(1).strip() if match else prompt
+        if re.search(r'[\u4e00-\u9fff]', clothing) and not re.search(r'[A-Za-z]{12,}', clothing):
+            return re.sub(r'\s+', ' ', clothing).strip()[:80].rstrip("，,。. ")
+
+        lower = clothing.lower()
+        keywords = []
+        phrase_map = [
+            (["light gray", "knit", "cardigan"], "浅灰色针织开衫"),
+            (["gray", "knit", "cardigan"], "灰色针织开衫"),
+            (["pink", "lace", "camisole dress"], "粉色蕾丝吊带裙"),
+            (["camisole dress"], "吊带裙"),
+            (["mary jane"], "玛丽珍鞋"),
+            (["lace", "ankle socks"], "蕾丝短袜"),
+            (["heart", "necklace"], "爱心项链"),
+            (["crystal", "bracelet"], "水晶手链"),
+            (["pearl", "button"], "珍珠纽扣"),
+            (["oversized hoodie"], "宽松连帽衫"),
+            (["hoodie"], "连帽衫"),
+            (["satin", "slip"], "缎面吊带裙"),
+            (["silk", "nightgown"], "丝绸睡裙"),
+            (["lace", "robe"], "蕾丝睡袍"),
+            (["jk", "uniform"], "JK制服"),
+            (["pleated", "skirt"], "百褶裙"),
+            (["white", "blouse"], "白色衬衫"),
+            (["dress"], "连衣裙"),
+            (["skirt"], "半身裙"),
+            (["sneakers"], "运动鞋"),
+            (["loafers"], "乐福鞋"),
+            (["boots"], "靴子"),
+            (["ribbon"], "蝴蝶结"),
+            (["earrings"], "耳饰"),
+        ]
+        for needles, label in phrase_map:
+            if (
+                all(needle in lower for needle in needles)
+                and not any(label in existing or existing in label for existing in keywords)
+            ):
+                keywords.append(label)
+            if len(keywords) >= 5:
+                break
+        return "、".join(keywords[:5])
+
+    def _load_image_metadata(self) -> dict:
+        path = os.path.join(self.data_dir, "image_metadata.json")
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                return data if isinstance(data, dict) else {}
+        except Exception as e:
+            logger.error(f"Load image metadata error: {e}")
+        return {}
+
+    @staticmethod
+    def _date_caption_map(all_data: dict) -> dict:
+        captions = {}
+        for key, entry in all_data.items():
+            if not isinstance(entry, dict):
+                continue
+            caption = entry.get("caption", "")
+            date_text = entry.get("date", "")
+            if caption and date_text and (DATE_KEY_RE.match(key) or entry.get("schedule")):
+                captions.setdefault(date_text, caption)
+        return captions
 
     def _photo_schedule_item(self, entry: dict) -> dict:
         """Build a schedule item from a generated photo entry."""
@@ -471,11 +570,11 @@ class GalleryServer:
             activity = self._photo_schedule_activity(entry)
         return {"time": schedule_time, "activity": activity}
 
-    def _enrich_photo_schedule_time(self, entry: dict) -> dict:
+    def _enrich_photo_schedule_time(self, entry: dict, metadata: Optional[dict] = None, fallback_caption: str = "") -> dict:
         """Return a copy with schedule_time filled from image time when missing."""
         if not isinstance(entry, dict):
             return entry
-        entry = self._normalize_entry_display(entry)
+        entry = self._normalize_entry_display(entry, metadata, fallback_caption)
         if entry.get("schedule_time"):
             return entry
 
@@ -625,6 +724,8 @@ class GalleryServer:
                         break
 
             # 2. 获取今日所有照片
+            metadata = self._load_image_metadata()
+            fallback_caption = schedule_info.get("caption", "") if isinstance(schedule_info, dict) else ""
             photos = []
             seen = set()
             for key, e in all_data.items():
@@ -636,7 +737,7 @@ class GalleryServer:
                         img_path = os.path.join(self.image_dir, img_file)
                         if os.path.exists(img_path):
                             seen.add(img_file)
-                            photos.append(self._enrich_photo_schedule_time(e))
+                            photos.append(self._enrich_photo_schedule_time(e, metadata, fallback_caption))
 
             if photos:
                 # Sort by timestamp in filename (newest first)
@@ -724,6 +825,12 @@ class GalleryServer:
                         schedule_items.append({"time": time_text, "activity": activity})
 
             # 从图片条目补充 schedule_time：日程原文可能缺少手动/补生成的照片
+            metadata = self._load_image_metadata()
+            fallback_caption = caption
+            today_photos = [
+                self._normalize_entry_display(p, metadata, fallback_caption)
+                for p in today_photos
+            ]
             if today_photos:
                 seen_times = {item.get("time") for item in schedule_items}
                 for p in sorted(today_photos, key=lambda x: self._time_sort_value(x.get("schedule_time") or x.get("time", ""))):
@@ -744,6 +851,12 @@ class GalleryServer:
             elif today_photos and not schedule_entry:
                 best = sorted(today_photos, key=lambda x: x.get("time", ""), reverse=True)[0]
                 self._enrich_outfit_parts_from_entry(outfit_parts, best)
+
+            if not caption and today_photos:
+                for p in sorted(today_photos, key=lambda x: x.get("time", ""), reverse=True):
+                    if p.get("caption"):
+                        caption = p["caption"]
+                        break
 
             # 最终 fallback：从当前时间生成占位日程
             if not schedule_items:
@@ -920,7 +1033,9 @@ class GalleryServer:
             all_data = store.load()
             for entry in all_data.values():
                 if isinstance(entry, dict) and entry.get("date") == date_str:
-                    return self._enrich_photo_schedule_time(entry)
+                    metadata = self._load_image_metadata()
+                    fallback_caption = self._date_caption_map(all_data).get(date_str, "")
+                    return self._enrich_photo_schedule_time(entry, metadata, fallback_caption)
         except Exception as e:
             logger.error(f"Load entry error: {e}")
         return None
@@ -963,17 +1078,25 @@ class GalleryServer:
 
             # 2) 用 LLM 根据精确时间生成活动描述
             import urllib.request
-            cpa_url = "http://127.0.0.1:8327/v1/chat/completions"
+            cpa_base_url = os.environ.get("CPA_BASE_URL", "http://127.0.0.1:8327/v1").rstrip("/")
             cpa_key = ""
             try:
                 cfg_path = os.path.join(self.data_dir, "api_keys_config.json")
                 if os.path.exists(cfg_path):
-                    with open(cfg_path) as f:
-                        cpa_key = _json.load(f).get("cpa_key", "")
+                    with open(cfg_path, encoding="utf-8") as f:
+                        cfg = _json.load(f)
+                    cpa_key = cfg.get("cpa_key", "")
+                    if cfg.get("cpa_url"):
+                        cpa_base_url = cfg["cpa_url"].rstrip("/")
             except Exception:
                 pass
             if not cpa_key:
                 cpa_key = os.environ.get("CPA_API_KEY", "")
+            cpa_url = (
+                cpa_base_url
+                if cpa_base_url.endswith("/chat/completions")
+                else f"{cpa_base_url}/chat/completions"
+            )
 
             schedule_hint = f"\n今日日程参考：\n{schedule_text}" if schedule_text else ""
             llm_prompt = (
@@ -1158,6 +1281,8 @@ class GalleryServer:
                 return []
             result = []
             seen_filenames = set()
+            metadata = self._load_image_metadata()
+            date_captions = self._date_caption_map(all_data)
             for key, entry in all_data.items():
                 is_date_key = bool(DATE_KEY_RE.match(key))
                 if is_date_key:
@@ -1180,7 +1305,8 @@ class GalleryServer:
                     else:
                         # Non-date-key entry without image_filename is broken, skip
                         continue
-                    result.append(self._enrich_photo_schedule_time(entry))
+                    fallback_caption = date_captions.get(entry.get("date", ""), "")
+                    result.append(self._enrich_photo_schedule_time(entry, metadata, fallback_caption))
             return result
         except Exception as e:
             logger.error(f"Load entries error: {e}")
@@ -1246,6 +1372,8 @@ class GalleryServer:
 
     async def handle_update(self, request: web.Request):
         """执行更新（git pull + 重启）"""
+        import asyncio
+
         try:
             # 1. git pull（注入代理环境变量）
             env = os.environ.copy()
@@ -1266,10 +1394,11 @@ class GalleryServer:
                     status=500
                 )
 
-            # 2. 重启服务
-            os.execv(sys.executable, [sys.executable] + sys.argv)
+            # 2. 先返回响应，再稍后重启，避免前端把成功更新误判为网络失败。
+            loop = asyncio.get_running_loop()
+            loop.call_later(1.0, lambda: os.execv(sys.executable, [sys.executable] + sys.argv))
 
-            return web.json_response({"message": "更新成功，服务已重启"})
+            return web.json_response({"message": "更新成功，服务即将重启"})
         except subprocess.TimeoutExpired:
             logger.error("Update timeout")
             return web.json_response(

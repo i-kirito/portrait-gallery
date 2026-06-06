@@ -1,5 +1,7 @@
 # 🎀 Portrait Gallery
 
+当前版本：**v1.0.7**
+
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
 一个基于 LLM 日程驱动的 AI 个人形象生成与展示系统。每天自动生成穿搭日程，按时调用 AI 生图引擎生成写真照片，通过 Web 画廊展示和管理。
@@ -25,7 +27,7 @@ cd portrait-gallery
 ### 2. 安装依赖
 
 ```bash
-pip install aiohttp apscheduler pyyaml requests
+python3 -m pip install -r app/requirements.txt
 ```
 
 ### 3. 配置
@@ -54,6 +56,14 @@ python3 main.py
 ```
 
 访问 **http://localhost:18889** 即可使用画廊。
+
+如果设置了 `GALLERY_API_KEY`，首次访问请带上密钥：
+
+```text
+http://localhost:18889/?key=your-gallery-api-key
+```
+
+前端会把密钥保存在浏览器 `localStorage`，后续同源 `/api/*` 请求会自动带上 `X-API-Key`。
 
 ### 5. 部署方式
 
@@ -227,6 +237,14 @@ curl -X POST http://localhost:18889/api/config/keys \
 | `GPT_IMAGE_BASE_URL` | GPT Image 端点（覆盖 config） |
 | `GALLERY_API_KEY` | Web UI 认证密钥（留空则不认证） |
 
+启用 `GALLERY_API_KEY` 后，命令行 API 需要带认证：
+
+```bash
+curl -H "X-API-Key: $GALLERY_API_KEY" http://localhost:18889/api/gallery
+# 或
+curl "http://localhost:18889/api/gallery?key=$GALLERY_API_KEY"
+```
+
 ## 📱 微信推送
 
 生图完成后自动通过 `hermes send --to weixin` 推送到微信：
@@ -242,6 +260,16 @@ curl -X POST http://localhost:18889/api/config/keys \
 - **收藏 Tab** — 筛选已收藏图片
 - **🎀 穿搭生成** — 自定义 prompt + 参考图 + 尺寸选择
 - **⚙️ 设置** — Web UI 管理 API 密钥
+
+## 🧾 Release Notes
+
+### v1.0.7
+
+- 修复 Python 3.9 本地运行时对 `dict | None` 类型注解不兼容导致的启动失败。
+- 修复开启 `GALLERY_API_KEY` 后 Web UI 主接口未带认证导致首页、设置、生图等功能不可用的问题。
+- 优化在线更新接口：`git pull` 成功后先返回响应，再延迟重启，避免前端误报更新失败。
+- 补全旧图片条目的展示数据：从 `image_metadata.json` 回填完整 prompt、规范模型名、修复误显示为画质 prompt 的穿搭字段，并用当日日程 caption 做合理回填。
+- 生成链路写入 caption、model、source 等 gallery 字段，让今日/全部/彩蛋视图展示更完整。
 
 ## 🤖 AI Agent 集成
 

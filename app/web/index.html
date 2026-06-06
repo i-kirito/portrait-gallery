@@ -1523,7 +1523,7 @@ body {
 
 <div class="header">
   <div class="header-left">
-    <h1 style="user-select:none;" onclick="openScheduleEgg()">🐷 猪猪穿搭画廊 <span style="font-size:12px;color:#999;font-weight:400;" id="versionTag">v1.0.6</span></h1>
+    <h1 style="user-select:none;" onclick="openScheduleEgg()">🐷 猪猪穿搭画廊 <span style="font-size:12px;color:#999;font-weight:400;" id="versionTag">v1.0.7</span></h1>
   </div>
   <div class="header-right">
     <div class="tabs">
@@ -1616,7 +1616,7 @@ body {
     <div style="margin-top:20px;padding-top:20px;border-top:1px solid #eee;">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
         <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
-        <span style="font-size:12px;color:#999;">当前版本 <span id="settingsVersion">v1.0.6</span></span>
+        <span style="font-size:12px;color:#999;">当前版本 <span id="settingsVersion">v1.0.7</span></span>
       </div>
       <div id="updateResult"></div>
     </div>
@@ -1668,6 +1668,47 @@ body {
 
 <script>
 const API = "";
+const API_KEY_STORAGE = "gallery_api_key";
+
+function initApiKey() {
+  const params = new URLSearchParams(window.location.search);
+  const keyFromUrl = params.get("key") || params.get("api_key") || "";
+  if (keyFromUrl) {
+    localStorage.setItem(API_KEY_STORAGE, keyFromUrl);
+  }
+  window.__API_KEY = keyFromUrl || localStorage.getItem(API_KEY_STORAGE) || "";
+}
+
+function apiKeyQuery() {
+  return window.__API_KEY ? "?key=" + encodeURIComponent(window.__API_KEY) : "";
+}
+
+initApiKey();
+
+(function installApiKeyFetchWrapper() {
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = function(input, init) {
+    const apiKey = window.__API_KEY || "";
+    if (!apiKey) return nativeFetch(input, init);
+
+    try {
+      const inputUrl = typeof input === "string" ? input : input.url;
+      const url = new URL(inputUrl, window.location.href);
+      if (url.origin === window.location.origin && url.pathname.startsWith("/api/")) {
+        const nextInit = Object.assign({}, init || {});
+        const inputHeaders = typeof input === "string" ? null : input.headers;
+        const headers = new Headers(nextInit.headers || inputHeaders || undefined);
+        if (!headers.has("X-API-Key")) headers.set("X-API-Key", apiKey);
+        nextInit.headers = headers;
+        return nativeFetch(input, nextInit);
+      }
+    } catch(e) {
+      console.warn("api key wrapper skipped:", e);
+    }
+    return nativeFetch(input, init);
+  };
+})();
+
 let allEntries = [];
 let todayData = null;  // {date, photos: [...], schedule, outfit_style}
 let currentTagFilter = "";
@@ -2595,6 +2636,12 @@ async function loadGallery() {
       fetch(`${API}/api/today`),
       fetch(`${API}/api/gallery`)
     ]);
+    if (todayRes.status === 401 || galleryRes.status === 401) {
+      throw new Error("需要 API Key，请用 ?key=你的密钥 打开页面");
+    }
+    if (!todayRes.ok || !galleryRes.ok) {
+      throw new Error("API 请求失败");
+    }
     todayData = await todayRes.json();
     allEntries = await galleryRes.json();
     // Dedup by image_filename (keep first occurrence), but allow date-keyed entries (no image_filename)
@@ -2946,7 +2993,7 @@ function loadScheduleEggData() {
   body.innerHTML = '<div class="egg-loading">🔮 正在窥探猪猪的日程秘密...</div>';
 
   // 并行拉取日程详情、今日照片和真实待执行生图任务
-  var apiSuffix = window.__API_KEY ? '?key=' + window.__API_KEY : '';
+  var apiSuffix = apiKeyQuery();
   return Promise.all([
     fetch('/api/schedule-detail' + apiSuffix).then(function(r){ return r.json(); }).catch(function(){ return null; }),
     fetch('/api/today' + apiSuffix).then(function(r){ return r.json(); }).catch(function(){ return null; }),
@@ -3213,7 +3260,7 @@ function savePhotoJobLimit() {
     btn.textContent = '保存中';
   }
 
-  var apiSuffix = window.__API_KEY ? '?key=' + window.__API_KEY : '';
+  var apiSuffix = apiKeyQuery();
   fetch('/api/photo-job-limit' + apiSuffix, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -3254,7 +3301,7 @@ function refreshScheduleEgg() {
   if (body) {
     body.innerHTML = '<div class="egg-loading">🔮 正在重新生成今天的日程...</div>';
   }
-  var apiSuffix = window.__API_KEY ? '?key=' + window.__API_KEY : '';
+  var apiSuffix = apiKeyQuery();
   fetch('/api/refresh-schedule' + apiSuffix, { method: 'POST' })
     .then(function(r) {
       return r.json().then(function(data) {
