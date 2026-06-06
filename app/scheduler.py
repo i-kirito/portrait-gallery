@@ -170,10 +170,11 @@ class DailyScheduler:
 
 ⚠️ prompt 字段必须是纯英文，适合 AI 生图，必须包含：发型、服装细节、动作/姿势、场景、光影氛围
 
-⚠️ schedule 必须有 6-8 条，严格使用 \\n 分隔，每行一条，格式为「HH:mm 活动描述」：
-   "09:00 起床洗漱，换上今日穿搭\\n10:30 去咖啡馆写日记\\n12:00 午餐\\n14:00 画画创作\\n16:00 出门散步\\n18:00 回家做饭\\n20:00 晚间直播\\n22:00 护肤睡觉"
+⚠️ schedule 必须有 6-8 条，严格使用 \\n 分隔，每行一条，格式为「HH:mm 英文活动描述」：
+   "09:00 wake up and get dressed in today's outfit\\n10:30 go to a cafe to write diary\\n12:00 lunch\\n14:00 painting and creating art\\n16:00 go out for a walk\\n18:00 cook dinner at home\\n20:00 evening livestream\\n22:00 skincare and bedtime"
    不要用"早上9点"、"下午2点"等中文时间格式，必须用 HH:mm 数字格式！每行之间必须用 \\n 换行，不要用空格或句号分隔！
-   每条活动描述要具体到场景/动作/道具（12-28 个汉字），不要只写“做早餐中”“出门”“休息”等短句。
+   每条活动描述必须用英文写，要具体到场景/动作/道具（12-28 words），不要只写"做早餐""出门""休息"等短句。
+   活动描述必须和 prompt 字段中的场景/动作保持一致！
 
 caption 要用猪猪的语气，带颜文字和～波浪号，根据穿搭和日程写出今日心情。
 
