@@ -3021,9 +3021,10 @@ function loadScheduleEggData() {
       }
     }
 
-    // 过滤：只显示已完成 + 当前时段的日程，不显示未来计划
+    // 过滤：显示已完成/已过日程 + 下一条未来计划
     var visibleSchedule = [];
     var lastPastIdx = -1;
+    var nextFutureIdx = -1;
     for (var i = 0; i < schedule.length; i++) {
       var normalizedTime = extractJobTime(schedule[i].time);
       if (!normalizedTime) continue;
@@ -3035,22 +3036,22 @@ function loadScheduleEggData() {
       };
       var itemPast = isPastOrNow(normalizedTime);
       
-      if (itemPast) {
-        // 已完成/当前时段：显示
+      if (itemPast || normalizedItem.hasPhoto) {
+        // 已完成/已过时段：显示为完成态，不再拿最后一条已过日程冒充当前项。
         normalizedItem.isPast = true;
+        normalizedItem.isNext = false;
         visibleSchedule.push(normalizedItem);
         lastPastIdx = visibleSchedule.length - 1;
+      } else if (nextFutureIdx < 0) {
+        // 下一条未来计划：显示为高亮预告。
+        normalizedItem.isPast = false;
+        normalizedItem.isNext = true;
+        visibleSchedule.push(normalizedItem);
+        nextFutureIdx = visibleSchedule.length - 1;
       }
-      // 未来计划：不显示
+      // 其他未来计划：不显示
     }
-    var activeScheduleIdx = -1;
-    for (var ai = 0; ai < visibleSchedule.length; ai++) {
-      if (!visibleSchedule[ai].isPast) {
-        activeScheduleIdx = ai;
-        break;
-      }
-    }
-    if (activeScheduleIdx < 0) activeScheduleIdx = lastPastIdx;
+    var activeScheduleIdx = nextFutureIdx;
 
     if (visibleSchedule.length > 0) {
       html += '<div class="egg-section"><div class="egg-section-title"><span class="icon">📅</span>今日日程</div>';
@@ -3058,8 +3059,8 @@ function loadScheduleEggData() {
       for (var i = 0; i < visibleSchedule.length; i++) {
         var item = visibleSchedule[i];
         var theme = inferTheme(item.time);
-        // 红点标记下一条可执行日程；已过日程保持完成态。
-        var statusCls = (i === activeScheduleIdx) ? 'now' : (item.isPast ? 'past' : 'future');
+        // 红点标记下一条可执行日程；已过/已完成日程保持完成态。
+        var statusCls = (i === activeScheduleIdx && !item.isPast) ? 'now' : (item.isPast ? 'past' : 'future');
         var statusIcon = statusCls === 'now' ? '💫' : (statusCls === 'future' ? '⏳' : '✅');
         html += '<div class="egg-sched-item ' + statusCls + '">';
         html += '<div class="egg-sched-time">' + statusIcon + ' ' + escapeHtml(item.time) + '<span class="egg-sched-theme ' + theme + '">' + themeLabel(theme) + '</span></div>';
