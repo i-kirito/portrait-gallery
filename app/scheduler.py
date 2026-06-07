@@ -4,10 +4,12 @@ import json
 import logging
 import os
 import random
+import re
 from datetime import datetime, date, timedelta
 from typing import Optional
 
 from data import DailyEntry
+from settings import llm_request_config
 
 logger = logging.getLogger(__name__)
 
@@ -57,27 +59,22 @@ class DailyScheduler:
 
     async def _call_llm(self, prompt: str, timeout: int = 60) -> Optional[str]:
         """调用 CPA LLM（异步，不阻塞事件循环）"""
-        # 优先从前端设置的 api_keys_config.json 读取，fallback 到 config.yaml
-        base_url = self._read_config_key("cpa_url") or self._llm_config.get("base_url", "http://127.0.0.1:8327/v1")
-        api_key = self._read_config_key("cpa_key") or self._llm_config.get("api_key", "")
-        model = self._llm_config.get("model", "deepseek-v4-flash")
+        request_config = llm_request_config(self.config, self.data_dir)
+        chat_url = request_config["chat_url"]
+        api_key = request_config["api_key"]
+        models = request_config["models"]
+        if not chat_url or not models:
+            logger.error("LLM config missing: chat_url/models")
+            return None
 
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        }
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
 
         # deepseek 模型对 system 角色有 reasoning 问题，全放 user 消息
         messages = [
             {"role": "user", "content": prompt},
         ]
-
-        payload = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": 2048,
-            "temperature": 0.3,
-        }
 
         loop = asyncio.get_running_loop()
 
@@ -88,50 +85,31 @@ class DailyScheduler:
             except Exception:
                 return None
 
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: _do_request(
-                    f"{base_url}/chat/completions",
-                    headers, payload, timeout,
+        for model in models:
+            payload = {
+                "model": model,
+                "messages": messages,
+                "max_tokens": 2048,
+                "temperature": 0.3,
+            }
+            try:
+                resp = await loop.run_in_executor(
+                    None,
+                    lambda p=payload: _do_request(chat_url, headers, p, timeout),
                 )
-            )
-            if resp and resp.status_code == 200:
-                data = resp.json()
-                msg = data["choices"][0]["message"]
-                # deepseek 推理模型可能把输出放 reasoning_content
-                content = (msg.get("content") or "").strip()
-                if not content:
-                    content = (msg.get("reasoning_content") or "").strip()
-                if content:
-                    return content
-                return None
-            else:
-                status = resp.status_code if resp else "no response"
-                logger.error(f"LLM call failed: {status}")
-                return None
-        except Exception as e:
-            logger.error(f"LLM call error: {e}")
-            # 尝试备用模型
-            fallback = self._llm_config.get("fallback_model", "mimo-v2.5")
-            if fallback and fallback != model:
-                payload["model"] = fallback
-                payload["temperature"] = 0.3
-                try:
-                    resp = await loop.run_in_executor(
-                        None,
-                        lambda: _do_request(
-                            f"{base_url}/chat/completions",
-                            headers, payload, timeout,
-                        )
-                    )
-                    if resp and resp.status_code == 200:
-                        data = resp.json()
-                        msg = data["choices"][0]["message"]
-                        return (msg.get("content") or msg.get("reasoning_content") or "").strip()
-                except Exception:
-                    pass
-            return None
+                if resp and resp.status_code == 200:
+                    data = resp.json()
+                    msg = data["choices"][0]["message"]
+                    content = (msg.get("content") or msg.get("reasoning_content") or "").strip()
+                    if content:
+                        return content
+                    logger.error(f"LLM call returned empty content: model={model}")
+                else:
+                    status = resp.status_code if resp else "no response"
+                    logger.error(f"LLM call failed: model={model}, status={status}")
+            except Exception as e:
+                logger.error(f"LLM call error: model={model}, {e}")
+        return None
 
     def _build_schedule_prompt(self, today: date, history: str) -> str:
         """构建日程生成 prompt"""
@@ -140,6 +118,8 @@ class DailyScheduler:
         mood = random.choice(MOOD_COLORS)
         sched_type = random.choice(SCHEDULE_TYPES)
         appearance = self._char.get("appearance", "")
+        if not appearance:
+            appearance = self._read_config_key("character_appearance")
         persona = self._char.get("persona", "")
 
         return f"""你是一个18岁的虚拟主播，名叫猪猪，是主人的专属小宝贝。你热爱生活，情感细腻，每天都会精心打扮自己。
@@ -162,19 +142,23 @@ class DailyScheduler:
 【任务要求】
 请为今日生成一份完整的穿搭和日程计划。
 
-⚠️ outfit 字段必须包含以下三个部分，缺一不可：
+⚠️ outfit 字段必须包含以下五个部分，缺一不可：
 1. 「风格：」+ 风格名（从 [冷御风, 甜美风, 元气风, 温柔风, 优雅风, 休闲风, 酷飒风, 清新风, 性感风, 复古风] 中选）
 2. 「发型：」+ 具体发型描述（15-30 个汉字，如：双马尾配蝴蝶结、慵懒低丸子头、编发侧马尾、高马尾、公主切、蛋卷头等，不要披头散发）
 3. 「穿搭：」+ 详细穿搭描述（至少 70 个汉字），必须同时写清：上装、下装或裙装、鞋子、包/发饰/首饰等配饰、主色、材质、版型/廓形、一个细节亮点。不要只写“少女风造型”“精心搭配”等空泛词。
 4. 「动作：」+ 当前的姿态/场景动作（20-40 个汉字，如：托腮趴在桌上、踮脚够书架上的书、蹲下系鞋带、靠在窗边喝咖啡等）
+5. 「场景：」+ 当前中文场景描述（15-40 个汉字，如：晨光照进来的卧室窗边、安静咖啡馆的靠窗小桌、暖色路灯下的街角等）
 
 ⚠️ prompt 字段必须是纯英文，适合 AI 生图，必须包含：发型、服装细节、动作/姿势、场景、光影氛围
 
-⚠️ schedule 必须有 6-8 条，严格使用 \\n 分隔，每行一条，格式为「HH:mm 英文活动描述」：
-   "09:00 wake up and get dressed in today's outfit\\n10:30 go to a cafe to write diary\\n12:00 lunch\\n14:00 painting and creating art\\n16:00 go out for a walk\\n18:00 cook dinner at home\\n20:00 evening livestream\\n22:00 skincare and bedtime"
+⚠️ schedule 是 WebUI 展示用，必须用中文，必须有 6-8 条，严格使用 \\n 分隔，每行一条，格式为「HH:mm 中文活动描述」：
+   "09:00 起床整理今天的温柔穿搭\\n10:30 坐在咖啡馆窗边写手账\\n12:00 吃一份清爽午餐\\n14:00 在画室整理灵感草图\\n16:00 去公园散步拍照\\n18:00 回家做一顿简单晚餐\\n20:00 准备晚间直播\\n22:00 做睡前护肤准备休息"
    不要用"早上9点"、"下午2点"等中文时间格式，必须用 HH:mm 数字格式！每行之间必须用 \\n 换行，不要用空格或句号分隔！
-   每条活动描述必须用英文写，要具体到场景/动作/道具（12-28 words），不要只写"做早餐""出门""休息"等短句。
-   活动描述必须和 prompt 字段中的场景/动作保持一致！
+   每条活动描述必须用中文写，要具体到场景/动作/道具（12-30 个汉字），不要只写"做早餐""出门""休息"等短句。
+
+⚠️ schedule_prompt 是生图 prompt 注入用，必须用纯英文，条数和时间必须与 schedule 一一对应：
+   "09:00 wake up and arrange today's soft outfit\\n10:30 write diary at a window table in a cafe\\n12:00 have a light refreshing lunch\\n14:00 organize inspiration sketches in an art studio\\n16:00 take a walk and photos in the park\\n18:00 cook a simple dinner at home\\n20:00 prepare for an evening livestream\\n22:00 do skincare and get ready for bedtime"
+   schedule 给用户看中文；schedule_prompt 只给生图 prompt 使用英文。
 
 caption 要用猪猪的语气，带颜文字和～波浪号，根据穿搭和日程写出今日心情。
 
@@ -184,8 +168,9 @@ caption 要用猪猪的语气，带颜文字和～波浪号，根据穿搭和日
 JSON 格式（字段名固定，value 替换为实际内容）：
 {{
     "outfit_style": "风格名",
-    "outfit": "风格：xxx \\n发型：xxx \\n穿搭：xxx \\n动作：xxx",
-    "schedule": "HH:mm 活动描述\\nHH:mm 活动描述\\n...",
+    "outfit": "风格：xxx \\n发型：xxx \\n穿搭：xxx \\n动作：xxx \\n场景：xxx",
+    "schedule": "HH:mm 中文活动描述\\nHH:mm 中文活动描述\\n...",
+    "schedule_prompt": "HH:mm English activity\\nHH:mm English activity\\n...",
     "prompt": "English prompt with hairstyle, outfit details, pose, scene, lighting...",
     "caption": "猪猪的今日心情文案～",
     "outfit_keywords": "JK uniform, pleated skirt, white blouse, red ribbon, loafers",
@@ -224,6 +209,16 @@ JSON 格式（字段名固定，value 替换为实际内容）：
             prompt, re.IGNORECASE
         )
         return ', '.join(dict.fromkeys(scene_words)) if scene_words else ''
+
+    @staticmethod
+    def _contains_cjk(value: str) -> bool:
+        return bool(re.search(r'[\u4e00-\u9fff]', value or ""))
+
+    def _valid_display_outfit(self, outfit: str) -> bool:
+        if not self._contains_cjk(outfit):
+            return False
+        required = ("风格", "发型", "穿搭", "动作", "场景")
+        return all(re.search(fr'{name}[：:]\s*[\u4e00-\u9fff]', outfit or "") for name in required)
 
     def _get_history(self, today: date, days: int = 7) -> str:
         """获取最近几天的历史日程"""
@@ -294,11 +289,22 @@ JSON 格式（字段名固定，value 替换为实际内容）：
             if not scene_kw and llm_prompt:
                 scene_kw = self._extract_scene_keywords(llm_prompt)
 
+            schedule_display = data.get("schedule", "").strip()
+            schedule_prompt = (data.get("schedule_prompt", "") or data.get("schedule_en", "")).strip()
+            outfit_display = data.get("outfit", "").strip()
+            if not schedule_display or not schedule_prompt or not self._contains_cjk(schedule_display):
+                logger.warning(f"日程字段不完整或展示日程非中文 (attempt {attempt+1})")
+                continue
+            if not self._valid_display_outfit(outfit_display):
+                logger.warning(f"outfit 展示字段不完整或非中文 (attempt {attempt+1})")
+                continue
+
             entry = DailyEntry(
                 date=date_str,
                 outfit_style=data.get("outfit_style", ""),
-                outfit=data.get("outfit", ""),
-                schedule=data.get("schedule", ""),
+                outfit=outfit_display,
+                schedule=schedule_display,
+                schedule_prompt=schedule_prompt,
                 prompt=llm_prompt,
                 caption=data.get("caption", ""),
                 status="ok",
@@ -309,9 +315,49 @@ JSON 格式（字段名固定，value 替换为实际内容）：
             return entry
 
         logger.error(f"日程生成失败: 重试 {3} 次均未成功")
+        return self._build_fallback_entry(today)
+
+    def _build_fallback_entry(self, today: date) -> DailyEntry:
+        date_str = today.isoformat()
+        schedule = "\n".join([
+            "08:30 在窗边慢慢醒来，挑选今天的柔和彩色穿搭",
+            "10:00 坐在咖啡馆窗边小桌前写手账",
+            "12:30 配着柠檬茶吃一份轻食午餐和小甜点",
+            "15:00 去安静书店翻看艺术杂志",
+            "18:30 在暖色路灯下散步放松",
+            "22:30 对着镜子做睡前护肤准备休息",
+        ])
+        schedule_prompt = "\n".join([
+            "08:30 wake up slowly by the window and choose a soft colorful outfit",
+            "10:00 write diary at a small window table in a cafe",
+            "12:30 enjoy a light lunch and small dessert with lemon tea",
+            "15:00 browse art magazines in a quiet bookstore",
+            "18:30 take a relaxing walk under warm street lights",
+            "22:30 do skincare beside the mirror and get ready for bedtime",
+        ])
+        outfit = "\n".join([
+            "风格：休闲风",
+            "发型：松软低丸子头配细丝带发饰",
+            "穿搭：奶白色针织短开衫搭配浅蓝高腰百褶半裙，脚穿米色玛丽珍鞋，斜挎小号珍珠链包，整体以柔和浅色为主，针织纹理和裙摆褶皱显得轻盈，袖口的小蝴蝶结是今天的细节亮点。",
+            "动作：靠在窗边桌前托腮看向镜头，手边放着手账和柠檬茶",
+            "场景：晨光洒进来的咖啡馆靠窗小桌",
+        ])
+        prompt = (
+            "A cute 18-year-old virtual idol with a soft low bun tied with a thin ribbon, "
+            "leaning by a window table and resting her cheek on one hand. She is wearing a cream knitted cropped cardigan, "
+            "a light blue high-waisted pleated skirt, beige mary jane shoes, and a small pearl-chain shoulder bag. "
+            "Background: a cozy cafe window table with a diary notebook, lemon tea, warm morning light, gentle atmosphere."
+        )
         return DailyEntry(
             date=date_str,
-            outfit="生成失败",
-            schedule="生成失败",
-            status="failed",
+            outfit_style="休闲风",
+            outfit=outfit,
+            schedule=schedule,
+            schedule_prompt=schedule_prompt,
+            prompt=prompt,
+            caption="今天想当一只慢慢发光的小猪猪～把柔软的心情穿在身上啦(｡･ω･｡)",
+            status="ok",
+            source="fallback",
+            outfit_keywords="cream knitted cropped cardigan, light blue pleated skirt, beige mary jane shoes, ribbon hair accessory, pearl-chain shoulder bag",
+            scene_keywords="cozy cafe, window table, diary notebook, lemon tea, warm morning light",
         )

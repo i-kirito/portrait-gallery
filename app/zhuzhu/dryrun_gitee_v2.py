@@ -4,16 +4,13 @@ DRY-RUN 版本 — 展示优化后的 z-image-turbo API 调用参数
 不实际发送请求，只输出最终 prompt 和 payload
 
 用法：
-  python3 dryrun_gitee_v2.py --theme custom --prompt "描述"
-  python3 dryrun_gitee_v2.py --theme morning
+  python dryrun_gitee_v2.py --theme custom --prompt "描述"
+  python dryrun_gitee_v2.py --theme morning
 """
 import random
 import json
-import sys
 
-sys.path.insert(0, "/Users/ikirito/.openclaw/workspace/skills/zhuzhu-image-gen/scripts")
-
-from core import APPEARANCE, THEMES
+from core import APPEARANCE, THEMES, get_image_model
 
 # ─── 优化配置 ────────────────────────────────────────────────────────────────
 
@@ -63,7 +60,7 @@ def dry_run(theme: str, extra_prompt: str = None):
     prompt = build_optimized_prompt(theme, extra_prompt)
 
     payload = {
-        "model": "z-image-turbo",
+        "model": get_image_model("gitee_model"),
         "prompt": prompt,
         "negative_prompt": NEGATIVE_PROMPT,
         "size": "1024x1024",
@@ -73,7 +70,7 @@ def dry_run(theme: str, extra_prompt: str = None):
     }
 
     print("=" * 70)
-    print(f"🎨 Z-Image-Turbo DRY RUN — theme: {theme}")
+    print(f"🎨 Gitee dry run — theme: {theme}")
     print("=" * 70)
     print(f"\n📝 PROMPT ({len(prompt)} chars):")
     print("-" * 40)

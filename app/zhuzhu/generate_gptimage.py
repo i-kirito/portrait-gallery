@@ -15,15 +15,16 @@ from core import (
     REQUEST_SESSION,
     build_caption,
     build_prompt,
+    get_image_model,
     sync_to_gallery,
     save_image,
     send_photo,
     update_metadata,
+    _API_KEYS_CONFIG_PATH,
 )
 
-# jiuuij.de5.net 直连（文生图 + 图生图）— 默认值，可被 api_keys_config.json 的 gpt_base_url 覆盖
-GPTIMAGE_DIRECT_URL = "https://jiuuij.de5.net/v1/chat/completions"
-GPTIMAGE_DIRECT_MODEL = "gpt-image-2"
+GPTIMAGE_DIRECT_URL = get_image_model("gpt_base_url")
+GPTIMAGE_DIRECT_MODEL = get_image_model("gpt_model")
 
 # 文生图超时 180s（jiuuij 偶尔慢），图生图 300s
 TEXT2IMG_TIMEOUT = 180
@@ -36,11 +37,7 @@ def _get_gpt_key() -> str:
     if env_key:
         return env_key
 
-    config_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "data",
-        "api_keys_config.json",
-    )
+    config_path = _API_KEYS_CONFIG_PATH
     if os.path.exists(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
@@ -57,11 +54,7 @@ def _get_gpt_base_url() -> str:
     if env_url:
         return env_url
 
-    config_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "data",
-        "api_keys_config.json",
-    )
+    config_path = _API_KEYS_CONFIG_PATH
     if os.path.exists(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
@@ -104,6 +97,13 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size:
     if not api_key:
         print("ERROR: GPT_IMAGE_API_KEY or gpt_key is required", file=sys.stderr)
         return None
+    base_url = _get_gpt_base_url()
+    if not base_url:
+        print("ERROR: image_gen.gpt_base_url is required", file=sys.stderr)
+        return None
+    if not GPTIMAGE_DIRECT_MODEL:
+        print("ERROR: image_gen.gpt_model is required", file=sys.stderr)
+        return None
 
     headers = {
         "Content-Type": "application/json",
@@ -142,7 +142,7 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size:
 
     try:
         resp = REQUEST_SESSION.post(
-            _get_gpt_base_url(),
+            base_url,
             headers=headers,
             json=payload,
             timeout=timeout,
@@ -212,16 +212,6 @@ def generate(theme: str, send: bool = False, caption: bool = False,
     cap_text = None
     if caption:
         cap_text = build_caption(theme)
-    sync_to_gallery(
-        path,
-        filename,
-        theme,
-        style=style,
-        prompt=prompt,
-        caption=cap_text or "",
-        model_name=GPTIMAGE_DIRECT_MODEL,
-        source="cron",
-    )
     if send:
         send_photo(path, cap_text)
 

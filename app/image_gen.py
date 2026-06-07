@@ -3,8 +3,10 @@ import asyncio
 import logging
 import os
 import subprocess
-import time
+import sys
 from typing import Optional
+
+from settings import build_child_env, configured_python
 
 logger = logging.getLogger(__name__)
 
@@ -12,30 +14,57 @@ logger = logging.getLogger(__name__)
 class ImageGenerator:
     """调用本地 zhuzhu-image-gen 脚本生成图片"""
 
-    def __init__(self, script_dir: str, data_dir: str):
-        self.script_dir = script_dir
+    def __init__(
+        self,
+        script_dir: str,
+        data_dir: str,
+        config: Optional[dict] = None,
+        config_path: str = "",
+        python_executable: str = "",
+        default_engine: str = "",
+    ):
+        self.script_dir = os.path.abspath(os.path.expanduser(script_dir))
         self.data_dir = data_dir
+        self.config = config or {}
+        self.config_path = config_path
+        self.python_executable = python_executable or configured_python(self.config) or sys.executable
+        self.default_engine = default_engine or self.config.get("image_gen", {}).get("default_engine", "gptimage")
         self.output_dir = os.path.join(data_dir, "images")
         os.makedirs(self.output_dir, exist_ok=True)
+
+    @property
+    def generate_script(self) -> str:
+        return os.path.join(self.script_dir, "generate.py")
+
+    def build_env(self, extra: Optional[dict[str, str]] = None) -> dict[str, str]:
+        return build_child_env(self.config, self.config_path, self.data_dir, extra)
 
     async def generate(
         self,
         prompt: str,
         style: Optional[str] = None,
-        engine: str = "gptimage",
+        engine: str = "",
         timeout: int = 300,
         ref_image: str = "",
         size: str = "",
+        source: str = "custom",
     ) -> Optional[str]:
         """生成图片，返回图片文件名（相对路径）（异步，不阻塞事件循环）"""
+        engine = engine or self.default_engine
         logger.info(f"开始生图: engine={engine}, style={style}, prompt={prompt[:80]}...")
+
+        generate_script = self.generate_script
+        if not os.path.isfile(generate_script):
+            logger.error(f"生图脚本不存在: {generate_script}")
+            return None
 
         # 构建命令
         cmd = [
-            "python3",
-            f"{self.script_dir}/generate.py",
+            self.python_executable,
+            generate_script,
             "--theme", "custom",
             "--engine", engine,
+            "--source", source,
         ]
         if style:
             cmd.extend(["--style", style])
@@ -52,7 +81,8 @@ class ImageGenerator:
                 None,
                 lambda: subprocess.run(
                     cmd, capture_output=True, text=True, timeout=timeout,
-                    env={**os.environ, "ZHUZHU_MEDIA_DIR": self.output_dir},
+                    cwd=self.script_dir,
+                    env=self.build_env({"ZHUZHU_MEDIA_DIR": self.output_dir}),
                 )
             )
             # 检查输出路径

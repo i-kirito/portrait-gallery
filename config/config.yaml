@@ -1,12 +1,19 @@
 config:
-  schedule_time: 07:00
+  schedule_time: '07:00'
+  timezone: Asia/Shanghai
 llm:
+  base_url: http://127.0.0.1:8327/v1
   model: gemini-3.5-flash
   fallback_model: deepseek-v4-flash
 image_gen:
-  script_dir: /Users/ikirito/docker/hermes-portrait-gallery/app/zhuzhu
+  script_dir: app/zhuzhu
   default_engine: gptimage
   timeout: 300
+  gpt_model: gpt-image-2
+  gpt_base_url: https://jiuuij.de5.net/v1/chat/completions
+  gitee_model: z-image-turbo
+  gitee_url: https://ai.gitee.com/v1/images/generations
+  gemini_model: gemini-3.1-flash-image
 character:
   appearance: 18-year-old Chinese girl, fair skin, delicate features. dusty rose pink
     hair, wispy air bangs. large round doll-like deep-set natural dark brown eyes.
@@ -20,4 +27,16 @@ gallery:
 webhook:
   enabled: true
   url: ''
-data_dir: /Users/ikirito/docker/hermes-portrait-gallery/data
+paths:
+  data_dir: data
+  reference_dir: data/references
+  builtin_reference_dir: app/references
+integrations:
+  send_enabled: true
+  hermes_cli: ''
+  wechat_target: weixin
+update:
+  github_api: https://api.github.com/repos/i-kirito/portrait-gallery/releases/latest
+  remote: origin
+  branch: main
+data_dir: data

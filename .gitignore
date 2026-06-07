@@ -4,6 +4,7 @@ app/data/
 logs/
 *.log
 .env
+config/local.yaml
 
 # Backups
 *.bak

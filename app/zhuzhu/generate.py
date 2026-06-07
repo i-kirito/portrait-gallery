@@ -11,42 +11,95 @@ from typing import Optional
 
 import requests
 
-from core import build_caption, build_prompt, enhance_prompt, send_photo
+from core import (
+    SECRETARY_SCHEDULE_PATH,
+    build_caption,
+    build_prompt,
+    enhance_prompt,
+    get_cpa_chat_url,
+    get_cpa_key,
+    get_image_model,
+    get_llm_models,
+    get_reference_path,
+    send_photo,
+)
 from generate_gitee import MODEL_NAME as GITEE_MODEL_NAME
 from generate_gitee import generate as generate_with_gitee
 from generate_gptimage import GPTIMAGE_DIRECT_MODEL
 from generate_gptimage import generate as generate_with_gptimage
 
 # Gemini image generation always uses the CPA Base URL config.
-_GEMINI_CPA_MODEL = "gemini-3.1-flash-image"
+_GEMINI_CPA_MODEL = get_image_model("gemini_model", "gemini-3.1-flash-image")
 
 DAILY_THEMES = {"morning", "noon", "evening", "bedtime"}
 ALL_THEMES = sorted(DAILY_THEMES | {"sexy", "custom"})
 
-# 风格底模参考图路径映射（用户可自行放入参考图到 references/ 目录）
-_REF_DIR = os.path.join(os.path.dirname(__file__), "..", "references")
 STYLE_REF_MAP = {}
 for _style, _fname in [
     ("cool", "reference_face.jpg"),
     ("girly", "ref_style_girly.jpg"),
     ("sweet", "ref_style_sweet.jpg"),
 ]:
-    _path = os.path.join(_REF_DIR, _fname)
-    if os.path.isfile(_path):
+    _path = get_reference_path(_fname)
+    if _path:
         STYLE_REF_MAP[_style] = _path
 
-_OPENCODE_API = "https://opencode.ai/zen/go/v1/chat/completions"
+STYLE_EN_MAP = {
+    "冷御风": "cool elegant style",
+    "甜美风": "sweet style",
+    "元气风": "energetic girly style",
+    "温柔风": "gentle soft style",
+    "优雅风": "elegant style",
+    "休闲风": "casual style",
+    "酷飒风": "chic cool style",
+    "清新风": "fresh style",
+    "性感风": "glamorous style",
+    "复古风": "retro style",
+}
+
+
+def _extract_style_hint(outfit_info: str) -> str:
+    if not outfit_info:
+        return ""
+    m = re.search(r'风格[：:]\s*(\S+)', outfit_info)
+    if not m:
+        return ""
+    raw_style = m.group(1).strip()
+    return STYLE_EN_MAP.get(raw_style, raw_style if not re.search(r'[\u4e00-\u9fff]', raw_style) else "")
+
+
+def _chat_llm(messages: list[dict], max_tokens: int, temperature: float) -> str:
+    api_key = get_cpa_key()
+    chat_url = get_cpa_chat_url()
+    models = get_llm_models()
+    if not chat_url or not models:
+        return ""
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    for model in models:
+        try:
+            payload = {
+                "model": model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            }
+            resp = requests.post(chat_url, headers=headers, json=payload, timeout=30)
+            if resp.status_code != 200:
+                continue
+            msg = resp.json()["choices"][0]["message"]
+            content = (msg.get("content") or msg.get("reasoning_content") or "").strip()
+            if content:
+                return content
+        except Exception as e:
+            print(f"[llm] {model} failed: {e}", file=sys.stderr)
+    return ""
 
 
 def _classify_style(prompt_text: str) -> str:
     """Use LLM to classify prompt into cool/girly/sweet based on vibe."""
-    api_key = os.getenv("OPENCODE_API_KEY")
-    if not api_key:
-        from core import get_cpa_key
-        api_key = get_cpa_key()
-        if not api_key:
-            return random.choice(["cool", "girly", "sweet"])
-
     system = (
         "You are a style classifier for character portrait generation. "
         "Given an image description, classify the overall vibe into exactly one of three styles:\n"
@@ -66,31 +119,17 @@ def _classify_style(prompt_text: str) -> str:
         "Output ONLY the single word: cool, girly, or sweet. No explanation, no punctuation."
     )
 
-    try:
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        payload = {
-            "model": "deepseek-v4-flash",
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt_text[:500]},
-            ],
-            "max_tokens": 50,
-            "temperature": 0.1,
-        }
-        resp = requests.post(_OPENCODE_API, headers=headers, json=payload, timeout=15)
-        if resp.status_code == 200:
-            data = resp.json()
-            msg = data["choices"][0]["message"]
-            # deepseek 推理模型有时把输出放 reasoning_content 而非 content
-            raw = (msg.get("content") or "").strip().lower()
-            if not raw:
-                raw = (msg.get("reasoning_content") or "").strip().lower()
-            # Extract the style word from the response
-            for word in ("cool", "girly", "sweet"):
-                if word in raw:
-                    return word
-    except Exception as e:
-        print(f"[style_classify] LLM failed: {e}", file=sys.stderr)
+    raw = _chat_llm(
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt_text[:500]},
+        ],
+        max_tokens=50,
+        temperature=0.1,
+    ).lower()
+    for word in ("cool", "girly", "sweet"):
+        if word in raw:
+            return word
 
     return random.choice(["cool", "girly", "sweet"])
 
@@ -106,13 +145,6 @@ _HAIRSTYLE_POOL = [
 
 def _decide_hairstyle(prompt_text: str) -> Optional[str]:
     """Use LLM to pick the most fitting hairstyle for the scene."""
-    api_key = os.getenv("OPENCODE_API_KEY")
-    if not api_key:
-        from core import get_cpa_key
-        api_key = get_cpa_key()
-        if not api_key:
-            return None
-
     pool_str = ", ".join(_HAIRSTYLE_POOL)
     system = (
         "You are a hairstyle selector for character portrait generation. "
@@ -131,35 +163,23 @@ def _decide_hairstyle(prompt_text: str) -> Optional[str]:
         "Output ONLY the hairstyle name from the pool, e.g. 'high ponytail'. No explanation."
     )
 
-    try:
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        payload = {
-            "model": "mimo-v2.5",
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt_text[:500]},
-            ],
-            "max_tokens": 200,
-            "temperature": 0.2,
-        }
-        resp = requests.post(_OPENCODE_API, headers=headers, json=payload, timeout=30)
-        if resp.status_code == 200:
-            data = resp.json()
-            msg = data["choices"][0]["message"]
-            # Check content first, then fall back to reasoning_content
-            raw = (msg.get("content") or msg.get("reasoning_content") or "").strip().lower()
-            # Find which hairstyle appears first in the response
-            best_idx = len(raw)
-            best_h = None
-            for h in _HAIRSTYLE_POOL:
-                idx = raw.find(h)
-                if idx != -1 and idx < best_idx:
-                    best_idx = idx
-                    best_h = h
-            if best_h:
-                return best_h
-    except Exception as e:
-        print(f"[hairstyle] LLM failed: {e}", file=sys.stderr)
+    raw = _chat_llm(
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt_text[:500]},
+        ],
+        max_tokens=200,
+        temperature=0.2,
+    ).lower()
+    best_idx = len(raw)
+    best_h = None
+    for h in _HAIRSTYLE_POOL:
+        idx = raw.find(h)
+        if idx != -1 and idx < best_idx:
+            best_idx = idx
+            best_h = h
+    if best_h:
+        return best_h
 
     return None
 
@@ -183,10 +203,10 @@ def _generate_with_gemini_cpa(theme: str, prompt: str):
     import requests
     from core import get_cpa_base_url, get_cpa_key, save_image, update_metadata, sync_to_gallery
 
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {get_cpa_key()}",
-    }
+    api_key = get_cpa_key()
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     payload = {
         "model": _GEMINI_CPA_MODEL,
         "stream": False,
@@ -238,7 +258,7 @@ def _generate_with_gemini_cpa(theme: str, prompt: str):
         return None
 
 
-_SCHEDULE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "schedule_data.json")
+_SCHEDULE_PATH = SECRETARY_SCHEDULE_PATH
 
 # Theme → schedule period keywords
 _THEME_PERIODS = {
@@ -265,6 +285,24 @@ def _normalize_schedule_slot(value: str) -> tuple:
     return f"{hour:02d}:{minute:02d} {activity}".strip(), activity
 
 
+def _find_schedule_activity(schedule: str, time_slot: str, max_distance: int = 60) -> str:
+    """Find the activity near HH:mm in a schedule block."""
+    m = re.match(r'\s*(\d{1,2}):(\d{2})', time_slot or "")
+    if not m or not schedule:
+        return ""
+    target_min = int(m.group(1)) * 60 + int(m.group(2))
+    times = re.findall(r'(\d{1,2}):(\d{2})', schedule)
+    parts = re.split(r'\d{1,2}:\d{2}\s*', schedule)
+    best, best_dist = "", 9999
+    for (hs, ms), activity in zip(times, parts[1:]):
+        slot_min = int(hs) * 60 + int(ms)
+        dist = abs(slot_min - target_min)
+        if dist < best_dist:
+            best_dist = dist
+            best = activity.strip().rstrip('～').strip()
+    return best if best and best_dist <= max_distance else ""
+
+
 def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple:
     """Read daily schedule and return (context_string, raw_time_slot, outfit_keywords, scene_keywords)."""
     if theme not in _THEME_PERIODS or not _THEME_PERIODS[theme]:
@@ -280,12 +318,14 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple
     
     # Search for schedule: first try date key, then scan all entries for today
     schedule = ""
+    schedule_prompt = ""
     outfit_info = ""
     outfit_kw = ""
     scene_kw = ""
     daily = data.get(today_str)
     if daily and daily.get("schedule") and daily["schedule"] not in ("生成失败", ""):
         schedule = daily["schedule"]
+        schedule_prompt = daily.get("schedule_prompt", "") or daily["schedule"]
         outfit_info = daily.get("outfit", "")
         outfit_kw = daily.get("outfit_keywords", "")
         scene_kw = daily.get("scene_keywords", "")
@@ -295,6 +335,7 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple
         for key, entry in data.items():
             if entry.get("date") == today_str and entry.get("schedule") and entry["schedule"] not in ("生成失败", ""):
                 schedule = entry["schedule"]
+                schedule_prompt = entry.get("schedule_prompt", "") or entry["schedule"]
                 outfit_info = entry.get("outfit", "")
                 outfit_kw = entry.get("outfit_keywords", "")
                 scene_kw = entry.get("scene_keywords", "")
@@ -303,35 +344,23 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple
     if schedule_time_override:
         raw_slot, activity = _normalize_schedule_slot(schedule_time_override)
         if activity:
-            style_hint = ""
-            if outfit_info:
-                m = re.search(r'风格[：:]\s*(\S+)', outfit_info)
-                if m:
-                    style_hint = m.group(1)
-            ctx = f"Today's plan: {activity}"
+            prompt_activity = _find_schedule_activity(schedule_prompt, raw_slot) or activity
+            style_hint = _extract_style_hint(outfit_info)
+            ctx = f"Today's plan: {prompt_activity}"
             if style_hint:
                 ctx += f". Style: {style_hint}"
             print(f"📋 Schedule override: {ctx}", file=sys.stderr)
             return ctx, raw_slot, outfit_kw, ""
         # 只传了 HH:MM 没有活动文字 → 在日程中精确匹配该时间
-        if schedule and raw_slot:
+        if (schedule_prompt or schedule) and raw_slot:
             h_match = re.match(r'(\d{1,2}):(\d{2})', raw_slot)
             if h_match:
-                target_h, target_m = int(h_match.group(1)), int(h_match.group(2))
-                target_min = target_h * 60 + target_m
-                times_all = re.findall(r'(\d{1,2}):(\d{2})', schedule)
-                parts_all = re.split(r'\d{1,2}:\d{2}\s*', schedule)
-                best, best_dist = None, 9999
-                for (hs, ms), act in zip(times_all, parts_all[1:]):
-                    sm = int(hs) * 60 + int(ms)
-                    d = abs(sm - target_min)
-                    if d < best_dist:
-                        best_dist = d
-                        best = act.strip().rstrip('～').strip()
-                if best and best_dist <= 60:
+                best = _find_schedule_activity(schedule_prompt or schedule, raw_slot)
+                display_best = _find_schedule_activity(schedule, raw_slot) or best
+                if best:
                     ctx = f"Today's plan: {best}"
-                    print(f"📋 Schedule time-match ({raw_slot}→{best_dist}min): {ctx}", file=sys.stderr)
-                    return ctx, f"{raw_slot} {best}", outfit_kw, ""
+                    print(f"📋 Schedule time-match ({raw_slot}): {ctx}", file=sys.stderr)
+                    return ctx, f"{raw_slot} {display_best}".strip(), outfit_kw, ""
     
     if not schedule:
         # Fallback: no schedule found, generate context from current time + theme
@@ -361,7 +390,7 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple
     periods = _THEME_PERIODS[theme]
     parts = re.split(
         r'(?=[\U0001F000-\U0001FFFF\U00002600-\U000027BF\U00002700-\U000027BF]|☕|🖼|🎹|🎵|🎶|💃|🎭|📚|🎨|🛒|🍰|☀️|🌙|🌅|🌇|🌆|🌃|🌤️)',
-        schedule
+        schedule_prompt or schedule
     )
     for p in periods:
         for part in parts:
@@ -372,11 +401,7 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple
             if cleaned.startswith(p + "：") or cleaned.startswith(p + ":"):
                 activity = re.sub(r'^[^：:]*[：:]\s*', '', cleaned).strip()
                 if activity:
-                    style_hint = ""
-                    if outfit_info:
-                        m = re.search(r'风格[：:]\s*(\S+)', outfit_info)
-                        if m:
-                            style_hint = m.group(1)
+                    style_hint = _extract_style_hint(outfit_info)
                     ctx = f"Today's plan: {activity}"
                     if style_hint:
                         ctx += f". Style: {style_hint}"
@@ -408,8 +433,11 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple
             hour_min, hour_max = 0, 5
     
     # Split schedule into time slots: "HH:MM activity" → [(hour, min, activity), ...]
-    times = re.findall(r'(\d{1,2}):(\d{2})', schedule)
-    parts = re.split(r'\d{1,2}:\d{2}\s*', schedule)
+    prompt_schedule = schedule_prompt or schedule
+    times = re.findall(r'(\d{1,2}):(\d{2})', prompt_schedule)
+    parts = re.split(r'\d{1,2}:\d{2}\s*', prompt_schedule)
+    display_times = re.findall(r'(\d{1,2}):(\d{2})', schedule)
+    display_parts = re.split(r'\d{1,2}:\d{2}\s*', schedule)
     candidates = []
     now_minutes = now.hour * 60 + now.minute
 
@@ -425,17 +453,18 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple
 
     if candidates:
         _, _, h_str, m_str, activity = min(candidates, key=lambda item: (item[0], item[1]))
-        style_hint = ""
-        if outfit_info:
-            m = re.search(r'风格[：:]\s*(\S+)', outfit_info)
-            if m:
-                style_hint = m.group(1)
+        style_hint = _extract_style_hint(outfit_info)
+        display_activity = activity
+        for (dh, dm), d_activity in zip(display_times, display_parts[1:]):
+            if int(dh) == int(h_str) and int(dm) == int(m_str):
+                display_activity = d_activity.strip().rstrip('～').strip() or activity
+                break
         ctx = f"Today's plan: {activity}"
         if style_hint:
             ctx += f". Style: {style_hint}"
         print(f"📋 Schedule context: {ctx}", file=sys.stderr)
         # Return both context (for prompt) and raw time slot (for display)
-        return ctx, f"{h_str}:{m_str} {activity}", outfit_kw, ""
+        return ctx, f"{h_str}:{m_str} {display_activity}", outfit_kw, ""
     # If we get here, no time slot matched - return empty
     return "", "", "", ""
 
@@ -468,7 +497,7 @@ def generate(
     # Inject daily schedule context for timed photos (not custom/sexy)
     schedule_ctx, schedule_raw, outfit_kw, scene_kw = _get_schedule_context(theme, schedule_time)
     schedule_activity = ""
-    if schedule_ctx and theme in DAILY_THEMES and not prompt_override:
+    if schedule_ctx and theme in DAILY_THEMES:
         # Extract activity text for schedule-aware prompt building
         import re
         m = re.search(r"Today's plan:\s*(.+?)(?:\.|$)", schedule_ctx)
@@ -478,7 +507,7 @@ def generate(
         print(f"📋 Injected schedule into prompt (activity: {schedule_activity})", file=sys.stderr)
     
     # Re-build prompt with schedule-aware element selection if we have activity
-    if schedule_activity and theme in DAILY_THEMES and not prompt_override:
+    if schedule_activity and theme in DAILY_THEMES:
         resolved_prompt = build_prompt(theme, schedule_activity=schedule_activity,
                                        outfit_keywords=outfit_kw, scene_keywords=scene_kw)
         resolved_prompt = f"{resolved_prompt}. {schedule_ctx}"

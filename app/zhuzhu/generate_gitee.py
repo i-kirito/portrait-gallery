@@ -15,18 +15,26 @@ from core import (
     build_prompt,
     sync_to_gallery,
     get_gitee_key,
+    get_image_model,
     save_image,
     send_photo,
     update_metadata,
 )
 
-ENGINE_URL = "https://ai.gitee.com/v1/images/generations"
-MODEL_NAME = "z-image-turbo"
+ENGINE_URL = get_image_model("gitee_url")
+MODEL_NAME = get_image_model("gitee_model")
 
 
 
 def generate_image_bytes(prompt: str):
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {get_gitee_key()}"}
+    if not ENGINE_URL or not MODEL_NAME:
+        print("Gitee image_gen.gitee_url/gitee_model is required", file=sys.stderr)
+        return None
+    api_key = get_gitee_key()
+    if not api_key:
+        print("Gitee API key is required", file=sys.stderr)
+        return None
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
     payload = {
         "model": MODEL_NAME,
         "prompt": prompt,
@@ -66,16 +74,6 @@ def generate(theme: str, send: bool = False, caption: bool = False, prompt_overr
     caption_text = None
     if caption:
         caption_text = build_caption(theme)
-    sync_to_gallery(
-        path,
-        filename,
-        theme,
-        prompt=prompt,
-        caption=caption_text or "",
-        model_name=MODEL_NAME,
-        source="cron",
-    )
-
     if send:
         send_photo(path, caption_text)
 

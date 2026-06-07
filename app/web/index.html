@@ -1620,7 +1620,7 @@ body {
     <h2>🔑 API 密钥设置</h2>
     <div class="sk-field">
       <label for="skGiteeKey">Gitee API Key</label>
-      <div class="sk-desc">z-image-turbo 生图密钥</div>
+      <div class="sk-desc">Gitee 生图密钥</div>
       <input type="password" id="skGiteeKey" placeholder="输入新密钥（留空则不修改）">
       <div class="sk-status" id="skGiteeStatus">加载中...</div>
     </div>
@@ -1641,7 +1641,7 @@ body {
     </div>
     <div class="sk-field">
       <label for="skGptKey">GPT Image Key</label>
-      <div class="sk-desc">jiuuij.de5.net 直连密钥</div>
+      <div class="sk-desc">GPT Image 生图密钥</div>
       <input type="password" id="skGptKey" placeholder="输入新密钥（留空则不修改）">
       <div class="sk-status" id="skGptStatus">加载中...</div>
     </div>
@@ -1865,7 +1865,7 @@ async function triggerGenerate() {
     });
     const data = await res.json();
     if (data.error) {
-      showToast("❌ " + data.error);
+      showToast("❌ " + (data.message || data.error));
     } else {
       showToast("✨ 猪猪来啦～");
       await loadGallery();
@@ -2801,20 +2801,18 @@ async function loadSettingsStatus() {
     // LLM Model: 填充下拉框
     const llmEl = document.getElementById("skLlmModel");
     const llmStatus = document.getElementById("skLlmModelStatus");
-    const models = modelsData.models || [];
+    const configuredModels = [
+      data.llm_model,
+      data.llm_models && data.llm_models.fallback_model
+    ].filter(Boolean);
+    const models = (modelsData.models && modelsData.models.length > 0)
+      ? modelsData.models
+      : Array.from(new Set(configuredModels));
 
     // 清空并填充选项
     llmEl.innerHTML = "";
     if (models.length > 0) {
       models.forEach(m => {
-        const opt = document.createElement("option");
-        opt.value = m;
-        opt.textContent = m;
-        llmEl.appendChild(opt);
-      });
-    } else {
-      // fallback：至少有几个常用选项
-      ["deepseek-v4-pro", "deepseek-v4-flash", "mimo-v2.5-pro"].forEach(m => {
         const opt = document.createElement("option");
         opt.value = m;
         opt.textContent = m;
@@ -3387,8 +3385,12 @@ function refreshScheduleEgg() {
         return data;
       });
     })
-    .then(function() {
-      showToast('✨ 日程已刷新');
+    .then(function(data) {
+      if (data && data.status === 'preserved') {
+        showToast(data.message || 'LLM 暂不可用，已保留原日程');
+      } else {
+        showToast((data && data.message) || '✨ 日程已刷新');
+      }
       return loadScheduleEggData();
     })
     .catch(function(err) {

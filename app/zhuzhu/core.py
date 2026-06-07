@@ -8,6 +8,7 @@ import random
 import shutil
 import sys
 import time
+from pathlib import Path
 from typing import Optional
 
 import requests
@@ -18,6 +19,16 @@ if _APP_DIR not in sys.path:
     sys.path.insert(0, _APP_DIR)
 
 from store import ScheduleStore
+from settings import (
+    get_nested,
+    llm_request_config,
+    load_config,
+    load_json_file,
+    normalize_chat_url,
+    resolve_config_path,
+    resolve_data_dir,
+    resolve_project_root,
+)
 
 requests.packages.urllib3.disable_warnings()
 
@@ -26,19 +37,49 @@ MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 3
 REQUEST_SESSION = requests.Session()
 
-WORKSPACE_MEDIA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "images")
-SECRETARY_GALLERY_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "images")
-SECRETARY_SCHEDULE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "schedule_data.json")
-META_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "image_metadata.json")
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "plugin_config.json")
-OPENCLAW_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "openclaw_config.json")
-REFERENCE_IMAGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "references", "reference_face.jpg")
-# Only set if file actually exists, otherwise empty string
-if not os.path.isfile(REFERENCE_IMAGE_PATH):
-    REFERENCE_IMAGE_PATH = ""
+_GALLERY_CONFIG_PATH = resolve_config_path()
+try:
+    _GALLERY_CONFIG = load_config(_GALLERY_CONFIG_PATH)
+except Exception:
+    _GALLERY_CONFIG = {}
+_PROJECT_ROOT = resolve_project_root(_GALLERY_CONFIG_PATH, _GALLERY_CONFIG)
+_DATA_DIR = Path(
+    os.getenv("ZHUZHU_DATA_DIR")
+    or os.getenv("GALLERY_DATA_DIR")
+    or resolve_data_dir(_GALLERY_CONFIG, _GALLERY_CONFIG_PATH)
+).expanduser().resolve()
+
+WORKSPACE_MEDIA = str(Path(os.getenv("ZHUZHU_MEDIA_DIR") or (_DATA_DIR / "images")).expanduser().resolve())
+SECRETARY_GALLERY_DIR = WORKSPACE_MEDIA
+SECRETARY_SCHEDULE_PATH = str(_DATA_DIR / "schedule_data.json")
+META_PATH = str(_DATA_DIR / "image_metadata.json")
+CONFIG_PATH = str(_DATA_DIR / "plugin_config.json")
+OPENCLAW_CONFIG_PATH = str(_DATA_DIR / "openclaw_config.json")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-# CPA API key: read from environment variable first, then fall back to config file
-_API_KEYS_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "api_keys_config.json")
+_API_KEYS_CONFIG_PATH = str(_DATA_DIR / "api_keys_config.json")
+
+
+def _reference_dirs() -> list[Path]:
+    refs = [
+        _DATA_DIR / "references",
+        _PROJECT_ROOT / "app" / "references",
+    ]
+    configured = get_nested(_GALLERY_CONFIG, "paths.reference_dir", "")
+    if configured:
+        path = Path(configured).expanduser()
+        refs.insert(0, path if path.is_absolute() else _PROJECT_ROOT / path)
+    return refs
+
+
+def get_reference_path(filename: str = "reference_face.jpg") -> str:
+    for directory in _reference_dirs():
+        candidate = directory / filename
+        if candidate.is_file():
+            return str(candidate.resolve())
+    return ""
+
+
+REFERENCE_IMAGE_PATH = get_reference_path("reference_face.jpg")
 
 
 def _read_cpa_key() -> str:
@@ -60,9 +101,6 @@ def _read_cpa_key() -> str:
     return ""
 
 
-PRIMARY_API_KEY = _read_cpa_key()
-
-
 def _read_cpa_url() -> str:
     """Read CPA base URL from environment or config file."""
     env_url = os.getenv("CPA_BASE_URL", "")
@@ -77,15 +115,27 @@ def _read_cpa_url() -> str:
                     return url
         except Exception:
             pass
-    return "http://127.0.0.1:8327/v1"
+    return get_nested(_GALLERY_CONFIG, "llm.base_url", "")
 
 
-CPA_BASE_URL = _read_cpa_url()
+def get_llm_models() -> list[str]:
+    return llm_request_config(_GALLERY_CONFIG, str(_DATA_DIR))["models"]
 
 
 def get_cpa_base_url() -> str:
     """Read current CPA base URL from environment or api_keys_config.json."""
     return _read_cpa_url().rstrip("/")
+
+
+def get_cpa_chat_url() -> str:
+    return normalize_chat_url(get_cpa_base_url())
+
+
+def get_image_model(key: str, default: str = "") -> str:
+    return str(get_nested(_GALLERY_CONFIG, f"image_gen.{key}", default) or default).strip()
+
+
+CPA_BASE_URL = get_cpa_base_url()
 
 
 APPEARANCE = "18-year-old Chinese girl, fair skin, delicate features. dusty rose pink hair, wispy air bangs. large round doll-like deep-set natural dark brown eyes. beautiful hourglass figure, slim waist, natural breasts, realistic body proportions, emphasizing a natural soft tissue silhouette."
@@ -286,12 +336,14 @@ def get_openclaw_config():
 
 
 def get_telegram_bot_token() -> str:
-    return get_openclaw_config()["channels"]["telegram"]["accounts"]["default"]["botToken"]
+    cfg = get_openclaw_config()
+    return cfg.get("channels", {}).get("telegram", {}).get("accounts", {}).get("default", {}).get("botToken", "")
 
 
 def get_cpa_key() -> str:
-    if PRIMARY_API_KEY:
-        return PRIMARY_API_KEY
+    key = _read_cpa_key()
+    if key:
+        return key
     try:
         cfg = get_openclaw_config()
         for name, prov in cfg.get("providers", {}).items():
@@ -303,12 +355,12 @@ def get_cpa_key() -> str:
 
 
 def get_gitee_key() -> str:
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8-sig") as f:
-            conf = json.load(f)
-        return conf.get("gitee_config", {}).get("api_keys", [""])[0]
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return ""
+    env_key = os.getenv("GITEE_API_KEY", "")
+    if env_key:
+        return env_key
+    conf = load_json_file(CONFIG_PATH)
+    keys = conf.get("gitee_config", {}).get("api_keys", [])
+    return keys[0] if keys else ""
 
 
 def get_reference_image_b64() -> Optional[str]:
@@ -589,8 +641,11 @@ def _translate_outfit(prompt: str, style_name: str) -> str:
             "例如: \"sheer camisole, silk robe, lace trim\" → 丝绸睡袍、蕾丝边\n"
             "只输出关键词，不要其他文字。"
         )
+        models = get_llm_models()
+        if not models:
+            return _fallback_keywords(extraction_input)
         payload = {
-            "model": "gemini-3.5-flash",
+            "model": models[0],
             "messages": [
                 {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": extraction_input[:500]},
@@ -598,7 +653,7 @@ def _translate_outfit(prompt: str, style_name: str) -> str:
             "max_tokens": 150,
             "temperature": 0.3,
         }
-        resp = requests.post(f"{CPA_BASE_URL}/chat/completions",
+        resp = requests.post(get_cpa_chat_url(),
                              headers=headers, json=payload, timeout=15)
         if resp.status_code == 200:
             data = resp.json()
@@ -706,7 +761,9 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
         existing = data[filename]
         # Preserve fields that may have been set elsewhere (favorite, etc.)
         for field in ("favorite", "source", "time", "model_name", "base_style"):
-            if field in existing and (field not in entry or not entry.get(field)):
+            if field == "favorite" and field in existing:
+                entry[field] = existing[field]
+            elif field in existing and (field not in entry or not entry.get(field)):
                 entry[field] = existing[field]
     
     data[filename] = entry
@@ -775,8 +832,11 @@ def enhance_prompt(user_input: str, theme: Optional[str] = None) -> str:
         user_msg += f" (context: {theme})"
 
     api_key = get_cpa_key()
+    models = get_llm_models()
+    if not api_key or not models or not get_cpa_chat_url():
+        return user_input
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-    for model in ["gemini-3.1-flash-preview", "claude-sonnet-4-6"]:
+    for model in models:
         payload = {
             "model": model,
             "messages": [
@@ -787,7 +847,7 @@ def enhance_prompt(user_input: str, theme: Optional[str] = None) -> str:
             "temperature": 0.85,
         }
         try:
-            resp = REQUEST_SESSION.post(f"{CPA_BASE_URL}/chat/completions", headers=headers, json=payload, timeout=25)
+            resp = REQUEST_SESSION.post(get_cpa_chat_url(), headers=headers, json=payload, timeout=25)
             if resp.status_code == 200:
                 content = resp.json()["choices"][0]["message"].get("content")
                 if content:
@@ -841,9 +901,14 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         user_content = f"场景：{scene}，请写一段配文（不要描述具体衣服颜色款式）。"
 
     try:
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {get_cpa_key()}"}
+        api_key = get_cpa_key()
+        models = get_llm_models()
+        chat_url = get_cpa_chat_url()
+        if not api_key or not models or not chat_url:
+            return random.choice(CAPTION_TEMPLATES.get(theme, CAPTION_TEMPLATES["morning"]))
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
         payload = {
-            "model": "gemini-3-flash", # 这里换成最稳的 flash 避免打满 preview 额度
+            "model": models[0],
             "messages": [
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_content},
@@ -851,7 +916,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
             "max_tokens": 200,
             "temperature": 0.9,
         }
-        resp = REQUEST_SESSION.post(f"{CPA_BASE_URL}/chat/completions", headers=headers, json=payload, timeout=30)
+        resp = REQUEST_SESSION.post(chat_url, headers=headers, json=payload, timeout=30)
         if resp.status_code == 200:
             caption = resp.json()["choices"][0]["message"]["content"].strip()
             if caption:

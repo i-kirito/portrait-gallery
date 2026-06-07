@@ -11,11 +11,11 @@ import json
 import logging
 import os
 import re
+import shutil
 import sys
 import subprocess
 from datetime import datetime, time as dt_time
 
-import yaml
 from aiohttp import web
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -24,20 +24,23 @@ from scheduler import DailyScheduler
 from image_gen import ImageGenerator
 from web_server import GalleryServer
 from store import ScheduleStore
+from settings import (
+    apply_network_env,
+    configured_python,
+    load_config,
+    resolve_config_path,
+    resolve_data_dir,
+    resolve_script_dir,
+)
 
 TODAY_PHOTO_SOURCES = {"cron", "web"}
+FAILED_SCHEDULE_TEXT = "生成失败"
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("portrait_gallery")
-
-
-def load_config(path: str) -> dict:
-    """加载配置文件"""
-    with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
 
 
 def save_schedule_entry(data_dir: str, entry: DailyEntry):
@@ -75,13 +78,17 @@ def save_schedule_entry(data_dir: str, entry: DailyEntry):
                     old = all_data[k]
                     if old.get("schedule") and not entry_dict.get("schedule"):
                         entry_dict["schedule"] = old["schedule"]
+                    if old.get("schedule_prompt") and not entry_dict.get("schedule_prompt"):
+                        entry_dict["schedule_prompt"] = old["schedule_prompt"]
                     del all_data[k]
 
             # If there's already an entry under new_key, merge rather than overwrite
             if new_key in all_data:
                 existing = all_data[new_key]
-                for field in ("favorite", "source", "time", "model_name", "base_style"):
-                    if field in existing and (field not in entry_dict or not entry_dict.get(field)):
+                for field in ("favorite", "source", "time", "model_name", "base_style", "schedule_prompt"):
+                    if field == "favorite" and field in existing:
+                        entry_dict[field] = existing[field]
+                    elif field in existing and (field not in entry_dict or not entry_dict.get(field)):
                         entry_dict[field] = existing[field]
 
             all_data[new_key] = entry_dict
@@ -99,13 +106,22 @@ class PortraitGalleryApp:
     def __init__(self, config_path: str):
         self.config = load_config(config_path)
         self.config_path = config_path
-        self.data_dir = self.config.get("data_dir", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data"))
+        apply_network_env(self.config)
+        self.data_dir = resolve_data_dir(self.config, config_path)
         os.makedirs(self.data_dir, exist_ok=True)
 
         # 初始化组件
         self.scheduler_gen = DailyScheduler(self.config, self.data_dir)
-        script_dir = self.config.get("image_gen", {}).get("script_dir", os.path.join(os.path.dirname(os.path.abspath(__file__)), "zhuzhu"))
-        self.image_gen = ImageGenerator(script_dir, self.data_dir)
+        script_dir = resolve_script_dir(self.config, config_path)
+        image_config = self.config.get("image_gen", {})
+        self.image_gen = ImageGenerator(
+            script_dir,
+            self.data_dir,
+            config=self.config,
+            config_path=config_path,
+            python_executable=configured_python(self.config),
+            default_engine=image_config.get("default_engine", ""),
+        )
 
         # Web 服务器
         self.web_server = GalleryServer(self.config, self.data_dir, config_path)
@@ -116,7 +132,8 @@ class PortraitGalleryApp:
         self.web_server.on_rebuild_photo_jobs = self.rebuild_photo_jobs
 
         # APScheduler
-        self.aps = AsyncIOScheduler(timezone="Asia/Shanghai")
+        timezone = self.config.get("config", {}).get("timezone", "Asia/Shanghai")
+        self.aps = AsyncIOScheduler(timezone=timezone)
 
     async def generate_and_save(self) -> DailyEntry:
         """生成日程 → 生图 → 保存"""
@@ -207,37 +224,25 @@ class PortraitGalleryApp:
     async def refresh_schedule(self):
         """Regenerate today's schedule and rebuild dynamic photo jobs."""
         today_str = datetime.now().strftime("%Y-%m-%d")
-        now_hour = datetime.now().hour
-        now_minute = datetime.now().minute
-        now_minutes = now_hour * 60 + now_minute
-        
         # 生成新日程
         entry = await self.scheduler_gen.generate_today()
         
         if not entry or entry.status != "ok":
             logger.error("日程生成失败")
-            if entry:
+            if entry and entry.schedule and entry.schedule != FAILED_SCHEDULE_TEXT:
                 save_schedule_entry(self.data_dir, entry)
             return entry
-        
-        # 检查新日程里是否还有当前时间之后的计划
-        schedule_text = entry.schedule or ""
-        has_future_plan = False
-        
-        for line in schedule_text.strip().split("\n"):
-            line = line.strip()
-            if not line or ":" not in line[:5]:
-                continue
-            try:
-                time_part = line[:5]
-                h, m = map(int, time_part.split(":"))
-                plan_minutes = h * 60 + m
-                if plan_minutes > now_minutes:
-                    has_future_plan = True
-                    break
-            except:
-                continue
-        
+
+        # LLM 不通时 scheduler 会返回 fallback；刷新按钮不应因此覆盖已有可用日程。
+        if entry.source == "fallback":
+            existing_entry = self._today_schedule_entry()
+            if existing_entry:
+                logger.warning("日程生成使用兜底结果，保留现有今日日程")
+                preserved = DailyEntry.from_dict(existing_entry)
+                preserved.source = "preserved"
+                self._schedule_dynamic_photos(preserved.schedule)
+                return preserved
+
         # 清除旧日程（日期 key）
         store = ScheduleStore(self.data_dir)
         all_data = store.load()
@@ -246,24 +251,16 @@ class PortraitGalleryApp:
             store.save(all_data)
             logger.info("已清除今日日程数据")
         
-        if has_future_plan:
-            # 还有未来计划，保存新日程
-            save_schedule_entry(self.data_dir, entry)
-            logger.info(f"日程生成成功: {entry.outfit_style}")
-            self._schedule_dynamic_photos(entry.schedule)
-        else:
-            # 所有计划都已过期，不保存日程
-            logger.info("今天的日程已全部过期，等待明天刷新")
-            entry.schedule = ""
-            entry.outfit = "今天的日程已结束～明天见哦 💕"
-            save_schedule_entry(self.data_dir, entry)
+        save_schedule_entry(self.data_dir, entry)
+        logger.info(f"日程生成成功: {entry.outfit_style}")
+        self._schedule_dynamic_photos(entry.schedule)
         
         return entry
 
     def _get_photo_job_limit(self) -> int:
         if hasattr(self.web_server, "get_photo_job_limit"):
             return self.web_server.get_photo_job_limit()
-        return 6
+        return int(self.config.get("config", {}).get("photo_job_limit", 6))
 
     def _today_completed_photo_count(self) -> int:
         today_str = datetime.now().strftime("%Y-%m-%d")
@@ -286,23 +283,32 @@ class PortraitGalleryApp:
             logger.error(f"统计今日已完成生图失败: {e}")
         return len(seen)
 
-    def _today_schedule_text(self) -> str:
+    def _is_usable_schedule_entry(self, entry: dict) -> bool:
+        return (
+            isinstance(entry, dict)
+            and entry.get("status") == "ok"
+            and bool((entry.get("schedule") or "").strip())
+            and entry.get("schedule") != FAILED_SCHEDULE_TEXT
+        )
+
+    def _today_schedule_entry(self) -> dict:
         today_str = datetime.now().strftime("%Y-%m-%d")
         try:
             all_data = ScheduleStore(self.data_dir).load()
-            if today_str in all_data and all_data[today_str].get("schedule"):
-                return all_data[today_str].get("schedule", "")
+            if self._is_usable_schedule_entry(all_data.get(today_str)):
+                return all_data[today_str]
             for entry in all_data.values():
                 if (
-                    isinstance(entry, dict)
+                    self._is_usable_schedule_entry(entry)
                     and entry.get("date") == today_str
-                    and entry.get("schedule")
-                    and entry.get("schedule") != "生成失败"
                 ):
-                    return entry.get("schedule", "")
+                    return entry
         except Exception as e:
-            logger.error(f"读取今日日程失败: {e}")
-        return ""
+            logger.error(f"读取今日日程条目失败: {e}")
+        return {}
+
+    def _today_schedule_text(self) -> str:
+        return self._today_schedule_entry().get("schedule", "")
 
     def rebuild_photo_jobs(self) -> list:
         """Rebuild dynamic photo jobs from today's saved schedule."""
@@ -398,20 +404,7 @@ class PortraitGalleryApp:
         today_str = datetime.now().strftime("%Y-%m-%d")
         activity_by_time = {}
         try:
-            all_data = ScheduleStore(self.data_dir).load()
-            schedule_text = ""
-            if today_str in all_data and all_data[today_str].get("schedule"):
-                schedule_text = all_data[today_str].get("schedule", "")
-            if not schedule_text:
-                for entry in all_data.values():
-                    if (
-                        isinstance(entry, dict)
-                        and entry.get("date") == today_str
-                        and entry.get("schedule")
-                        and entry.get("schedule") != "生成失败"
-                    ):
-                        schedule_text = entry.get("schedule", "")
-                        break
+            schedule_text = self._today_schedule_text()
             for h_str, m_str, activity in re.findall(r'(\d{1,2}):(\d{2})\s*(.*)', schedule_text):
                 h, m = int(h_str), int(m_str)
                 if 0 <= h <= 23 and 0 <= m <= 59:
@@ -457,8 +450,8 @@ class PortraitGalleryApp:
         """定时生图任务 - 调用 generate.py 完整链路"""
         logger.info(f"开始定时生图: theme={theme}, schedule_time={schedule_time}")
         cmd = [
-            "python3",
-            os.path.join(os.path.expanduser("~"), ".hermes", "skills", "openclaw-imports", "zhuzhu-image-gen", "scripts", "generate.py"),
+            self.image_gen.python_executable,
+            self.image_gen.generate_script,
             "--theme", theme,
             "--caption",
             "--source", "cron",
@@ -470,7 +463,12 @@ class PortraitGalleryApp:
             result = await loop.run_in_executor(
                 None,
                 lambda: subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=900,
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=900,
+                    cwd=self.image_gen.script_dir,
+                    env=self.image_gen.build_env(),
                 )
             )
             if result.returncode == 0:
@@ -501,12 +499,23 @@ class PortraitGalleryApp:
     def _send_to_wechat(self, image_path: str, caption: str):
         """Send image and caption to WeChat via hermes CLI."""
         import subprocess as sp
-        # 使用 hermes 完整路径，避免 launchd 环境找不到命令
-        hermes_cmd = "/Users/ikirito/.hermes/hermes-agent/venv/bin/hermes"
+        integrations = self.config.get("integrations", {})
+        if integrations.get("send_enabled") is False:
+            logger.info("Hermes 发送已在配置中关闭")
+            return
+        hermes_cmd = integrations.get("hermes_cli", "") or os.getenv("HERMES_CLI", "") or shutil.which("hermes")
+        if not hermes_cmd:
+            candidate = os.path.join(os.path.expanduser("~"), ".hermes", "hermes-agent", "venv", "bin", "hermes")
+            if os.path.exists(candidate):
+                hermes_cmd = candidate
+        if not hermes_cmd:
+            logger.warning("未找到 Hermes CLI，跳过微信发送")
+            return
+        target = integrations.get("wechat_target", "weixin")
         try:
             # 发送图片
             logger.info(f"发送图片到微信: {image_path}")
-            r1 = sp.run([hermes_cmd, "send", "--to", "weixin", f"MEDIA:{image_path}"],
+            r1 = sp.run([hermes_cmd, "send", "--to", target, f"MEDIA:{image_path}"],
                         capture_output=True, text=True, timeout=60)
             if r1.returncode != 0:
                 logger.error(f"发送图片失败: {r1.stderr[:200]}")
@@ -515,7 +524,7 @@ class PortraitGalleryApp:
             # 发送文案
             if caption:
                 logger.info(f"发送文案到微信: {caption[:50]}...")
-                r2 = sp.run([hermes_cmd, "send", "--to", "weixin", caption],
+                r2 = sp.run([hermes_cmd, "send", "--to", target, caption],
                             capture_output=True, text=True, timeout=60)
                 if r2.returncode != 0:
                     logger.error(f"发送文案失败: {r2.stderr[:200]}")
@@ -523,6 +532,18 @@ class PortraitGalleryApp:
             logger.info("微信发送完成")
         except Exception as e:
             logger.error(f"微信发送异常: {e}")
+
+    def _schedule_time(self) -> tuple[int, int]:
+        raw = str(self.config.get("config", {}).get("schedule_time", "07:00")).strip()
+        match = re.match(r"^(\d{1,2}):(\d{2})$", raw)
+        if not match:
+            logger.warning(f"schedule_time 配置无效，使用默认 07:00: {raw}")
+            return 7, 0
+        hour, minute = int(match.group(1)), int(match.group(2))
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            logger.warning(f"schedule_time 配置超出范围，使用默认 07:00: {raw}")
+            return 7, 0
+        return hour, minute
 
     def start(self):
         """启动所有服务（同步入口）"""
@@ -534,13 +555,14 @@ class PortraitGalleryApp:
         self.aps.add_job(
             self.daily_job,
             "cron",
-            hour=7,
-            minute=0,
+            hour=self._schedule_time()[0],
+            minute=self._schedule_time()[1],
             id="daily_schedule",
         )
 
         self.aps.start()
-        logger.info("定时任务已设置: 日程(07:00) + 动态生图(根据日程时间)")
+        sched_hour, sched_minute = self._schedule_time()
+        logger.info(f"定时任务已设置: 日程({sched_hour:02d}:{sched_minute:02d}) + 动态生图(根据日程时间)")
 
         # 启动 Web 服务器
         runner = web.AppRunner(self.web_server.app)
@@ -577,10 +599,7 @@ class PortraitGalleryApp:
 
 
 def main():
-    config_path = os.environ.get(
-        "CONFIG_PATH",
-        os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "config.yaml"),
-    )
+    config_path = resolve_config_path()
     app = PortraitGalleryApp(config_path)
 
     app.start()

@@ -10,6 +10,7 @@ class DailyEntry:
     outfit_style: str = ""
     outfit: str = ""
     schedule: str = ""
+    schedule_prompt: str = ""  # English schedule used for image prompt injection
     image_path: str = ""
     image_filename: str = ""
     prompt: str = ""
@@ -29,6 +30,7 @@ class DailyEntry:
             outfit_style=data.get("outfit_style", ""),
             outfit=data.get("outfit", ""),
             schedule=data.get("schedule", ""),
+            schedule_prompt=data.get("schedule_prompt", ""),
             image_path=data.get("image_path", ""),
             image_filename=data.get("image_filename", ""),
             prompt=data.get("prompt", ""),
