@@ -31,6 +31,12 @@ SCHEDULE_TYPES = [
     "学习日", "社交日", "旅行日", "创作日", "放松日",
 ]
 
+DEFAULT_REQUIRED_PERIODS = [
+    {"name": "morning", "label": "早", "start": "06:00", "end": "11:59"},
+    {"name": "noon", "label": "中", "start": "12:00", "end": "17:59"},
+    {"name": "evening", "label": "晚", "start": "18:00", "end": "23:59"},
+]
+
 
 class DailyScheduler:
     """使用 LLM 生成每日穿搭和日程"""
@@ -160,6 +166,13 @@ class DailyScheduler:
    "09:00 wake up and arrange today's soft outfit\\n10:30 write diary at a window table in a cafe\\n12:00 have a light refreshing lunch\\n14:00 organize inspiration sketches in an art studio\\n16:00 take a walk and photos in the park\\n18:00 cook a simple dinner at home\\n20:00 prepare for an evening livestream\\n22:00 do skincare and get ready for bedtime"
    schedule 给用户看中文；schedule_prompt 只给生图 prompt 使用英文。
 
+⚠️ schedule 必须覆盖早/中/晚三个时间段，每个时间段至少 1 条：
+   - 早：06:00-11:59
+   - 中：12:00-17:59
+   - 晚：18:00-23:59
+   如果只有 5 条，也必须至少包含 1 条早、1 条中、1 条晚；不要把所有安排都集中在上午和下午。
+   schedule_prompt 的时间必须和 schedule 一一对应，也要覆盖同样的早/中/晚时间段。
+
 caption 要用猪猪的语气，带颜文字和～波浪号，根据穿搭和日程写出今日心情。
 
 ⚠️ outfit_keywords 字段：从 prompt 中提取穿搭相关英文关键词（服装+鞋子+配饰），逗号分隔，5-10个词。必须和 prompt 中的穿搭描述完全一致。
@@ -219,6 +232,62 @@ JSON 格式（字段名固定，value 替换为实际内容）：
             return False
         required = ("风格", "发型", "穿搭", "动作", "场景")
         return all(re.search(fr'{name}[：:]\s*[\u4e00-\u9fff]', outfit or "") for name in required)
+
+    @staticmethod
+    def _time_to_minutes(value: str) -> Optional[int]:
+        match = re.match(r'\s*(\d{1,2}):(\d{2})', value or "")
+        if not match:
+            return None
+        hour = int(match.group(1))
+        minute = int(match.group(2))
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            return None
+        return hour * 60 + minute
+
+    def _required_periods(self) -> list[dict]:
+        raw_periods = self.config.get("schedule", {}).get("required_periods", DEFAULT_REQUIRED_PERIODS)
+        periods = []
+        for item in raw_periods:
+            if not isinstance(item, dict):
+                continue
+            start = self._time_to_minutes(str(item.get("start", "")))
+            end = self._time_to_minutes(str(item.get("end", "")))
+            label = str(item.get("label") or item.get("name") or "").strip()
+            if start is None or end is None or not label:
+                continue
+            periods.append({"label": label, "start": start, "end": end})
+        if periods:
+            return periods
+        return [
+            {
+                "label": item["label"],
+                "start": self._time_to_minutes(item["start"]),
+                "end": self._time_to_minutes(item["end"]),
+            }
+            for item in DEFAULT_REQUIRED_PERIODS
+        ]
+
+    def _schedule_minutes(self, schedule: str) -> list[int]:
+        minutes = []
+        for match in re.finditer(r'(?m)^\s*(\d{1,2}):(\d{2})\s+.+', schedule or ""):
+            minute = self._time_to_minutes(f"{match.group(1)}:{match.group(2)}")
+            if minute is not None:
+                minutes.append(minute)
+        return minutes
+
+    def _missing_required_periods(self, schedule: str) -> list[str]:
+        minutes = self._schedule_minutes(schedule)
+        missing = []
+        for period in self._required_periods():
+            start = period["start"]
+            end = period["end"]
+            if start <= end:
+                has_item = any(start <= minute <= end for minute in minutes)
+            else:
+                has_item = any(minute >= start or minute <= end for minute in minutes)
+            if not has_item:
+                missing.append(period["label"])
+        return missing
 
     def _get_history(self, today: date, days: int = 7) -> str:
         """获取最近几天的历史日程"""
@@ -294,6 +363,14 @@ JSON 格式（字段名固定，value 替换为实际内容）：
             outfit_display = data.get("outfit", "").strip()
             if not schedule_display or not schedule_prompt or not self._contains_cjk(schedule_display):
                 logger.warning(f"日程字段不完整或展示日程非中文 (attempt {attempt+1})")
+                continue
+            missing_display = self._missing_required_periods(schedule_display)
+            missing_prompt = self._missing_required_periods(schedule_prompt)
+            if missing_display or missing_prompt:
+                logger.warning(
+                    f"日程缺少早中晚覆盖 (attempt {attempt+1}): "
+                    f"display_missing={missing_display}, prompt_missing={missing_prompt}"
+                )
                 continue
             if not self._valid_display_outfit(outfit_display):
                 logger.warning(f"outfit 展示字段不完整或非中文 (attempt {attempt+1})")

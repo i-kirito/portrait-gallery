@@ -236,12 +236,15 @@ class PortraitGalleryApp:
         # LLM 不通时 scheduler 会返回 fallback；刷新按钮不应因此覆盖已有可用日程。
         if entry.source == "fallback":
             existing_entry = self._today_schedule_entry()
-            if existing_entry:
+            existing_missing = self._schedule_missing_required_periods(existing_entry.get("schedule", "")) if existing_entry else []
+            if existing_entry and not existing_missing:
                 logger.warning("日程生成使用兜底结果，保留现有今日日程")
                 preserved = DailyEntry.from_dict(existing_entry)
                 preserved.source = "preserved"
                 self._schedule_dynamic_photos(preserved.schedule)
                 return preserved
+            if existing_entry and existing_missing:
+                logger.warning(f"现有今日日程缺少时间段 {existing_missing}，使用兜底日程修复")
 
         # 清除旧日程（日期 key）
         store = ScheduleStore(self.data_dir)
@@ -283,6 +286,84 @@ class PortraitGalleryApp:
             logger.error(f"统计今日已完成生图失败: {e}")
         return len(seen)
 
+    def _schedule_period_label(self, hour: int, minute: int = 0) -> str:
+        total_minutes = hour * 60 + minute
+        try:
+            periods = self.scheduler_gen._required_periods()
+        except Exception as e:
+            logger.error(f"读取日程必需时间段失败: {e}")
+            return ""
+        for period in periods:
+            start = period["start"]
+            end = period["end"]
+            if start <= end:
+                in_period = start <= total_minutes <= end
+            else:
+                in_period = total_minutes >= start or total_minutes <= end
+            if in_period:
+                return period["label"]
+        return ""
+
+    def _today_completed_photo_periods(self) -> set[str]:
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        completed_periods = set()
+        try:
+            all_data = ScheduleStore(self.data_dir).load()
+            for entry in all_data.values():
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("date") != today_str or entry.get("status") != "ok":
+                    continue
+                if entry.get("source", "") not in TODAY_PHOTO_SOURCES:
+                    continue
+                raw_time = entry.get("schedule_time") or entry.get("time") or ""
+                match = re.match(r'\s*(\d{1,2}):(\d{2})', raw_time)
+                if not match:
+                    continue
+                label = self._schedule_period_label(int(match.group(1)), int(match.group(2)))
+                if label:
+                    completed_periods.add(label)
+        except Exception as e:
+            logger.error(f"统计今日已完成生图时间段失败: {e}")
+        return completed_periods
+
+    def _select_photo_job_candidates(self, candidates: list[dict], limit: int) -> list[dict]:
+        if limit <= 0:
+            return []
+        if len(candidates) <= limit:
+            return candidates
+
+        selected = []
+        selected_ids = set()
+        completed_periods = self._today_completed_photo_periods()
+        try:
+            required_labels = [period["label"] for period in self.scheduler_gen._required_periods()]
+        except Exception as e:
+            logger.error(f"读取日程必需时间段失败: {e}")
+            required_labels = []
+
+        for label in required_labels:
+            if len(selected) >= limit:
+                break
+            if label in completed_periods:
+                continue
+            for candidate in candidates:
+                if candidate["id"] in selected_ids or candidate.get("period_label") != label:
+                    continue
+                selected.append(candidate)
+                selected_ids.add(candidate["id"])
+                break
+
+        for candidate in candidates:
+            if len(selected) >= limit:
+                break
+            if candidate["id"] in selected_ids:
+                continue
+            selected.append(candidate)
+            selected_ids.add(candidate["id"])
+
+        return sorted(selected, key=lambda item: item["run_time"])
+
     def _is_usable_schedule_entry(self, entry: dict) -> bool:
         return (
             isinstance(entry, dict)
@@ -290,6 +371,13 @@ class PortraitGalleryApp:
             and bool((entry.get("schedule") or "").strip())
             and entry.get("schedule") != FAILED_SCHEDULE_TEXT
         )
+
+    def _schedule_missing_required_periods(self, schedule_text: str) -> list[str]:
+        try:
+            return self.scheduler_gen._missing_required_periods(schedule_text or "")
+        except Exception as e:
+            logger.error(f"检查日程早中晚覆盖失败: {e}")
+            return []
 
     def _today_schedule_entry(self) -> dict:
         today_str = datetime.now().strftime("%Y-%m-%d")
@@ -342,15 +430,8 @@ class PortraitGalleryApp:
             logger.info(f"今日生图已达上限: completed={completed_count}, max={max_daily}")
             return
 
-        scheduled_count = 0
+        candidates = []
         for h_str, m_str, activity in time_matches:
-            if scheduled_count >= remaining_slots:
-                logger.info(
-                    f"已达到今日剩余生图上限: scheduled={scheduled_count}, "
-                    f"completed={completed_count}, max={max_daily}"
-                )
-                break
-
             h, m = int(h_str), int(m_str)
             if h < 0 or h > 23 or m < 0 or m > 59:
                 continue
@@ -372,18 +453,33 @@ class PortraitGalleryApp:
                 logger.info(f"跳过已过期的时间: {h}:{m:02d}")
                 continue
 
+            candidates.append({
+                "id": job_id,
+                "hour": h,
+                "minute": m,
+                "activity": activity.strip(),
+                "theme": theme,
+                "run_time": run_time,
+                "period_label": self._schedule_period_label(h, m),
+            })
+
+        selected_jobs = self._select_photo_job_candidates(candidates, remaining_slots)
+        for item in selected_jobs:
             self.aps.add_job(
                 self.photo_job,
                 'date',
-                run_date=run_time,
-                args=[theme, f"{h:02d}:{m:02d} {activity.strip()}"],
-                id=job_id,
+                run_date=item["run_time"],
+                args=[item["theme"], f"{item['hour']:02d}:{item['minute']:02d} {item['activity']}"],
+                id=item["id"],
             )
-            scheduled_count += 1
-            logger.info(f"添加动态生图任务: {h:02d}:{m:02d} theme={theme} activity={activity[:30]}")
+            logger.info(
+                f"添加动态生图任务: {item['hour']:02d}:{item['minute']:02d} "
+                f"theme={item['theme']} period={item.get('period_label') or '-'} "
+                f"activity={item['activity'][:30]}"
+            )
 
         logger.info(
-            f"动态生图任务已创建: {scheduled_count} 个 "
+            f"动态生图任务已创建: {len(selected_jobs)} 个 "
             f"(completed={completed_count}, max_daily={max_daily})"
         )
 
@@ -572,20 +668,16 @@ class PortraitGalleryApp:
         logger.info(f"画廊启动: http://{self.web_server.host}:{self.web_server.port}")
 
         # 检查今天是否已有完整日程；启动后需要恢复内存里的动态生图任务
-        today_str = datetime.now().strftime("%Y-%m-%d")
         today_schedule = ""
         need_generate = True
-        all_data = ScheduleStore(self.data_dir).load()
-        for key, entry in all_data.items():
-            if not isinstance(entry, dict):
-                continue
-            if key != today_str and entry.get("date") != today_str:
-                continue
-            schedule = entry.get("schedule", "")
-            if schedule and schedule != "生成失败":
-                today_schedule = schedule
+        today_entry = self._today_schedule_entry()
+        if today_entry:
+            today_schedule = today_entry.get("schedule", "")
+            missing_periods = self._schedule_missing_required_periods(today_schedule)
+            if missing_periods:
+                logger.warning(f"今日日程缺少时间段 {missing_periods}，后台刷新修复")
+            else:
                 need_generate = False
-                break
 
         if need_generate:
             logger.info("今日尚未生成完整日程，后台生成中...")

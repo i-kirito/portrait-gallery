@@ -581,6 +581,7 @@ class GalleryServer:
             "Masterpiece clarity",
             "high-quality raw photo",
             "glowing skin texture",
+            "未检测到服装",
         )
         return any(marker in outfit for marker in broken_markers)
 
@@ -597,8 +598,12 @@ class GalleryServer:
         phrase_map = [
             (["light gray", "knit", "cardigan"], "浅灰色针织开衫"),
             (["gray", "knit", "cardigan"], "灰色针织开衫"),
+            (["white", "lace", "camisole"], "白色蕾丝吊带睡裙"),
+            (["lace", "camisole"], "蕾丝吊带睡裙"),
             (["pink", "lace", "camisole dress"], "粉色蕾丝吊带裙"),
             (["camisole dress"], "吊带裙"),
+            (["sleep", "dress"], "睡裙"),
+            (["duvet"], "柔软白色被子"),
             (["mary jane"], "玛丽珍鞋"),
             (["lace", "ankle socks"], "蕾丝短袜"),
             (["heart", "necklace"], "爱心项链"),
@@ -1245,11 +1250,12 @@ class GalleryServer:
     def _has_cjk(value: str) -> bool:
         return bool(re.search(r'[\u4e00-\u9fff]', value or ""))
 
-    def _parse_generate_now_llm(self, text: str) -> tuple[str, str]:
+    def _parse_generate_now_llm(self, text: str) -> tuple[str, str, str]:
         raw = (text or "").strip()
         raw = raw.replace("```json", "").replace("```", "").strip()
         activity = ""
         image_prompt = ""
+        outfit_prompt = ""
 
         start = raw.find("{")
         end = raw.rfind("}")
@@ -1261,6 +1267,12 @@ class GalleryServer:
                     data.get("image_prompt_en")
                     or data.get("prompt_en")
                     or data.get("image_prompt")
+                    or ""
+                ).strip()
+                outfit_prompt = str(
+                    data.get("outfit_en")
+                    or data.get("clothing_en")
+                    or data.get("outfit")
                     or ""
                 ).strip()
             except json.JSONDecodeError:
@@ -1277,9 +1289,12 @@ class GalleryServer:
         image_prompt = re.sub(r'\s+', ' ', image_prompt).strip().strip('"').strip("'")
         if self._has_cjk(image_prompt):
             image_prompt = ""
-        return activity, image_prompt
+        outfit_prompt = re.sub(r'\s+', ' ', outfit_prompt).strip().strip('"').strip("'")
+        if self._has_cjk(outfit_prompt):
+            outfit_prompt = ""
+        return activity, image_prompt, outfit_prompt
 
-    def _fallback_generate_now_context(self, now_str: str, schedule_text: str = "") -> tuple[str, str]:
+    def _fallback_generate_now_context(self, now_str: str, schedule_text: str = "") -> tuple[str, str, str]:
         time_value, nearest_activity = "", ""
         target_time, _ = self._parse_time_activity(now_str)
         if target_time and schedule_text:
@@ -1296,16 +1311,20 @@ class GalleryServer:
         if 0 <= hour < 6 or hour >= 22:
             activity = nearest_activity or "在柔软床边安静放松准备入睡"
             prompt = "relaxing beside a soft bed late at night, sleepy gentle expression, cozy bedroom, warm bedside lamp, quiet intimate atmosphere"
+            outfit = "soft white lace camisole sleep dress, delicate lace trim, partly covered by a white duvet"
         elif hour < 11:
             activity = nearest_activity or "在晨光里整理今天的穿搭"
             prompt = "arranging today's outfit in soft morning light, relaxed natural pose, tidy bedroom mirror, warm calm atmosphere"
+            outfit = "cream knit cardigan, white camisole top, light blue pleated skirt, beige mary jane shoes"
         elif hour < 18:
             activity = nearest_activity or "在午后阳光里享受轻松日常"
             prompt = "enjoying a relaxed afternoon moment, casual natural pose, bright cafe or city street setting, clean daylight atmosphere"
+            outfit = "fitted crop top, high-waisted wide-leg trousers, small shoulder bag, simple earrings"
         else:
             activity = nearest_activity or "在傍晚灯光下散步放松"
             prompt = "taking a relaxed evening walk under warm city lights, gentle candid pose, softly glowing street scene, cozy dusk atmosphere"
-        return activity, prompt
+            outfit = "elegant satin slip dress, sheer lace cardigan, delicate necklace, low heels"
+        return activity, prompt, outfit
 
     async def handle_generate_now(self, request: web.Request):
         """根据当前精确时间动态生图 (💭 现在在干嘛)"""
@@ -1356,13 +1375,15 @@ class GalleryServer:
                 "请根据当前时间和日程生成两个字段，只输出 JSON：\n"
                 "{\n"
                 '  "activity_zh": "给 WebUI 展示的中文活动，15-30 个汉字，不要带时间",\n'
-                '  "image_prompt_en": "给 AI 生图用的英文场景描述，25-55 words, no Chinese, include pose/action/scene/props/lighting, do not include character appearance or quality prefix"\n'
+                '  "image_prompt_en": "给 AI 生图用的英文场景描述，25-55 words, no Chinese, include pose/action/scene/props/lighting, do not include character appearance, quality prefix, or clothing",\n'
+                '  "outfit_en": "英文服装描述，8-20 words, must name visible clothing, shoes/accessories if visible, no Chinese"\n'
                 "}\n"
-                "activity_zh 必须中文；image_prompt_en 必须纯英文。不要解释。"
+                "activity_zh 必须中文；image_prompt_en 和 outfit_en 必须纯英文。不要解释。"
             )
 
             activity = ""
             image_prompt = ""
+            outfit_prompt = ""
             llm_models = request_config["models"] if cpa_url else []
 
             for model_name in llm_models:
@@ -1384,17 +1405,19 @@ class GalleryServer:
                         resp_data = _json.loads(resp.read())
                         msg = resp_data["choices"][0]["message"]
                         raw_content = (msg.get("content") or msg.get("reasoning_content") or "").strip()
-                        activity, image_prompt = self._parse_generate_now_llm(raw_content)
-                    if activity and image_prompt:
+                        activity, image_prompt, outfit_prompt = self._parse_generate_now_llm(raw_content)
+                    if activity and image_prompt and outfit_prompt:
                         break
                 except Exception as e:
                     logger.warning(f"LLM activity generation failed with {model_name}: {e}")
 
-            if not activity or not image_prompt:
-                fallback_activity, fallback_prompt = self._fallback_generate_now_context(now_str, schedule_text)
+            if not activity or not image_prompt or not outfit_prompt:
+                fallback_activity, fallback_prompt, fallback_outfit = self._fallback_generate_now_context(now_str, schedule_text)
                 activity = activity or fallback_activity
                 image_prompt = image_prompt or fallback_prompt
+                outfit_prompt = outfit_prompt or fallback_outfit
             schedule_time = f"{now_str} {activity}".strip()
+            image_prompt = f"{image_prompt}. She is wearing {outfit_prompt}."
 
             logger.info(f"LLM generated activity: {activity}; image_prompt_en={image_prompt[:80]}")
 

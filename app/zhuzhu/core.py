@@ -593,8 +593,12 @@ def _translate_outfit(prompt: str, style_name: str) -> str:
         phrase_map = [
             (["light gray", "knit", "cardigan"], "浅灰色针织开衫"),
             (["gray", "knit", "cardigan"], "灰色针织开衫"),
+            (["white", "lace", "camisole"], "白色蕾丝吊带睡裙"),
+            (["lace", "camisole"], "蕾丝吊带睡裙"),
             (["pink", "lace", "camisole dress"], "粉色蕾丝吊带裙"),
             (["camisole dress"], "吊带裙"),
+            (["sleep", "dress"], "睡裙"),
+            (["duvet"], "柔软白色被子"),
             (["mary jane"], "玛丽珍鞋"),
             (["lace", "ankle socks"], "蕾丝短袜"),
             (["heart", "necklace"], "爱心项链"),
@@ -626,10 +630,28 @@ def _translate_outfit(prompt: str, style_name: str) -> str:
                 break
         return "、".join(keywords[:5])
 
+    def _contextual_fallback_keywords(full_prompt: str, theme: str) -> str:
+        lower_prompt = (full_prompt or "").lower()
+        if any(word in lower_prompt for word in ("bed", "duvet", "sleep", "bedroom", "pillow")):
+            return "白色蕾丝吊带睡裙、柔软白色被子"
+        if any(word in lower_prompt for word in ("yoga", "stretch", "running", "tennis", "workout", "gym")):
+            return "运动短上衣、运动半裙、白色运动鞋"
+        if any(word in lower_prompt for word in ("cafe", "coffee", "window table", "diary")):
+            return "针织开衫、半身裙、玛丽珍鞋"
+        if theme == "bedtime":
+            return "蕾丝睡裙、柔软居家披肩"
+        if theme == "morning":
+            return "针织开衫、浅色半身裙、舒适平底鞋"
+        if theme == "noon":
+            return "短款上衣、高腰长裤、小号斜挎包"
+        if theme == "evening":
+            return "缎面连衣裙、蕾丝外搭、精致项链"
+        return ""
+
     try:
         api_key = get_cpa_key()
         if not api_key:
-            return _fallback_keywords(extraction_input)
+            return _fallback_keywords(extraction_input) or _contextual_fallback_keywords(prompt, style_name)
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
         sys_prompt = (
             "你是一个穿搭关键词提取器。从英文AI生图prompt中提取服装，用中文列出3-5个关键词，用顿号分隔。\n"
@@ -643,7 +665,7 @@ def _translate_outfit(prompt: str, style_name: str) -> str:
         )
         models = get_llm_models()
         if not models:
-            return _fallback_keywords(extraction_input)
+            return _fallback_keywords(extraction_input) or _contextual_fallback_keywords(prompt, style_name)
         payload = {
             "model": models[0],
             "messages": [
@@ -662,7 +684,7 @@ def _translate_outfit(prompt: str, style_name: str) -> str:
                 return content
     except Exception as e:
         print(f"[translate_outfit] LLM failed: {e}", file=sys.stderr)
-    return _fallback_keywords(extraction_input)
+    return _fallback_keywords(extraction_input) or _contextual_fallback_keywords(prompt, style_name)
 
 
 def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] = None,

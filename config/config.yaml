@@ -1,6 +1,20 @@
 config:
   schedule_time: '07:00'
   timezone: Asia/Shanghai
+schedule:
+  required_periods:
+    - name: morning
+      label: 早
+      start: '06:00'
+      end: '11:59'
+    - name: noon
+      label: 中
+      start: '12:00'
+      end: '17:59'
+    - name: evening
+      label: 晚
+      start: '18:00'
+      end: '23:59'
 llm:
   base_url: http://127.0.0.1:8327/v1
   model: gemini-3.5-flash
