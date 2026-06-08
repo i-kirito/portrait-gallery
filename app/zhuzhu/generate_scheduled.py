@@ -2,6 +2,7 @@
 """Scheduled image generation entrypoint for zhuzhu-image-gen."""
 import argparse
 import io
+import json
 import os
 import subprocess
 import sys
@@ -9,6 +10,7 @@ from contextlib import redirect_stdout
 
 from generate_gptimage import generate as generate_with_gpt
 from generate_gitee import generate as generate_with_gitee
+from core import CONFIG_PATH
 
 DAILY_THEMES = {"morning", "noon", "evening", "bedtime"}
 ALL_THEMES = sorted(DAILY_THEMES | {"sexy"})
@@ -16,6 +18,15 @@ SEND_TARGET = os.getenv("ZHUZHU_SEND_TARGET", "5509078392")
 SEND_CHANNEL = os.getenv("ZHUZHU_SEND_CHANNEL", "telegram")
 SEND_ACCOUNT = os.getenv("ZHUZHU_SEND_ACCOUNT", "default")
 FALLBACK_TEXT = "主人～猪猪的新照片来啦！"
+
+
+def _gitee_fallback_enabled() -> bool:
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            data = json.load(f) or {}
+        return bool(data.get("gitee_fallback_enabled", False))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return False
 
 
 
@@ -40,6 +51,10 @@ def generate(theme: str, caption: bool = True):
     path, caption_text = _run_backend(generate_with_gpt, theme, caption)
     if path:
         return path, caption_text
+
+    if not _gitee_fallback_enabled():
+        print(f"[scheduled] GPT Image failed; Gitee fallback is disabled for theme={theme}", file=sys.stderr)
+        return None, None
 
     print(f"[scheduled] GPT Image failed, falling back to Gitee for theme={theme}", file=sys.stderr)
     return _run_backend(generate_with_gitee, theme, caption)

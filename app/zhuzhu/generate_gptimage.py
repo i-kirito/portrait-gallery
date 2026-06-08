@@ -12,7 +12,10 @@ from typing import Optional
 import requests
 
 from core import (
+    MAX_RETRIES,
     REQUEST_SESSION,
+    RETRYABLE_STATUS,
+    RETRY_DELAY_SECONDS,
     build_caption,
     build_prompt,
     get_image_model,
@@ -140,50 +143,76 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size:
     timeout = IMG2IMG_TIMEOUT if ref_image else TEXT2IMG_TIMEOUT
     start = time.time()
 
-    try:
-        resp = REQUEST_SESSION.post(
-            base_url,
-            headers=headers,
-            json=payload,
-            timeout=timeout,
-        )
+    for attempt in range(MAX_RETRIES):
+        try:
+            resp = REQUEST_SESSION.post(
+                base_url,
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
 
-        if resp.status_code != 200:
-            print(f"Direct GPT API error {resp.status_code}: {resp.text[:200]}", file=sys.stderr)
-            return None
+            if resp.status_code != 200:
+                print(
+                    f"Direct GPT API error {resp.status_code} "
+                    f"(attempt {attempt + 1}/{MAX_RETRIES}): {resp.text[:200]}",
+                    file=sys.stderr,
+                )
+                if resp.status_code in RETRYABLE_STATUS and attempt < MAX_RETRIES - 1:
+                    time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+                    continue
+                return None
 
-        data = resp.json()
-        msg = data["choices"][0]["message"]
+            data = resp.json()
+            msg = data["choices"][0]["message"]
 
-        # CPA-compatible format: message.images[0].image_url.url
-        images = msg.get("images", [])
-        if images and isinstance(images, list):
-            img_url = images[0].get("image_url", {}).get("url", "")
-            if img_url.startswith("data:image/"):
-                img_data = base64.b64decode(img_url.split(",", 1)[1])
+            # CPA-compatible format: message.images[0].image_url.url
+            images = msg.get("images", [])
+            if images and isinstance(images, list):
+                img_url = images[0].get("image_url", {}).get("url", "")
+                if img_url.startswith("data:image/"):
+                    img_data = base64.b64decode(img_url.split(",", 1)[1])
+                else:
+                    print(
+                        f"Direct GPT API: unexpected image_url format "
+                        f"(attempt {attempt + 1}/{MAX_RETRIES}): {str(img_url)[:100]}",
+                        file=sys.stderr,
+                    )
+                    if attempt < MAX_RETRIES - 1:
+                        time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+                        continue
+                    return None
             else:
-                print(f"Direct GPT API: unexpected image_url format: {str(img_url)[:100]}", file=sys.stderr)
-                return None
-        else:
-            # jiuuij.de5.net markdown format: ![image](data:image/png;base64,...)
-            response_content = msg.get("content", "") or ""
-            b64_match = re.search(r'!\[[^\]]*\]\(data:image/[^;]+;base64,([^)]+)\)', response_content)
-            if not b64_match:
-                print(f"Direct GPT API: no base64 image in response: {response_content[:300]}", file=sys.stderr)
-                return None
-            img_data = base64.b64decode(b64_match.group(1))
-        elapsed = round(time.time() - start, 2)
+                # jiuuij.de5.net markdown format: ![image](data:image/png;base64,...)
+                response_content = msg.get("content", "") or ""
+                b64_match = re.search(r'!\[[^\]]*\]\(data:image/[^;]+;base64,([^)]+)\)', response_content)
+                if not b64_match:
+                    print(
+                        f"Direct GPT API: no base64 image in response "
+                        f"(attempt {attempt + 1}/{MAX_RETRIES}): {response_content[:300]}",
+                        file=sys.stderr,
+                    )
+                    if attempt < MAX_RETRIES - 1:
+                        time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+                        continue
+                    return None
+                img_data = base64.b64decode(b64_match.group(1))
+            elapsed = round(time.time() - start, 2)
 
-        return img_data, elapsed
+            return img_data, elapsed
 
-    except Exception as e:
-        print(f"Direct GPT API failed: {e}", file=sys.stderr)
-        return None
+        except Exception as e:
+            print(f"Direct GPT API failed (attempt {attempt + 1}/{MAX_RETRIES}): {e}", file=sys.stderr)
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+                continue
+            return None
 
 
 def generate(theme: str, send: bool = False, caption: bool = False,
              prompt_override: Optional[str] = None, ref_image: Optional[str] = None,
-             style: Optional[str] = None, size: Optional[str] = None):
+             style: Optional[str] = None, size: Optional[str] = None,
+             prompt_is_final: bool = False):
     """GPT Image 生成入口 — 统一走 jiuuij.de5.net 直连
 
     Args:
@@ -194,8 +223,9 @@ def generate(theme: str, send: bool = False, caption: bool = False,
         ref_image: 参考图本地路径，传入则启用图生图模式（img2img）
         style: 风格名 (cool/girly/sweet)，用于文件名标注
         size: 图片尺寸
+        prompt_is_final: prompt_override 已包含画质、外貌、日程等注入内容时设为 True
     """
-    prompt = build_prompt(theme, prompt_override)
+    prompt = prompt_override if prompt_is_final and prompt_override else build_prompt(theme, prompt_override)
     mode = "img2img" if ref_image else "text2img"
     print(f"🎨 GPT Image via jiuuij.de5.net ({mode})...", file=sys.stderr)
 

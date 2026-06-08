@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.0.9**
+当前版本：**v1.1.0**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -256,6 +256,12 @@ curl "http://localhost:18889/api/gallery?key=$GALLERY_API_KEY"
 - **⚙️ 设置** — Web UI 管理 API 密钥
 
 ## 🧾 Release Notes
+
+### v1.1.0
+
+- 修复 Gitee 回退开关未生效的问题：未勾选时 GPT Image 失败不会再自动生成 Gitee 图片。
+- GPT Image 生图失败会先按重试策略尝试多次，只有启用 Gitee 回退后才会改用 Gitee。
+- 优化 prompt 注入链路，避免画质前缀和人物外貌被重复注入，并让日程场景关键词参与最终 prompt。
 
 ### v1.0.9
 

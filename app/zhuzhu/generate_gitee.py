@@ -61,8 +61,9 @@ def generate_image_bytes(prompt: str):
 
 
 
-def generate(theme: str, send: bool = False, caption: bool = False, prompt_override: Optional[str] = None):
-    prompt = build_prompt(theme, prompt_override)
+def generate(theme: str, send: bool = False, caption: bool = False,
+             prompt_override: Optional[str] = None, prompt_is_final: bool = False):
+    prompt = prompt_override if prompt_is_final and prompt_override else build_prompt(theme, prompt_override)
     result = generate_image_bytes(prompt)
     if not result:
         return None

@@ -12,6 +12,7 @@ from typing import Optional
 import requests
 
 from core import (
+    CONFIG_PATH,
     SECRETARY_SCHEDULE_PATH,
     build_caption,
     build_prompt,
@@ -66,6 +67,16 @@ def _extract_style_hint(outfit_info: str) -> str:
         return ""
     raw_style = m.group(1).strip()
     return STYLE_EN_MAP.get(raw_style, raw_style if not re.search(r'[\u4e00-\u9fff]', raw_style) else "")
+
+
+def _gitee_fallback_enabled() -> bool:
+    """Return whether automatic GPT/Gemini -> Gitee fallback is enabled."""
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            data = json.load(f) or {}
+        return bool(data.get("gitee_fallback_enabled", False))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return False
 
 
 def _chat_llm(messages: list[dict], max_tokens: int, temperature: float) -> str:
@@ -350,7 +361,7 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple
             if style_hint:
                 ctx += f". Style: {style_hint}"
             print(f"📋 Schedule override: {ctx}", file=sys.stderr)
-            return ctx, raw_slot, outfit_kw, ""
+            return ctx, raw_slot, outfit_kw, scene_kw
         # 只传了 HH:MM 没有活动文字 → 在日程中精确匹配该时间
         if (schedule_prompt or schedule) and raw_slot:
             h_match = re.match(r'(\d{1,2}):(\d{2})', raw_slot)
@@ -360,7 +371,7 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple
                 if best:
                     ctx = f"Today's plan: {best}"
                     print(f"📋 Schedule time-match ({raw_slot}): {ctx}", file=sys.stderr)
-                    return ctx, f"{raw_slot} {display_best}".strip(), outfit_kw, ""
+                    return ctx, f"{raw_slot} {display_best}".strip(), outfit_kw, scene_kw
     
     if not schedule:
         # Fallback: no schedule found, generate context from current time + theme
@@ -464,7 +475,7 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple
             ctx += f". Style: {style_hint}"
         print(f"📋 Schedule context: {ctx}", file=sys.stderr)
         # Return both context (for prompt) and raw time slot (for display)
-        return ctx, f"{h_str}:{m_str} {display_activity}", outfit_kw, ""
+        return ctx, f"{h_str}:{m_str} {display_activity}", outfit_kw, scene_kw
     # If we get here, no time slot matched - return empty
     return "", "", "", ""
 
@@ -562,34 +573,40 @@ def generate(
 
     used_model = ""
     if theme == "sexy":
-        path = generate_with_gitee(theme, send=False, caption=caption, prompt_override=resolved_prompt)
+        path = generate_with_gitee(theme, send=False, caption=caption, prompt_override=resolved_prompt, prompt_is_final=True)
         if path:
             used_model = GITEE_MODEL_NAME
     elif engine == "gptimage":
-        path = generate_with_gptimage(theme, send=False, caption=caption, prompt_override=resolved_prompt, ref_image=ref_image, size=size, style=actual_style)
+        path = generate_with_gptimage(theme, send=False, caption=caption, prompt_override=resolved_prompt, ref_image=ref_image, size=size, style=actual_style, prompt_is_final=True)
         if path:
             used_model = GPTIMAGE_DIRECT_MODEL
         if not path:
-            print("GPT Image failed, falling back to Gitee", file=sys.stderr)
-            path = generate_with_gitee(theme, send=False, caption=caption, prompt_override=resolved_prompt)
-            if path:
-                used_model = GITEE_MODEL_NAME
+            if _gitee_fallback_enabled():
+                print("GPT Image failed, falling back to Gitee", file=sys.stderr)
+                path = generate_with_gitee(theme, send=False, caption=caption, prompt_override=resolved_prompt, prompt_is_final=True)
+                if path:
+                    used_model = GITEE_MODEL_NAME
+            else:
+                print("GPT Image failed; Gitee fallback is disabled", file=sys.stderr)
     elif engine == "gemini":
         path = _generate_with_gemini_cpa(theme, resolved_prompt)
         if path:
             used_model = _GEMINI_CPA_MODEL
         if not path:
-            print("Gemini CPA failed, falling back to Gitee", file=sys.stderr)
-            path = generate_with_gitee(theme, send=False, caption=caption, prompt_override=resolved_prompt)
-            if path:
-                used_model = GITEE_MODEL_NAME
+            if _gitee_fallback_enabled():
+                print("Gemini CPA failed, falling back to Gitee", file=sys.stderr)
+                path = generate_with_gitee(theme, send=False, caption=caption, prompt_override=resolved_prompt, prompt_is_final=True)
+                if path:
+                    used_model = GITEE_MODEL_NAME
+            else:
+                print("Gemini CPA failed; Gitee fallback is disabled", file=sys.stderr)
     else:  # engine == "gitee"
-        path = generate_with_gitee(theme, send=False, caption=caption, prompt_override=resolved_prompt)
+        path = generate_with_gitee(theme, send=False, caption=caption, prompt_override=resolved_prompt, prompt_is_final=True)
         if path:
             used_model = GITEE_MODEL_NAME
         if not path:
             print("Gitee failed, falling back to GPT Image", file=sys.stderr)
-            path = generate_with_gptimage(theme, send=False, caption=caption, prompt_override=resolved_prompt, ref_image=ref_image, size=size, style=actual_style)
+            path = generate_with_gptimage(theme, send=False, caption=caption, prompt_override=resolved_prompt, ref_image=ref_image, size=size, style=actual_style, prompt_is_final=True)
             if path:
                 used_model = GPTIMAGE_DIRECT_MODEL
 
