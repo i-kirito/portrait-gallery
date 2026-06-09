@@ -659,6 +659,7 @@ body {
 .gallery-list .today-compact {
   display: flex;
   flex-direction: row;
+  align-items: stretch;
   background: #fff;
   border-radius: 16px;
   overflow: visible;
@@ -667,7 +668,7 @@ body {
   transition: box-shadow 0.3s, transform 0.3s;
   position: relative;
   isolation: isolate;
-  min-height: 170px;
+  min-height: 0;
 }
 .gallery-list .today-compact::before {
   content: '';
@@ -693,7 +694,8 @@ body {
 .today-compact .tc-image {
   flex: 0 0 34%;
   max-width: 34%;
-  min-height: 170px;
+  align-self: stretch;
+  min-height: 0;
   background: linear-gradient(135deg, #fce4ec, #f3d4e0);
   overflow: hidden;
   position: relative;
@@ -711,6 +713,8 @@ body {
   pointer-events: none;
 }
 .today-compact .tc-image img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -732,6 +736,16 @@ body {
   position: relative;
   z-index: 1;
   justify-content: center;
+}
+.today-compact .modal-info {
+  min-height: 0;
+  justify-content: flex-start;
+  gap: 8px;
+}
+.today-compact .today-card-info {
+  flex: 1;
+  padding: 14px 16px;
+  border-radius: 20px;
 }
 .tc-top {
   display: flex;
@@ -993,8 +1007,8 @@ body {
 
 @media (max-width: 700px) {
   .gallery-list .today-compact { flex-direction: column; border-radius: 20px; }
-  .gallery-list .today-compact .tc-image { flex: unset; width: 100%; min-height: 180px; border-radius: 14px 14px 0 0; margin: 0; }
-  .gallery-list .today-compact .tc-image img { border-radius: 14px 14px 0 0; }
+  .gallery-list .today-compact .tc-image { flex: unset; width: 100%; max-width: 100%; height: clamp(220px, 62vw, 360px); max-height: none; border-radius: 14px 14px 0 0; margin: 0; }
+  .gallery-list .today-compact .tc-image img { position: static; border-radius: 14px 14px 0 0; }
   .gallery-list .today-compact .tc-info { padding: 14px 16px; }
 }
 
@@ -1347,7 +1361,7 @@ body {
   .header { padding: 14px 16px; }
   .header-left h1 { font-size: 18px; }
   .container { padding: 16px 14px; }
-  .gallery-list .today-compact .tc-image { min-height: 160px; }
+  .gallery-list .today-compact .tc-image { height: clamp(190px, 66vw, 320px); }
   .gallery-list .today-compact .tc-info { padding: 12px 14px; gap: 6px; }
   .gallery-list .today-compact .tc-outfit { font-size: 13px; line-height: 1.6; }
   .gallery-list .today-compact .tc-thought { font-size: 12px; }
@@ -1503,8 +1517,13 @@ body {
 .egg-photo-status-badge.done { background: #d1fae5; color: #065f46; }
 .egg-photo-status-badge.pending { background: #fef3c7; color: #92400e; }
 .egg-photo-status-badge.past { background: #e5e7eb; color: #6b7280; }
+.egg-photo-status-badge.failed { background: #fee2e2; color: #991b1b; }
+.egg-photo-status-badge.running { background: #dbeafe; color: #1d4ed8; }
 .egg-photo-time { font-weight: 600; color: #ff6b9d; min-width: 48px; }
 .egg-photo-theme { font-size: 11px; color: #888; background: #f5f3f7; padding: 2px 8px; border-radius: 6px; }
+.egg-photo-error { flex-basis: 100%; font-size: 11px; line-height: 1.45; color: #b91c1c; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; padding: 5px 8px; overflow-wrap: anywhere; }
+.egg-photo-retry-btn { height: 24px; border: 0; border-radius: 8px; padding: 0 10px; background: #ff5fa2; color: #fff; font-size: 11px; font-weight: 800; cursor: pointer; margin-left: auto; }
+.egg-photo-retry-btn:disabled { opacity: 0.55; cursor: default; }
 .egg-header .egg-date-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; position: relative; z-index: 1; }
 .egg-refresh-btn { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.24); color: #fff; width: 32px; height: 32px; border-radius: 10px; font-size: 15px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: all 0.25s ease; padding: 0; line-height: 1; flex-shrink: 0; backdrop-filter: blur(4px); box-shadow: inset 0 1px 0 rgba(255,255,255,0.18); }
 .egg-refresh-btn:hover { background: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.4); transform: scale(1.08); }
@@ -1576,7 +1595,7 @@ body {
 
 <div class="header">
   <div class="header-left">
-    <h1 style="user-select:none;" onclick="openScheduleEgg()">🐷 猪猪穿搭画廊 <span style="font-size:12px;color:#999;font-weight:400;" id="versionTag">v1.1.0</span></h1>
+    <h1 style="user-select:none;" onclick="openScheduleEgg()">🐷 猪猪穿搭画廊 <span style="font-size:12px;color:#999;font-weight:400;" id="versionTag">v1.1.2</span></h1>
   </div>
   <div class="header-right">
     <div class="tabs">
@@ -1658,6 +1677,12 @@ body {
       <div class="sk-status" id="skCpaKeyStatus">加载中...</div>
     </div>
     <div class="sk-field">
+      <label for="skGithubProxy">GitHub API 代理</label>
+      <div class="sk-desc">用于检查更新和在线更新；例如 http://127.0.0.1:7890，留空则直连或使用系统代理</div>
+      <input type="text" id="skGithubProxy" placeholder="http://127.0.0.1:7890">
+      <div class="sk-status" id="skGithubProxyStatus">加载中...</div>
+    </div>
+    <div class="sk-field">
       <label for="skAppearance">🧬 人物外貌提示词</label>
       <div class="sk-desc">本机专属参数，只保存在 data/api_keys_config.json，不写入仓库配置。写英文效果最佳</div>
       <textarea id="skAppearance" rows="4" placeholder="留空则不注入人物外貌前缀..." style="width:100%;padding:10px;border:1.5px solid #e0d0e8;border-radius:10px;font-size:13px;line-height:1.5;resize:vertical;font-family:inherit;"></textarea>
@@ -1678,7 +1703,7 @@ body {
     <div style="margin-top:20px;padding-top:20px;border-top:1px solid #eee;">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
         <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
-        <span style="font-size:12px;color:#999;">当前版本 <span id="settingsVersion">v1.1.0</span></span>
+        <span style="font-size:12px;color:#999;">当前版本 <span id="settingsVersion">v1.1.2</span></span>
       </div>
       <div id="updateResult"></div>
     </div>
@@ -1776,6 +1801,7 @@ let todayData = null;  // {date, photos: [...], schedule, outfit_style}
 let currentTagFilter = "";
 let showFavoritesOnly = false;
 let showTodayOnly = false;
+let photoRetryPollTimer = null;
 
 function clearFilter() {
   currentTagFilter = "";
@@ -2023,7 +2049,7 @@ function renderToday() {
         <div class="tc-image">
           <img src="/images/${today.image_filename}" alt="今日穿搭" onclick="openViewer('/images/${today.image_filename}')" style="cursor:pointer;">
         </div>
-        <div class="modal-info" style="flex:1;padding:14px 16px;border-radius:20px;">
+        <div class="modal-info today-card-info">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
             <span class="modal-date" style="margin:0;padding:0;background:none;">${dateText} ${timeLabel}</span>
             ${today.outfit_style ? `<span class="modal-style" onclick="event.stopPropagation();filterByTag('${today.outfit_style}');">${today.outfit_style}</span>` : ""}
@@ -2357,6 +2383,16 @@ ms.textContent = `
 .modal-actions { display: flex; gap: 10px; margin-top: auto; padding-top: 16px; }
 .modal-actions .mbtn { flex: 1; padding: 13px 0; border-radius: 14px; border: 1.5px solid #ede5f0; background: #fff; font-size: 16px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; color: #777; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
 .modal-actions .mbtn:hover { border-color: #e91e63; color: #e91e63; background: #fce4ec; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(233,30,99,0.15); }
+.today-compact .modal-actions {
+  margin-top: 2px;
+  padding-top: 8px;
+  gap: 8px;
+}
+.today-compact .modal-actions .mbtn {
+  padding: 9px 0;
+  border-radius: 11px;
+  font-size: 14px;
+}
 .modal-actions .mbtn.danger:hover { border-color: #e53935; color: #e53935; background: #ffebee; box-shadow: 0 6px 16px rgba(229,57,53,0.12); }
 .modal-actions .mbtn.active { border-color: #e91e63; color: #e91e63; background: #fce4ec; box-shadow: 0 2px 8px rgba(233,30,99,0.12); }
 .modal-actions .mbtn .fav-icon { font-size: 18px; line-height: 1; display:inline-block; }
@@ -2752,6 +2788,7 @@ function openSettings() {
   document.getElementById("skGptKey").value = "";
   document.getElementById("skCpaUrl").value = "";
   document.getElementById("skCpaKey").value = "";
+  document.getElementById("skGithubProxy").value = "";
   document.getElementById("skAppearance").value = "";
   document.getElementById("skGiteeFallback").checked = false;
   // Load current status
@@ -2779,6 +2816,9 @@ async function loadSettingsStatus() {
     updateStatus("skGptBaseUrlStatus", data.gpt_base_url);
     updateStatus("skCpaUrlStatus", data.cpa_url);
     updateStatus("skCpaKeyStatus", data.cpa_key);
+    const githubProxyEl = document.getElementById("skGithubProxy");
+    githubProxyEl.value = data.github_proxy || "";
+    updateStatus("skGithubProxyStatus", data.github_proxy);
     const giteeFallbackEl = document.getElementById("skGiteeFallback");
     const giteeFallbackStatus = document.getElementById("skGiteeFallbackStatus");
     giteeFallbackEl.checked = data.gitee_fallback_enabled === true;
@@ -2857,9 +2897,10 @@ async function saveSettings() {
   const gptBaseUrl = document.getElementById("skGptBaseUrl").value.trim();
   const cpaUrl = document.getElementById("skCpaUrl").value.trim();
   const cpaKey = document.getElementById("skCpaKey").value.trim();
-	  const appearance = document.getElementById("skAppearance").value.trim();
-	  const llmModel = document.getElementById("skLlmModel").value;
-	  const giteeFallbackEnabled = document.getElementById("skGiteeFallback").checked;
+  const githubProxy = document.getElementById("skGithubProxy").value.trim();
+  const appearance = document.getElementById("skAppearance").value.trim();
+  const llmModel = document.getElementById("skLlmModel").value;
+  const giteeFallbackEnabled = document.getElementById("skGiteeFallback").checked;
 
   const btn = document.getElementById("skSaveBtn");
   btn.disabled = true;
@@ -2872,10 +2913,11 @@ async function saveSettings() {
     if (gptBaseUrl) body.gpt_base_url = gptBaseUrl;
     if (cpaUrl) body.cpa_url = cpaUrl;
     if (cpaKey) body.cpa_key = cpaKey;
+    body.github_proxy = githubProxy;
     // appearance: always send (empty = remove local appearance)
-	    body.appearance = appearance;
-	    body.gitee_fallback_enabled = giteeFallbackEnabled;
-	    // llm_model: always send
+    body.appearance = appearance;
+    body.gitee_fallback_enabled = giteeFallbackEnabled;
+    // llm_model: always send
     body.llm_model = llmModel;
 
     const res = await fetch(`${API}/api/config/keys`, {
@@ -3050,6 +3092,40 @@ document.addEventListener("keydown", e => {
 
 // 🐷 日程彩蛋弹窗（左上角 logo 点击触发）
 function escapeHtml(s) { var d=document.createElement('div'); d.appendChild(document.createTextNode(s)); return d.innerHTML; }
+function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+
+function extractClockTime(value) {
+  var m = String(value || '').match(/(\d{1,2}:\d{2})/);
+  return m ? m[1].padStart(5, '0') : '';
+}
+
+function summarizePhotoJobError(jobOrText) {
+  var raw = '';
+  if (jobOrText && typeof jobOrText === 'object') {
+    raw = jobOrText.error_summary || jobOrText.error || '';
+  } else {
+    raw = String(jobOrText || '');
+  }
+  var lower = raw.toLowerCase();
+  var reasons = [];
+  if (lower.includes('ssleoferror') || lower.includes('unexpected_eof_while_reading')) {
+    reasons.push('GPT Image 上游 SSL 连接被断开');
+  } else if (lower.includes('max retries exceeded')) {
+    reasons.push('GPT Image 上游连接重试耗尽');
+  } else if (lower.includes('timeout') || lower.includes('timed out')) {
+    reasons.push('生图请求超时');
+  } else if (lower.includes('unauthorized') || lower.includes('invalid api key') || lower.includes('401')) {
+    reasons.push('API Key 校验失败');
+  } else if (lower.includes('rate limit') || lower.includes('429')) {
+    reasons.push('上游限流');
+  } else if (raw.trim()) {
+    reasons.push(raw.trim().split('\n').filter(Boolean).pop().slice(0, 80));
+  }
+  if (lower.includes('gitee fallback is disabled')) {
+    reasons.push('Gitee 兜底未启用');
+  }
+  return Array.from(new Set(reasons)).join('；') || '未知失败';
+}
 
 function inferTheme(timeStr) {
   // 根据 HH:mm 推断主题：<12=morning, 12-17=noon, 18-20=evening, >20=bedtime
@@ -3063,10 +3139,13 @@ function themeLabel(t) {
   return { morning: '☀️ 晨间', noon: '🌤 午后', evening: '🌆 傍晚', bedtime: '🌙 睡前' }[t] || t;
 }
 
-function loadScheduleEggData() {
+function loadScheduleEggData(options) {
+  options = options || {};
   var body = document.getElementById('eggBody');
   var dateEl = document.getElementById('eggDate');
-  body.innerHTML = '<div class="egg-loading">🔮 正在窥探猪猪的日程秘密...</div>';
+  if (!options.silent) {
+    body.innerHTML = '<div class="egg-loading">🔮 正在窥探猪猪的日程秘密...</div>';
+  }
 
   // 并行拉取日程详情、今日照片和真实待执行生图任务
   var apiSuffix = apiKeyQuery();
@@ -3105,8 +3184,7 @@ function loadScheduleEggData() {
     if (photos.length === 0 && detail.photos) photos = detail.photos;
 
     function extractJobTime(value) {
-      var m = String(value || '').match(/(\d{1,2}:\d{2})/);
-      return m ? m[1].padStart(5, '0') : '';
+      return extractClockTime(value);
     }
 
     function extractJobActivity(value) {
@@ -3265,17 +3343,23 @@ function loadScheduleEggData() {
         var planDone = !!planPhoto || plan.status === 'done';
         var planTheme = plan.theme || inferTheme(plan.time);
         var planScheduled = plan.status === 'scheduled';
-        var planSkipped = plan.status === 'skipped';
+        var planRunning = plan.status === 'running';
+        var planFailed = plan.status === 'failed';
+        var planSkipped = plan.status === 'skipped' || plan.status === 'missed';
+        var planErrorText = planFailed ? summarizePhotoJobError(plan.job || plan) : '';
 
-        var planStatusCls = planDone ? 'done' : ((planSkipped || (planPast && !planScheduled)) ? 'past' : 'pending');
-        var planStatusText = planDone ? '✅ 已完成' : (planSkipped ? '⌛ 已过未排' : (planScheduled ? '⏳ 待执行' : (planPast ? '⏳ 已过' : '⏳ 待执行')));
+        var planRetryable = !planDone && !planScheduled && !planRunning && (planSkipped || planFailed || planPast);
+        var planStatusCls = planDone ? 'done' : (planRunning ? 'running' : (planFailed ? 'failed' : ((planSkipped || (planPast && !planScheduled)) ? 'past' : 'pending')));
+        var planStatusText = planDone ? '✅ 已完成' : (planRunning ? '⏳ 生成中' : (planFailed ? '⚠️ 失败' : (planSkipped ? '⌛ 已过未排' : (planScheduled ? '⏳ 待执行' : (planPast ? '⏳ 已过' : '⏳ 待执行')))));
 
         html += '<div class="egg-photo-item">';
         html += '<span class="egg-photo-status-badge ' + planStatusCls + '">' + planStatusText + '</span>';
         html += '<span class="egg-photo-time">' + escapeHtml(plan.time) + '</span>';
         html += '<span class="egg-photo-theme">' + themeLabel(planTheme) + '</span>';
         if (plan.activity) html += '<span style="font-size:12px;color:#666;margin-left:8px;">' + escapeHtml(plan.activity) + '</span>';
+        if (planFailed && planErrorText) html += '<span class="egg-photo-error" title="' + escapeAttr(planErrorText) + '">' + escapeHtml(planErrorText) + '</span>';
         if (planPhoto && planPhoto.outfit_style) html += '<span style="font-size:11px;color:#888;margin-left:auto;">' + escapeHtml(planPhoto.outfit_style) + '</span>';
+        else if (planRetryable) html += '<button class="egg-photo-retry-btn" data-time="' + escapeHtml(plan.time) + '" onclick="retryPhotoJob(this.dataset.time, this)">重试</button>';
         else if (plan.scheduleOnly) html += '<span style="font-size:11px;color:#aaa;margin-left:auto;">刷新时已过</span>';
         html += '</div>';
       }
@@ -3316,6 +3400,114 @@ function loadScheduleEggData() {
     body.innerHTML = html;
   }).catch(function() {
     body.innerHTML = '<div class="egg-empty"><div class="icon">😵</div><p>加载失败了...</p></div>';
+  });
+}
+
+function readPhotoJobState(timeText) {
+  var wanted = extractClockTime(timeText);
+  var apiSuffix = apiKeyQuery();
+  return Promise.all([
+    fetch('/api/today' + apiSuffix).then(function(r){ return r.json(); }).catch(function(){ return null; }),
+    fetch('/api/photo-jobs' + apiSuffix).then(function(r){ return r.json(); }).catch(function(){ return null; }),
+  ]).then(function(results) {
+    var today = results[0];
+    var jobsData = results[1];
+    var photos = (today && today.photos) ? today.photos : [];
+    for (var i = 0; i < photos.length; i++) {
+      var photoTime = extractClockTime(photos[i].schedule_time) || extractClockTime(photos[i].time);
+      if (photoTime === wanted) return { status: 'done', photo: photos[i] };
+    }
+
+    var jobs = (jobsData && jobsData.jobs) ? jobsData.jobs : [];
+    for (var j = 0; j < jobs.length; j++) {
+      var jobTime = extractClockTime(jobs[j].time) || extractClockTime(jobs[j].run_at);
+      if (jobTime === wanted) return jobs[j];
+    }
+    return { status: 'missing' };
+  });
+}
+
+function startPhotoRetryPolling(timeText) {
+  if (photoRetryPollTimer) {
+    clearTimeout(photoRetryPollTimer);
+    photoRetryPollTimer = null;
+  }
+
+  var attempts = 0;
+  var maxAttempts = 180;
+  var poll = function() {
+    attempts += 1;
+    readPhotoJobState(timeText).then(function(state) {
+      loadScheduleEggData({ silent: true });
+      var status = state && state.status;
+      if (status === 'done') {
+        photoRetryPollTimer = null;
+        showToast('补拍完成：' + timeText);
+        loadGallery();
+        return;
+      }
+      if (status === 'failed') {
+        photoRetryPollTimer = null;
+        showToast('补拍失败：' + summarizePhotoJobError(state), 6000);
+        return;
+      }
+      if (attempts >= maxAttempts) {
+        photoRetryPollTimer = null;
+        showToast('补拍仍在生成中，稍后刷新查看');
+        return;
+      }
+      photoRetryPollTimer = setTimeout(poll, 5000);
+    }).catch(function() {
+      if (attempts >= maxAttempts) {
+        photoRetryPollTimer = null;
+        showToast('补拍状态暂时查不到，稍后刷新查看');
+        return;
+      }
+      photoRetryPollTimer = setTimeout(poll, 5000);
+    });
+  };
+
+  photoRetryPollTimer = setTimeout(poll, 1800);
+}
+
+function retryPhotoJob(timeText, btn) {
+  if (!timeText) return;
+  var keepDisabled = false;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '排队中';
+  }
+  showToast('已提交重试：' + timeText);
+
+  var apiSuffix = apiKeyQuery();
+  fetch('/api/photo-jobs/retry' + apiSuffix, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ time: timeText })
+  }).then(function(r) {
+    return r.json().then(function(data) {
+      if (!r.ok) throw new Error(data.error || data.message || 'retry_failed');
+      return data;
+    });
+  }).then(function(data) {
+    if (data.status === 'already_done') showToast('这个时间点已经有图啦');
+    else if (data.status === 'running') {
+      keepDisabled = true;
+      showToast('这个时间点正在生成中');
+      startPhotoRetryPolling(timeText);
+    } else {
+      keepDisabled = true;
+      showToast('已开始补拍：' + timeText);
+      startPhotoRetryPolling(timeText);
+    }
+    return loadScheduleEggData({ silent: true });
+  }).catch(function(e) {
+    showToast('重试失败：' + e.message);
+  }).finally(function() {
+    if (btn && !keepDisabled) {
+      btn.disabled = false;
+      btn.textContent = '重试';
+    }
   });
 }
 

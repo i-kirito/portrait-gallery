@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.1.0**
+当前版本：**v1.1.2**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -229,6 +229,7 @@ curl -X POST http://localhost:18889/api/config/keys \
 | `CPA_API_KEY` | CPA 代理 API Key（覆盖 config） |
 | `GPT_IMAGE_API_KEY` | GPT Image API Key（覆盖 config） |
 | `GPT_IMAGE_BASE_URL` | GPT Image 端点（覆盖 config） |
+| `GITHUB_PROXY` | GitHub 更新检查/在线更新代理（也可在 Web 设置中填写） |
 | `GALLERY_API_KEY` | Web UI 认证密钥（留空则不认证） |
 
 启用 `GALLERY_API_KEY` 后，命令行 API 需要带认证：
@@ -256,6 +257,13 @@ curl "http://localhost:18889/api/gallery?key=$GALLERY_API_KEY"
 - **⚙️ 设置** — Web UI 管理 API 密钥
 
 ## 🧾 Release Notes
+
+### v1.1.2
+
+- 设置面板新增 GitHub API 代理地址，可用于修复检查更新时的 `403`；代理只保存在本机运行数据里，不写死到仓库配置。
+- 检查更新和在线更新都会优先使用 GitHub 代理配置，`git pull` 更新时同步注入代理环境变量。
+- 日程彩蛋支持失败/已过未排任务重试，并展示更清晰的生图失败原因。
+- 优化今日卡片自适应布局，避免图片把卡片撑高导致按钮悬在中间、底部留白过大。
 
 ### v1.1.0
 

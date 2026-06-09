@@ -77,6 +77,7 @@ class GalleryServer:
         self.on_list_photo_jobs = None
         self.on_refresh_schedule = None
         self.on_rebuild_photo_jobs = None
+        self.on_retry_photo_job = None
 
         self.app = web.Application(middlewares=[self.api_key_middleware])
         self._setup_routes()
@@ -132,6 +133,7 @@ class GalleryServer:
         # 日程彩蛋
         self.app.router.add_get("/api/schedule-detail", self.handle_schedule_detail)
         self.app.router.add_get("/api/photo-jobs", self.handle_photo_jobs)
+        self.app.router.add_post("/api/photo-jobs/retry", self.handle_retry_photo_job)
         self.app.router.add_get("/api/photo-job-limit", self.handle_photo_job_limit)
         self.app.router.add_post("/api/photo-job-limit", self.handle_photo_job_limit)
 
@@ -171,6 +173,31 @@ class GalleryServer:
         except Exception as e:
             logger.error(f"Load API keys config error: {e}")
             return {}
+
+    def _github_proxy(self) -> str:
+        """Return the effective GitHub-only proxy URL, if configured."""
+        keys = self._load_api_keys_config()
+        update_config = self.config.get("update", {}) if isinstance(self.config.get("update"), dict) else {}
+        for value in (
+            keys.get("github_proxy"),
+            os.getenv("GITHUB_PROXY"),
+            update_config.get("github_proxy"),
+        ):
+            proxy = str(value or "").strip()
+            if proxy:
+                return proxy
+        return ""
+
+    def _github_proxy_env(self) -> dict[str, str]:
+        proxy = self._github_proxy()
+        if not proxy:
+            return {}
+        return {
+            "HTTP_PROXY": proxy,
+            "HTTPS_PROXY": proxy,
+            "http_proxy": proxy,
+            "https_proxy": proxy,
+        }
 
     def _load_plugin_config(self) -> dict:
         path = self._plugin_config_path()
@@ -298,6 +325,29 @@ class GalleryServer:
             logger.error(f"Load photo jobs error: {e}")
             return web.json_response({"error": str(e), "jobs": []}, status=500)
 
+    async def handle_retry_photo_job(self, request: web.Request):
+        """Queue a retry for a missed/failed dynamic photo job."""
+        if not self.on_retry_photo_job:
+            return web.json_response({"error": "retry_unavailable"}, status=503)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        raw_time = str(body.get("time") or body.get("schedule_time") or "").strip()
+        match = re.match(r'^\s*(\d{1,2}):(\d{2})', raw_time)
+        if not match:
+            return web.json_response({"error": "invalid_time"}, status=400)
+
+        schedule_time = f"{int(match.group(1)):02d}:{int(match.group(2)):02d}"
+        try:
+            result = await self.on_retry_photo_job(schedule_time)
+            status = result.get("status") if isinstance(result, dict) else ""
+            http_status = 400 if status == "error" else 200
+            return web.json_response(result, status=http_status)
+        except Exception as e:
+            logger.error(f"Retry photo job error: {e}", exc_info=True)
+            return web.json_response({"error": str(e)}, status=500)
+
     async def handle_photo_job_limit(self, request: web.Request):
         """Read or update the daily dynamic photo-job limit."""
         if request.method == "GET":
@@ -403,6 +453,7 @@ class GalleryServer:
             "cpa_url": keys_config.get("cpa_url", "") or llm_config.get("base_url", ""),
             "cpa_key": self._mask_key(keys_config.get("cpa_key", "")),
             "appearance": keys_config.get("appearance", ""),
+            "github_proxy": self._github_proxy(),
             "llm_model": llm_model,
             "llm_models": self.config.get("llm", {}),
             "gitee_fallback_enabled": gitee_fallback_enabled,
@@ -719,6 +770,9 @@ class GalleryServer:
                     # appearance: always update (empty string = remove local appearance)
                     if "appearance" in body:
                         keys_config["appearance"] = body["appearance"]
+                    # GitHub proxy is local-only and may be cleared with an empty string.
+                    if "github_proxy" in body:
+                        keys_config["github_proxy"] = str(body["github_proxy"] or "").strip()
                     
                     # 写入 api_keys_config.json
                     with open(api_keys_path, 'w', encoding='utf-8') as f:
@@ -1641,6 +1695,15 @@ class GalleryServer:
                 return f.read().strip()
         return "unknown"
 
+    @staticmethod
+    def _version_key(version: str) -> tuple[int, ...]:
+        """Build a comparable key for simple semantic versions like 1.1.2."""
+        parts = []
+        for part in str(version or "").lstrip("v").split("."):
+            match = re.match(r"(\d+)", part)
+            parts.append(int(match.group(1)) if match else 0)
+        return tuple(parts or [0])
+
     async def handle_version(self, request: web.Request):
         """返回当前版本信息"""
         version = self._load_version()
@@ -1660,14 +1723,24 @@ class GalleryServer:
                 "current": current_version,
             })
 
+        github_proxy = self._github_proxy()
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "portrait-gallery-updater",
+        }
+
         try:
-            async with aiohttp.ClientSession(trust_env=True) as session:
-                async with session.get(github_api) as resp:
+            timeout = aiohttp.ClientTimeout(total=20)
+            async with aiohttp.ClientSession(trust_env=True, timeout=timeout, headers=headers) as session:
+                async with session.get(github_api, proxy=github_proxy or None) as resp:
                     if resp.status != 200:
                         error_text = await resp.text()
                         logger.error(f"GitHub API error: {resp.status}, {error_text}")
+                        error_message = f"GitHub API 请求失败: {resp.status}"
+                        if resp.status == 403 and not github_proxy:
+                            error_message += "（可在设置中填写 GitHub 代理后重试）"
                         return web.json_response(
-                            {"error": f"GitHub API 请求失败: {resp.status}"},
+                            {"error": error_message},
                             status=500
                         )
 
@@ -1679,7 +1752,7 @@ class GalleryServer:
                             status=500
                         )
 
-                    if latest_version == current_version:
+                    if self._version_key(latest_version) <= self._version_key(current_version):
                         return web.json_response({"message": "已是最新版本"})
 
                     # 返回更新信息
@@ -1709,7 +1782,7 @@ class GalleryServer:
                     "status": "unavailable",
                     "message": "当前项目目录不是 Git 仓库，无法自动更新。请从发布包或仓库同步后重启服务。",
                 })
-            env = self._child_env()
+            env = self._child_env(self._github_proxy_env())
             update_config = self.config.get("update", {})
             remote = update_config.get("remote", "origin")
             branch = update_config.get("branch", "main")
