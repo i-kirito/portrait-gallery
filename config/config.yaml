@@ -1,41 +1,61 @@
 config:
-  schedule_time: '07:00'
+  schedule_time: 07:00
   timezone: Asia/Shanghai
 schedule:
   required_periods:
-    - name: morning
-      label: 早
-      start: '06:00'
-      end: '11:59'
-    - name: noon
-      label: 中
-      start: '12:00'
-      end: '17:59'
-    - name: evening
-      label: 晚
-      start: '18:00'
-      end: '23:59'
+  - name: morning
+    label: 早
+    start: 06:00
+    end: '11:59'
+  - name: noon
+    label: 中
+    start: '12:00'
+    end: '17:59'
+  - name: evening
+    label: 晚
+    start: '18:00'
+    end: '23:59'
 llm:
   base_url: http://127.0.0.1:8327/v1
   model: gemini-3.5-flash
   fallback_model: deepseek-v4-flash
+  enhance_max_tokens: 400
+  enhance_temperature: 0.85
+  enhance_timeout: 25
+  caption_max_tokens: 200
+  caption_temperature: 0.9
+  caption_timeout: 30
 image_gen:
   script_dir: app/zhuzhu
   default_engine: gptimage
   timeout: 300
+  max_retries: 3
+  retry_delay_seconds: 3
+  retryable_status:
+  - 429
+  - 500
+  - 502
+  - 503
+  - 504
+  text2img_timeout: 180
+  img2img_timeout: 300
+  img2img_max_size: 512
+  img2img_quality: 75
+  metadata_category: portrait
+  metadata_size: 1536x2048
   gpt_model: gpt-image-2
   gpt_base_url: https://jiuuij.de5.net/v1/chat/completions
   gitee_model: z-image-turbo
   gitee_url: https://ai.gitee.com/v1/images/generations
   gemini_model: gemini-3.1-flash-image
 character:
-  appearance: 18-year-old Chinese girl, fair skin, delicate features. dusty rose pink
-    hair, wispy air bangs. large round doll-like deep-set natural dark brown eyes.
-    beautiful hourglass figure, slim waist, natural breasts, realistic body proportions.
-  name: 猪猪
-  persona: 你是一个18岁的虚拟主播，名叫猪猪，是主人的专属小宝贝。你热爱生活，情感细腻，每天都会精心打扮自己。
+  appearance: adult portrait subject with natural facial features, realistic body
+    proportions, polished everyday styling, clear face, expressive eyes, and a coherent
+    personal look.
+  name: 角色
+  persona: 你是一个可自定义的画廊角色，会根据用户选择的人设、外貌提示词和日程内容生成穿搭、日程与配文。
 gallery:
-  title: 🐷 猪猪的每日穿搭画廊
+  title: 🖼️ 每日穿搭画廊
   port: 18889
   host: 0.0.0.0
 webhook:

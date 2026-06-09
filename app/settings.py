@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -11,11 +12,181 @@ import yaml
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_PROJECT_ROOT = APP_DIR.parent
 
+DEFAULT_OUTFIT_STYLES = [
+    "冷御风", "甜美风", "元气风", "温柔风", "优雅风",
+    "休闲风", "酷飒风", "清新风", "性感风", "复古风",
+]
+
+GENERIC_APPEARANCE = (
+    "adult portrait subject with natural facial features, realistic body proportions, "
+    "polished everyday styling, clear face, expressive eyes, and a coherent personal look"
+)
+
+DEFAULT_QUALITY_PREFIX = (
+    "This image should look like a high-quality raw photo captured on a flagship smartphone. "
+    "Masterpiece clarity, hyper realistic, intimate atmosphere, natural skin texture, "
+    "clean face, no artifacts, no smudges."
+)
+
+DEFAULT_STYLE_REFERENCE_FILES = {
+    "cool": "reference_face.jpg",
+    "girly": "ref_style_girly.jpg",
+    "sweet": "ref_style_sweet.jpg",
+}
+
+DEFAULT_BASE_STYLE_LABELS = {
+    "cool": "冷御风",
+    "girly": "少女风",
+    "sweet": "甜妹风",
+}
+
+DEFAULT_OUTFIT_STYLE_MAP = {
+    "冷御风": {"base_style": "cool", "prompt_hint": "cool elegant style"},
+    "甜美风": {"base_style": "sweet", "prompt_hint": "sweet style"},
+    "元气风": {"base_style": "girly", "prompt_hint": "energetic girly style"},
+    "温柔风": {"base_style": "sweet", "prompt_hint": "gentle soft style"},
+    "优雅风": {"base_style": "cool", "prompt_hint": "elegant style"},
+    "休闲风": {"base_style": "girly", "prompt_hint": "casual style"},
+    "酷飒风": {"base_style": "cool", "prompt_hint": "chic cool style"},
+    "清新风": {"base_style": "sweet", "prompt_hint": "fresh style"},
+    "性感风": {"base_style": "cool", "prompt_hint": "glamorous style"},
+    "复古风": {"base_style": "cool", "prompt_hint": "retro style"},
+    "少女风": {"base_style": "girly", "prompt_hint": "youthful girly style"},
+    "甜妹风": {"base_style": "sweet", "prompt_hint": "sweet soft style"},
+}
+
+DEFAULT_THEME_STYLE_MAP = {
+    "morning": ("sweet", "甜妹风"),
+    "noon": ("girly", "少女风"),
+    "evening": ("cool", "冷御风"),
+    "bedtime": ("sweet", "甜妹风"),
+    "sexy": ("cool", "冷御风"),
+    "custom": ("sweet", "甜妹风"),
+}
+
+DEFAULT_PERSONA_SOURCE = "custom"
+PERSONA_SOURCE_ALIASES = {
+    "custom": "custom",
+    "local": "custom",
+    "manual": "custom",
+    "自定义": "custom",
+    "hermes": "hermes",
+    "Hermes": "hermes",
+    "openclaw": "openclaw",
+    "OpenClaw": "openclaw",
+    "open_claw": "openclaw",
+}
+
 
 def _non_empty(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def normalize_persona_source(value: Any) -> str:
+    text = _non_empty(value)
+    if not text:
+        return DEFAULT_PERSONA_SOURCE
+    return PERSONA_SOURCE_ALIASES.get(text, PERSONA_SOURCE_ALIASES.get(text.lower(), DEFAULT_PERSONA_SOURCE))
+
+
+def normalize_outfit_styles(value: Any, allowed: list[str] | None = None) -> list[str]:
+    allowed_styles = allowed or DEFAULT_OUTFIT_STYLES
+    allowed_lookup = {style.strip(): style for style in allowed_styles if _non_empty(style)}
+    if isinstance(value, str):
+        raw_items = re.split(r"[\n,，、|/]+", value)
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        raw_items = []
+
+    result: list[str] = []
+    for item in raw_items:
+        text = _non_empty(item)
+        style = allowed_lookup.get(text)
+        if style and style not in result:
+            result.append(style)
+    return result
+
+
+def base_style_label(base_style: str) -> str:
+    return DEFAULT_BASE_STYLE_LABELS.get(_non_empty(base_style), _non_empty(base_style))
+
+
+def style_reference_filename(base_style: str) -> str:
+    return DEFAULT_STYLE_REFERENCE_FILES.get(_non_empty(base_style), "")
+
+
+def reference_filename_to_style(filename: str) -> str:
+    name = os.path.basename(_non_empty(filename))
+    for style, ref_filename in DEFAULT_STYLE_REFERENCE_FILES.items():
+        if name == ref_filename:
+            return style
+    return ""
+
+
+def builtin_reference_map() -> dict[str, dict[str, str]]:
+    return {
+        filename: {"style": style, "label": base_style_label(style)}
+        for style, filename in DEFAULT_STYLE_REFERENCE_FILES.items()
+    }
+
+
+def outfit_style_to_base_style(style_name: str) -> str:
+    text = _non_empty(style_name)
+    if text in DEFAULT_BASE_STYLE_LABELS:
+        return text
+    return DEFAULT_OUTFIT_STYLE_MAP.get(text, {}).get("base_style", "")
+
+
+def outfit_style_to_prompt_hint(style_name: str) -> str:
+    text = _non_empty(style_name)
+    mapped = DEFAULT_OUTFIT_STYLE_MAP.get(text, {})
+    if mapped.get("prompt_hint"):
+        return mapped["prompt_hint"]
+    if text and not re.search(r"[\u4e00-\u9fff]", text):
+        return text
+    return ""
+
+
+def theme_style_default(theme: str) -> tuple[str, str]:
+    return DEFAULT_THEME_STYLE_MAP.get(_non_empty(theme), DEFAULT_THEME_STYLE_MAP["custom"])
+
+
+def load_enabled_outfit_styles(config: dict, data_dir: str) -> list[str]:
+    keys = load_json_file(api_keys_path(data_dir))
+    local_styles = normalize_outfit_styles(keys.get("enabled_outfit_styles"))
+    if local_styles:
+        return local_styles
+
+    schedule_cfg = config.get("schedule", {}) if isinstance(config.get("schedule"), dict) else {}
+    configured_styles = normalize_outfit_styles(schedule_cfg.get("enabled_outfit_styles"))
+    return configured_styles or list(DEFAULT_OUTFIT_STYLES)
+
+
+def config_int(config: dict, path: str, default: int, min_value: int | None = None, max_value: int | None = None) -> int:
+    try:
+        value = int(get_nested(config, path, default))
+    except (TypeError, ValueError):
+        value = default
+    if min_value is not None:
+        value = max(min_value, value)
+    if max_value is not None:
+        value = min(max_value, value)
+    return value
+
+
+def config_float(config: dict, path: str, default: float, min_value: float | None = None, max_value: float | None = None) -> float:
+    try:
+        value = float(get_nested(config, path, default))
+    except (TypeError, ValueError):
+        value = default
+    if min_value is not None:
+        value = max(min_value, value)
+    if max_value is not None:
+        value = min(max_value, value)
+    return value
 
 
 def get_nested(data: dict, path: str, default: Any = None) -> Any:
@@ -122,6 +293,31 @@ def resolve_data_dir(config: dict, config_path: str = "") -> str:
     return resolve_path(value, root, "data")
 
 
+def default_image_dir(data_dir: str) -> str:
+    return str((Path(data_dir).expanduser() / "images").resolve())
+
+
+def normalize_image_dir(value: Any, data_dir: str) -> str:
+    raw = _non_empty(value)
+    if not raw:
+        return ""
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = Path(data_dir).expanduser() / path
+    return str(path.resolve())
+
+
+def resolve_image_dir(config: dict, data_dir: str) -> str:
+    keys = load_json_file(api_keys_path(data_dir))
+    local_dir = normalize_image_dir(keys.get("image_dir"), data_dir)
+    if local_dir:
+        return local_dir
+
+    value = get_nested(config, "paths.image_dir", "") or get_nested(config, "gallery.image_dir", "")
+    configured = normalize_image_dir(value, data_dir)
+    return configured or default_image_dir(data_dir)
+
+
 def resolve_script_dir(config: dict, config_path: str = "") -> str:
     root = resolve_project_root(config_path, config)
     value = get_nested(config, "image_gen.script_dir", "")
@@ -149,6 +345,309 @@ def load_json_file(path: str) -> dict:
         return data if isinstance(data, dict) else {}
     except (json.JSONDecodeError, OSError):
         return {}
+
+
+PERSONA_FIELD_ALIASES = {
+    "name": (
+        "character_name",
+        "characterName",
+        "self_name",
+        "selfName",
+        "assistant_name",
+        "bot_name",
+        "display_name",
+        "displayName",
+        "nickname",
+        "name",
+    ),
+    "user_name": (
+        "user_name",
+        "userName",
+        "audience_name",
+        "audienceName",
+        "owner_name",
+        "ownerName",
+        "master_name",
+        "masterName",
+        "user_call",
+        "User_Call",
+        "address_user_as",
+        "target_name",
+    ),
+    "persona": (
+        "persona",
+        "character_persona",
+        "role_persona",
+        "identity",
+        "Identity",
+        "description",
+        "bio",
+        "profile",
+    ),
+    "caption_voice": (
+        "caption_voice",
+        "captionVoice",
+        "caption_style",
+        "captionStyle",
+        "voice",
+        "tone",
+        "vibe",
+        "personality",
+        "Tone_Guidance",
+        "小心思口吻",
+    ),
+    "appearance": (
+        "appearance",
+        "character_appearance",
+        "characterAppearance",
+        "visual",
+        "look",
+        "image_prompt",
+        "visual_prompt",
+    ),
+}
+
+
+def _clean_persona_text(value: Any, limit: int = 1800) -> str:
+    text = _non_empty(value)
+    if not text:
+        return ""
+    text = re.sub(r"\s+", " ", text).strip(" -_`*：:")
+    if len(text) > limit:
+        text = text[:limit].rstrip() + "..."
+    return text
+
+
+def _split_persona_name(value: str) -> str:
+    text = _clean_persona_text(value, 80)
+    if not text:
+        return ""
+    text = re.split(r"[/／,，|、（(]", text, 1)[0].strip()
+    return text[:40].strip()
+
+
+def _short_persona_source(source: str) -> str:
+    home = str(Path.home())
+    return source.replace(home, "~")
+
+
+def _persona_candidate_dicts(data: dict) -> list[dict]:
+    candidates: list[dict] = []
+    if isinstance(data, dict):
+        candidates.append(data)
+        for key in ("character", "persona", "profile", "identity", "agent", "assistant", "display", "gallery"):
+            child = data.get(key)
+            if isinstance(child, dict):
+                candidates.append(child)
+        for key in ("personas", "personalities", "profiles"):
+            group = data.get(key)
+            if isinstance(group, dict):
+                candidates.extend(v for v in group.values() if isinstance(v, dict))
+    return candidates
+
+
+def _extract_persona_fields(data: dict, source: str) -> dict:
+    fields: dict[str, str] = {}
+    for candidate in _persona_candidate_dicts(data):
+        for target, aliases in PERSONA_FIELD_ALIASES.items():
+            if fields.get(target):
+                continue
+            for alias in aliases:
+                if alias not in candidate:
+                    continue
+                value = candidate.get(alias)
+                if isinstance(value, (dict, list)):
+                    continue
+                text = _clean_persona_text(value, 2400 if target == "persona" else 900)
+                if text:
+                    fields[target] = text
+                    break
+    if fields:
+        fields["_source"] = _short_persona_source(source)
+    return fields
+
+
+def _read_persona_json(path: Path) -> dict:
+    data = load_json_file(str(path))
+    return _extract_persona_fields(data, str(path)) if data else {}
+
+
+def _read_persona_yaml(path: Path) -> dict:
+    if not path.is_file():
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    return _extract_persona_fields(data, str(path)) if isinstance(data, dict) else {}
+
+
+def _looks_like_prompt_dump(text: str) -> bool:
+    lowered = text.lower()
+    markers = (
+        "start of input",
+        "start of output",
+        "end of input",
+        "ignore previous",
+        "godmode",
+        "tool call",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def _read_keyed_persona_file(path: Path) -> dict:
+    if not path.is_file():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return {}
+    if not text.strip():
+        return {}
+
+    fields: dict[str, str] = {}
+    key_map = {
+        "name": (r"\bSelf_Call\b", r"\bName\b", r"自称", r"名字", r"角色名称"),
+        "user_name": (r"\bUser_Call\b", r"用户称呼", r"称呼用户", r"Owner_Call"),
+        "persona": (r"\bIdentity\b", r"\bPersona\b", r"身份卡", r"身份", r"核心人格"),
+        "caption_voice": (r"\bTone_Guidance\b", r"\bVibe\b", r"语气", r"口吻", r"性格底色"),
+        "appearance": (r"\bAppearance\b", r"\bVisual\b", r"\bLook\b", r"外貌", r"人物外貌", r"视觉"),
+    }
+    for raw_line in text.splitlines():
+        line = raw_line.strip().strip("- ")
+        if not line or ":" not in line and "：" not in line:
+            continue
+        cleaned = re.sub(r"[*`#>]", "", line).strip()
+        parts = re.split(r"[:：]", cleaned, 1)
+        if len(parts) != 2:
+            continue
+        label_text = parts[0].strip()
+        value = parts[1].strip()
+        for target, labels in key_map.items():
+            if fields.get(target):
+                continue
+            if any(re.search(label, label_text, re.IGNORECASE) for label in labels):
+                value = _clean_persona_text(value, 1200 if target in ("persona", "caption_voice") else 120)
+                if value and not _looks_like_prompt_dump(value):
+                    fields[target] = _split_persona_name(value) if target in ("name", "user_name") else value
+                break
+
+    if fields:
+        fields["_source"] = _short_persona_source(str(path))
+    return fields
+
+
+def _load_project_persona_files(data_dir: str) -> list[dict]:
+    base = Path(data_dir)
+    files = [
+        base / "persona.json",
+        base / "hermes_persona.json",
+        base / "openclaw_persona.json",
+        base / "openclaw_config.json",
+    ]
+    return [_read_persona_json(path) for path in files]
+
+
+def _load_hermes_persona() -> list[dict]:
+    base = Path.home() / ".hermes"
+    files = [
+        base / "persona.json",
+        base / "hermes_persona.json",
+        base / "profile.json",
+        base / "SOUL.md",
+        base / "config.yaml",
+    ]
+    result: list[dict] = []
+    for path in files:
+        if path.suffix.lower() in (".yaml", ".yml"):
+            result.append(_read_persona_yaml(path))
+        elif path.suffix.lower() == ".json":
+            result.append(_read_persona_json(path))
+        else:
+            result.append(_read_keyed_persona_file(path))
+    return result
+
+
+def _load_openclaw_persona() -> list[dict]:
+    base = Path.home() / ".openclaw"
+    files = [
+        base / "persona.json",
+        base / "openclaw_persona.json",
+        base / "profile.json",
+        base / "openclaw.json",
+    ]
+    result = [_read_persona_json(path) for path in files]
+    for pattern in ("agents/main/SOUL.md", "agents/main/IDENTITY.md", "agents/*/SOUL.md", "agents/*/IDENTITY.md"):
+        for path in sorted(base.glob(pattern)):
+            result.append(_read_keyed_persona_file(path))
+    return result
+
+
+def load_runtime_persona(config: dict, data_dir: str) -> dict:
+    """Resolve local character/persona settings without treating agent prompts as commands."""
+    keys_config = load_json_file(api_keys_path(data_dir))
+    persona_source = normalize_persona_source(keys_config.get("persona_source"))
+    resolved = {
+        "name": "",
+        "user_name": "",
+        "persona": "",
+        "caption_voice": "",
+        "appearance": "",
+        "source": "",
+        "persona_source": persona_source,
+        "sources": {},
+    }
+    sources: dict[str, str] = {}
+
+    def apply(fields: dict, default_source: str = "", keys: tuple[str, ...] = ("name", "user_name", "persona", "caption_voice", "appearance")):
+        source = fields.get("_source") or default_source
+        for key in keys:
+            if resolved.get(key) or not fields.get(key):
+                continue
+            value = _clean_persona_text(fields[key], 2400 if key == "persona" else 1200)
+            if key in ("name", "user_name"):
+                value = _split_persona_name(value)
+            if not value or _looks_like_prompt_dump(value):
+                continue
+            resolved[key] = value
+            sources[key] = source
+
+    local_fields = _extract_persona_fields(keys_config, "data/api_keys_config.json")
+    local_appearance = _non_empty(keys_config.get("appearance") or keys_config.get("character_appearance"))
+    if local_appearance:
+        local_fields["appearance"] = local_appearance
+        local_fields["_source"] = "data/api_keys_config.json"
+    apply(local_fields, keys=("appearance",))
+
+    if persona_source == "hermes":
+        for fields in _load_hermes_persona():
+            apply(fields, keys=("name", "user_name", "persona", "caption_voice", "appearance"))
+    elif persona_source == "openclaw":
+        for fields in _load_openclaw_persona():
+            apply(fields, keys=("name", "user_name", "persona", "caption_voice", "appearance"))
+    else:
+        apply(local_fields, keys=("persona",))
+        for fields in _load_project_persona_files(data_dir):
+            apply(fields, keys=("name", "user_name", "persona", "caption_voice", "appearance"))
+
+    character = config.get("character", {}) if isinstance(config.get("character"), dict) else {}
+    apply(_extract_persona_fields({"character": character}, "config.character"))
+
+    if not resolved["name"]:
+        resolved["name"] = "角色"
+        sources["name"] = "default"
+    if not resolved["user_name"]:
+        resolved["user_name"] = "你"
+        sources["user_name"] = "default"
+    if not resolved["caption_voice"]:
+        resolved["caption_voice"] = "自然、亲切、贴近日常，带一点轻松的分享感。"
+        sources["caption_voice"] = "default"
+
+    resolved["sources"] = sources
+    persona_sources = [sources.get(k, "") for k in ("persona", "caption_voice", "name", "user_name", "appearance") if sources.get(k)]
+    resolved["source"] = persona_sources[0] if persona_sources else "default"
+    return resolved
 
 
 def api_keys_path(data_dir: str) -> str:
@@ -206,13 +705,14 @@ def apply_network_env(config: dict, env: dict[str, str] | None = None) -> dict[s
 
 def build_child_env(config: dict, config_path: str, data_dir: str, extra: dict[str, str] | None = None) -> dict[str, str]:
     root = resolve_project_root(config_path, config)
+    image_dir = resolve_image_dir(config, data_dir)
     env = dict(os.environ)
     env["HERMES_PORTRAIT_GALLERY_HOME"] = str(root)
     env["CONFIG_PATH"] = str(Path(config_path).expanduser().resolve())
     env["GALLERY_DATA_DIR"] = data_dir
     env["ZHUZHU_DATA_DIR"] = data_dir
     env["ZHUZHU_PROJECT_DIR"] = str(root)
-    env["ZHUZHU_MEDIA_DIR"] = os.path.join(data_dir, "images")
+    env["ZHUZHU_MEDIA_DIR"] = image_dir
     app_path = str(root / "app")
     current_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = app_path if not current_pythonpath else app_path + os.pathsep + current_pythonpath

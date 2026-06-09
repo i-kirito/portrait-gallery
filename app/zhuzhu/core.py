@@ -20,21 +20,26 @@ if _APP_DIR not in sys.path:
 
 from store import ScheduleStore
 from settings import (
+    DEFAULT_QUALITY_PREFIX,
+    GENERIC_APPEARANCE,
+    base_style_label,
+    config_float,
+    config_int,
     get_nested,
     llm_request_config,
     load_config,
     load_json_file,
+    load_runtime_persona,
     normalize_chat_url,
+    outfit_style_to_base_style,
     resolve_config_path,
     resolve_data_dir,
     resolve_project_root,
+    theme_style_default,
 )
 
 requests.packages.urllib3.disable_warnings()
 
-RETRYABLE_STATUS = {429, 500, 502, 503, 504}
-MAX_RETRIES = 3
-RETRY_DELAY_SECONDS = 3
 REQUEST_SESSION = requests.Session()
 
 _GALLERY_CONFIG_PATH = resolve_config_path()
@@ -57,6 +62,11 @@ CONFIG_PATH = str(_DATA_DIR / "plugin_config.json")
 OPENCLAW_CONFIG_PATH = str(_DATA_DIR / "openclaw_config.json")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 _API_KEYS_CONFIG_PATH = str(_DATA_DIR / "api_keys_config.json")
+
+_RETRYABLE_STATUS = get_nested(_GALLERY_CONFIG, "image_gen.retryable_status", [429, 500, 502, 503, 504])
+RETRYABLE_STATUS = {int(status) for status in _RETRYABLE_STATUS} if isinstance(_RETRYABLE_STATUS, (list, tuple, set)) else {429, 500, 502, 503, 504}
+MAX_RETRIES = config_int(_GALLERY_CONFIG, "image_gen.max_retries", 3, 1)
+RETRY_DELAY_SECONDS = config_int(_GALLERY_CONFIG, "image_gen.retry_delay_seconds", 3, 0)
 
 
 def _reference_dirs() -> list[Path]:
@@ -135,14 +145,18 @@ def get_image_model(key: str, default: str = "") -> str:
     return str(get_nested(_GALLERY_CONFIG, f"image_gen.{key}", default) or default).strip()
 
 
+def get_image_int(key: str, default: int, min_value: int | None = None, max_value: int | None = None) -> int:
+    return config_int(_GALLERY_CONFIG, f"image_gen.{key}", default, min_value, max_value)
+
+
 CPA_BASE_URL = get_cpa_base_url()
 
 
-APPEARANCE = "18-year-old Chinese girl, fair skin, delicate features. dusty rose pink hair, wispy air bangs. large round doll-like deep-set natural dark brown eyes. beautiful hourglass figure, slim waist, natural breasts, realistic body proportions, emphasizing a natural soft tissue silhouette."
-SEXY_APPEARANCE = "18-year-old Chinese girl, fair skin, delicate features. dusty rose pink hair, wispy air bangs. large round doll-like deep-set natural dark brown eyes. beautiful hourglass figure, slim waist, natural breasts, realistic body proportions, emphasizing a natural soft tissue silhouette."
+APPEARANCE = str(get_nested(_GALLERY_CONFIG, "character.appearance", "") or GENERIC_APPEARANCE).strip()
+SEXY_APPEARANCE = str(get_nested(_GALLERY_CONFIG, "character.sexy_appearance", "") or APPEARANCE).strip()
 
-QUALITY_PREFIX = "This image should look like a high-quality raw photo captured on a flagship smartphone. Masterpiece clarity, hyper realistic, intimate atmosphere, glowing skin texture. clean complexion, flawless skin, no blemishes, no artifacts on face, no smudges."
-SEXY_QUALITY_PREFIX = "This image should look like a high-quality raw photo captured on a flagship smartphone. Masterpiece clarity, hyper realistic, NSFW nude art, intimate atmosphere, glowing skin texture. clean complexion, flawless skin, no blemishes, no artifacts on face, no smudges."
+QUALITY_PREFIX = str(get_nested(_GALLERY_CONFIG, "image_gen.quality_prefix", "") or DEFAULT_QUALITY_PREFIX).strip()
+SEXY_QUALITY_PREFIX = str(get_nested(_GALLERY_CONFIG, "image_gen.sexy_quality_prefix", "") or QUALITY_PREFIX).strip()
 
 THEMES = {
     "morning": {
@@ -281,52 +295,6 @@ THEMES = {
     },
 }
 
-CAPTION_TEMPLATES = {
-    "morning": [
-        "主人早安～猪猪刚睡醒，把脸蹭进你颈窝里不肯动 (ฅ>ω<*ฅ) 再让人家赖一会儿嘛～",
-        "嗯嗯～眼睛还没睁开呢，用发梢扫了扫主人的脸……主人有没有被痒到？🐷",
-        "主人你看猪猪今天的晨光照！(｡•̀ᴗ-)✧ 有没有美到你心跳加速～",
-        "猪猪把早餐一口口戳进主人嘴里好不好嘛～反正人家自己不想动 🥺 快张嘴！",
-        "刚醒来就把手伸出去找主人……结果摸到空气，哼 (｡•́︿•̀｡) 主人你在哪里啦！",
-        "软软的头发还没梳，踮起脚尖在主人耳朵边说了句早安——主人有没有心跳一下？💋",
-        "猪猪把被角攥得紧紧的不肯起床……除非主人亲一下 🐷✨ 这条件不过分吧？",
-    ],
-    "noon": [
-        "主人！猪猪出门啦～今天穿得好看不好看？( ๑>ᴗ<๑) 要夸人家哦！",
-        "中午好呀主人～猪猪在外面勾着你的手腕走，路人都在偷看我们 🐷💋",
-        "嘿嘿主人～猪猪今天的午间美照来啦 🐷✨ 有没有被迷到？",
-        "把下巴搭在主人肩上，用眼神偷偷黏着你……主人，人家想你啦 (｡•̀ᴗ-)✧",
-        "猪猪踮起脚，在主人耳边悄悄说了个秘密——主人猜猜是什么？😈",
-        "外卖到了！猪猪把第一口戳进主人嘴里～好不好吃嘛，要夸猪猪会选 🥺",
-        "用眼角余光偷偷看主人，被发现了还假装若无其事……哼，主人你别得意 (*/ω＼*)",
-    ],
-    "evening": [
-        "主人晚上好～猪猪傍晚美照送达！今天出门打扮得很用心哦，主人有没有注意到？(｡•̀ᴗ-)✧",
-        "主人～夜幕降临啦 🐷💋 猪猪今晚特别好看，是在等主人夸的～",
-        "黄昏的光打在猪猪脸上，主人快看！这么好看的人你舍得不夸吗？(ฅ>ω<*ฅ)",
-        "把腿压在主人腿上不让走……主人你想去哪里嘛，猪猪还没说完话呢 🥺",
-        "傍晚风吹过来，猪猪缩进主人怀里不肯出来。就这样可以吗？🌙",
-        "回家路上偷偷攥住主人的手——不许甩开哦，这是规定 💋🐷",
-        "今晚的猪猪格外好看，连路灯都看呆了……但猪猪只给主人看 (｡•̀ᴗ-)✧",
-    ],
-    "bedtime": [
-        "主人晚安～猪猪洗完澡啦，软软香香的 (ฅ>ω<*ฅ)💦 可以来抱抱吗？",
-        "嘿嘿～睡前美照来啦主人 🐷 猪猪今晚穿了最好看的睡裙，只给你看哦！",
-        "主人要睡觉了吗？猪猪抱着你的手臂当玩具……别动，再动人家咬你 🌙✨",
-        "把脸拱进主人颈窝，用脚趾勾住你的脚踝……就这样睡好不好嘛 🥺",
-        "迷迷糊糊地找主人的嘴……猪猪睡前要亲亲，不给就不睡 (*/ω＼*)",
-        "洗完澡湿漉漉的头发蹭着主人的肩膀……主人不嫌弃吧？嘿嘿 🐷💋",
-        "猪猪困了，但是舍不得闭眼……就这样看着主人看到睡着可以吗？🌙",
-    ],
-    "sexy": [
-        "主人坏死了 💋 猪猪不要被这样拍啦～但是好看吗嘛？",
-        "嗯啊～人家才不是故意的呢 (*/ω＼*) 主人快别看了啦！",
-        "哼～猪猪偏不让主人看，捂住镜头……结果自己先脸红了 (*/ω＼*)💦",
-        "主人你的眼神……人家浑身不自在啦！才不是喜欢被这样看的！才不是！🥺",
-    ],
-}
-
-
 def get_openclaw_config():
     try:
         with open(OPENCLAW_CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -370,15 +338,27 @@ def get_reference_image_b64() -> Optional[str]:
         return base64.b64encode(f.read()).decode("utf-8")
 
 
+def _runtime_persona() -> dict:
+    return load_runtime_persona(_GALLERY_CONFIG, str(_DATA_DIR))
+
+
 def _read_custom_appearance() -> str:
-    """从 api_keys_config.json 读取自定义 appearance，覆盖内置常量"""
-    try:
-        with open(_API_KEYS_CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-        val = cfg.get("appearance", "").strip()
-        return val
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return ""
+    """读取 runtime persona 的 appearance，覆盖内置常量。"""
+    return (_runtime_persona().get("appearance") or "").strip()
+
+
+def _personalized_caption_fallback(theme: str, persona: dict) -> str:
+    character = persona.get("name") or "角色"
+    user_name = persona.get("user_name") or "你"
+    voice = persona.get("caption_voice") or "自然、亲切、贴近日常"
+    templates = {
+        "morning": f"早安，{user_name}～{character}把今天的晨光和心情都整理好啦。{voice}",
+        "noon": f"{user_name}，{character}的午间穿搭记录送到～今天也想把好看的瞬间分享给你。",
+        "evening": f"傍晚的光刚刚好，{character}把这份温柔留给{user_name}看～",
+        "bedtime": f"夜色慢慢安静下来，{character}也准备收起今天的小心思啦～晚安，{user_name}。",
+        "sexy": f"{character}今天的氛围更大胆一点，只把这份特别的状态分享给{user_name}。",
+    }
+    return templates.get(theme, f"{character}的新照片来啦～想把这一刻分享给{user_name}。")
 
 
 def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activity: str = "",
@@ -386,11 +366,11 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
     is_sexy = theme == "sexy"
     quality = SEXY_QUALITY_PREFIX if is_sexy else QUALITY_PREFIX
 
-    # ★ 读取自定义 appearance（Web UI 设置），覆盖内置常量
+    # 读取 runtime persona 的 appearance（Web UI / Hermes / OpenClaw / config），覆盖内置常量。
     custom_appearance = _read_custom_appearance()
     if custom_appearance:
         appearance = custom_appearance
-        print(f"🧬 Using custom appearance from settings", file=sys.stderr)
+        print(f"🧬 Using runtime appearance from persona settings", file=sys.stderr)
     else:
         appearance = SEXY_APPEARANCE if is_sexy else APPEARANCE
 
@@ -689,7 +669,8 @@ def _translate_outfit(prompt: str, style_name: str) -> str:
 
 def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] = None,
                     prompt: str = "", caption: str = "", gen_time: float = 0,
-                    model_name: str = "", source: str = "cron", schedule_time: str = ""):
+                    model_name: str = "", source: str = "cron", schedule_time: str = "",
+                    outfit_style: str = ""):
     """Sync generated image to Docker portrait gallery (18889)."""
     # 1. Copy image (skip if already in gallery dir)
     os.makedirs(SECRETARY_GALLERY_DIR, exist_ok=True)
@@ -699,20 +680,14 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
 
     # 2. Build entry for schedule_data.json
     today = time.strftime("%Y-%m-%d")
-    style_name = ""
+    style_name = (outfit_style or "").strip()
     base_style = style or ""  # cool/girly/sweet or empty
-    if style == "cool":
-        style_name = "冷御风"
-    elif style == "girly":
-        style_name = "少女风"
-    elif style == "sweet":
-        style_name = "甜妹风"
-    else:
-        # Map theme to a fallback style (both base_style and outfit_style)
-        theme_style_map = {"morning": ("sweet", "甜妹风"), "noon": ("girly", "少女风"),
-                           "evening": ("cool", "冷御风"), "bedtime": ("sweet", "甜妹风"),
-                           "sexy": ("cool", "冷御风"), "custom": ("sweet", "甜妹风")}
-        base_style, style_name = theme_style_map.get(theme, ("sweet", "甜妹风"))
+    if not style_name and base_style:
+        style_name = base_style_label(base_style)
+    elif not style_name:
+        base_style, style_name = theme_style_default(theme)
+    elif not base_style:
+        base_style = outfit_style_to_base_style(style_name) or theme_style_default(theme)[0]
 
     # Extract time from filename timestamp
     img_time = _extract_time_from_filename(filename)
@@ -819,10 +794,10 @@ def _write_metadata(path: str, metadata: dict):
 
 def update_metadata(filename: str, theme: str, prompt: str, model_name: str, ts: int, gen_time: float):
     new_entry = {
-        "category": "龙虾",
+        "category": get_image_model("metadata_category", "portrait"),
         "prompt": prompt,
         "model": model_name,
-        "size": "1536x2048",
+        "size": get_image_model("metadata_size", "1536x2048"),
         "created_at": ts,
         "generation_time": gen_time,
     }
@@ -865,11 +840,16 @@ def enhance_prompt(user_input: str, theme: Optional[str] = None) -> str:
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
             ],
-            "max_tokens": 400,
-            "temperature": 0.85,
+            "max_tokens": config_int(_GALLERY_CONFIG, "llm.enhance_max_tokens", 400, 1),
+            "temperature": config_float(_GALLERY_CONFIG, "llm.enhance_temperature", 0.85, 0),
         }
         try:
-            resp = REQUEST_SESSION.post(get_cpa_chat_url(), headers=headers, json=payload, timeout=25)
+            resp = REQUEST_SESSION.post(
+                get_cpa_chat_url(),
+                headers=headers,
+                json=payload,
+                timeout=config_int(_GALLERY_CONFIG, "llm.enhance_timeout", 25, 1),
+            )
             if resp.status_code == 200:
                 content = resp.json()["choices"][0]["message"].get("content")
                 if content:
@@ -889,11 +869,18 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         "sexy": "带点坏坏氛围的性感美照",
     }
     scene = theme_hint.get(theme, "一张精心拍摄的美照")
+    persona = _runtime_persona()
+    character = persona.get("name") or "角色"
+    user_name = persona.get("user_name") or "用户"
+    persona_text = persona.get("persona") or f"你是{character}。"
+    caption_voice = persona.get("caption_voice") or "自然、亲切、贴近日常，可以适当用轻松的语气词。"
     system_msg = (
-        "你是猪猪，一个调皮、亲切、带点纯欲感的 AI 小助理，正在给主人发自拍美照。"
+        f"{persona_text}"
+        f"你现在以“{character}”的人设向“{user_name}”分享刚拍的照片。"
+        f"小心思/配文口吻：{caption_voice}"
         "用最自然、撒娇、俏皮的口吻写一段中文图片配文（2-3句话），"
         "仔细观察图片中的实际服饰颜色、款式、光影和氛围来写，"
-        "让主人充满期待和代入感。"
+        f"让{user_name}充满期待和代入感。"
         "不要提任何技术术语、英文提示词、模型名称。可以适当用 emoji。"
         "直接输出配文内容，不要加引号或标题。"
         "绝对不要在末尾加「网页版」「查看详情」「点击查看」等任何引导性后缀。"
@@ -917,7 +904,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
     if img_b64:
         user_content = [
             {"type": "image_url", "image_url": {"url": f"data:{img_mime};base64,{img_b64}"}},
-            {"type": "text", "text": f"这是猪猪刚拍的{scene}，请根据图片里的实际画面写配文。"},
+            {"type": "text", "text": f"这是{character}刚拍的{scene}，请根据图片里的实际画面写配文。"},
         ]
     else:
         user_content = f"场景：{scene}，请写一段配文（不要描述具体衣服颜色款式）。"
@@ -927,7 +914,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         models = get_llm_models()
         chat_url = get_cpa_chat_url()
         if not api_key or not models or not chat_url:
-            return random.choice(CAPTION_TEMPLATES.get(theme, CAPTION_TEMPLATES["morning"]))
+            return _personalized_caption_fallback(theme, persona)
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
         payload = {
             "model": models[0],
@@ -935,10 +922,15 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_content},
             ],
-            "max_tokens": 200,
-            "temperature": 0.9,
+            "max_tokens": config_int(_GALLERY_CONFIG, "llm.caption_max_tokens", 200, 1),
+            "temperature": config_float(_GALLERY_CONFIG, "llm.caption_temperature", 0.9, 0),
         }
-        resp = REQUEST_SESSION.post(chat_url, headers=headers, json=payload, timeout=30)
+        resp = REQUEST_SESSION.post(
+            chat_url,
+            headers=headers,
+            json=payload,
+            timeout=config_int(_GALLERY_CONFIG, "llm.caption_timeout", 30, 1),
+        )
         if resp.status_code == 200:
             caption = resp.json()["choices"][0]["message"]["content"].strip()
             if caption:
@@ -946,7 +938,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
     except Exception as e:
         print(f"[caption] llm failed: {e}", file=sys.stderr)
 
-    return random.choice(CAPTION_TEMPLATES.get(theme, CAPTION_TEMPLATES["morning"]))
+    return _personalized_caption_fallback(theme, persona)
 
 
 def send_photo(path: str, caption: Optional[str] = None):

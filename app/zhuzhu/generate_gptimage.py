@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GPT Image engine backend — 只走 jiuuij.de5.net 直连，支持文生图和图生图。"""
+"""GPT Image engine backend using the configured chat-compatible image endpoint."""
 import argparse
 import base64
 import json
@@ -8,6 +8,7 @@ import re
 import sys
 import time
 from typing import Optional
+from urllib.parse import urlparse
 
 import requests
 
@@ -18,6 +19,7 @@ from core import (
     RETRY_DELAY_SECONDS,
     build_caption,
     build_prompt,
+    get_image_int,
     get_image_model,
     sync_to_gallery,
     save_image,
@@ -29,9 +31,10 @@ from core import (
 GPTIMAGE_DIRECT_URL = get_image_model("gpt_base_url")
 GPTIMAGE_DIRECT_MODEL = get_image_model("gpt_model")
 
-# 文生图超时 180s（jiuuij 偶尔慢），图生图 300s
-TEXT2IMG_TIMEOUT = 180
-IMG2IMG_TIMEOUT = 300
+TEXT2IMG_TIMEOUT = get_image_int("text2img_timeout", 180, 1)
+IMG2IMG_TIMEOUT = get_image_int("img2img_timeout", 300, 1)
+IMG2IMG_MAX_SIZE = get_image_int("img2img_max_size", 512, 64)
+IMG2IMG_QUALITY = get_image_int("img2img_quality", 75, 1, 100)
 
 
 def _get_gpt_key() -> str:
@@ -55,7 +58,7 @@ def _get_gpt_base_url() -> str:
     """Read GPT Image base URL from environment or api_keys_config.json."""
     env_url = os.getenv("GPT_IMAGE_BASE_URL", "")
     if env_url:
-        return env_url
+        return _normalize_gpt_base_url(env_url)
 
     config_path = _API_KEYS_CONFIG_PATH
     if os.path.exists(config_path):
@@ -63,14 +66,28 @@ def _get_gpt_base_url() -> str:
             with open(config_path, "r", encoding="utf-8") as f:
                 config = json.load(f)
             if config.get("gpt_base_url"):
-                return config["gpt_base_url"]
+                return _normalize_gpt_base_url(config["gpt_base_url"])
         except Exception:
             pass
-    return GPTIMAGE_DIRECT_URL
+    return _normalize_gpt_base_url(GPTIMAGE_DIRECT_URL)
 
 
-def _compress_image_for_img2img(image_path: str, max_size: int = 512, quality: int = 75) -> str:
-    """Compress image to base64 for img2img (512px, quality 75 to avoid timeout)"""
+def _normalize_gpt_base_url(url: str) -> str:
+    """Accept either a /v1 base URL or the full chat completions endpoint."""
+    base = (url or "").strip().rstrip("/")
+    if not base:
+        return ""
+    if base.endswith("/chat/completions"):
+        return base
+    return f"{base}/chat/completions"
+
+
+def _compress_image_for_img2img(
+    image_path: str,
+    max_size: int = IMG2IMG_MAX_SIZE,
+    quality: int = IMG2IMG_QUALITY,
+) -> str:
+    """Compress image to base64 for img2img."""
     from PIL import Image
     import io
 
@@ -85,8 +102,13 @@ def _compress_image_for_img2img(image_path: str, max_size: int = 512, quality: i
     return f"data:image/jpeg;base64,{b64}"
 
 
+def _gpt_endpoint_label(url: str = "") -> str:
+    parsed = urlparse(url or _get_gpt_base_url())
+    return parsed.netloc or (url or "GPT Image")
+
+
 def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size: Optional[str] = None) -> Optional[tuple]:
-    """Call jiuuij.de5.net directly for GPT Image generation (text2img + img2img)
+    """Call the configured GPT Image endpoint (text2img + img2img)
 
     Args:
         prompt: Generation prompt
@@ -143,6 +165,7 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size:
     timeout = IMG2IMG_TIMEOUT if ref_image else TEXT2IMG_TIMEOUT
     start = time.time()
 
+    endpoint_label = _gpt_endpoint_label(base_url)
     for attempt in range(MAX_RETRIES):
         try:
             resp = REQUEST_SESSION.post(
@@ -154,7 +177,7 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size:
 
             if resp.status_code != 200:
                 print(
-                    f"Direct GPT API error {resp.status_code} "
+                    f"Direct GPT API error {resp.status_code} [{endpoint_label}] "
                     f"(attempt {attempt + 1}/{MAX_RETRIES}): {resp.text[:200]}",
                     file=sys.stderr,
                 )
@@ -183,7 +206,7 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size:
                         continue
                     return None
             else:
-                # jiuuij.de5.net markdown format: ![image](data:image/png;base64,...)
+                # Some chat-compatible endpoints return markdown image data.
                 response_content = msg.get("content", "") or ""
                 b64_match = re.search(r'!\[[^\]]*\]\(data:image/[^;]+;base64,([^)]+)\)', response_content)
                 if not b64_match:
@@ -202,7 +225,7 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size:
             return img_data, elapsed
 
         except Exception as e:
-            print(f"Direct GPT API failed (attempt {attempt + 1}/{MAX_RETRIES}): {e}", file=sys.stderr)
+            print(f"Direct GPT API failed [{endpoint_label}] (attempt {attempt + 1}/{MAX_RETRIES}): {e}", file=sys.stderr)
             if attempt < MAX_RETRIES - 1:
                 time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
                 continue
@@ -212,8 +235,9 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size:
 def generate(theme: str, send: bool = False, caption: bool = False,
              prompt_override: Optional[str] = None, ref_image: Optional[str] = None,
              style: Optional[str] = None, size: Optional[str] = None,
-             prompt_is_final: bool = False):
-    """GPT Image 生成入口 — 统一走 jiuuij.de5.net 直连
+             prompt_is_final: bool = False, source: str = "chat",
+             sync_gallery: bool = True):
+    """GPT Image 生成入口 — 使用当前配置的 GPT Image Base URL
 
     Args:
         theme: 时段主题 (morning/noon/evening/bedtime/sexy/custom)
@@ -224,15 +248,21 @@ def generate(theme: str, send: bool = False, caption: bool = False,
         style: 风格名 (cool/girly/sweet)，用于文件名标注
         size: 图片尺寸
         prompt_is_final: prompt_override 已包含画质、外貌、日程等注入内容时设为 True
+        source: 来源标识，直连后端默认视为聊天通道生成
+        sync_gallery: 是否直接写入画廊索引；统一入口会自行同步一次
     """
     prompt = prompt_override if prompt_is_final and prompt_override else build_prompt(theme, prompt_override)
     mode = "img2img" if ref_image else "text2img"
-    print(f"🎨 GPT Image via jiuuij.de5.net ({mode})...", file=sys.stderr)
+    endpoint_label = _gpt_endpoint_label()
+    print(f"🎨 GPT Image via {endpoint_label} ({mode})...", file=sys.stderr)
 
     result = _generate_via_direct_gpt(prompt, ref_image, size)
+    if not result and ref_image:
+        print(f"GPT Image img2img failed via {endpoint_label}; retrying text2img without reference image", file=sys.stderr)
+        result = _generate_via_direct_gpt(prompt, None, size)
 
     if not result:
-        print("ERROR: jiuuij.de5.net failed", file=sys.stderr)
+        print(f"ERROR: GPT Image endpoint failed: {endpoint_label}", file=sys.stderr)
         return None
 
     img_data, gen_time = result
@@ -245,6 +275,19 @@ def generate(theme: str, send: bool = False, caption: bool = False,
     if send:
         send_photo(path, cap_text)
 
+    if sync_gallery:
+        sync_to_gallery(
+            path,
+            filename,
+            theme,
+            style,
+            prompt=prompt,
+            caption=cap_text or "",
+            gen_time=gen_time,
+            model_name=GPTIMAGE_DIRECT_MODEL,
+            source=source,
+        )
+
     print(f"SUCCESS:{path}")
     if cap_text:
         print(f"CAPTION:{cap_text}")
@@ -252,15 +295,16 @@ def generate(theme: str, send: bool = False, caption: bool = False,
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="GPT Image gpt-image-2 生图（jiuuij.de5.net 直连）")
+    parser = argparse.ArgumentParser(description="GPT Image 生图（使用配置的 Base URL）")
     parser.add_argument("--theme", choices=["morning", "noon", "evening", "bedtime", "sexy", "custom"], default="sexy")
     parser.add_argument("--send", action="store_true")
     parser.add_argument("--caption", action="store_true")
     parser.add_argument("--prompt", type=str, default=None, help="自定义 prompt")
     parser.add_argument("--ref-image", type=str, default=None, help="参考图本地路径（图生图/img2img 模式）")
     parser.add_argument("--size", type=str, default=None, help="图片尺寸")
+    parser.add_argument("--source", choices=["cron", "web", "chat", "custom"], default="chat", help="来源标识")
     args = parser.parse_args()
-    path = generate(args.theme, args.send, args.caption, args.prompt, args.ref_image, size=args.size)
+    path = generate(args.theme, args.send, args.caption, args.prompt, args.ref_image, size=args.size, source=args.source)
     if not path:
         print("ERROR: GPT Image generation failed", file=sys.stderr)
         sys.exit(1)

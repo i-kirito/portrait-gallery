@@ -10,14 +10,16 @@ from contextlib import redirect_stdout
 
 from generate_gptimage import generate as generate_with_gpt
 from generate_gitee import generate as generate_with_gitee
-from core import CONFIG_PATH
+from core import CONFIG_PATH, _personalized_caption_fallback, _runtime_persona
 
 DAILY_THEMES = {"morning", "noon", "evening", "bedtime"}
 ALL_THEMES = sorted(DAILY_THEMES | {"sexy"})
 SEND_TARGET = os.getenv("ZHUZHU_SEND_TARGET", "5509078392")
 SEND_CHANNEL = os.getenv("ZHUZHU_SEND_CHANNEL", "telegram")
 SEND_ACCOUNT = os.getenv("ZHUZHU_SEND_ACCOUNT", "default")
-FALLBACK_TEXT = "主人～猪猪的新照片来啦！"
+
+def _fallback_text(theme: str = "morning") -> str:
+    return _personalized_caption_fallback(theme, _runtime_persona())
 
 
 def _gitee_fallback_enabled() -> bool:
@@ -33,7 +35,7 @@ def _gitee_fallback_enabled() -> bool:
 def _run_backend(func, theme: str, caption: bool):
     captured = io.StringIO()
     with redirect_stdout(captured):
-        path = func(theme, send=False, caption=caption)
+        path = func(theme, send=False, caption=caption, source="cron")
 
     caption_text = None
     for line in captured.getvalue().splitlines():
@@ -79,7 +81,7 @@ def send_photo(path: str, caption_text: str):
         "--media",
         path,
         "--message",
-        caption_text or FALLBACK_TEXT,
+        caption_text or _fallback_text(),
         "--json",
     ]
     return subprocess.run(cmd, check=True, capture_output=True, text=True)
@@ -96,7 +98,7 @@ if __name__ == "__main__":
         print(f"ERROR: all engines failed for theme={args.theme}", file=sys.stderr)
         sys.exit(1)
 
-    caption_text = caption_text or FALLBACK_TEXT
+    caption_text = caption_text or _fallback_text(args.theme)
     print(f"SUCCESS:{path}")
     print(f"CAPTION:{caption_text}")
 

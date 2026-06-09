@@ -6,7 +6,7 @@ import os
 import shutil
 import sys
 import subprocess
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 import time
 import re
@@ -18,10 +18,19 @@ from aiohttp import web
 
 from store import ScheduleStore
 from settings import (
+    DEFAULT_OUTFIT_STYLES,
+    builtin_reference_map,
     build_child_env,
     configured_python,
     llm_request_config,
+    load_enabled_outfit_styles,
+    load_runtime_persona,
+    normalize_outfit_styles,
+    normalize_persona_source,
+    default_image_dir,
+    normalize_image_dir,
     resolve_builtin_reference_dir,
+    resolve_image_dir,
     resolve_project_root,
     resolve_reference_dir,
     resolve_script_dir,
@@ -37,21 +46,23 @@ MAX_PHOTO_JOB_LIMIT = 6
 TODAY_PHOTO_SOURCES = {"cron", "web"}
 FAILED_SCHEDULE_TEXT = "生成失败"
 REFERENCE_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+CLEANUP_PRESET_DAYS = {
+    "3d": 3,
+    "7d": 7,
+    "1m": 30,
+    "3m": 90,
+}
 REFERENCE_MIME_EXTENSIONS = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
     "image/webp": ".webp",
     "image/gif": ".gif",
 }
-BUILTIN_REFERENCE_MAP = {
-    "reference_face.jpg": {"style": "cool", "label": "冷御风"},
-    "ref_style_girly.jpg": {"style": "girly", "label": "少女风"},
-    "ref_style_sweet.jpg": {"style": "sweet", "label": "甜妹风"},
-}
+BUILTIN_REFERENCE_MAP = builtin_reference_map()
 
 
 class GalleryServer:
-    """猪猪画廊 Web 服务器"""
+    """Portrait gallery Web server."""
 
     def __init__(self, config: dict, data_dir: str, config_path: str = ""):
         self.config = config
@@ -61,11 +72,13 @@ class GalleryServer:
         self.host = self.gallery_config.get("host", "0.0.0.0")
         self.port = self.gallery_config.get("port", 18888)
         self.token = self.gallery_config.get("token", "")
-        self.image_dir = os.path.join(data_dir, "images")
+        self.default_image_dir = default_image_dir(data_dir)
+        self.image_dir = self._resolve_image_dir()
         self.app_reference_dir = resolve_builtin_reference_dir(config, config_path)
         self.reference_dir = resolve_reference_dir(config, data_dir, config_path)
         self.uploaded_reference_dir = os.path.join(self.reference_dir, "uploads")
         self.legacy_uploaded_reference_dir = os.path.join(self.app_reference_dir, "uploads")
+        os.makedirs(self.default_image_dir, exist_ok=True)
         os.makedirs(self.image_dir, exist_ok=True)
         os.makedirs(self.reference_dir, exist_ok=True)
         os.makedirs(self.uploaded_reference_dir, exist_ok=True)
@@ -78,6 +91,7 @@ class GalleryServer:
         self.on_refresh_schedule = None
         self.on_rebuild_photo_jobs = None
         self.on_retry_photo_job = None
+        self.on_image_dir_changed = None
 
         self.app = web.Application(middlewares=[self.api_key_middleware])
         self._setup_routes()
@@ -120,6 +134,7 @@ class GalleryServer:
         self.app.router.add_post("/api/refresh-schedule", self.handle_refresh_schedule)
         self.app.router.add_post("/api/generate-now", self.handle_generate_now)
         self.app.router.add_post("/api/generate-custom", self.handle_generate_custom)
+        self.app.router.add_post("/api/images/cleanup", self.handle_cleanup_images)
         self.app.router.add_post("/api/images/{img_id}/favorite", self.handle_toggle_favorite)
         self.app.router.add_delete("/api/images/{img_id}", self.handle_delete_image)
         self.app.router.add_get("/api/health", self.handle_health)
@@ -138,7 +153,7 @@ class GalleryServer:
         self.app.router.add_post("/api/photo-job-limit", self.handle_photo_job_limit)
 
         # 图片服务
-        self.app.router.add_static("/images", self.image_dir, show_index=False)
+        self.app.router.add_get("/images/{filename:.*}", self.handle_image_file)
 
     async def _check_auth(self, request: web.Request) -> bool:
         """简单 token 认证"""
@@ -173,6 +188,96 @@ class GalleryServer:
         except Exception as e:
             logger.error(f"Load API keys config error: {e}")
             return {}
+
+    def _resolve_image_dir(self) -> str:
+        image_dir = resolve_image_dir(self.config, self.data_dir)
+        if os.path.exists(image_dir) and not os.path.isdir(image_dir):
+            logger.error(f"Configured image dir is not a directory: {image_dir}; using default")
+            return self.default_image_dir
+        return image_dir
+
+    def _set_runtime_image_dir(self, image_dir: str):
+        image_dir = image_dir or self.default_image_dir
+        self.image_dir = os.path.abspath(os.path.expanduser(image_dir))
+        os.makedirs(self.image_dir, exist_ok=True)
+        if self.on_image_dir_changed:
+            self.on_image_dir_changed(self.image_dir)
+
+    def _image_search_dirs(self) -> list[str]:
+        result = []
+        for path in (self.image_dir, self.default_image_dir):
+            clean = os.path.abspath(os.path.expanduser(path or ""))
+            if clean and clean not in result:
+                result.append(clean)
+        return result
+
+    @staticmethod
+    def _safe_image_relative_path(filename: str) -> Optional[Path]:
+        raw = unquote(filename or "").strip()
+        if not raw or raw.startswith(("/", "\\")) or "\x00" in raw:
+            return None
+        rel = Path(raw)
+        if rel.is_absolute() or any(part in ("", ".", "..") for part in rel.parts):
+            return None
+        return rel
+
+    def _image_file_path(self, filename: str) -> str:
+        rel = self._safe_image_relative_path(filename)
+        if rel is None:
+            return ""
+        for base in self._image_search_dirs():
+            base_path = Path(base).resolve()
+            candidate = (base_path / rel).resolve()
+            try:
+                candidate.relative_to(base_path)
+            except ValueError:
+                continue
+            if candidate.exists() and candidate.is_file():
+                return str(candidate)
+        return ""
+
+    def _image_exists(self, filename: str) -> bool:
+        return bool(self._image_file_path(filename))
+
+    def _image_stat(self, filename: str):
+        path = self._image_file_path(filename)
+        if not path:
+            return None
+        try:
+            return os.stat(path)
+        except OSError:
+            return None
+
+    def _delete_image_files(self, filename: str) -> tuple[int, list[str]]:
+        rel = self._safe_image_relative_path(filename)
+        if rel is None:
+            return 0, ["invalid_filename"]
+        deleted = 0
+        errors = []
+        for base in self._image_search_dirs():
+            base_path = Path(base).resolve()
+            candidate = (base_path / rel).resolve()
+            try:
+                candidate.relative_to(base_path)
+            except ValueError:
+                errors.append(f"unsafe_path:{base}")
+                continue
+            if not candidate.exists():
+                continue
+            try:
+                if candidate.is_file():
+                    candidate.unlink()
+                    deleted += 1
+            except OSError as e:
+                errors.append(f"{candidate}: {e}")
+        return deleted, errors
+
+    async def handle_image_file(self, request: web.Request):
+        filename = request.match_info.get("filename", "")
+        path = self._image_file_path(filename)
+        if not path:
+            raise web.HTTPNotFound()
+        return web.FileResponse(path)
 
     def _github_proxy(self) -> str:
         """Return the effective GitHub-only proxy URL, if configured."""
@@ -225,7 +330,56 @@ class GalleryServer:
         return os.path.join(resolve_script_dir(self.config, self.config_path), "generate.py")
 
     def _child_env(self, extra: Optional[dict[str, str]] = None) -> dict[str, str]:
-        return build_child_env(self.config, self.config_path, self.data_dir, extra)
+        merged = {"ZHUZHU_MEDIA_DIR": self.image_dir}
+        if extra:
+            merged.update(extra)
+        return build_child_env(self.config, self.config_path, self.data_dir, merged)
+
+    @staticmethod
+    def _is_protected_update_path(path: str) -> bool:
+        """Return True for local data/secrets that online update must never overwrite."""
+        clean = str(path or "").strip().replace("\\", "/").lstrip("./")
+        if not clean or clean.startswith("../") or "/../" in clean:
+            return True
+        protected_exact = {
+            ".env",
+            "config/config.yaml",
+            "config/local.yaml",
+            "docker-compose.override.yml",
+        }
+        protected_prefixes = (
+            "data/",
+            "app/data/",
+            "logs/",
+            "app/references/uploads/",
+        )
+        if clean in protected_exact:
+            return True
+        return any(clean.startswith(prefix) for prefix in protected_prefixes)
+
+    @staticmethod
+    def _git_run(args: list[str], cwd: Path, env: dict[str, str], timeout: int = 60) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", *args],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
+
+    def _safe_update_ref(self, remote: str, branch: str) -> str:
+        remote_ref = f"{remote}/{branch}"
+        if not re.match(r"^[A-Za-z0-9._/-]+$", remote_ref):
+            raise ValueError("更新源包含非法字符")
+        return remote_ref
+
+    def _safe_update_changed_files(self, project_root: Path, remote_ref: str, env: dict[str, str]) -> list[str]:
+        result = self._git_run(["diff", "--name-only", "HEAD.." + remote_ref, "--"], project_root, env)
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "无法读取远端改动列表")
+        files = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        return [path for path in files if not self._is_protected_update_path(path)]
 
     @staticmethod
     def _clamp_photo_job_limit(value) -> int:
@@ -289,7 +443,7 @@ class GalleryServer:
                 img_file = entry.get("image_filename", "")
                 if not img_file or img_file in seen:
                     continue
-                if os.path.exists(os.path.join(self.image_dir, img_file)):
+                if self._image_exists(img_file):
                     seen.add(img_file)
         except Exception as e:
             logger.error(f"Count completed photos error: {e}")
@@ -444,16 +598,50 @@ class GalleryServer:
 
         image_config = self.config.get("image_gen", {})
         llm_config = self.config.get("llm", {})
+        local_gpt_base_url = str(keys_config.get("gpt_base_url", "") or "").strip()
+        default_gpt_base_url = str(image_config.get("gpt_base_url", "") or "").strip()
+        local_cpa_url = str(keys_config.get("cpa_url", "") or "").strip()
+        default_cpa_url = str(llm_config.get("base_url", "") or "").strip()
+        persona = load_runtime_persona(self.config, self.data_dir)
+        persona_source = normalize_persona_source(keys_config.get("persona_source"))
+        local_image_dir = normalize_image_dir(keys_config.get("image_dir"), self.data_dir)
+        configured_image_dir = resolve_image_dir(self.config, self.data_dir)
+        effective_image_dir = self.image_dir or configured_image_dir
+        default_dir = self.default_image_dir
+        gallery_title = str(self.gallery_config.get("title", "") or "每日穿搭画廊").strip()
 
         # 返回 masked 状态
         return web.json_response({
+            "gallery_title": gallery_title,
             "gitee_key": self._mask_key(gitee_key),
             "gpt_key": self._mask_key(keys_config.get("gpt_key", "")),
-            "gpt_base_url": keys_config.get("gpt_base_url", "") or image_config.get("gpt_base_url", ""),
-            "cpa_url": keys_config.get("cpa_url", "") or llm_config.get("base_url", ""),
+            "gpt_base_url": local_gpt_base_url or default_gpt_base_url,
+            "gpt_base_url_local": local_gpt_base_url,
+            "gpt_base_url_default": default_gpt_base_url,
+            "cpa_url": local_cpa_url or default_cpa_url,
+            "cpa_url_local": local_cpa_url,
+            "cpa_url_default": default_cpa_url,
             "cpa_key": self._mask_key(keys_config.get("cpa_key", "")),
             "appearance": keys_config.get("appearance", ""),
+            "persona_source": persona_source,
+            "persona": keys_config.get("persona", ""),
+            "resolved_persona": {
+                "name": persona.get("name", ""),
+                "user_name": persona.get("user_name", ""),
+                "persona": persona.get("persona", ""),
+                "caption_voice": persona.get("caption_voice", ""),
+                "appearance": persona.get("appearance", ""),
+                "source": persona.get("source", ""),
+                "sources": persona.get("sources", {}),
+                "persona_source": persona.get("persona_source", persona_source),
+            },
+            "outfit_styles": DEFAULT_OUTFIT_STYLES,
+            "enabled_outfit_styles": load_enabled_outfit_styles(self.config, self.data_dir),
             "github_proxy": self._github_proxy(),
+            "image_dir": effective_image_dir,
+            "image_dir_local": local_image_dir,
+            "image_dir_default": default_dir,
+            "image_dir_exists": os.path.isdir(effective_image_dir),
             "llm_model": llm_model,
             "llm_models": self.config.get("llm", {}),
             "gitee_fallback_enabled": gitee_fallback_enabled,
@@ -697,6 +885,198 @@ class GalleryServer:
             logger.error(f"Load image metadata error: {e}")
         return {}
 
+    def _save_image_metadata(self, metadata: dict):
+        path = os.path.join(self.data_dir, "image_metadata.json")
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+
+    def _iter_gallery_image_files(self) -> dict[str, str]:
+        files = {}
+        for image_dir in self._image_search_dirs():
+            try:
+                for item in Path(image_dir).iterdir():
+                    if not item.is_file():
+                        continue
+                    if item.name.lower().endswith(REFERENCE_IMAGE_EXTENSIONS):
+                        files.setdefault(item.name, str(item))
+            except OSError as e:
+                logger.error(f"Scan image dir error: {image_dir}, {e}")
+        return files
+
+    @staticmethod
+    def _timestamp_from_entry(entry: dict) -> int:
+        if not isinstance(entry, dict):
+            return 0
+        date_text = str(entry.get("date") or "").strip()
+        time_text = str(entry.get("time") or "").strip()
+        if not date_text:
+            return 0
+        try:
+            if re.match(r"^\d{1,2}:\d{2}", time_text):
+                dt = datetime.strptime(f"{date_text} {time_text[:5]}", "%Y-%m-%d %H:%M")
+            else:
+                dt = datetime.strptime(date_text, "%Y-%m-%d")
+            return int(time.mktime(dt.timetuple()))
+        except ValueError:
+            return 0
+
+    @classmethod
+    def _image_created_timestamp(cls, filename: str, entry: dict, meta: dict, path: str) -> int:
+        ts = cls._timestamp_from_image_filename(filename)
+        if ts:
+            return ts
+        if isinstance(meta, dict):
+            try:
+                ts = int(float(meta.get("created_at") or 0))
+            except (TypeError, ValueError):
+                ts = 0
+            if ts:
+                return ts
+        ts = cls._timestamp_from_entry(entry)
+        if ts:
+            return ts
+        try:
+            return int(os.stat(path).st_mtime)
+        except OSError:
+            return 0
+
+    @staticmethod
+    def _cleanup_days_from_body(body: dict) -> int:
+        preset = str(body.get("preset") or body.get("older_than") or "").strip()
+        if preset in CLEANUP_PRESET_DAYS:
+            return CLEANUP_PRESET_DAYS[preset]
+        if preset in {"3", "7", "30", "90"}:
+            return int(preset)
+
+        raw_days = body.get("custom_days") if preset == "custom" else body.get("older_than_days")
+        if raw_days in (None, ""):
+            raw_days = body.get("days")
+        try:
+            days = int(raw_days)
+        except (TypeError, ValueError):
+            raise ValueError("请选择清理时间范围")
+        if days < 1 or days > 3650:
+            raise ValueError("自定义天数需在 1-3650 之间")
+        return days
+
+    def _cleanup_image_plan(self, days: int) -> dict:
+        now_ts = int(time.time())
+        cutoff_ts = now_ts - days * 86400
+        store = ScheduleStore(self.data_dir)
+        all_data = store.load()
+        metadata = self._load_image_metadata()
+        image_files = self._iter_gallery_image_files()
+        entry_by_filename = {}
+        favorite_filenames = set()
+
+        for key, entry in all_data.items():
+            if key == "_meta" or not isinstance(entry, dict) or DATE_KEY_RE.match(str(key)):
+                continue
+            filename = entry.get("image_filename") or (key if str(key).lower().endswith(REFERENCE_IMAGE_EXTENSIONS) else "")
+            if not filename:
+                continue
+            entry_by_filename.setdefault(filename, entry)
+            if entry.get("favorite") is True:
+                favorite_filenames.add(filename)
+
+        known_filenames = set(image_files) | set(metadata) | set(entry_by_filename)
+        candidates = []
+        favorite_kept = 0
+        missing_files = 0
+
+        for filename in sorted(known_filenames):
+            path = image_files.get(filename) or self._image_file_path(filename)
+            if not path:
+                missing_files += 1
+                continue
+            if filename in favorite_filenames:
+                favorite_kept += 1
+                continue
+
+            entry = entry_by_filename.get(filename, {})
+            meta = metadata.get(filename, {})
+            created_ts = self._image_created_timestamp(filename, entry, meta, path)
+            if not created_ts or created_ts > cutoff_ts:
+                continue
+
+            candidates.append({
+                "filename": filename,
+                "image_path": f"/images/{filename}",
+                "date": entry.get("date") or self._date_time_from_timestamp(created_ts)[0],
+                "source": entry.get("source", "") or ("metadata" if filename in metadata else "file"),
+                "age_days": max(0, (now_ts - created_ts) // 86400),
+                "created_at": created_ts,
+            })
+
+        return {
+            "older_than_days": days,
+            "cutoff_ts": cutoff_ts,
+            "scanned_count": len(known_filenames),
+            "candidate_count": len(candidates),
+            "favorite_kept": favorite_kept,
+            "missing_files": missing_files,
+            "candidates": candidates,
+        }
+
+    @staticmethod
+    def _timestamp_from_image_filename(filename: str) -> int:
+        match = re.search(r'_(\d{10})\.\w+$', filename or "")
+        if not match:
+            return 0
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return 0
+
+    @staticmethod
+    def _date_time_from_timestamp(timestamp: int) -> tuple[str, str]:
+        if not timestamp:
+            return "", ""
+        try:
+            local_time = time.localtime(int(timestamp))
+            return time.strftime("%Y-%m-%d", local_time), time.strftime("%H:%M", local_time)
+        except (OSError, OverflowError, ValueError):
+            return "", ""
+
+    def _metadata_gallery_entry(self, filename: str, meta: dict) -> dict:
+        """Build a gallery-only entry for images that only have metadata."""
+        if not isinstance(meta, dict):
+            meta = {}
+        created_at = meta.get("created_at") or self._timestamp_from_image_filename(filename)
+        date_text, time_text = self._date_time_from_timestamp(created_at)
+        if not date_text:
+            try:
+                stat = self._image_stat(filename)
+                if stat is None:
+                    raise OSError("image file missing")
+                date_text, time_text = self._date_time_from_timestamp(int(stat.st_mtime))
+            except OSError:
+                date_text = date.today().isoformat()
+                time_text = ""
+
+        prompt = meta.get("prompt", "")
+        model_name = meta.get("model") or meta.get("model_name", "")
+        outfit_label = "聊天图生图" if "img2img" in prompt.lower() or "参考这张图" in prompt else "聊天生图"
+        return {
+            "id": filename,
+            "date": date_text,
+            "time": time_text,
+            "model_name": self._display_model_name(model_name),
+            "base_style": "",
+            "outfit_style": "自定义",
+            "outfit": f"风格：自定义 穿搭：{outfit_label}",
+            "image_path": f"/images/{filename}",
+            "image_filename": filename,
+            "prompt": prompt,
+            "caption": "",
+            "favorite": False,
+            "status": "ok",
+            "source": "chat",
+            "metadata_only": True,
+        }
+
     @staticmethod
     def _date_caption_map(all_data: dict) -> dict:
         captions = {}
@@ -743,6 +1123,7 @@ class GalleryServer:
         """保存 API 密钥配置"""
         try:
             body = await request.json()
+            image_dir_changed = "image_dir" in body
             
             # 使用 ScheduleStore 的文件锁保护写入
             store = ScheduleStore(self.data_dir)
@@ -761,18 +1142,53 @@ class GalleryServer:
                     # 更新配置（只更新提供的字段）
                     if "gpt_key" in body and body["gpt_key"]:
                         keys_config["gpt_key"] = body["gpt_key"]
-                    if "gpt_base_url" in body and body["gpt_base_url"]:
-                        keys_config["gpt_base_url"] = body["gpt_base_url"]
-                    if "cpa_url" in body and body["cpa_url"]:
-                        keys_config["cpa_url"] = body["cpa_url"]
+                    if "gpt_base_url" in body:
+                        gpt_base_url = str(body.get("gpt_base_url") or "").strip()
+                        if gpt_base_url:
+                            keys_config["gpt_base_url"] = gpt_base_url
+                        else:
+                            keys_config.pop("gpt_base_url", None)
+                    if "cpa_url" in body:
+                        cpa_url = str(body.get("cpa_url") or "").strip()
+                        if cpa_url:
+                            keys_config["cpa_url"] = cpa_url
+                        else:
+                            keys_config.pop("cpa_url", None)
                     if "cpa_key" in body and body["cpa_key"]:
                         keys_config["cpa_key"] = body["cpa_key"]
                     # appearance: always update (empty string = remove local appearance)
                     if "appearance" in body:
                         keys_config["appearance"] = body["appearance"]
+                    if "persona_source" in body:
+                        keys_config["persona_source"] = normalize_persona_source(body.get("persona_source"))
+                    if "persona" in body:
+                        value = str(body.get("persona") or "").strip()
+                        if value:
+                            keys_config["persona"] = value
+                        else:
+                            keys_config.pop("persona", None)
+                    for removed_persona_field in ("character_name", "user_name", "caption_voice"):
+                        keys_config.pop(removed_persona_field, None)
+                    if "enabled_outfit_styles" in body:
+                        styles = normalize_outfit_styles(body.get("enabled_outfit_styles"))
+                        if not styles:
+                            return web.json_response({"error": "至少保留一个穿搭风格"}, status=400)
+                        keys_config["enabled_outfit_styles"] = styles
                     # GitHub proxy is local-only and may be cleared with an empty string.
                     if "github_proxy" in body:
                         keys_config["github_proxy"] = str(body["github_proxy"] or "").strip()
+                    if "image_dir" in body:
+                        image_dir_raw = str(body.get("image_dir") or "").strip()
+                        if "\x00" in image_dir_raw:
+                            return web.json_response({"error": "图片目录包含非法字符"}, status=400)
+                        if image_dir_raw:
+                            target_image_dir = normalize_image_dir(image_dir_raw, self.data_dir)
+                            if os.path.exists(target_image_dir) and not os.path.isdir(target_image_dir):
+                                return web.json_response({"error": "图片存放位置不是文件夹"}, status=400)
+                            os.makedirs(target_image_dir, exist_ok=True)
+                            keys_config["image_dir"] = target_image_dir
+                        else:
+                            keys_config.pop("image_dir", None)
                     
                     # 写入 api_keys_config.json
                     with open(api_keys_path, 'w', encoding='utf-8') as f:
@@ -823,7 +1239,10 @@ class GalleryServer:
                 except Exception as e:
                     logger.error(f"Save llm_model error: {e}")
 
-            return web.json_response({"success": True})
+            if image_dir_changed:
+                self._set_runtime_image_dir(self._resolve_image_dir())
+
+            return web.json_response({"success": True, "image_dir": self.image_dir})
 
         except Exception as e:
             logger.error(f"Save keys error: {e}")
@@ -895,8 +1314,7 @@ class GalleryServer:
                 ):
                     img_file = e.get("image_filename", "")
                     if img_file and img_file not in seen:
-                        img_path = os.path.join(self.image_dir, img_file)
-                        if os.path.exists(img_path):
+                        if self._image_exists(img_file):
                             seen.add(img_file)
                             photos.append(self._enrich_photo_schedule_time(e, metadata, fallback_caption))
 
@@ -1034,7 +1452,7 @@ class GalleryServer:
                     (14, 18): ("noon", ["逛街shopping", "公园散步拍照", "喝下午茶吃甜点"]),
                     (18, 21): ("evening", ["下班后放松时刻", "健身房运动", "弹琴唱歌"]),
                     (21, 24): ("bedtime", ["睡前护肤敷面膜", "窝在被窝看小说", "泡澡放松"]),
-                    (0, 6): ("bedtime", ["深夜emo时间", "和主人说晚安"]),
+                    (0, 6): ("bedtime", ["深夜emo时间", "安静说晚安"]),
                 }
                 for (lo, hi), (theme, activities) in fallback_map.items():
                     if lo <= h < hi:
@@ -1583,6 +2001,74 @@ class GalleryServer:
             logger.error(f"Custom generate error: {e}")
             return web.json_response({"error": str(e)}, status=500)
 
+    async def handle_cleanup_images(self, request: web.Request):
+        """Preview or delete old non-favorite gallery images."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        try:
+            days = self._cleanup_days_from_body(body if isinstance(body, dict) else {})
+            dry_run = bool((body or {}).get("dry_run", True))
+            plan = self._cleanup_image_plan(days)
+            candidates = plan["candidates"]
+
+            if dry_run:
+                return web.json_response({
+                    "success": True,
+                    "dry_run": True,
+                    **plan,
+                })
+
+            deleted_filenames = []
+            errors = []
+            for item in candidates:
+                filename = item["filename"]
+                _, delete_errors = self._delete_image_files(filename)
+                if delete_errors:
+                    errors.extend(delete_errors)
+                    if self._image_exists(filename):
+                        continue
+                deleted_filenames.append(filename)
+
+            deleted_set = set(deleted_filenames)
+            if deleted_set:
+                store = ScheduleStore(self.data_dir)
+
+                def _remove_deleted_entries(all_data):
+                    for key, entry in list(all_data.items()):
+                        if key in deleted_set:
+                            del all_data[key]
+                            continue
+                        if isinstance(entry, dict) and entry.get("image_filename") in deleted_set:
+                            del all_data[key]
+                    return all_data
+
+                store.update(_remove_deleted_entries)
+
+                metadata = self._load_image_metadata()
+                changed = False
+                for filename in deleted_set:
+                    if filename in metadata:
+                        del metadata[filename]
+                        changed = True
+                if changed:
+                    self._save_image_metadata(metadata)
+
+            return web.json_response({
+                "success": True,
+                "dry_run": False,
+                **plan,
+                "deleted_count": len(deleted_filenames),
+                "deleted": deleted_filenames,
+                "errors": errors,
+            })
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        except Exception as e:
+            logger.error(f"Cleanup images error: {e}", exc_info=True)
+            return web.json_response({"error": str(e)}, status=500)
+
     async def handle_delete_image(self, request: web.Request):
         """删除图片和条目"""
         img_id = request.match_info.get("img_id")
@@ -1591,9 +2077,7 @@ class GalleryServer:
             return web.json_response({"error": "invalid_filename"}, status=400)
         try:
             # 1. Delete image file
-            img_path = os.path.join(self.image_dir, img_id)
-            if os.path.exists(img_path):
-                os.remove(img_path)
+            self._delete_image_files(img_id)
 
             # 2. Remove from schedule_data.json
             store = ScheduleStore(self.data_dir)
@@ -1652,13 +2136,15 @@ class GalleryServer:
         try:
             store = ScheduleStore(self.data_dir)
             all_data = store.load()
-            if not all_data:
-                return []
+            if not isinstance(all_data, dict):
+                all_data = {}
             result = []
             seen_filenames = set()
             metadata = self._load_image_metadata()
             date_captions = self._date_caption_map(all_data)
             for key, entry in all_data.items():
+                if not isinstance(entry, dict):
+                    continue
                 is_date_key = bool(DATE_KEY_RE.match(key))
                 if is_date_key:
                     # Skip date-key entries — they hold schedule data but
@@ -1672,8 +2158,7 @@ class GalleryServer:
                             logger.warning(f"Duplicate image_filename found: {img_file} (key={key}), skipping")
                             continue
                         # Skip broken entries where image file is missing
-                        img_path = os.path.join(self.image_dir, img_file)
-                        if not os.path.exists(img_path):
+                        if not self._image_exists(img_file):
                             logger.warning(f"Image file missing: {img_file} (key={key}), skipping")
                             continue
                         seen_filenames.add(img_file)
@@ -1682,6 +2167,16 @@ class GalleryServer:
                         continue
                     fallback_caption = date_captions.get(entry.get("date", ""), "")
                     result.append(self._enrich_photo_schedule_time(entry, metadata, fallback_caption))
+            for img_file, meta in metadata.items():
+                if not isinstance(img_file, str) or img_file in seen_filenames:
+                    continue
+                if not img_file.lower().endswith(REFERENCE_IMAGE_EXTENSIONS):
+                    continue
+                if not self._image_exists(img_file):
+                    continue
+                seen_filenames.add(img_file)
+                entry = self._metadata_gallery_entry(img_file, meta)
+                result.append(self._normalize_entry_display(entry, metadata, ""))
             return result
         except Exception as e:
             logger.error(f"Load entries error: {e}")
@@ -1771,11 +2266,10 @@ class GalleryServer:
             )
 
     async def handle_update(self, request: web.Request):
-        """执行更新（git pull + 重启）"""
+        """执行安全更新：只拉取仓库代码，保留本地数据、密钥和图片。"""
         import asyncio
 
         try:
-            # 1. git pull（注入代理环境变量）
             project_root = resolve_project_root(self.config_path, self.config)
             if not (project_root / ".git").exists():
                 return web.json_response({
@@ -1786,26 +2280,50 @@ class GalleryServer:
             update_config = self.config.get("update", {})
             remote = update_config.get("remote", "origin")
             branch = update_config.get("branch", "main")
-            result = subprocess.run(
-                ["git", "pull", remote, branch],
-                cwd=str(project_root),
-                capture_output=True,
-                text=True,
-                timeout=60,
-                env=env
-            )
+            remote_ref = self._safe_update_ref(remote, branch)
 
-            if result.returncode != 0:
+            fetch = self._git_run(["fetch", "--prune", remote, branch], project_root, env, timeout=90)
+            if fetch.returncode != 0:
                 return web.json_response(
-                    {"error": f"git pull 失败: {result.stderr}"},
+                    {"error": f"git fetch 失败: {fetch.stderr.strip() or fetch.stdout.strip()}"},
                     status=500
                 )
 
-            # 2. 先返回响应，再稍后重启，避免前端把成功更新误判为网络失败。
+            changed_files = self._safe_update_changed_files(project_root, remote_ref, env)
+            skipped_files = []
+            all_changed = self._git_run(["diff", "--name-only", "HEAD.." + remote_ref, "--"], project_root, env)
+            if all_changed.returncode == 0:
+                skipped_files = [
+                    path.strip()
+                    for path in all_changed.stdout.splitlines()
+                    if path.strip() and self._is_protected_update_path(path.strip())
+                ]
+
+            if not changed_files:
+                message = "没有可更新的代码文件；本地数据与配置已保持不变"
+                return web.json_response({
+                    "message": message,
+                    "updated_files": [],
+                    "skipped_files": skipped_files,
+                })
+
+            result = self._git_run(["checkout", remote_ref, "--", *changed_files], project_root, env, timeout=90)
+
+            if result.returncode != 0:
+                return web.json_response(
+                    {"error": f"安全更新失败: {result.stderr.strip() or result.stdout.strip()}"},
+                    status=500
+                )
+
+            # 先返回响应，再稍后重启，避免前端把成功更新误判为网络失败。
             loop = asyncio.get_running_loop()
             loop.call_later(1.0, lambda: os.execv(sys.executable, [sys.executable] + sys.argv))
 
-            return web.json_response({"message": "更新成功，服务即将重启"})
+            return web.json_response({
+                "message": "更新成功，服务即将重启；本地 API Key、appearance、图片和参考图已保留",
+                "updated_files": changed_files,
+                "skipped_files": skipped_files,
+            })
         except subprocess.TimeoutExpired:
             logger.error("Update timeout")
             return web.json_response(

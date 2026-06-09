@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>猪猪的每日穿搭画廊</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐷</text></svg>">
+<title>每日穿搭画廊</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✨</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700;800&amp;family=Noto+Sans+SC:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
@@ -28,29 +28,50 @@ body {
   background: rgba(255,255,255,0.92);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
-  padding: 20px 32px;
+  padding: 18px 32px;
   border-bottom: 1px solid rgba(0,0,0,0.05);
   position: sticky;
   top: 0;
   z-index: 100;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(220px, auto) minmax(0, 1fr) auto;
+  grid-template-areas: "brand tabs actions";
   align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
+  gap: 14px;
+}
+.header-left {
+  grid-area: brand;
+  min-width: 0;
 }
 .header-left h1 {
-  font-size: 28px;
+  font-size: clamp(22px, 2.6vw, 28px);
   background: linear-gradient(135deg, #e91e63, #9c27b0);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
   font-weight: 700;
+  line-height: 1.15;
+  white-space: nowrap;
 }
-.header-right {
+.version-tag {
+  font-size: 12px;
+  color: #999;
+  font-weight: 400;
+  -webkit-text-fill-color: #999;
+}
+.header-actions {
+  grid-area: actions;
   display: flex;
   align-items: center;
   gap: 10px;
+  justify-content: flex-end;
+}
+.header-gen-btn {
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 22px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .btn {
   padding: 10px 24px;
@@ -73,14 +94,22 @@ body {
 
 /* ===== Tabs ===== */
 .tabs {
+  grid-area: tabs;
   display: flex;
   gap: 4px;
   background: #f0ecf4;
   padding: 3px;
   border-radius: 14px;
+  justify-self: center;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.tabs::-webkit-scrollbar { display: none; }
 .tab {
-  padding: 10px 20px;
+  min-height: 44px;
+  padding: 9px 18px;
   border-radius: 14px;
   border: none;
   background: transparent;
@@ -91,7 +120,9 @@ body {
   font-weight: 500;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
+  white-space: nowrap;
 }
 .tab.active {
   background: #fff;
@@ -186,7 +217,8 @@ body {
   margin-bottom: 6px;
 }
 .sk-field input[type="password"],
-.sk-field input[type="text"] {
+.sk-field input[type="text"],
+.sk-field input[type="number"] {
   width: 100%;
   padding: 10px 14px;
   border-radius: 12px;
@@ -198,10 +230,222 @@ body {
   color: #333;
   background: #fafafa;
 }
+.sk-field textarea {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid #e0e0e0;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
+  outline: none;
+  resize: vertical;
+  transition: border 0.2s;
+  color: #333;
+  background: #fafafa;
+}
+.sk-field select {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1.5px solid #e0d0e8;
+  border-radius: 10px;
+  font-size: 14px;
+  background: #fafafa;
+  cursor: pointer;
+  outline: none;
+}
 .sk-field input:focus {
   border-color: #e91e63;
   box-shadow: 0 0 0 3px rgba(233,30,99,0.08);
   background: #fff;
+}
+.sk-field textarea:focus {
+  border-color: #e91e63;
+  box-shadow: 0 0 0 3px rgba(233,30,99,0.08);
+  background: #fff;
+}
+.sk-mini-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.sk-mini-field label {
+  font-size: 12px;
+  color: #666;
+}
+.sk-segmented {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+.sk-segmented label {
+  margin: 0;
+}
+.sk-segmented input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.sk-segmented span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid #ece4f0;
+  border-radius: 12px;
+  background: #faf8fc;
+  color: #666;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border 0.2s, background 0.2s, color 0.2s, box-shadow 0.2s;
+}
+.sk-segmented input:checked + span {
+  border-color: #e91e63;
+  background: #fff1f7;
+  color: #c2185b;
+  box-shadow: 0 0 0 3px rgba(233,30,99,0.08);
+}
+.sk-persona-custom {
+  display: none;
+  margin-top: 10px;
+}
+.sk-persona-custom.show {
+  display: block;
+}
+.sk-persona-preview {
+  padding: 10px 12px;
+  border: 1px solid #f0e6f6;
+  border-radius: 12px;
+  background: #fffafd;
+  color: #666;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.sk-persona-preview strong {
+  color: #555;
+}
+.sk-persona-preview-text {
+  margin-top: 4px;
+  color: #777;
+  max-height: 72px;
+  overflow: hidden;
+}
+.sk-style-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.sk-style-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid #ece4f0;
+  border-radius: 12px;
+  background: #faf8fc;
+  color: #555;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  transition: border 0.2s, background 0.2s, box-shadow 0.2s;
+}
+.sk-style-chip input {
+  width: 16px;
+  height: 16px;
+  accent-color: #e91e63;
+  flex-shrink: 0;
+}
+.sk-style-chip:has(input:checked) {
+  border-color: #e91e63;
+  background: #fff1f7;
+  box-shadow: 0 0 0 3px rgba(233,30,99,0.06);
+}
+.egg-style-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(32,20,42,0.34);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.egg-style-overlay.open { display: flex; }
+.egg-style-modal {
+  width: min(430px, calc(100vw - 32px));
+  max-height: min(78vh, 620px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 22px;
+  border: 1px solid rgba(255,255,255,0.76);
+  border-radius: 18px;
+  background: linear-gradient(180deg, #fff, #fff8fc);
+  box-shadow: 0 24px 70px rgba(55,34,76,0.28);
+  animation: slideUp 0.22s ease;
+}
+.egg-style-modal h3 {
+  margin: 0 0 7px;
+  color: #c2185b;
+  font-size: 18px;
+}
+.egg-style-modal .sk-desc {
+  margin-bottom: 12px;
+  color: #8a728f;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.egg-style-modal .sk-style-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 0;
+}
+.egg-style-status {
+  margin-top: 12px;
+  color: #777;
+  font-size: 12px;
+  min-height: 18px;
+}
+.egg-style-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+.egg-style-btn {
+  border: 0;
+  border-radius: 12px;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.egg-style-btn.secondary {
+  background: #f7f1fb;
+  color: #7c3aed;
+}
+.egg-style-btn.primary {
+  background: linear-gradient(135deg, #ff6b9d, #c084fc);
+  color: #fff;
+  box-shadow: 0 8px 18px rgba(233,30,99,0.18);
+}
+.egg-style-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.sk-field-action {
+  border: none;
+  background: transparent;
+  color: #9c27b0;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 3px 0;
 }
 .sk-field .sk-status {
   font-size: 11px;
@@ -210,6 +454,107 @@ body {
 }
 .sk-field .sk-status.set { color: #4caf50; }
 .sk-field .sk-status.unset { color: #ff9800; }
+.sk-inline-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 4px;
+}
+.sk-inline-status .sk-status { margin-top: 0; }
+.sk-gitee-status-row {
+  align-items: center;
+  margin-top: 8px;
+}
+.sk-gitee-status-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.sk-gitee-fallback-inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid #f0e6f6;
+  border-radius: 10px;
+  background: #fffafd;
+  transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+.sk-gitee-fallback-inline.enabled {
+  border-color: rgba(233,30,99,0.42);
+  background: linear-gradient(135deg, #fff0f7 0%, #faf0ff 100%);
+  box-shadow: 0 6px 18px rgba(156,39,176,0.12);
+}
+.sk-gitee-fallback-copy {
+  min-width: 0;
+}
+.sk-gitee-fallback-title {
+  display: block;
+  color: #555;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.sk-gitee-fallback-inline.enabled .sk-gitee-fallback-title {
+  color: #c2185b;
+}
+.sk-gitee-fallback-hint {
+  display: block;
+  margin-top: 2px;
+  color: #999;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+.sk-gitee-fallback-inline.enabled .sk-gitee-fallback-hint {
+  color: #7b1fa2;
+  font-weight: 700;
+}
+.sk-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 42px;
+  height: 24px;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+.sk-switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.sk-switch-knob {
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  background: #e7e0ea;
+  box-shadow: inset 0 0 0 1px rgba(124,58,237,0.08);
+  transition: background 0.2s, box-shadow 0.2s;
+}
+.sk-switch-knob::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  left: 3px;
+  top: 3px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.18);
+  transition: transform 0.2s;
+}
+.sk-switch input:checked + .sk-switch-knob {
+  background: linear-gradient(135deg, #e91e63, #9c27b0);
+  box-shadow: 0 4px 12px rgba(233,30,99,0.22);
+}
+.sk-switch input:checked + .sk-switch-knob::after {
+  transform: translateX(18px);
+}
 .sk-toggle {
   display: flex;
   align-items: center;
@@ -231,18 +576,153 @@ body {
   color: #555;
   font-weight: 600;
 }
-.sk-actions {
+.sk-compact-toggle {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+.sk-compact-toggle input {
+  width: 16px;
+  height: 16px;
+}
+.sk-compact-toggle span {
+  font-size: 13px;
+}
+.sk-field-note {
+  font-size: 11px;
+  color: #999;
+  line-height: 1.5;
+  margin-top: 6px;
+}
+.sk-storage-field {
+  margin-bottom: 18px;
+}
+.sk-storage-panel {
+  padding: 12px;
+  border: 1px solid #f0e6f6;
+  border-radius: 14px;
+  background: #fffafd;
+}
+.sk-storage-head {
   display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.sk-storage-title {
+  display: block;
+  margin-bottom: 2px;
+  color: #555;
+  font-size: 14px;
+  font-weight: 700;
+}
+.sk-storage-head .sk-desc {
+  margin: 0;
+}
+.sk-storage-status {
+  flex: 0 0 auto;
+  margin-top: 2px !important;
+  white-space: nowrap;
+}
+.sk-storage-panel #skImageDir {
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+.sk-storage-cleanup {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #f2eaf6;
+}
+.sk-cleanup-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.sk-cleanup-title {
+  color: #555;
+  font-size: 13px;
+  font-weight: 700;
+}
+.sk-cleanup-hint {
+  color: #999;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.sk-cleanup-controls {
+  display: grid;
+  grid-template-columns: minmax(135px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+.sk-cleanup-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.sk-cleanup-row select {
+  min-width: 0;
+}
+.sk-cleanup-row input[type="number"] {
+  width: 86px;
+  flex: 0 0 auto;
+  padding: 9px 10px;
+  border-radius: 10px;
+}
+.sk-cleanup-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+.sk-cleanup-actions .btn {
+  min-width: 0;
+  padding: 8px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.sk-cleanup-result {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border-radius: 999px;
+  background: #f6f2fb;
+  color: #666;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.sk-cleanup-result:empty {
+  display: none;
+}
+.sk-footer-row {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   margin-top: 24px;
   padding-top: 18px;
   border-top: 1px solid #f0f0f0;
+}
+.sk-footer-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+.sk-actions {
+  display: flex;
+  gap: 10px;
   justify-content: flex-end;
 }
 .sk-actions .btn {
-  padding: 10px 24px;
+  padding: 10px 18px;
   font-size: 14px;
-  min-width: 100px;
+  min-width: 88px;
   justify-content: center;
 }
 .sk-actions .btn-secondary {
@@ -251,6 +731,101 @@ body {
   border: 1px solid #e0e0e0;
 }
 .sk-actions .btn-secondary:hover { background: #eee; }
+.sk-update-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.sk-update-row .btn {
+  padding: 10px 12px;
+  min-width: 104px;
+}
+.sk-version-text {
+  font-size: 12px;
+  color: #999;
+  white-space: nowrap;
+}
+.sk-update-result {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+.sk-update-result:empty {
+  display: none;
+}
+.sk-update-pill {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: normal;
+}
+.sk-update-pill.ok { color: #2e7d32; background: #e8f5e9; }
+.sk-update-pill.error { color: #c62828; background: #ffebee; }
+.sk-update-card {
+  width: 100%;
+  box-sizing: border-box;
+  background: #e8f5e9;
+  padding: 12px;
+  border-radius: 8px;
+}
+.sk-update-safe-note {
+  font-size: 12px;
+  color: #4b7d4f;
+  line-height: 1.45;
+  margin: 8px 0 10px;
+}
+.sk-update-action {
+  margin-top: 8px;
+  padding: 8px 16px;
+  background: #4caf50;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+}
+.sk-update-action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+@media (max-width: 560px) {
+  .sk-footer-main {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+  .sk-actions,
+  .sk-update-row {
+    width: 100%;
+  }
+  .sk-actions .btn { flex: 1; }
+  .sk-segmented,
+  .sk-style-grid {
+    grid-template-columns: 1fr;
+  }
+  .sk-cleanup-controls {
+    grid-template-columns: 1fr;
+  }
+  .sk-cleanup-actions .btn {
+    flex: 1;
+  }
+  .egg-style-modal .sk-style-grid {
+    grid-template-columns: 1fr;
+  }
+  .egg-style-actions {
+    justify-content: stretch;
+  }
+  .egg-style-actions .egg-style-btn { flex: 1; }
+}
 
 /* ===== Container ===== */
 .container { max-width: 1400px; margin: 0 auto; padding: 24px 20px; }
@@ -396,15 +971,16 @@ body {
 .big-card-info .bc-note::before { content: "💬 "; font-style: normal; }
 .big-card-info .bc-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 4px;
-  padding-top: 8px;
+  gap: 7px;
+  margin-top: 3px;
+  padding-top: 6px;
   border-top: 1px solid #f0ecf4;
 }
 .big-card-info .bc-actions .bc-btn {
   flex: 1;
-  padding: 8px 0;
-  border-radius: 10px;
+  min-height: 32px;
+  padding: 5px 2px;
+  border-radius: 9px;
   border: 1.5px solid #eee;
   background: #fff;
   font-size: 13px;
@@ -416,7 +992,8 @@ body {
   gap: 4px;
   color: #888;
   transition: all 0.18s;
-  line-height: 1.3;
+  line-height: 1.15;
+  white-space: nowrap;
 }
 .big-card-info .bc-actions .bc-btn:hover {
   border-color: #e91e63;
@@ -502,7 +1079,7 @@ body {
 /* ===== Gallery Grid (original, for full gallery) ===== */
 .gallery-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
   gap: 12px;
 }
 
@@ -571,7 +1148,7 @@ body {
 }
 .gallery-card .card-style-tag:hover { opacity: 0.8; }
 .gallery-card .card-body {
-  padding: 10px 12px 12px;
+  padding: 10px 8px 12px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -580,19 +1157,34 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
 }
 .gallery-card .card-body .card-row1 .date {
+  display: inline-block;
+  flex: 1 1 auto;
   font-size: 12px;
   color: #bbb;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gallery-card .card-body .card-row1 .time {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: #aaa;
+  letter-spacing: 0;
+  white-space: nowrap;
+  text-align: right;
 }
 .gallery-card .card-body .card-meta {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 4px;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 .gallery-card .card-body .card-meta .meta-tag {
   font-size: 10px;
@@ -617,16 +1209,18 @@ body {
   text-overflow: ellipsis;
 }
 .gallery-card .card-body .card-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 6px;
-  padding-top: 6px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  margin-top: 5px;
+  padding-top: 5px;
   border-top: 1px solid #f0f0f0;
 }
 .gallery-card .card-body .card-actions .ca-btn {
-  flex: 1;
-  padding: 8px 0;
-  border-radius: 10px;
+  min-width: 0;
+  min-height: 30px;
+  padding: 4px 2px;
+  border-radius: 9px;
   border: 1.5px solid #eee;
   background: #fff;
   font-size: 13px;
@@ -638,7 +1232,8 @@ body {
   gap: 4px;
   color: #888;
   transition: all 0.18s;
-  line-height: 1.3;
+  line-height: 1.15;
+  white-space: nowrap;
 }
 .gallery-card .card-body .card-actions .ca-btn:hover {
   border-color: #e91e63;
@@ -740,11 +1335,11 @@ body {
 .today-compact .modal-info {
   min-height: 0;
   justify-content: flex-start;
-  gap: 8px;
+  gap: 14px;
 }
 .today-compact .today-card-info {
   flex: 1;
-  padding: 14px 16px;
+  padding: 18px 16px 16px;
   border-radius: 20px;
 }
 .tc-top {
@@ -968,13 +1563,14 @@ body {
 }
 .tc-actions {
   display: flex;
-  gap: 10px;
-  padding-top: 4px;
+  gap: 8px;
+  padding-top: 2px;
   margin-top: auto;
 }
 .tc-actions .tc-btn {
   flex: 1;
-  padding: 8px 0;
+  min-height: 31px;
+  padding: 5px 2px;
   border-radius: 8px;
   border: none;
   background: #fff;
@@ -987,7 +1583,7 @@ body {
   gap: 4px;
   color: #555;
   transition: all 0.2s ease;
-  line-height: 1.2;
+  line-height: 1.15;
   white-space: nowrap;
   box-shadow: none;
 }
@@ -1324,49 +1920,66 @@ body {
 /* ===== Responsive ===== */
 @media (max-width: 1200px) {
   .gallery-list { gap: 14px; }
-  .gallery-grid { grid-template-columns: repeat(5, 1fr); gap: 10px; }
+  .gallery-grid { gap: 10px; }
   .big-card-image { flex: 0 0 38%; min-height: 280px; }
   .big-card-info { padding: 18px 22px; }
   .big-card-info .bc-desc { font-size: 14px; }
   .big-card-info .bc-schedule { padding: 10px 14px; }
   .big-card-info .bc-schedule .sched-row { font-size: 13px; }
 }
-@media (max-width: 900px) {
-  .gallery-grid { grid-template-columns: repeat(4, 1fr); }
-}
 @media (max-width: 700px) {
+  .header {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand actions"
+      "tabs tabs";
+    gap: 12px 10px;
+    padding: 16px 20px 14px;
+  }
+  .header-left h1 { font-size: 24px; }
+  .tabs { justify-self: stretch; width: 100%; }
+  .tab { flex: 1; padding: 9px 12px; }
+  .header-gen-btn { min-height: 42px; padding: 0 16px; }
   .gallery-list { gap: 12px; }
-  .gallery-grid { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .gallery-grid { grid-template-columns: repeat(auto-fit, minmax(164px, 1fr)); gap: 10px; }
   .big-card { flex-direction: column; }
   .big-card-image { flex: unset; width: 100%; min-height: 260px; aspect-ratio: 3/4; }
   .big-card-info { padding: 16px 18px; }
   .big-card-info .bc-desc { font-size: 14px; }
   .big-card-info .bc-schedule { padding: 10px 12px; }
-  .big-card-info .bc-actions .bc-btn { padding: 8px 0; font-size: 13px; }
+  .big-card-info .bc-actions .bc-btn { min-height: 31px; padding: 5px 2px; font-size: 13px; }
   .today-hero-title h2 { font-size: 22px; }
   .today-hero-title .subtitle { font-size: 13px; }
   .today-hero-title .gen-today-btn { font-size: 14px; padding: 10px 24px; }
 }
 @media (max-width: 500px) {
   .gallery-list { gap: 10px; }
-  .gallery-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .gallery-grid { grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 8px; }
   .big-card-image { min-height: 200px; }
   .big-card-info { padding: 12px 14px; gap: 5px; }
   .big-card-info .bc-date { font-size: 11px; }
   .big-card-info .bc-desc { font-size: 13px; }
   .big-card-info .bc-schedule { padding: 8px 10px; }
   .big-card-info .bc-schedule .sched-row { font-size: 12px; }
-  .big-card-info .bc-actions .bc-btn { font-size: 12px; padding: 6px 0; }
-  .big-card-info .bc-actions { gap: 6px; padding-top: 8px; margin-top: 4px; }
-  .header { padding: 14px 16px; }
-  .header-left h1 { font-size: 18px; }
+  .big-card-info .bc-actions .bc-btn { min-height: 29px; font-size: 12px; padding: 4px 2px; }
+  .big-card-info .bc-actions { gap: 6px; padding-top: 6px; margin-top: 3px; }
+  .header { padding: 14px 14px 12px; gap: 10px 8px; }
+  .header-left h1 { font-size: 21px; }
+  .version-tag { font-size: 11px; }
+  .header-actions { gap: 8px; }
+  .header-gen-btn { min-height: 40px; padding: 0 12px; font-size: 13px; }
+  .settings-btn { width: 38px; height: 38px; }
+  .tabs { padding: 3px; }
+  .tab { min-height: 40px; padding: 8px 10px; font-size: 14px; }
+  .tab-badge { min-width: 15px; height: 15px; font-size: 9px; padding: 0 4px; margin-left: 2px; }
   .container { padding: 16px 14px; }
   .gallery-list .today-compact .tc-image { height: clamp(190px, 66vw, 320px); }
   .gallery-list .today-compact .tc-info { padding: 12px 14px; gap: 6px; }
   .gallery-list .today-compact .tc-outfit { font-size: 13px; line-height: 1.6; }
   .gallery-list .today-compact .tc-thought { font-size: 12px; }
   .gallery-list .today-compact .tc-schedule { font-size: 12px; padding: 6px 10px; }
-  .gallery-list .today-compact .tc-actions .tc-btn { font-size: 12px; padding: 6px 0; }
+  .gallery-list .today-compact .tc-actions { gap: 6px; padding-top: 1px; }
+  .gallery-list .today-compact .tc-actions .tc-btn { min-height: 29px; font-size: 12px; padding: 4px 2px; }
   .gallery-list .today-compact .tc-date { font-size: 12px; }
   .gallery-list .today-compact .tc-meta-row .tc-meta-tag { font-size: 10px; }
   .gallery-list .today-compact .tc-style { font-size: 10px; padding: 2px 10px; }
@@ -1429,35 +2042,39 @@ body {
 /* ===== Column-responsive card scaling ===== */
 /* 8 columns: smallest */
 .gallery-grid.cols-8 .gallery-card .card-body { padding: 6px 8px; }
-.gallery-grid.cols-8 .gallery-card .card-body .card-row1 .date { font-size: 11px; }
+.gallery-grid.cols-8 .gallery-card .card-body .card-row1 .date,
+.gallery-grid.cols-8 .gallery-card .card-body .card-row1 .time { font-size: 11px; }
 .gallery-grid.cols-8 .gallery-card .card-body .card-meta .meta-tag { font-size: 9px; padding: 1px 5px; border-radius: 8px; }
 .gallery-grid.cols-8 .gallery-card .card-body .card-sched { font-size: 9px; padding: 3px 6px; border-radius: 6px; }
-.gallery-grid.cols-8 .gallery-card .card-body .card-actions .ca-btn { font-size: 10px; padding: 5px 0; border-radius: 6px; }
+.gallery-grid.cols-8 .gallery-card .card-body .card-actions .ca-btn { min-height: 25px; font-size: 10px; padding: 3px 1px; border-radius: 6px; }
 .gallery-grid.cols-8 .gallery-card .card-date-tag { font-size: 10px; padding: 2px 5px; }
 
 /* 7 columns */
-.gallery-grid.cols-7 .gallery-card .card-body { padding: 7px 9px; }
-.gallery-grid.cols-7 .gallery-card .card-body .card-row1 .date { font-size: 11px; }
+.gallery-grid.cols-7 .gallery-card .card-body { padding: 7px 8px; }
+.gallery-grid.cols-7 .gallery-card .card-body .card-row1 .date,
+.gallery-grid.cols-7 .gallery-card .card-body .card-row1 .time { font-size: 11px; }
 .gallery-grid.cols-7 .gallery-card .card-body .card-meta .meta-tag { font-size: 10px; padding: 1px 6px; border-radius: 9px; }
 .gallery-grid.cols-7 .gallery-card .card-body .card-sched { font-size: 10px; padding: 3px 8px; border-radius: 7px; }
-.gallery-grid.cols-7 .gallery-card .card-body .card-actions .ca-btn { font-size: 11px; padding: 6px 0; border-radius: 7px; }
+.gallery-grid.cols-7 .gallery-card .card-body .card-actions .ca-btn { min-height: 27px; font-size: 11px; padding: 4px 1px; border-radius: 7px; }
 .gallery-grid.cols-7 .gallery-card .card-date-tag { font-size: 10px; padding: 2px 6px; }
 
 /* 6 columns */
-.gallery-grid.cols-6 .gallery-card .card-body { padding: 8px 10px; }
-.gallery-grid.cols-6 .gallery-card .card-body .card-row1 .date { font-size: 12px; }
+.gallery-grid.cols-6 .gallery-card .card-body { padding: 8px; }
+.gallery-grid.cols-6 .gallery-card .card-body .card-row1 .date,
+.gallery-grid.cols-6 .gallery-card .card-body .card-row1 .time { font-size: 12px; }
 .gallery-grid.cols-6 .gallery-card .card-body .card-meta .meta-tag { font-size: 11px; padding: 2px 7px; border-radius: 10px; }
 .gallery-grid.cols-6 .gallery-card .card-body .card-sched { font-size: 10px; padding: 3px 8px; border-radius: 7px; }
-.gallery-grid.cols-6 .gallery-card .card-body .card-actions .ca-btn { font-size: 12px; padding: 7px 0; border-radius: 8px; }
+.gallery-grid.cols-6 .gallery-card .card-body .card-actions .ca-btn { min-height: 29px; font-size: 12px; padding: 4px 2px; border-radius: 8px; }
 
 /* 5 columns (default) — no override needed, uses base CSS */
 
 /* 4 columns: largest */
-.gallery-grid.cols-4 .gallery-card .card-body { padding: 10px 14px; }
-.gallery-grid.cols-4 .gallery-card .card-body .card-row1 .date { font-size: 14px; }
+.gallery-grid.cols-4 .gallery-card .card-body { padding: 10px 8px 12px; }
+.gallery-grid.cols-4 .gallery-card .card-body .card-row1 .date,
+.gallery-grid.cols-4 .gallery-card .card-body .card-row1 .time { font-size: 14px; }
 .gallery-grid.cols-4 .gallery-card .card-body .card-meta .meta-tag { font-size: 13px; padding: 2px 10px; border-radius: 12px; }
 .gallery-grid.cols-4 .gallery-card .card-body .card-sched { font-size: 12px; padding: 5px 12px; border-radius: 10px; }
-.gallery-grid.cols-4 .gallery-card .card-body .card-actions .ca-btn { font-size: 14px; padding: 9px 0; border-radius: 12px; }
+.gallery-grid.cols-4 .gallery-card .card-body .card-actions .ca-btn { min-height: 31px; font-size: 13px; padding: 4px 2px; border-radius: 10px; }
 .gallery-grid.cols-4 .gallery-card .card-date-tag { font-size: 12px; padding: 3px 9px; }
 
 /* 🐷 日程彩蛋弹窗 */
@@ -1484,6 +2101,20 @@ body {
 .egg-outfit-item:hover { transform: translateY(-2px); box-shadow: 0 14px 28px rgba(168,85,247,0.14), 0 4px 12px rgba(255,107,157,0.08); border-color: rgba(228,202,255,0.95); }
 .egg-outfit-label { font-size: 11px; color: #a78bfa; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
 .egg-outfit-value { font-size: 14px; color: #333; line-height: 1.58; overflow-wrap: anywhere; }
+.egg-outfit-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.egg-outfit-head .egg-outfit-label { margin-bottom: 0; }
+.egg-style-manage {
+  border: 1px solid rgba(233,30,99,0.18);
+  background: #fff7fb;
+  color: #c2185b;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.egg-style-manage:hover { background: #ffeaf3; }
 .egg-schedule-list { position: relative; padding-left: 24px; }
 .egg-schedule-list::before { content: ''; position: absolute; left: 8px; top: 7px; bottom: 7px; width: 2px; background: linear-gradient(to bottom, #ff6b9d, #c084fc, #818cf8); border-radius: 1px; opacity: 0.75; }
 .egg-sched-item { position: relative; padding: 9px 0 9px 2px; }
@@ -1554,20 +2185,33 @@ body {
 </head>
 <body>
 <!-- 🐷 日程彩蛋弹窗 -->
-<div class="egg-overlay" id="eggOverlay" onclick="if(event.target===this)closeScheduleEgg()">
+<div class="egg-overlay" id="eggOverlay">
   <div class="egg-card">
     <div class="egg-header">
       <h2>🐷 今日日程彩蛋</h2>
       <div class="egg-date-row">
         <div class="egg-date" id="eggDate"></div>
-        <button class="egg-refresh-btn" onclick="refreshScheduleEgg()" title="重新生成日程">
+        <button class="egg-refresh-btn" title="重新生成日程">
           <svg class="egg-refresh-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         </button>
       </div>
-      <button class="egg-close" onclick="closeScheduleEgg()">✕</button>
+      <button class="egg-close">✕</button>
     </div>
     <div class="egg-body" id="eggBody">
       <div class="egg-loading">加载中...</div>
+    </div>
+  </div>
+</div>
+
+<div class="egg-style-overlay" id="eggStyleOverlay">
+  <div class="egg-style-modal">
+    <h3>✨ 调整风格池</h3>
+    <div class="sk-desc">每日自动日程只会从勾选的风格中抽取；至少保留一个。</div>
+    <div class="sk-style-grid" id="eggOutfitStyleGrid"></div>
+    <div class="egg-style-status" id="eggOutfitStyleStatus">加载中...</div>
+    <div class="egg-style-actions">
+      <button class="egg-style-btn secondary" type="button" data-egg-style-close>取消</button>
+      <button class="egg-style-btn primary" type="button" id="eggStyleSaveBtn" data-egg-style-save>保存</button>
     </div>
   </div>
 </div>
@@ -1595,15 +2239,15 @@ body {
 
 <div class="header">
   <div class="header-left">
-    <h1 style="user-select:none;" onclick="openScheduleEgg()">🐷 猪猪穿搭画廊 <span style="font-size:12px;color:#999;font-weight:400;" id="versionTag">v1.1.2</span></h1>
+    <h1 style="user-select:none;"><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.1.3</span></h1>
   </div>
-  <div class="header-right">
-    <div class="tabs">
-      <button class="tab" data-tab="gallery" onclick="switchTab('gallery')">✨ 全部 <span class="tab-badge" id="badge-all">0</span></button>
-      <button class="tab" data-tab="today" onclick="switchTab('today')">🌸 今日 <span class="tab-badge" id="badge-today">0</span></button>
-      <button class="tab" data-tab="favorites" onclick="switchTab('favorites')">❤️ 收藏 <span class="tab-badge" id="badge-favorites">0</span></button>
-    </div>
-    <button class="btn btn-primary" onclick="openCustomGen()">🎀 穿搭生成</button>
+  <div class="tabs">
+    <button class="tab" data-tab="gallery" onclick="switchTab('gallery')">✨ 全部 <span class="tab-badge" id="badge-all">0</span></button>
+    <button class="tab" data-tab="today" onclick="switchTab('today')">🌸 今日 <span class="tab-badge" id="badge-today">0</span></button>
+    <button class="tab" data-tab="favorites" onclick="switchTab('favorites')">❤️ 收藏 <span class="tab-badge" id="badge-favorites">0</span></button>
+  </div>
+  <div class="header-actions">
+    <button class="btn btn-primary header-gen-btn" onclick="openCustomGen()">🎀 穿搭生成</button>
     <button class="settings-btn" onclick="openSettings()" title="API 密钥设置">⚙️</button>
   </div>
 </div>
@@ -1613,13 +2257,13 @@ body {
   <!-- Today Card -->
   <div class="today-section" id="todaySection">
     <div class="today-hero-title">
-      <h2><span class="pig-emoji">🐷</span> 猪猪的每日穿搭画廊</h2>
-      <div class="subtitle">每一天，都是不一样的猪猪 <span class="heart">💞</span></div>
+      <h2><span class="pig-emoji">✨</span> <span id="appHeroTitle">每日穿搭画廊</span></h2>
+      <div class="subtitle" id="appHeroSubtitle">每一天，都是不一样的角色 <span class="heart">💞</span></div>
       <button class="gen-today-btn" onclick="triggerGenerate()">💭 现在在干嘛</button>
     </div>
     <div class="today-empty" id="todayEmpty" style="display:none;">
       <div class="icon">🌸</div>
-      <p>今天还没有穿搭记录呢～让猪猪生成一个吧！</p>
+      <p id="todayEmptyText">今天还没有穿搭记录呢～生成一个吧！</p>
     </div>
     <div class="gallery-list" id="todayList"></div>
   </div>
@@ -1627,7 +2271,7 @@ body {
   <!-- Gallery Grid -->
   <div class="gallery-section hidden" id="gallerySection">
     <div id="galleryContent">
-      <div class="loading-state"><div class="spinner"></div>猪猪在整理衣橱...</div>
+      <div class="loading-state"><div class="spinner"></div><span id="galleryLoadingText">正在整理衣橱...</span></div>
     </div>
   </div>
 
@@ -1636,26 +2280,73 @@ body {
 <!-- Settings Modal -->
 <div class="sk-overlay" id="skOverlay" onclick="if(event.target===this)closeSettings()">
   <div class="sk-modal" onclick="event.stopPropagation()">
-    <h2>🔑 API 密钥设置</h2>
+    <h2>⚙️ 设置</h2>
+    <div class="sk-field">
+      <label>🎭 人设来源</label>
+      <div class="sk-desc">用于日程文案、小心思和脚本口吻；默认使用本机自定义</div>
+      <div class="sk-segmented" id="skPersonaSourceGroup">
+        <label>
+          <input type="radio" name="skPersonaSource" value="custom" onchange="setPersonaSource(this.value)">
+          <span>自定义</span>
+        </label>
+        <label>
+          <input type="radio" name="skPersonaSource" value="hermes" onchange="setPersonaSource(this.value)">
+          <span>Hermes</span>
+        </label>
+        <label>
+          <input type="radio" name="skPersonaSource" value="openclaw" onchange="setPersonaSource(this.value)">
+          <span>OpenClaw</span>
+        </label>
+      </div>
+      <div class="sk-persona-custom" id="skPersonaCustomWrap">
+        <label for="skPersona">人设提示词</label>
+        <textarea id="skPersona" rows="3" placeholder="例如：冷静克制、温柔、活泼、傲娇；会用于日程、配文和小心思口吻"></textarea>
+      </div>
+      <div class="sk-persona-preview" id="skPersonaPreview">
+        <strong id="skPersonaPreviewTitle">加载中...</strong>
+        <div class="sk-persona-preview-text" id="skPersonaPreviewText"></div>
+      </div>
+      <div class="sk-status" id="skPersonaStatus">加载中...</div>
+    </div>
+    <div class="sk-field">
+      <label for="skAppearance">🧬 人物外貌提示词</label>
+      <div class="sk-desc">本机专属参数，只保存在 data/api_keys_config.json，不写入仓库配置。写英文效果最佳</div>
+      <textarea id="skAppearance" rows="4" placeholder="留空则自动读取 Hermes/OpenClaw 或配置默认外貌..."></textarea>
+      <div class="sk-status" id="skAppearanceStatus">加载中...</div>
+    </div>
+    <div class="sk-field">
+      <label for="skLlmModel">🧠 日程生成模型</label>
+      <div class="sk-desc">用于每日日程生成和穿搭翻译的 LLM 模型</div>
+      <select id="skLlmModel">
+        <option value="">加载中...</option>
+      </select>
+      <div class="sk-status" id="skLlmModelStatus">加载中...</div>
+    </div>
     <div class="sk-field">
       <label for="skGiteeKey">Gitee API Key</label>
       <div class="sk-desc">Gitee 生图密钥</div>
       <input type="password" id="skGiteeKey" placeholder="输入新密钥（留空则不修改）">
-      <div class="sk-status" id="skGiteeStatus">加载中...</div>
-    </div>
-    <div class="sk-field">
-      <label for="skGiteeFallback">Gitee 回退</label>
-      <div class="sk-desc">开启后，GPT Image 多次重试失败才会改用 Gitee</div>
-      <label class="sk-toggle">
-        <input type="checkbox" id="skGiteeFallback">
-        <span>允许 GPT 失败后回退到 Gitee</span>
-      </label>
-      <div class="sk-status" id="skGiteeFallbackStatus">加载中...</div>
+      <div class="sk-inline-status sk-gitee-status-row">
+        <div class="sk-gitee-status-main">
+          <div class="sk-status" id="skGiteeStatus">加载中...</div>
+          <div class="sk-status" id="skGiteeFallbackStatus">加载中...</div>
+        </div>
+      </div>
+      <div class="sk-gitee-fallback-inline" id="skGiteeFallbackRow">
+        <div class="sk-gitee-fallback-copy">
+          <span class="sk-gitee-fallback-title">失败回退</span>
+          <span class="sk-gitee-fallback-hint">GPT Image 多次失败后使用 Gitee</span>
+        </div>
+        <label class="sk-switch" for="skGiteeFallback" aria-label="允许 GPT 失败后回退到 Gitee">
+          <input type="checkbox" id="skGiteeFallback" onchange="syncGiteeFallbackVisual(this.checked)">
+          <span class="sk-switch-knob"></span>
+        </label>
+      </div>
     </div>
     <div class="sk-field">
       <label for="skGptBaseUrl">GPT Image Base URL</label>
       <div class="sk-desc">GPT 生图端点；只有需要走 CPA 的 GPT 生图时才替换</div>
-      <input type="text" id="skGptBaseUrl" placeholder="留空则不修改">
+      <input type="text" id="skGptBaseUrl" placeholder="留空则使用配置默认值">
       <div class="sk-status" id="skGptBaseUrlStatus">加载中...</div>
     </div>
     <div class="sk-field">
@@ -1667,7 +2358,7 @@ body {
     <div class="sk-field">
       <label for="skCpaUrl">CPA Base URL</label>
       <div class="sk-desc">Gemini 生图和 LLM 调度使用，填 CPA 的 /v1 地址</div>
-      <input type="text" id="skCpaUrl" placeholder="输入新地址（留空则不修改）">
+      <input type="text" id="skCpaUrl" placeholder="留空则使用配置默认值">
       <div class="sk-status" id="skCpaUrlStatus">加载中...</div>
     </div>
     <div class="sk-field">
@@ -1682,30 +2373,53 @@ body {
       <input type="text" id="skGithubProxy" placeholder="http://127.0.0.1:7890">
       <div class="sk-status" id="skGithubProxyStatus">加载中...</div>
     </div>
-    <div class="sk-field">
-      <label for="skAppearance">🧬 人物外貌提示词</label>
-      <div class="sk-desc">本机专属参数，只保存在 data/api_keys_config.json，不写入仓库配置。写英文效果最佳</div>
-      <textarea id="skAppearance" rows="4" placeholder="留空则不注入人物外貌前缀..." style="width:100%;padding:10px;border:1.5px solid #e0d0e8;border-radius:10px;font-size:13px;line-height:1.5;resize:vertical;font-family:inherit;"></textarea>
-      <div class="sk-status" id="skAppearanceStatus">加载中...</div>
-    </div>
-    <div class="sk-field">
-      <label for="skLlmModel">🧠 日程生成模型</label>
-      <div class="sk-desc">用于每日日程生成和穿搭翻译的 LLM 模型</div>
-      <select id="skLlmModel" style="width:100%;padding:10px 14px;border:1.5px solid #e0d0e8;border-radius:10px;font-size:14px;background:#fafafa;cursor:pointer;outline:none;">
-        <option value="">加载中...</option>
-      </select>
-      <div class="sk-status" id="skLlmModelStatus">加载中...</div>
-    </div>
-    <div class="sk-actions">
-      <button class="btn btn-secondary" onclick="closeSettings()">关闭</button>
-      <button class="btn btn-primary" id="skSaveBtn" onclick="saveSettings()">💾 保存</button>
-    </div>
-    <div style="margin-top:20px;padding-top:20px;border-top:1px solid #eee;">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-        <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
-        <span style="font-size:12px;color:#999;">当前版本 <span id="settingsVersion">v1.1.2</span></span>
+    <div class="sk-field sk-storage-field">
+      <div class="sk-storage-panel">
+        <div class="sk-storage-head">
+          <div>
+            <label class="sk-storage-title" for="skImageDir">图片与清理</label>
+            <div class="sk-desc">新图保存位置；旧图清理会保留收藏</div>
+          </div>
+          <div class="sk-status sk-storage-status" id="skImageDirStatus">加载中...</div>
+        </div>
+        <input type="text" id="skImageDir" placeholder="/path/to/gallery/images">
+        <div class="sk-storage-cleanup">
+          <div class="sk-cleanup-head">
+            <span class="sk-cleanup-title">旧图清理</span>
+            <span class="sk-cleanup-hint">收藏不清理</span>
+          </div>
+          <div class="sk-cleanup-controls">
+            <div class="sk-cleanup-row">
+              <select id="skCleanupPreset" onchange="updateCleanupCustomVisibility()">
+                <option value="3d">3 天前</option>
+                <option value="7d">7 天前</option>
+                <option value="1m">1 个月前</option>
+                <option value="3m">3 个月前</option>
+                <option value="custom">自定义</option>
+              </select>
+              <input type="number" id="skCleanupCustomDays" min="1" max="3650" step="1" value="30" style="display:none;" placeholder="天数">
+            </div>
+            <div class="sk-cleanup-actions">
+              <button class="btn btn-secondary" type="button" id="skCleanupPreviewBtn" onclick="previewImageCleanup()">检查</button>
+              <button class="btn btn-secondary" type="button" id="skCleanupRunBtn" onclick="runImageCleanup()">清理</button>
+            </div>
+          </div>
+          <div class="sk-cleanup-result" id="skCleanupResult"></div>
+        </div>
       </div>
-      <div id="updateResult"></div>
+    </div>
+    <div class="sk-footer-row">
+      <div class="sk-footer-main">
+        <div class="sk-update-row">
+          <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
+          <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.1.3</span></span>
+        </div>
+        <div class="sk-actions">
+          <button class="btn btn-secondary" onclick="closeSettings()">关闭</button>
+          <button class="btn btn-primary" id="skSaveBtn" onclick="saveSettings()">💾 保存</button>
+        </div>
+      </div>
+      <div class="sk-update-result" id="updateResult"></div>
     </div>
   </div>
 </div>
@@ -1718,7 +2432,7 @@ body {
     <h2>🎀 穿搭生成</h2>
     <div class="cg-field">
       <label for="cgPrompt">穿搭描述</label>
-      <textarea id="cgPrompt" placeholder="描述你想看到的猪猪穿搭，比如：穿着粉色JK制服在樱花树下吃团子~" rows="3"></textarea>
+      <textarea id="cgPrompt" placeholder="描述你想看到的穿搭，比如：穿着粉色JK制服在樱花树下吃团子~" rows="3"></textarea>
       <div class="hint">支持中英文，越详细效果越好哦～</div>
     </div>
     <div class="cg-field">
@@ -1802,6 +2516,62 @@ let currentTagFilter = "";
 let showFavoritesOnly = false;
 let showTodayOnly = false;
 let photoRetryPollTimer = null;
+let settingsSnapshot = null;
+const appDisplay = {
+  title: "每日穿搭画廊",
+  characterName: "角色",
+  shareTitle: "穿搭分享",
+};
+
+function compactDisplayText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function resolvedCharacterName(data) {
+  const resolved = data && data.resolved_persona ? data.resolved_persona : {};
+  return compactDisplayText(resolved.name || data?.character_name || data?.name || appDisplay.characterName || "角色");
+}
+
+function resolvedGalleryTitle(data) {
+  const configuredTitle = compactDisplayText(data && data.gallery_title);
+  if (configuredTitle) return configuredTitle;
+  const name = resolvedCharacterName(data);
+  return name && name !== "角色" ? `${name}穿搭画廊` : "每日穿搭画廊";
+}
+
+function updateText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
+function applyDisplayConfig(data) {
+  const name = resolvedCharacterName(data || {});
+  const title = resolvedGalleryTitle(data || {});
+  appDisplay.characterName = name || "角色";
+  appDisplay.title = title;
+  appDisplay.shareTitle = `${appDisplay.characterName === "角色" ? "" : appDisplay.characterName}${title.includes("穿搭") ? "穿搭" : "画廊图片"}` || "穿搭分享";
+
+  document.title = title;
+  updateText("appHeaderTitle", title);
+  updateText("appHeroTitle", title);
+  updateText("appHeroSubtitle", `每一天，都是不一样的${appDisplay.characterName}`);
+  updateText("todayEmptyText", `今天还没有穿搭记录呢～让${appDisplay.characterName}生成一个吧！`);
+  updateText("galleryLoadingText", `${appDisplay.characterName}正在整理衣橱...`);
+  const promptEl = document.getElementById("cgPrompt");
+  if (promptEl) {
+    promptEl.placeholder = `描述你想看到的${appDisplay.characterName}穿搭，比如：穿着粉色JK制服在樱花树下吃团子~`;
+  }
+}
+
+async function loadDisplayConfig() {
+  try {
+    const res = await fetch(`${API}/api/config/keys`);
+    const data = await res.json();
+    if (res.ok) applyDisplayConfig(data);
+  } catch(e) {
+    console.warn("load display config:", e);
+  }
+}
 
 function clearFilter() {
   currentTagFilter = "";
@@ -1881,7 +2651,7 @@ function switchTab(tab) {
 async function triggerGenerate() {
   const btn = document.querySelector(".gen-today-btn");
   btn.disabled = true;
-  btn.textContent = "⏳ 猪猪在打扮...";
+  btn.textContent = "⏳ 正在生成...";
   showToast("💭 正在根据现在的时间段生图～");
   
   try {
@@ -1893,7 +2663,7 @@ async function triggerGenerate() {
     if (data.error) {
       showToast("❌ " + (data.message || data.error));
     } else {
-      showToast("✨ 猪猪来啦～");
+      showToast("✨ 新图生成完成～");
       await loadGallery();
     }
   } catch(e) {
@@ -2253,7 +3023,8 @@ function renderGallery() {
               </div>
               <div class="card-body">
                 <div class="card-row1">
-                  <span class="date">${formatDate(e.date)}${timeDisplay ? ' ' + timeDisplay : ''}</span>
+                  <span class="date">${formatDate(e.date)}</span>
+                  ${timeDisplay ? `<span class="time">${timeDisplay}</span>` : ''}
                 </div>
                 ${metaHtml ? `<div class="card-meta">${metaHtml}</div>` : ''}
                 <div class="card-actions">
@@ -2268,11 +3039,7 @@ function renderGallery() {
   );
   requestAnimationFrame(() => {
     try {
-      const grid = content.querySelector('.gallery-grid');
-      const saved = localStorage.getItem('gallery_cols');
-      if (grid && saved) {
-        grid.style.gridTemplateColumns = `repeat(${saved}, 1fr)`;
-      }
+      window.applyGalleryColumns?.();
     } catch (e) { console.error('applyCols after render:', e); }
   });
 }
@@ -2372,6 +3139,9 @@ ms.textContent = `
 .modal-outfit .outfit-divider { color:#ccc;font-size:14px; }
 .modal-outfit .outfit-text { color:#555;flex:1;min-width:200px; }
 .today-compact .modal-outfit .outfit-text { white-space:normal;overflow:visible;text-overflow:clip;max-width:none;-webkit-line-clamp:unset;display:block; }
+.today-compact .modal-outfit { padding:8px 0; }
+.today-compact .modal-schedule { margin-top:4px; }
+.today-compact .modal-caption.tc-thought { margin-top:6px; }
 .modal-schedule { background:linear-gradient(135deg,#faf5ff,#fce4ec20);border-radius:14px;padding:12px 18px;font-size:15px;line-height:1.8;color:#555;max-height:200px;overflow-y:auto;border:1px solid #f0e8f4; }
 .modal-schedule .sched-item { padding: 5px 0; display: flex; align-items: baseline; gap: 10px; }
 .modal-schedule .sched-item .sched-label { font-weight: 700; color: #e91e63; white-space: nowrap; font-size: 15px; min-width: 56px; }
@@ -2381,16 +3151,17 @@ ms.textContent = `
 .modal-caption .tag-link { color: #7b1fa2; text-decoration: none; font-weight: 600; cursor: pointer; transition:color 0.15s; }
 .modal-caption .tag-link:hover { color: #e91e63; text-decoration: underline; }
 .modal-actions { display: flex; gap: 10px; margin-top: auto; padding-top: 16px; }
-.modal-actions .mbtn { flex: 1; padding: 13px 0; border-radius: 14px; border: 1.5px solid #ede5f0; background: #fff; font-size: 16px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; color: #777; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+.modal-actions .mbtn { flex: 1; min-height: 36px; padding: 7px 2px; border-radius: 12px; border: 1.5px solid #ede5f0; background: #fff; font-size: 15px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 5px; color: #777; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.02); line-height: 1.15; white-space: nowrap; }
 .modal-actions .mbtn:hover { border-color: #e91e63; color: #e91e63; background: #fce4ec; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(233,30,99,0.15); }
 .today-compact .modal-actions {
-  margin-top: 2px;
-  padding-top: 8px;
-  gap: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
+  gap: 7px;
 }
 .today-compact .modal-actions .mbtn {
-  padding: 9px 0;
-  border-radius: 11px;
+  min-height: 32px;
+  padding: 5px 2px;
+  border-radius: 10px;
   font-size: 14px;
 }
 .modal-actions .mbtn.danger:hover { border-color: #e53935; color: #e53935; background: #ffebee; box-shadow: 0 6px 16px rgba(229,57,53,0.12); }
@@ -2448,7 +3219,7 @@ let currentModalImg = '';
 function openModal(e) {
   if (!e.image_filename) return;
   currentModalImg = e.image_filename;
-  document.getElementById("modalImageWrap").innerHTML = `<img src="/images/${e.image_filename}" alt="${e.caption || '猪猪穿搭'}" onclick="openFullscreenImg('/images/${e.image_filename}')">`;
+  document.getElementById("modalImageWrap").innerHTML = `<img src="/images/${e.image_filename}" alt="${e.caption || appDisplay.shareTitle}" onclick="openFullscreenImg('/images/${e.image_filename}')">`;
   document.getElementById("modalDate").textContent = formatDate(e.date) + (e.time ? ' ' + e.time : '');
   const styleEl = document.getElementById("modalStyle");
   if (e.outfit_style) { styleEl.textContent = e.outfit_style; styleEl.style.display = "inline-block"; }
@@ -2581,7 +3352,7 @@ function shareImage(imgId, event) {
   if (event) event.stopPropagation();
   const url = `${location.origin}/images/${imgId}`;
   if (navigator.share) {
-    navigator.share({ title: '猪猪穿搭', url }).catch(() => {});
+    navigator.share({ title: appDisplay.shareTitle, url }).catch(() => {});
   } else {
     navigator.clipboard.writeText(url).then(() => {
       showToast("📤 链接已复制到剪贴板");
@@ -2712,8 +3483,8 @@ async function submitCustomGen() {
   const refImage = refItem ? refItem.dataset.ref : "";
   
   const btn = document.getElementById("cgSubmitBtn");
-  btn.disabled = true; btn.textContent = "⏳ 猪猪在打扮...";
-  showToast("🌸 按主人要求打扮去啦～");
+  btn.disabled = true; btn.textContent = "⏳ 正在打扮...";
+  showToast("🌸 按你的描述开始生成～");
   
   try {
     const body = { prompt, size };
@@ -2726,7 +3497,7 @@ async function submitCustomGen() {
     const data = await res.json();
     if (data.error) showToast("❌ " + data.error);
     else {
-      showToast("✨ 主人定制的猪猪出炉啦！");
+      showToast("✨ 定制造型生成完成啦！");
       closeCustomGen();
       document.getElementById("cgPrompt").value = "";
       await loadGallery();
@@ -2777,6 +3548,7 @@ async function loadGallery() {
   }
 }
 
+loadDisplayConfig();
 loadGallery();
 
 // ===== Settings Modal =====
@@ -2786,11 +3558,18 @@ function openSettings() {
   // Clear input fields
   document.getElementById("skGiteeKey").value = "";
   document.getElementById("skGptKey").value = "";
+  document.getElementById("skGptBaseUrl").value = "";
   document.getElementById("skCpaUrl").value = "";
   document.getElementById("skCpaKey").value = "";
   document.getElementById("skGithubProxy").value = "";
+  document.getElementById("skImageDir").value = "";
   document.getElementById("skAppearance").value = "";
+  document.getElementById("skPersona").value = "";
   document.getElementById("skGiteeFallback").checked = false;
+  syncGiteeFallbackVisual(false);
+  const cleanupResult = document.getElementById("skCleanupResult");
+  if (cleanupResult) cleanupResult.textContent = "";
+  updateCleanupCustomVisibility();
   // Load current status
   loadSettingsStatus();
 }
@@ -2798,6 +3577,196 @@ function openSettings() {
 function closeSettings() {
   document.getElementById("skOverlay").classList.remove("open");
   document.body.style.overflow = "";
+}
+
+function setPersonaSource(source) {
+  const normalized = (source === "hermes" || source === "openclaw") ? source : "custom";
+  document.querySelectorAll('input[name="skPersonaSource"]').forEach(input => {
+    input.checked = input.value === normalized;
+  });
+  const customWrap = document.getElementById("skPersonaCustomWrap");
+  if (customWrap) customWrap.classList.toggle("show", normalized === "custom");
+}
+
+function getPersonaSource() {
+  const checked = document.querySelector('input[name="skPersonaSource"]:checked');
+  return checked ? checked.value : "custom";
+}
+
+function personaSourceLabel(source) {
+  if (source === "hermes") return "Hermes";
+  if (source === "openclaw") return "OpenClaw";
+  return "自定义";
+}
+
+function updatePersonaPreview(data) {
+  const resolved = data.resolved_persona || {};
+  const source = data.persona_source || resolved.persona_source || "custom";
+  setPersonaSource(source);
+
+  const personaEl = document.getElementById("skPersona");
+  const statusEl = document.getElementById("skPersonaStatus");
+  const titleEl = document.getElementById("skPersonaPreviewTitle");
+  const textEl = document.getElementById("skPersonaPreviewText");
+  if (personaEl) personaEl.value = source === "custom" ? (data.persona || "") : "";
+
+  const nameText = resolved.name ? "角色：" + resolved.name : "角色：自动";
+  const userText = resolved.user_name ? "用户称呼：" + resolved.user_name : "用户称呼：自动";
+  const sourceText = resolved.source ? " · 来源：" + resolved.source : "";
+  const personaText = resolved.persona || resolved.caption_voice || "";
+
+  if (titleEl) {
+    titleEl.textContent = personaSourceLabel(source) + " 已选择 · " + nameText + " / " + userText;
+  }
+  if (textEl) {
+    textEl.textContent = personaText ? personaText : "当前没有读取到明确人设，会使用项目默认口吻。";
+  }
+  if (statusEl) {
+    if (source === "custom" && data.persona && data.persona.trim()) {
+      statusEl.textContent = "✓ 自定义人设已启用" + sourceText;
+      statusEl.className = "sk-status set";
+    } else if (personaText) {
+      statusEl.textContent = "○ 自动读取" + sourceText;
+      statusEl.className = "sk-status unset";
+    } else {
+      statusEl.textContent = "○ 使用项目默认人设";
+      statusEl.className = "sk-status unset";
+    }
+  }
+}
+
+function syncGiteeFallbackVisual(enabled) {
+  const row = document.getElementById("skGiteeFallbackRow");
+  const status = document.getElementById("skGiteeFallbackStatus");
+  if (row) row.classList.toggle("enabled", enabled === true);
+  if (status) {
+    status.textContent = enabled ? "✓ 回退开" : "○ 回退关";
+    status.className = "sk-status " + (enabled ? "set" : "unset");
+  }
+}
+
+function renderOutfitStyleGrid(gridId, statusId, inputName, styles, enabledStyles) {
+  const grid = document.getElementById(gridId);
+  const status = document.getElementById(statusId);
+  if (!grid) return;
+  const allStyles = Array.isArray(styles) && styles.length ? styles : [];
+  const enabled = new Set((Array.isArray(enabledStyles) && enabledStyles.length ? enabledStyles : allStyles));
+  grid.innerHTML = allStyles.map(style => {
+    const checked = enabled.has(style) ? " checked" : "";
+    return '<label class="sk-style-chip"><input type="checkbox" name="' + escapeAttr(inputName) + '" value="' + escapeAttr(style) + '"' + checked + '><span>' + escapeHtml(style) + '</span></label>';
+  }).join("");
+  if (status) {
+    status.textContent = "✓ 已启用 " + enabled.size + " / " + allStyles.length + " 个风格";
+    if (status.classList.contains("sk-status")) {
+      status.className = "sk-status set";
+    }
+  }
+}
+
+function renderEggOutfitStylePicker(styles, enabledStyles) {
+  renderOutfitStyleGrid("eggOutfitStyleGrid", "eggOutfitStyleStatus", "eggOutfitStyle", styles, enabledStyles);
+}
+
+async function openOutfitStyleDialog() {
+  const overlay = document.getElementById("eggStyleOverlay");
+  const grid = document.getElementById("eggOutfitStyleGrid");
+  const status = document.getElementById("eggOutfitStyleStatus");
+  if (!overlay || !grid) return;
+  overlay.classList.add("open");
+  grid.innerHTML = "";
+  if (status) status.textContent = "加载中...";
+  try {
+    const res = await fetch(`${API}/api/config/keys`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "加载失败");
+    settingsSnapshot = data;
+    renderEggOutfitStylePicker(data.outfit_styles || [], data.enabled_outfit_styles || []);
+  } catch(e) {
+    if (status) status.textContent = "加载失败：" + e.message;
+  }
+}
+
+function closeOutfitStyleDialog() {
+  const overlay = document.getElementById("eggStyleOverlay");
+  if (overlay) overlay.classList.remove("open");
+}
+
+function bindOutfitStyleDialogEvents() {
+  const overlay = document.getElementById("eggStyleOverlay");
+  if (overlay && overlay.dataset.bound !== "1") {
+    overlay.dataset.bound = "1";
+    overlay.addEventListener("click", e => {
+      if (e.target === overlay || e.target.closest("[data-egg-style-close]")) {
+        e.preventDefault();
+        closeOutfitStyleDialog();
+        return;
+      }
+      if (e.target.closest("[data-egg-style-save]")) {
+        e.preventDefault();
+        saveOutfitStyleDialog();
+      }
+    });
+  }
+
+  const eggBody = document.getElementById("eggBody");
+  if (eggBody && eggBody.dataset.styleManageBound !== "1") {
+    eggBody.dataset.styleManageBound = "1";
+    eggBody.addEventListener("click", e => {
+      const btn = e.target.closest('[data-action="manage-outfit-styles"]');
+      if (!btn || !eggBody.contains(btn)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openOutfitStyleDialog();
+    });
+  }
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", bindOutfitStyleDialogEvents);
+} else {
+  bindOutfitStyleDialogEvents();
+}
+
+async function saveOutfitStyleDialog() {
+  const selectedStyles = Array.from(document.querySelectorAll('input[name="eggOutfitStyle"]:checked')).map(input => input.value);
+  const status = document.getElementById("eggOutfitStyleStatus");
+  const btn = document.getElementById("eggStyleSaveBtn");
+
+  if (selectedStyles.length === 0) {
+    showToast("至少保留一个穿搭风格");
+    if (status) status.textContent = "至少保留一个穿搭风格";
+    return;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "保存中...";
+  }
+  if (status) status.textContent = "正在保存...";
+
+  try {
+    const res = await fetch(`${API}/api/config/keys`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({enabled_outfit_styles: selectedStyles})
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || "保存失败");
+
+    settingsSnapshot = settingsSnapshot || {};
+    settingsSnapshot.enabled_outfit_styles = selectedStyles;
+    renderEggOutfitStylePicker(settingsSnapshot.outfit_styles || selectedStyles, selectedStyles);
+    closeOutfitStyleDialog();
+    showToast("✅ 风格池已保存");
+  } catch(e) {
+    if (status) status.textContent = "保存失败：" + e.message;
+    showToast("❌ " + e.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "保存";
+    }
+  }
 }
 
 async function loadSettingsStatus() {
@@ -2809,21 +3778,64 @@ async function loadSettingsStatus() {
     ]);
     const data = await configRes.json();
     const modelsData = await modelsRes.json();
+    settingsSnapshot = data;
+    applyDisplayConfig(data);
 
     // Update status indicators
     updateStatus("skGiteeStatus", data.gitee_key);
     updateStatus("skGptStatus", data.gpt_key);
-    updateStatus("skGptBaseUrlStatus", data.gpt_base_url);
-    updateStatus("skCpaUrlStatus", data.cpa_url);
     updateStatus("skCpaKeyStatus", data.cpa_key);
+    const gptBaseUrlEl = document.getElementById("skGptBaseUrl");
+    const gptBaseUrlStatus = document.getElementById("skGptBaseUrlStatus");
+    gptBaseUrlEl.value = data.gpt_base_url_local || data.gpt_base_url || "";
+    if (data.gpt_base_url_local) {
+      gptBaseUrlStatus.textContent = "✓ 本机已设置";
+      gptBaseUrlStatus.className = "sk-status set";
+    } else if (data.gpt_base_url) {
+      gptBaseUrlStatus.textContent = "○ 使用配置默认值";
+      gptBaseUrlStatus.className = "sk-status unset";
+    } else {
+      gptBaseUrlStatus.textContent = "○ 未设置";
+      gptBaseUrlStatus.className = "sk-status unset";
+    }
+    const cpaUrlEl = document.getElementById("skCpaUrl");
+    const cpaUrlStatus = document.getElementById("skCpaUrlStatus");
+    cpaUrlEl.value = data.cpa_url_local || data.cpa_url || "";
+    if (data.cpa_url_local) {
+      cpaUrlStatus.textContent = "✓ 本机已设置";
+      cpaUrlStatus.className = "sk-status set";
+    } else if (data.cpa_url) {
+      cpaUrlStatus.textContent = "○ 使用配置默认值";
+      cpaUrlStatus.className = "sk-status unset";
+    } else {
+      cpaUrlStatus.textContent = "○ 未设置";
+      cpaUrlStatus.className = "sk-status unset";
+    }
     const githubProxyEl = document.getElementById("skGithubProxy");
     githubProxyEl.value = data.github_proxy || "";
     updateStatus("skGithubProxyStatus", data.github_proxy);
+    const imageDirEl = document.getElementById("skImageDir");
+    const imageDirStatus = document.getElementById("skImageDirStatus");
+    if (imageDirEl) {
+      imageDirEl.value = data.image_dir_local || "";
+      imageDirEl.placeholder = data.image_dir_default || data.image_dir || "/path/to/gallery/images";
+    }
+    if (imageDirStatus) {
+      imageDirStatus.title = data.image_dir || data.image_dir_default || "";
+      if (data.image_dir_local) {
+        imageDirStatus.textContent = "✓ 本机位置";
+        imageDirStatus.className = "sk-status set";
+      } else if (data.image_dir_default) {
+        imageDirStatus.textContent = "○ 默认位置";
+        imageDirStatus.className = "sk-status unset";
+      } else {
+        imageDirStatus.textContent = "○ 未设置";
+        imageDirStatus.className = "sk-status unset";
+      }
+    }
     const giteeFallbackEl = document.getElementById("skGiteeFallback");
-    const giteeFallbackStatus = document.getElementById("skGiteeFallbackStatus");
     giteeFallbackEl.checked = data.gitee_fallback_enabled === true;
-    giteeFallbackStatus.textContent = giteeFallbackEl.checked ? "✓ 已开启" : "○ 已关闭";
-    giteeFallbackStatus.className = "sk-status " + (giteeFallbackEl.checked ? "set" : "unset");
+    syncGiteeFallbackVisual(giteeFallbackEl.checked);
 
     // Appearance: show as textarea content (not masked)
     const appEl = document.getElementById("skAppearance");
@@ -2837,6 +3849,7 @@ async function loadSettingsStatus() {
       appStatus.textContent = "○ 未设置本机外貌";
       appStatus.className = "sk-status unset";
     }
+    updatePersonaPreview(data);
 
     // LLM Model: 填充下拉框
     const llmEl = document.getElementById("skLlmModel");
@@ -2891,6 +3904,107 @@ function updateStatus(elementId, value) {
   }
 }
 
+function updateCleanupCustomVisibility() {
+  const preset = document.getElementById("skCleanupPreset");
+  const custom = document.getElementById("skCleanupCustomDays");
+  if (!preset || !custom) return;
+  custom.style.display = preset.value === "custom" ? "block" : "none";
+}
+
+function cleanupPayload(dryRun) {
+  const presetEl = document.getElementById("skCleanupPreset");
+  const customEl = document.getElementById("skCleanupCustomDays");
+  const preset = presetEl ? presetEl.value : "7d";
+  const payload = {preset, dry_run: dryRun};
+  if (preset === "custom") {
+    payload.custom_days = Number(customEl && customEl.value ? customEl.value : 0);
+  }
+  return payload;
+}
+
+function cleanupDaysLabel(payload) {
+  const presetMap = {"3d": "3 天前", "7d": "7 天前", "1m": "1 个月前", "3m": "3 个月前"};
+  if (payload.preset === "custom") return `${payload.custom_days || 0} 天前`;
+  return presetMap[payload.preset] || "选定时间前";
+}
+
+function renderCleanupResult(data, dryRun) {
+  const el = document.getElementById("skCleanupResult");
+  if (!el) return;
+  if (data.error) {
+    el.textContent = "清理失败：" + data.error;
+    return;
+  }
+  const actionText = dryRun ? "可清理" : "已清理";
+  const count = dryRun ? data.candidate_count : (data.deleted_count || 0);
+  el.textContent = `${actionText} ${count} 张；已排除收藏 ${data.favorite_kept || 0} 张。`;
+}
+
+async function previewImageCleanup() {
+  const btn = document.getElementById("skCleanupPreviewBtn");
+  const payload = cleanupPayload(true);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "检查中...";
+  }
+  try {
+    const res = await fetch(`${API}/api/images/cleanup`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    renderCleanupResult(data, true);
+    if (!res.ok || data.error) showToast("❌ " + (data.error || "检查失败"));
+  } catch(e) {
+    renderCleanupResult({error: e.message}, true);
+    showToast("❌ " + e.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "检查";
+    }
+  }
+}
+
+async function runImageCleanup() {
+  const payload = cleanupPayload(false);
+  const label = cleanupDaysLabel(payload);
+  if (!confirm(`确定清理${label}的非收藏图片吗？收藏 tab 的图片会保留。`)) return;
+  const btn = document.getElementById("skCleanupRunBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "清理中...";
+  }
+  try {
+    const res = await fetch(`${API}/api/images/cleanup`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    renderCleanupResult(data, false);
+    if (!res.ok || data.error) {
+      showToast("❌ " + (data.error || "清理失败"));
+      return;
+    }
+    showToast(`🗑 已清理 ${data.deleted_count || 0} 张非收藏旧图`);
+    await loadGallery();
+  } catch(e) {
+    renderCleanupResult({error: e.message}, false);
+    showToast("❌ " + e.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "清理";
+    }
+  }
+}
+
+window.updateCleanupCustomVisibility = updateCleanupCustomVisibility;
+window.previewImageCleanup = previewImageCleanup;
+window.runImageCleanup = runImageCleanup;
+
 async function saveSettings() {
   const giteeKey = document.getElementById("skGiteeKey").value.trim();
   const gptKey = document.getElementById("skGptKey").value.trim();
@@ -2898,7 +4012,10 @@ async function saveSettings() {
   const cpaUrl = document.getElementById("skCpaUrl").value.trim();
   const cpaKey = document.getElementById("skCpaKey").value.trim();
   const githubProxy = document.getElementById("skGithubProxy").value.trim();
+  const imageDir = document.getElementById("skImageDir").value.trim();
   const appearance = document.getElementById("skAppearance").value.trim();
+  const personaSource = getPersonaSource();
+  const persona = document.getElementById("skPersona").value.trim();
   const llmModel = document.getElementById("skLlmModel").value;
   const giteeFallbackEnabled = document.getElementById("skGiteeFallback").checked;
 
@@ -2910,12 +4027,15 @@ async function saveSettings() {
     const body = {};
     if (giteeKey) body.gitee_key = giteeKey;
     if (gptKey) body.gpt_key = gptKey;
-    if (gptBaseUrl) body.gpt_base_url = gptBaseUrl;
-    if (cpaUrl) body.cpa_url = cpaUrl;
+    body.gpt_base_url = gptBaseUrl;
+    body.cpa_url = cpaUrl;
     if (cpaKey) body.cpa_key = cpaKey;
     body.github_proxy = githubProxy;
+    body.image_dir = imageDir;
     // appearance: always send (empty = remove local appearance)
     body.appearance = appearance;
+    body.persona_source = personaSource;
+    body.persona = personaSource === "custom" ? persona : "";
     body.gitee_fallback_enabled = giteeFallbackEnabled;
     // llm_model: always send
     body.llm_model = llmModel;
@@ -2928,8 +4048,10 @@ async function saveSettings() {
     const data = await res.json();
     
     if (data.success) {
-      showToast("✅ 密钥已保存");
+      showToast("✅ 设置已保存");
       closeSettings();
+      await loadDisplayConfig();
+      await loadGallery();
     } else {
       showToast("❌ " + (data.error || "保存失败"));
     }
@@ -2973,20 +4095,21 @@ async function checkUpdate() {
     const data = await res.json();
     
     if (data.error) {
-      resultDiv.innerHTML = `<div style="color:#f44336;padding:10px;">❌ ${data.error}</div>`;
+      resultDiv.innerHTML = `<div class="sk-update-pill error">❌ ${data.error}</div>`;
     } else if (data.update_available) {
       resultDiv.innerHTML = `
-        <div style="background:#e8f5e9;padding:12px;border-radius:8px;margin-top:10px;">
+        <div class="sk-update-card">
           <div style="font-weight:600;color:#2e7d32;margin-bottom:8px;">🎉 发现新版本 v${data.latest}</div>
           <div style="font-size:13px;color:#555;margin-bottom:10px;">${data.changelog || '更新内容详见 GitHub'}</div>
+          <div class="sk-update-safe-note">只更新仓库代码；本地 API Key、Base URL、appearance、画廊图片和参考图会保留。</div>
           ${data.html_url ? `<a href="${data.html_url}" target="_blank" style="font-size:12px;color:#1976d2;">查看完整更新日志</a><br>` : ''}
-          <button onclick="applyUpdate()" style="margin-top:8px;padding:8px 16px;background:#4caf50;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;">🔄 更新到 v${data.latest}</button>
+          <button class="sk-update-action" id="applyUpdateBtn" onclick="applyUpdate()">⬆️ 一键安全升级到 v${data.latest}</button>
         </div>`;
     } else {
-      resultDiv.innerHTML = `<div style="color:#4caf50;padding:10px;">✅ 已是最新版本</div>`;
+      resultDiv.innerHTML = `<div class="sk-update-pill ok">✅ 已是最新版本</div>`;
     }
   } catch(e) {
-    resultDiv.innerHTML = `<div style="color:#f44336;padding:10px;">❌ 检查失败: ${e.message}</div>`;
+    resultDiv.innerHTML = `<div class="sk-update-pill error">❌ 检查失败: ${e.message}</div>`;
   } finally {
     btn.disabled = false;
     btn.textContent = "🔍 检查更新";
@@ -2997,25 +4120,25 @@ async function applyUpdate() {
   const resultDiv = document.getElementById("updateResult");
   if (!resultDiv) return;
   
-  if (!confirm("确定要更新吗？更新后服务会自动重启。")) return;
+  if (!confirm("确定要一键安全升级吗？只会更新仓库代码，本地 API Key、appearance、画廊图片和参考图会保留；更新后服务会自动重启。")) return;
   
-  resultDiv.innerHTML = `<div style="color:#1976d2;padding:10px;">⏳ 正在更新，请稍候...</div>`;
+  resultDiv.innerHTML = `<div class="sk-update-pill ok">⏳ 正在更新，请稍候...</div>`;
   
   try {
     const res = await fetch(`${API}/api/update`, { method: "POST" });
     const data = await res.json();
     
     if (data.error) {
-      resultDiv.innerHTML = `<div style="color:#f44336;padding:10px;">❌ ${data.error}</div>`;
+      resultDiv.innerHTML = `<div class="sk-update-pill error">❌ ${data.error}</div>`;
     } else {
-      resultDiv.innerHTML = `<div style="color:#4caf50;padding:10px;">✅ ${data.message || '更新成功，服务已重启'}</div>`;
+      resultDiv.innerHTML = `<div class="sk-update-pill ok">✅ ${data.message || '更新成功，服务已重启'}</div>`;
       // Reload page after 3 seconds
       setTimeout(() => {
         location.reload();
       }, 3000);
     }
   } catch(e) {
-    resultDiv.innerHTML = `<div style="color:#f44336;padding:10px;">❌ 更新失败: ${e.message}</div>`;
+    resultDiv.innerHTML = `<div class="sk-update-pill error">❌ 更新失败: ${e.message}</div>`;
   }
 }
 
@@ -3025,7 +4148,9 @@ loadVersion();
 // Close settings on Escape key
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    if (document.getElementById("imgFullscreen").classList.contains("open")) {
+    if (document.getElementById("eggStyleOverlay").classList.contains("open")) {
+      closeOutfitStyleDialog();
+    } else if (document.getElementById("imgFullscreen").classList.contains("open")) {
       document.getElementById("imgFullscreen").classList.remove("open");
     } else if (modalOverlay.classList.contains("open")) {
       closeModal();
@@ -3051,21 +4176,37 @@ document.addEventListener("keydown", e => {
   const saved = localStorage.getItem('gallery_cols');
   if (saved) { slider.value = saved; valEl.textContent = saved; }
 
-  function applyCols(n) {
+  const MIN_CARD_WIDTH = 168;
+
+  function safeColumnCount(grid, requested) {
+    const width = grid.clientWidth || grid.getBoundingClientRect().width || window.innerWidth;
+    const gap = parseFloat(getComputedStyle(grid).columnGap || "12") || 12;
+    const maxByWidth = Math.max(1, Math.floor((width + gap) / (MIN_CARD_WIDTH + gap)));
+    return Math.max(1, Math.min(requested, maxByWidth));
+  }
+
+  function applyCols(n, persist = true) {
+    let actual = n;
     document.querySelectorAll('.gallery-grid').forEach(g => {
-      g.style.gridTemplateColumns = `repeat(${n}, 1fr)`;
+      const safeCount = safeColumnCount(g, n);
+      actual = Math.min(actual, safeCount);
+      g.style.gridTemplateColumns = `repeat(${safeCount}, minmax(0, 1fr))`;
       // Remove old cols-N classes and add new one
       for (let i = 4; i <= 8; i++) g.classList.remove('cols-' + i);
-      if (n !== 5) g.classList.add('cols-' + n); // 5 is default, no class needed
+      if (safeCount !== 5 && safeCount >= 4) g.classList.add('cols-' + safeCount); // 5 is default, no class needed
     });
-    valEl.textContent = n;
-    localStorage.setItem('gallery_cols', n);
+    valEl.textContent = String(actual);
+    valEl.title = actual === n ? `${n} 列` : `已按宽度从 ${n} 列适配为 ${actual} 列`;
+    if (persist) localStorage.setItem('gallery_cols', n);
   }
+
+  window.applyGalleryColumns = () => applyCols(parseInt(slider.value), false);
 
   // Apply saved value on load
   if (saved) applyCols(parseInt(saved));
 
   slider.addEventListener('input', () => applyCols(parseInt(slider.value)));
+  window.addEventListener('resize', () => window.applyGalleryColumns());
 
   // Show/hide based on active tab
   const origSwitchTab = window.switchTab;
@@ -3118,6 +4259,8 @@ function summarizePhotoJobError(jobOrText) {
     reasons.push('API Key 校验失败');
   } else if (lower.includes('rate limit') || lower.includes('429')) {
     reasons.push('上游限流');
+  } else if (lower.includes('path not found') || lower.includes('direct gpt api error 404') || lower.includes(' 404')) {
+    reasons.push('GPT Image Base URL 端点错误');
   } else if (raw.trim()) {
     reasons.push(raw.trim().split('\n').filter(Boolean).pop().slice(0, 80));
   }
@@ -3144,7 +4287,7 @@ function loadScheduleEggData(options) {
   var body = document.getElementById('eggBody');
   var dateEl = document.getElementById('eggDate');
   if (!options.silent) {
-    body.innerHTML = '<div class="egg-loading">🔮 正在窥探猪猪的日程秘密...</div>';
+    body.innerHTML = '<div class="egg-loading">🔮 正在读取' + escapeHtml(appDisplay.characterName) + '的日程...</div>';
   }
 
   // 并行拉取日程详情、今日照片和真实待执行生图任务
@@ -3167,6 +4310,7 @@ function loadScheduleEggData(options) {
       return;
     }
 
+    var currentOutfitStyle = (detail.outfit_style || (detail.outfit && detail.outfit['风格']) || '').trim();
     dateEl.textContent = detail.date + (detail.outfit_style ? ' · ' + escapeHtml(detail.outfit_style) : '');
 
     var html = '';
@@ -3358,8 +4502,9 @@ function loadScheduleEggData(options) {
         html += '<span class="egg-photo-theme">' + themeLabel(planTheme) + '</span>';
         if (plan.activity) html += '<span style="font-size:12px;color:#666;margin-left:8px;">' + escapeHtml(plan.activity) + '</span>';
         if (planFailed && planErrorText) html += '<span class="egg-photo-error" title="' + escapeAttr(planErrorText) + '">' + escapeHtml(planErrorText) + '</span>';
-        if (planPhoto && planPhoto.outfit_style) html += '<span style="font-size:11px;color:#888;margin-left:auto;">' + escapeHtml(planPhoto.outfit_style) + '</span>';
-        else if (planRetryable) html += '<button class="egg-photo-retry-btn" data-time="' + escapeHtml(plan.time) + '" onclick="retryPhotoJob(this.dataset.time, this)">重试</button>';
+        var planOutfitStyle = (plan.job && plan.job.outfit_style) || currentOutfitStyle || (planPhoto && planPhoto.outfit_style) || '';
+        if (planOutfitStyle) html += '<span style="font-size:11px;color:#888;margin-left:' + (planRetryable ? '8px' : 'auto') + ';">' + escapeHtml(planOutfitStyle) + '</span>';
+        if (planRetryable) html += '<button class="egg-photo-retry-btn" data-time="' + escapeHtml(plan.time) + '" onclick="retryPhotoJob(this.dataset.time, this)">重试</button>';
         else if (plan.scheduleOnly) html += '<span style="font-size:11px;color:#aaa;margin-left:auto;">刷新时已过</span>';
         html += '</div>';
       }
@@ -3382,7 +4527,11 @@ function loadScheduleEggData(options) {
       html += '<div class="egg-outfit-grid">';
       for (var m = 0; m < outfitKeys.length; m++) {
         if (outfit[outfitKeys[m]]) {
-          html += '<div class="egg-outfit-item"><div class="egg-outfit-label">' + (outfitIcons[outfitKeys[m]]||'') + ' ' + outfitKeys[m] + '</div><div class="egg-outfit-value">' + escapeHtml(outfit[outfitKeys[m]]) + '</div></div>';
+          if (outfitKeys[m] === '风格') {
+            html += '<div class="egg-outfit-item"><div class="egg-outfit-head"><div class="egg-outfit-label">' + (outfitIcons[outfitKeys[m]]||'') + ' ' + outfitKeys[m] + '</div><button class="egg-style-manage" type="button" data-action="manage-outfit-styles">调整风格池</button></div><div class="egg-outfit-value">' + escapeHtml(outfit[outfitKeys[m]]) + '</div></div>';
+          } else {
+            html += '<div class="egg-outfit-item"><div class="egg-outfit-label">' + (outfitIcons[outfitKeys[m]]||'') + ' ' + outfitKeys[m] + '</div><div class="egg-outfit-value">' + escapeHtml(outfit[outfitKeys[m]]) + '</div></div>';
+          }
         }
       }
       html += '</div></div>';
@@ -3390,7 +4539,7 @@ function loadScheduleEggData(options) {
 
     // ===== 心情文案 =====
     if (detail.caption) {
-      html += '<div class="egg-section"><div class="egg-section-title"><span class="icon">💭</span>猪猪的心思</div><div class="egg-caption">' + escapeHtml(detail.caption) + '</div></div>';
+      html += '<div class="egg-section"><div class="egg-section-title"><span class="icon">💭</span>小心思</div><div class="egg-caption">' + escapeHtml(detail.caption) + '</div></div>';
     }
 
     if (!html) {
@@ -3597,6 +4746,51 @@ function refreshScheduleEgg() {
 
 function closeScheduleEgg() {
   document.getElementById('eggOverlay').classList.remove('show');
+  closeOutfitStyleDialog();
+}
+
+function bindScheduleEggEvents() {
+  var title = document.querySelector('.header-left h1');
+  if (title && title.dataset.scheduleEggBound !== '1') {
+    title.dataset.scheduleEggBound = '1';
+    title.style.cursor = 'pointer';
+    title.addEventListener('click', function(e) {
+      e.preventDefault();
+      openScheduleEgg();
+    });
+  }
+
+  var overlay = document.getElementById('eggOverlay');
+  if (overlay && overlay.dataset.scheduleCloseBound !== '1') {
+    overlay.dataset.scheduleCloseBound = '1';
+    overlay.addEventListener('click', function(e) {
+      if (e.target === overlay) closeScheduleEgg();
+    });
+  }
+
+  var closeBtn = document.querySelector('.egg-close');
+  if (closeBtn && closeBtn.dataset.scheduleCloseBound !== '1') {
+    closeBtn.dataset.scheduleCloseBound = '1';
+    closeBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      closeScheduleEgg();
+    });
+  }
+
+  var refreshBtn = document.querySelector('.egg-refresh-btn');
+  if (refreshBtn && refreshBtn.dataset.scheduleRefreshBound !== '1') {
+    refreshBtn.dataset.scheduleRefreshBound = '1';
+    refreshBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      refreshScheduleEgg();
+    });
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', bindScheduleEggEvents);
+} else {
+  bindScheduleEggEvents();
 }
 
 // 📝 提示词弹窗

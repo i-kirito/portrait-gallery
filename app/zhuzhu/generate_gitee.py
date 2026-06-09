@@ -62,7 +62,8 @@ def generate_image_bytes(prompt: str):
 
 
 def generate(theme: str, send: bool = False, caption: bool = False,
-             prompt_override: Optional[str] = None, prompt_is_final: bool = False):
+             prompt_override: Optional[str] = None, prompt_is_final: bool = False,
+             source: str = "chat", sync_gallery: bool = True):
     prompt = prompt_override if prompt_is_final and prompt_override else build_prompt(theme, prompt_override)
     result = generate_image_bytes(prompt)
     if not result:
@@ -78,6 +79,18 @@ def generate(theme: str, send: bool = False, caption: bool = False,
     if send:
         send_photo(path, caption_text)
 
+    if sync_gallery:
+        sync_to_gallery(
+            path,
+            filename,
+            theme,
+            prompt=prompt,
+            caption=caption_text or "",
+            gen_time=gen_time,
+            model_name=MODEL_NAME,
+            source=source,
+        )
+
     print(f"SUCCESS:{path}")
     if caption_text:
         print(f"CAPTION:{caption_text}")
@@ -90,8 +103,9 @@ if __name__ == "__main__":
     parser.add_argument("--send", action="store_true")
     parser.add_argument("--caption", action="store_true")
     parser.add_argument("--prompt", type=str, default=None, help="自定义完整 prompt（自动注入前缀+外貌）")
+    parser.add_argument("--source", choices=["cron", "web", "chat", "custom"], default="chat", help="来源标识")
     args = parser.parse_args()
-    path = generate(args.theme, args.send, args.caption, args.prompt)
+    path = generate(args.theme, args.send, args.caption, args.prompt, source=args.source)
     if not path:
         print("ERROR: Gitee generation failed", file=sys.stderr)
         sys.exit(1)

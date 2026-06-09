@@ -6,7 +6,7 @@ import subprocess
 import sys
 from typing import Optional
 
-from settings import build_child_env, configured_python
+from settings import build_child_env, configured_python, outfit_style_to_base_style, resolve_image_dir
 
 logger = logging.getLogger(__name__)
 
@@ -29,15 +29,22 @@ class ImageGenerator:
         self.config_path = config_path
         self.python_executable = python_executable or configured_python(self.config) or sys.executable
         self.default_engine = default_engine or self.config.get("image_gen", {}).get("default_engine", "gptimage")
-        self.output_dir = os.path.join(data_dir, "images")
+        self.output_dir = resolve_image_dir(self.config, data_dir)
         os.makedirs(self.output_dir, exist_ok=True)
 
     @property
     def generate_script(self) -> str:
         return os.path.join(self.script_dir, "generate.py")
 
+    def set_output_dir(self, output_dir: str):
+        self.output_dir = os.path.abspath(os.path.expanduser(output_dir))
+        os.makedirs(self.output_dir, exist_ok=True)
+
     def build_env(self, extra: Optional[dict[str, str]] = None) -> dict[str, str]:
-        return build_child_env(self.config, self.config_path, self.data_dir, extra)
+        merged = {"ZHUZHU_MEDIA_DIR": self.output_dir}
+        if extra:
+            merged.update(extra)
+        return build_child_env(self.config, self.config_path, self.data_dir, merged)
 
     async def generate(
         self,
@@ -121,17 +128,5 @@ class ImageGenerator:
         outfit_style: str,
     ) -> Optional[str]:
         """根据穿搭描述生成图片，自动选择引擎和风格"""
-        style_map = {
-            "冷御风": "cool",
-            "甜美风": "sweet",
-            "元气风": "girly",
-            "温柔风": "sweet",
-            "优雅风": "cool",
-            "休闲风": "girly",
-            "酷飒风": "cool",
-            "清新风": "sweet",
-            "性感风": "cool",
-            "复古风": "cool",
-        }
-        style = style_map.get(outfit_style, None)
+        style = outfit_style_to_base_style(outfit_style) or None
         return await self.generate(outfit_prompt, style=style)

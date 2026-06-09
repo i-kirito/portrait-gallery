@@ -1,4 +1,4 @@
-"""猪猪肖像画廊 - 主入口
+"""Portrait gallery - main entry point.
 
 整合：
 - 每日日程生成 (LLM)
@@ -28,6 +28,8 @@ from settings import (
     apply_network_env,
     configured_python,
     load_config,
+    load_runtime_persona,
+    reference_filename_to_style,
     resolve_config_path,
     resolve_data_dir,
     resolve_script_dir,
@@ -140,6 +142,8 @@ class PortraitGalleryApp:
 
         # Web 服务器
         self.web_server = GalleryServer(self.config, self.data_dir, config_path)
+        self.image_gen.set_output_dir(self.web_server.image_dir)
+        self.web_server.on_image_dir_changed = self.image_gen.set_output_dir
         self.web_server.on_generate_today = self.generate_and_save
         self.web_server.on_generate_custom = self.generate_custom
         self.web_server.on_list_photo_jobs = self.list_photo_jobs
@@ -215,19 +219,14 @@ class PortraitGalleryApp:
         today_str = datetime.now().strftime("%Y-%m-%d")
         ts = int(datetime.now().timestamp())
 
-        # 如果选了风格参考图，映射为 style 参数
-        style_map = {
-            "reference_face.jpg": "cool",
-            "ref_style_girly.jpg": "girly",
-            "ref_style_sweet.jpg": "sweet",
-        }
         style = None
         ref_path = ref_image if ref_image else ""
         if ref_image:
             # Check if it's a built-in style reference
             ref_basename = os.path.basename(ref_image)
-            if ref_basename in style_map:
-                style = style_map[ref_basename]
+            ref_style = reference_filename_to_style(ref_basename)
+            if ref_style:
+                style = ref_style
                 ref_path = ref_image
             else:
                 # Custom uploaded reference - use as --ref-image
@@ -255,7 +254,7 @@ class PortraitGalleryApp:
             outfit=f"风格：{style or '自定义'} 穿搭：{user_prompt[:80]}",
             schedule="",
             prompt=user_prompt,
-            caption="✨ 主人定制的专属造型～",
+            caption=f"✨ {load_runtime_persona(self.config, self.data_dir).get('name') or '角色'}的定制专属造型完成啦～",
             image_filename=filename,
             image_path=f"/images/{filename}",
             status="ok",
@@ -717,7 +716,8 @@ class PortraitGalleryApp:
                 "activity": failed.get("activity") or activity_by_time.get(time_text, ""),
                 "source": "failed",
                 "error": failed.get("error", ""),
-                "error_summary": failed.get("error_summary") or self._summarize_photo_failure(failed.get("error", "")),
+                "error_summary": self._summarize_photo_failure(failed.get("error", ""))
+                or failed.get("error_summary", ""),
             })
 
         jobs.sort(key=lambda item: item["time"])
@@ -748,6 +748,14 @@ class PortraitGalleryApp:
             reasons.append("API Key 校验失败")
         elif "rate limit" in lower or "429" in lower:
             reasons.append("上游限流")
+        elif "direct gpt api error 502" in lower:
+            reasons.append("GPT Image 上游 502")
+        elif "direct gpt api error 503" in lower:
+            reasons.append("GPT Image 上游 503")
+        elif "direct gpt api error 504" in lower:
+            reasons.append("GPT Image 上游 504")
+        elif "path not found" in lower or "direct gpt api error 404" in lower or " 404" in lower:
+            reasons.append("GPT Image Base URL 端点错误")
         elif "generation failed" in lower:
             reasons.append("生图链路返回失败")
 
