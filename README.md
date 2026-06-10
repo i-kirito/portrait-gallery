@@ -9,7 +9,7 @@
 ## ✨ 功能亮点
 
 - 📅 **LLM 日程驱动** — DeepSeek 自动生成每日穿搭日程（HH:mm 精度），按时触发生图
-- 🎨 **双引擎生图** — GPT Image 高质量 + Gitee z-image-turbo 可选回退
+- 🎨 **多引擎生图** — 支持 OpenAI-compatible API (GPT Image / AxonHub / 自定义端点)、Gemini、Gitee z-image-turbo 可选回退（默认关闭）
 - 🖼️ **Web 画廊** — 今日/全部/收藏三 Tab，横版大卡 + 网格双布局
 - 🎀 **穿搭生成** — 自定义 prompt + 参考图 + 尺寸选择
 - ⏰ **动态调度** — LLM 日程驱动，根据 HH:mm 时间动态创建一次性生图任务
@@ -36,7 +36,7 @@ python3 -m pip install -r app/requirements.txt
 
 ```yaml
 llm:
-  base_url: "http://127.0.0.1:8327/v1"   # CPA 代理地址（用于 LLM）
+  base_url: "http://your-cpa-proxy:port/v1"   # CPA 代理地址（用于 LLM）
   api_key: "your-api-key"
   model: "deepseek-v4-flash"
 
@@ -153,6 +153,21 @@ portrait-gallery/
 | **Gitee z-image-turbo** | 12s | ⭐⭐⭐ | 快速出图、性感风格 |
 
 默认优先使用 GPT Image，并按重试机制处理失败；只有在设置里开启 Gitee 回退时，GPT Image 多次失败后才会改用 Gitee。
+
+### AxonHub 适配推荐
+
+推荐通过 [AxonHub](https://github.com/looplj/AxonHub) 统一管理多个生图渠道：
+
+1. 部署 AxonHub 并配置多个图像生成 channel（GPT Image / Gemini / 自定义）
+2. 在画廊的 Web 设置面板填入：
+   - **GPT Image Base URL**: `http://your-axonhub-host:port/v1`
+   - **GPT Image API Key**: AxonHub 的 API key（`ah-xxxxx` 格式）
+3. AxonHub 会自动按优先级 + 负载均衡路由请求
+
+**优势**：
+- 多渠道自动降级（一个挂了自动换下一个）
+- 统一鉴权和请求日志
+- 按模型名路由（`gpt-image-2` / `gemini-3.1-flash-image`）
 
 ## ⏰ 调度说明
 

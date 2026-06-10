@@ -16,13 +16,13 @@ schedule:
     start: '18:00'
     end: '23:59'
 llm:
-  base_url: http://127.0.0.1:8327/v1
+  base_url: http://your-cpa-proxy:port/v1
   model: gemini-3.5-flash
   fallback_model: deepseek-v4-flash
   enhance_max_tokens: 400
   enhance_temperature: 0.85
   enhance_timeout: 25
-  caption_max_tokens: 200
+  caption_max_tokens: 90
   caption_temperature: 0.9
   caption_timeout: 30
 image_gen:
@@ -44,7 +44,7 @@ image_gen:
   metadata_category: portrait
   metadata_size: 1536x2048
   gpt_model: gpt-image-2
-  gpt_base_url: https://jiuuij.de5.net/v1/chat/completions
+  gpt_base_url: https://your-gpt-image-endpoint/v1/chat/completions
   gitee_model: z-image-turbo
   gitee_url: https://ai.gitee.com/v1/images/generations
   gemini_model: gemini-3.1-flash-image
@@ -67,6 +67,7 @@ paths:
   builtin_reference_dir: app/references
 integrations:
   send_enabled: true
+  push_channel: wechat
   hermes_cli: ''
   wechat_target: weixin
 update:

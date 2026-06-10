@@ -51,13 +51,31 @@ https://github.com/i-kirito/portrait-gallery
 If the agent asks for a skill path, use `.`. If it asks for a skill name, use
 `portrait-gallery`.
 
+### Hermes Agent / OpenClaw
+
+Both [Hermes Agent](https://hermes-agent.nousresearch.com) and OpenClaw support
+skill-based integration. After installing this repo as a skill:
+
+1. **Load the skill** — the agent loads `SKILL.md` automatically when the user
+   mentions the gallery, or load it explicitly (e.g. `skill_view(name='portrait-gallery')`).
+2. **Operate via REST API** — the agent drives the running gallery through the
+   REST endpoints documented below (generate, schedule, favorite, delete).
+3. **Image generation routing** — point the gallery at your agent's existing
+   model gateway. If you run [AxonHub](https://github.com/looplj/AxonHub) (used by
+   many Hermes setups), set `GPT_IMAGE_BASE_URL` to your AxonHub `/v1` endpoint
+   and `GPT_IMAGE_API_KEY` to an AxonHub key — the gallery sends OpenAI-compatible
+   image requests and AxonHub handles multi-channel fallback.
+4. **Push delivery** — generated photos can be pushed to your agent's messaging
+   channel (the reference setup uses `hermes send --to weixin`; adapt the
+   delivery hook to your own platform).
+
 ## What This Skill Does
 
 Portrait Gallery is a local AI outfit portrait system:
 
 - Generates a daily outfit plan and HH:mm schedule with an LLM.
 - Dynamically schedules image-generation jobs from the generated schedule.
-- Generates portraits with GPT Image, Gemini, or Gitee z-image-turbo fallback.
+- Generates portraits with OpenAI-compatible image APIs (GPT Image / AxonHub / custom endpoints), Gemini, and optional Gitee z-image-turbo fallback.
 - Serves a local Web gallery for today/all/favorites/custom generation.
 - Stores runtime data in `data/schedule_data.json` and images in `data/images/`.
 - Exposes a REST API for agents and integrations.
@@ -107,12 +125,24 @@ http://localhost:18889
 Or configure environment variables:
 
 ```bash
-export CPA_API_KEY="..."
-export CPA_BASE_URL="http://127.0.0.1:8327/v1"
-export GPT_IMAGE_API_KEY="..."
-export GPT_IMAGE_BASE_URL="..."
+export CPA_API_KEY="your-cpa-api-key"
+export CPA_BASE_URL="http://your-cpa-proxy:port/v1"
+export GPT_IMAGE_API_KEY="your-api-key"  # AxonHub: ah-xxxxx, Direct: sk-xxxxx
+export GPT_IMAGE_BASE_URL="http://your-endpoint/v1"  # AxonHub or OpenAI-compatible
 export GALLERY_API_KEY="optional-web-api-key"
 ```
+
+**Recommended Setup**: Route through [AxonHub](https://github.com/looplj/AxonHub) for multi-channel fallback and unified management:
+
+```bash
+export GPT_IMAGE_BASE_URL="http://your-axonhub-host:port/v1"
+export GPT_IMAGE_API_KEY="ah-xxxxx"  # Your AxonHub API key
+```
+
+**Configuration Priority** (high to low):
+1. Environment variables (`CPA_API_KEY`, `GPT_IMAGE_API_KEY`, etc.)
+2. Web UI Settings Panel (saved to `data/api_keys_config.json`)
+3. `config/config.yaml` (default values)
 
 Runtime key files are stored under `data/`; avoid printing secrets in user
 responses.
