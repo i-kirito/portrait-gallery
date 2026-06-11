@@ -6,7 +6,7 @@ import subprocess
 import sys
 from typing import Optional
 
-from settings import build_child_env, configured_python, outfit_style_to_base_style, resolve_image_dir
+from settings import build_child_env, configured_python, resolve_image_dir
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +55,11 @@ class ImageGenerator:
         ref_image: str = "",
         size: str = "",
         source: str = "custom",
+        prompt_final: bool = False,
     ) -> Optional[str]:
         """生成图片，返回图片文件名（相对路径）（异步，不阻塞事件循环）"""
         engine = engine or self.default_engine
-        logger.info(f"开始生图: engine={engine}, style={style}, prompt={prompt[:80]}...")
+        logger.info(f"开始生图: engine={engine}, style={style}, size={size or '-'}, prompt={prompt[:80]}...")
 
         generate_script = self.generate_script
         if not os.path.isfile(generate_script):
@@ -79,6 +80,8 @@ class ImageGenerator:
             cmd.extend(["--ref-image", ref_image])
         if size:
             cmd.extend(["--size", size])
+        if prompt_final:
+            cmd.append("--prompt-final")
         cmd.extend(["--prompt", prompt])
 
         try:
@@ -126,7 +129,9 @@ class ImageGenerator:
         self,
         outfit_prompt: str,
         outfit_style: str,
+        base_style: str = "",
     ) -> Optional[str]:
-        """根据穿搭描述生成图片，自动选择引擎和风格"""
-        style = outfit_style_to_base_style(outfit_style) or None
+        """根据穿搭描述生成图片，使用 LLM 选出的当天底模。"""
+        style_value = (base_style or "").strip().lower()
+        style = style_value if style_value in {"cool", "girly", "sweet"} else None
         return await self.generate(outfit_prompt, style=style)

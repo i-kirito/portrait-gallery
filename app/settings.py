@@ -6,6 +6,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -64,6 +65,74 @@ DEFAULT_THEME_STYLE_MAP = {
     "custom": ("sweet", "甜妹风"),
 }
 
+DEFAULT_CUSTOM_IMAGE_ASPECT = "1:1"
+DEFAULT_CUSTOM_IMAGE_RESOLUTION = "1k"
+DEFAULT_CUSTOM_IMAGE_SIZE = "1024x1024"
+DEFAULT_CUSTOM_SHOT_TYPE = "selfie"
+
+CUSTOM_SHOT_TYPE_PROMPTS = {
+    "selfie": "camera view: casual close-up smartphone selfie, she is visibly holding a phone in one hand with her arm slightly extended toward the camera, actively taking a selfie, looking at the phone camera or screen, face and upper outfit visible, intimate natural angle",
+    "half_body": "camera view: half-body portrait from head to waist, outfit details clearly visible, natural portrait framing",
+    "full_body": "camera view: full-body outfit photo from head to shoes, complete outfit visible, balanced standing or seated composition",
+}
+
+CUSTOM_SHOT_TYPE_LABELS = {
+    "selfie": "自拍",
+    "half_body": "半身照",
+    "full_body": "全身照",
+}
+
+CUSTOM_SHOT_TYPE_ALIASES = {
+    "selfie": "selfie",
+    "自拍": "selfie",
+    "closeup": "selfie",
+    "close_up": "selfie",
+    "half": "half_body",
+    "half_body": "half_body",
+    "halfbody": "half_body",
+    "半身": "half_body",
+    "半身照": "half_body",
+    "full": "full_body",
+    "full_body": "full_body",
+    "fullbody": "full_body",
+    "全身": "full_body",
+    "全身照": "full_body",
+}
+
+CUSTOM_IMAGE_SIZE_MAP = {
+    "1:1": {
+        "1k": "1024x1024",
+        "2k": "2048x2048",
+        "4k": "4096x4096",
+    },
+    "3:4": {
+        "1k": "768x1024",
+        "2k": "1536x2048",
+        "4k": "3072x4096",
+    },
+    "4:3": {
+        "1k": "1024x768",
+        "2k": "2048x1536",
+        "4k": "4096x3072",
+    },
+    "2:3": {
+        "1k": "1024x1536",
+        "2k": "1365x2048",
+        "4k": "2731x4096",
+    },
+    "9:16": {
+        "1k": "768x1366",
+        "2k": "1152x2048",
+        "4k": "2304x4096",
+    },
+}
+
+CUSTOM_IMAGE_ALLOWED_SIZES = {
+    size
+    for by_resolution in CUSTOM_IMAGE_SIZE_MAP.values()
+    for size in by_resolution.values()
+}
+
 DEFAULT_PERSONA_SOURCE = "custom"
 PERSONA_SOURCE_ALIASES = {
     "custom": "custom",
@@ -77,6 +146,26 @@ PERSONA_SOURCE_ALIASES = {
     "open_claw": "openclaw",
 }
 
+DEFAULT_PUSH_CHANNEL = "wechat"
+PUSH_CHANNEL_ALIASES = {
+    "tg": "telegram",
+    "TG": "telegram",
+    "telegram": "telegram",
+    "Telegram": "telegram",
+    "微信": "wechat",
+    "weixin": "wechat",
+    "wechat": "wechat",
+    "WeChat": "wechat",
+}
+
+DEFAULT_NO_PROXY_HOSTS = (
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "0.0.0.0",
+    "host.docker.internal",
+)
+
 
 def _non_empty(value: Any) -> str:
     if value is None:
@@ -89,6 +178,68 @@ def normalize_persona_source(value: Any) -> str:
     if not text:
         return DEFAULT_PERSONA_SOURCE
     return PERSONA_SOURCE_ALIASES.get(text, PERSONA_SOURCE_ALIASES.get(text.lower(), DEFAULT_PERSONA_SOURCE))
+
+
+def normalize_push_channel(value: Any) -> str:
+    text = _non_empty(value)
+    if not text:
+        return DEFAULT_PUSH_CHANNEL
+    return PUSH_CHANNEL_ALIASES.get(text, PUSH_CHANNEL_ALIASES.get(text.lower(), DEFAULT_PUSH_CHANNEL))
+
+
+def normalize_custom_image_aspect(value: Any) -> str:
+    text = _non_empty(value).replace("：", ":")
+    return text if text in CUSTOM_IMAGE_SIZE_MAP else DEFAULT_CUSTOM_IMAGE_ASPECT
+
+
+def normalize_custom_image_resolution(value: Any) -> str:
+    text = _non_empty(value).lower()
+    if text in {"1", "1k", "默认", "default"}:
+        return "1k"
+    if text in {"2", "2k"}:
+        return "2k"
+    if text in {"4", "4k"}:
+        return "4k"
+    return DEFAULT_CUSTOM_IMAGE_RESOLUTION
+
+
+def normalize_custom_image_size(size: Any = "", aspect: Any = "", resolution: Any = "") -> str:
+    aspect_text = _non_empty(aspect).replace("：", ":")
+    resolution_text = _non_empty(resolution).lower()
+    if aspect_text in CUSTOM_IMAGE_SIZE_MAP and resolution_text in CUSTOM_IMAGE_SIZE_MAP[aspect_text]:
+        return CUSTOM_IMAGE_SIZE_MAP[aspect_text][resolution_text]
+
+    size_text = _non_empty(size).lower()
+    if size_text in CUSTOM_IMAGE_ALLOWED_SIZES:
+        return size_text
+
+    safe_aspect = normalize_custom_image_aspect(aspect)
+    safe_resolution = normalize_custom_image_resolution(resolution)
+    return CUSTOM_IMAGE_SIZE_MAP.get(safe_aspect, {}).get(safe_resolution, DEFAULT_CUSTOM_IMAGE_SIZE)
+
+
+def normalize_custom_shot_type(value: Any) -> str:
+    text = _non_empty(value).lower()
+    if not text:
+        return DEFAULT_CUSTOM_SHOT_TYPE
+    return CUSTOM_SHOT_TYPE_ALIASES.get(text, CUSTOM_SHOT_TYPE_ALIASES.get(_non_empty(value), DEFAULT_CUSTOM_SHOT_TYPE))
+
+
+def custom_shot_prompt(value: Any) -> str:
+    shot_type = normalize_custom_shot_type(value)
+    return CUSTOM_SHOT_TYPE_PROMPTS.get(shot_type, CUSTOM_SHOT_TYPE_PROMPTS[DEFAULT_CUSTOM_SHOT_TYPE])
+
+
+def custom_shot_label(value: Any) -> str:
+    shot_type = normalize_custom_shot_type(value)
+    return CUSTOM_SHOT_TYPE_LABELS.get(shot_type, CUSTOM_SHOT_TYPE_LABELS[DEFAULT_CUSTOM_SHOT_TYPE])
+
+
+def auto_push_agent(persona_source: Any, push_channel: Any = "") -> str:
+    source = normalize_persona_source(persona_source)
+    if source == "openclaw":
+        return "openclaw"
+    return "hermes"
 
 
 def normalize_outfit_styles(value: Any, allowed: list[str] | None = None) -> list[str]:
@@ -667,6 +818,30 @@ def normalize_chat_url(base_url: str) -> str:
     return f"{base}/chat/completions"
 
 
+def _split_no_proxy(value: Any) -> list[str]:
+    text = _non_empty(value)
+    if not text:
+        return []
+    return [item for item in re.split(r"[\s,]+", text) if item]
+
+
+def _host_from_url(value: Any) -> str:
+    text = _non_empty(value)
+    if not text:
+        return ""
+    parsed = urlparse(text if "://" in text else f"http://{text}")
+    return parsed.hostname or ""
+
+
+def merge_no_proxy(*values: Any) -> str:
+    merged: list[str] = []
+    for value in values:
+        for item in _split_no_proxy(value):
+            if item not in merged:
+                merged.append(item)
+    return ",".join(merged)
+
+
 def llm_request_config(config: dict, data_dir: str) -> dict:
     keys = load_json_file(api_keys_path(data_dir))
     base_url = (
@@ -686,13 +861,12 @@ def llm_request_config(config: dict, data_dir: str) -> dict:
     return {"base_url": base_url.rstrip("/"), "chat_url": normalize_chat_url(base_url), "api_key": api_key, "models": models}
 
 
-def apply_network_env(config: dict, env: dict[str, str] | None = None) -> dict[str, str]:
+def apply_network_env(config: dict, env: dict[str, str] | None = None, data_dir: str = "") -> dict[str, str]:
     target = env if env is not None else os.environ
     network = config.get("network", {}) if isinstance(config.get("network"), dict) else {}
     mapping = {
         "http_proxy": ("HTTP_PROXY", "http_proxy"),
         "https_proxy": ("HTTPS_PROXY", "https_proxy"),
-        "no_proxy": ("NO_PROXY", "no_proxy"),
     }
     for key, env_names in mapping.items():
         value = _non_empty(network.get(key))
@@ -700,6 +874,24 @@ def apply_network_env(config: dict, env: dict[str, str] | None = None) -> dict[s
             continue
         for env_name in env_names:
             target[env_name] = value
+
+    keys = load_json_file(api_keys_path(data_dir)) if data_dir else {}
+    dynamic_no_proxy_hosts = [
+        _host_from_url(keys.get("gpt_base_url")),
+        _host_from_url(keys.get("cpa_url")),
+        _host_from_url(get_nested(config, "image_gen.gpt_base_url", "")),
+        _host_from_url(get_nested(config, "llm.base_url", "")),
+    ]
+    no_proxy = merge_no_proxy(
+        target.get("NO_PROXY", ""),
+        target.get("no_proxy", ""),
+        network.get("no_proxy", ""),
+        ",".join(DEFAULT_NO_PROXY_HOSTS),
+        ",".join(host for host in dynamic_no_proxy_hosts if host),
+    )
+    if no_proxy:
+        target["NO_PROXY"] = no_proxy
+        target["no_proxy"] = no_proxy
     return target
 
 
@@ -716,7 +908,7 @@ def build_child_env(config: dict, config_path: str, data_dir: str, extra: dict[s
     app_path = str(root / "app")
     current_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = app_path if not current_pythonpath else app_path + os.pathsep + current_pythonpath
-    apply_network_env(config, env)
+    apply_network_env(config, env, data_dir=data_dir)
     if extra:
         env.update({k: v for k, v in extra.items() if v})
     return env

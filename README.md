@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.1.3**
+当前版本：**v1.1.4**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -272,6 +272,17 @@ curl "http://localhost:18889/api/gallery?key=$GALLERY_API_KEY"
 - **⚙️ 设置** — Web UI 管理 API 密钥
 
 ## 🧾 Release Notes
+
+### v1.1.4
+
+- 自定义穿搭生成新增比例、清晰度和自拍/半身/全身视角选择，并按目标尺寸保存输出图。
+- 新增画廊图片重抽入口，可基于已有最终 prompt 重新生成一张新图并保留原卡片上下文。
+- 日程生成新增 `base_style` 底模选择，让 LLM 在 cool / girly / sweet 中为当天风格选择参考底模。
+- 日程彩蛋的生图上限改为按已完成、待执行、运行中和失败待重试的计划槽位统一统计，避免重复补拍。
+- 推送渠道支持在 Web 设置中选择微信或 TG，并按人设来源自动优先使用 Hermes / OpenClaw。
+- 新增 Hermes 纯净文生图/图生图 API，图生图只允许使用受控参考图目录，避免任意本地路径被读取。
+- GPT Image 兼容 `/chat/completions` 和显式 `/images/generations` / `/images/edits`，保留裸 `/v1` 自动拼接 chat endpoint 的旧行为。
+- 优化 caption 防人设泄露、旅行/机场/机舱场景 prompt、移动端弹窗和设置面板交互。
 
 ### v1.1.3
 

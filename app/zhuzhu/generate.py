@@ -92,6 +92,16 @@ def _get_today_outfit_style_name() -> str:
     return ""
 
 
+def _gallery_outfit_style_for_source(source: str, actual_style: Optional[str]) -> str:
+    """Return the gallery style label without leaking the daily schedule style into chat/custom images."""
+    if (source or "").strip() in {"chat", "custom"}:
+        style = (actual_style or "").strip()
+        if style in {"cool", "girly", "sweet"}:
+            return "自定义"
+        return style
+    return _get_today_outfit_style_name()
+
+
 def _gitee_fallback_enabled() -> bool:
     """Return whether automatic GPT/Gemini -> Gitee fallback is enabled."""
     try:
@@ -515,9 +525,10 @@ def generate(
     ref_image: Optional[str] = None,
     size: Optional[str] = None,
     schedule_time: str = "",
+    prompt_final: bool = False,
 ):
     # If user didn't specify a hairstyle, let LLM pick one
-    if prompt_override and engine == "gptimage" and theme != "sexy":
+    if prompt_override and not prompt_final and engine == "gptimage" and theme != "sexy":
         hair_keywords = {"马尾", "辫", "丸子头", "双马尾", "编发", "披肩", "散发", "盘发",
                          "ponytail", "braid", "bun", "tails", "updo", "half-up"}
         if not any(kw in prompt_override.lower() for kw in hair_keywords):
@@ -526,12 +537,15 @@ def generate(
                 prompt_override = f"{llm_hair}, {prompt_override}"
                 print(f"💇 LLM chose hairstyle: {llm_hair}", file=sys.stderr)
 
-    resolved_prompt = resolve_prompt(theme, prompt_override, enhance)
+    if prompt_final and prompt_override:
+        resolved_prompt = prompt_override
+    else:
+        resolved_prompt = resolve_prompt(theme, prompt_override, enhance)
 
     # Inject daily schedule context for timed photos (not custom/sexy)
     schedule_ctx, schedule_raw, outfit_kw, scene_kw = _get_schedule_context(theme, schedule_time)
     schedule_activity = ""
-    if schedule_ctx and theme in DAILY_THEMES:
+    if schedule_ctx and theme in DAILY_THEMES and not prompt_final:
         # Extract activity text for schedule-aware prompt building
         import re
         m = re.search(r"Today's plan:\s*(.+?)(?:\.|$)", schedule_ctx)
@@ -541,7 +555,7 @@ def generate(
         print(f"📋 Injected schedule into prompt (activity: {schedule_activity})", file=sys.stderr)
     
     # Re-build prompt with schedule-aware element selection if we have activity
-    if schedule_activity and theme in DAILY_THEMES:
+    if schedule_activity and theme in DAILY_THEMES and not prompt_final:
         resolved_prompt = build_prompt(theme, schedule_activity=schedule_activity,
                                        outfit_keywords=outfit_kw, scene_keywords=scene_kw)
         resolved_prompt = f"{resolved_prompt}. {schedule_ctx}"
@@ -565,7 +579,7 @@ def generate(
         # 先检查当天是否已有风格，保持一天一致
         today_str = date.today().isoformat()
         today_style = ""
-        if os.path.exists(_SCHEDULE_PATH):
+        if source not in {"chat", "custom"} and os.path.exists(_SCHEDULE_PATH):
             try:
                 with open(_SCHEDULE_PATH, encoding="utf-8") as f:
                     sched_data = json.load(f)
@@ -703,7 +717,7 @@ def generate(
                         model_name=used_model,
                         source=source,
                         schedule_time=schedule_raw,
-                        outfit_style=_get_today_outfit_style_name())
+                        outfit_style=_gallery_outfit_style_for_source(source, actual_style))
 
     return path
 
@@ -721,6 +735,7 @@ if __name__ == "__main__":
     parser.add_argument("--ref-image", type=str, default=None, help="参考图本地路径（图生图/img2img 模式）")
     parser.add_argument("--size", type=str, default=None, help="图片尺寸")
     parser.add_argument("--schedule-time", type=str, default="", help="定时任务对应的日程时间和活动，如 '20:30 晚间直播'")
+    parser.add_argument("--prompt-final", action="store_true", help="prompt 已是完整生图提示词，不再注入画质/人设/发型")
     args = parser.parse_args()
 
     effective_theme = args.theme or ("custom" if args.prompt else "morning")
@@ -737,6 +752,7 @@ if __name__ == "__main__":
         ref_image=args.ref_image,
         size=args.size,
         schedule_time=args.schedule_time,
+        prompt_final=args.prompt_final,
     )
     if not path:
         print("ERROR: generation failed", file=sys.stderr)

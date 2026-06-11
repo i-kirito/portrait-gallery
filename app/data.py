@@ -8,6 +8,7 @@ class DailyEntry:
     """单日数据"""
     date: str  # yyyy-mm-dd
     outfit_style: str = ""
+    base_style: str = ""  # cool / girly / sweet, chosen by LLM for the day's reference model
     outfit: str = ""
     schedule: str = ""
     schedule_prompt: str = ""  # English schedule used for image prompt injection
@@ -28,6 +29,7 @@ class DailyEntry:
         return cls(
             date=data.get("date", ""),
             outfit_style=data.get("outfit_style", ""),
+            base_style=data.get("base_style", ""),
             outfit=data.get("outfit", ""),
             schedule=data.get("schedule", ""),
             schedule_prompt=data.get("schedule_prompt", ""),

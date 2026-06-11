@@ -5,6 +5,7 @@ import io
 import json
 import os
 import random
+import re
 import shutil
 import sys
 import time
@@ -12,7 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 import requests
-from PIL import Image
+from PIL import Image, ImageOps
 
 _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _APP_DIR not in sys.path:
@@ -145,7 +146,7 @@ def get_image_model(key: str, default: str = "") -> str:
     return str(get_nested(_GALLERY_CONFIG, f"image_gen.{key}", default) or default).strip()
 
 
-def get_image_int(key: str, default: int, min_value: int | None = None, max_value: int | None = None) -> int:
+def get_image_int(key: str, default: int, min_value: Optional[int] = None, max_value: Optional[int] = None) -> int:
     return config_int(_GALLERY_CONFIG, f"image_gen.{key}", default, min_value, max_value)
 
 
@@ -350,15 +351,64 @@ def _read_custom_appearance() -> str:
 def _personalized_caption_fallback(theme: str, persona: dict) -> str:
     character = persona.get("name") or "角色"
     user_name = persona.get("user_name") or "你"
-    voice = persona.get("caption_voice") or "自然、亲切、贴近日常"
     templates = {
-        "morning": f"早安，{user_name}～{character}把今天的晨光和心情都整理好啦。{voice}",
-        "noon": f"{user_name}，{character}的午间穿搭记录送到～今天也想把好看的瞬间分享给你。",
-        "evening": f"傍晚的光刚刚好，{character}把这份温柔留给{user_name}看～",
-        "bedtime": f"夜色慢慢安静下来，{character}也准备收起今天的小心思啦～晚安，{user_name}。",
-        "sexy": f"{character}今天的氛围更大胆一点，只把这份特别的状态分享给{user_name}。",
+        "morning": f"早安，{user_name}～{character}刚拍完晨间穿搭，光线很好，心情也亮起来了。",
+        "noon": f"{user_name}，{character}把午间穿搭拍好啦，阳光和状态都刚刚好。",
+        "evening": f"傍晚的光很温柔，{character}想把今天这套穿搭和心情分享给{user_name}。",
+        "bedtime": f"夜色安静下来啦，{character}把睡前这一刻留给{user_name}看。",
+        "sexy": f"{character}今天的镜头氛围更大胆一点，穿搭和心情都很特别。",
     }
     return templates.get(theme, f"{character}的新照片来啦～想把这一刻分享给{user_name}。")
+
+
+def _caption_voice_hint(persona: dict) -> str:
+    """Use persona tone as a tiny style hint without leaking the full Soul text."""
+    voice = str(persona.get("caption_voice") or "").strip()
+    if not voice:
+        return "自然、亲切、贴近日常"
+    voice = re.sub(r"\s+", " ", voice)
+    pieces = re.split(r"[。！？!?；;\n]", voice)
+    hint = next((piece.strip(" ，,、") for piece in pieces if piece.strip(" ，,、")), "")
+    if not hint:
+        return "自然、亲切、贴近日常"
+    blocked = (
+        "人设", "身份", "设定", "体质", "人格", "痴迷", "占有欲",
+        "恋爱脑", "系统", "提示词", "SOUL", "Soul", "工程师",
+    )
+    if any(marker in hint for marker in blocked):
+        return "自然、亲切、贴近日常"
+    return hint[:36]
+
+
+def _scene_caption_fallback(theme: str, persona: dict, caption: str = "") -> str:
+    if caption and not _caption_has_persona_leak(caption):
+        short = _shorten_caption(caption)
+        if short:
+            return short
+    return _personalized_caption_fallback(theme, persona)
+
+
+def _caption_has_persona_leak(caption: str) -> bool:
+    text = str(caption or "")
+    leak_markers = (
+        "人设", "身份", "设定", "体质", "人格", "痴迷", "占有欲",
+        "恋爱脑", "系统提示", "提示词", "SOUL", "Soul", "工程师",
+    )
+    return any(marker in text for marker in leak_markers)
+
+
+def _shorten_caption(caption: str, limit: int = 90) -> str:
+    text = re.sub(r"\s+", " ", str(caption or "")).strip(" 「」\"'")
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    parts = re.split(r"(?<=[。！？!?])", text)
+    short = "".join(part for part in parts[:2]).strip()
+    if short and len(short) <= limit:
+        return short
+    cut = text[:limit].rstrip("，,、；; ")
+    return cut + "。"
 
 
 def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activity: str = "",
@@ -394,6 +444,9 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
     
     # Schedule activity → element keywords mapping
     _ACTIVITY_KEYWORDS = {
+        # 旅行/飞机/机场。放在餐饮前面，避免 airline lunch 被普通午餐场景吞掉。
+        "travel": (["飞机", "机场", "登机", "航班", "航空", "机舱", "候机", "贵宾厅", "plane", "airline", "flight", "airport", "boarding", "cabin", "vip lounge"],
+                   {"clothing": [1, 4, 6], "pose": [4, 10, 11, 12, 13, 14], "env": [9, 10, 11]}),
         # 咖啡/餐厅/美食
         "food": (["咖啡", "餐", "吃", "饭", "面", "奶茶", "蛋糕", "甜点", "可颂", "午餐", "早餐", "晚餐", "boba", "cafe", "ramen", "noodle", "bento"],
                  {"clothing": [1, 4, 6], "pose": [11, 12, 13, 14, 15], "env": [1, 5, 9, 10, 11]}),
@@ -426,6 +479,20 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
                 "sitting at a cozy home livestream desk, holding up today's shopping finds toward the phone camera, smiling brightly as if chatting with fans",
                 "cozy home livestream corner with a ring light, phone tripod, neatly arranged shopping bags, small product display shelf, warm room decor",
                 "soft ring light mixed with warm indoor evening lamp light, realistic smartphone livestream ambience",
+            )
+
+        if has_any(["飞机", "航空", "航班", "机舱", "plane", "airline", "flight", "cabin"]):
+            return (
+                "sitting in an airplane window seat, with a small airline meal tray on the fold-down table, relaxing calmly and looking gently toward the phone camera, using only airplane cabin props",
+                "inside a modern airplane cabin with oval window, seat row, fold-down tray table, delicate airline lunch, soft clouds visible outside, only airplane cabin travel details",
+                "bright natural daylight through the airplane window, realistic smartphone travel photo ambience",
+            )
+
+        if has_any(["机场", "登机", "候机", "贵宾厅", "airport", "boarding", "vip lounge", "lounge"]):
+            return (
+                "sitting in an airport VIP lounge beside a silver suitcase, holding a boarding pass or coffee, waiting calmly for the flight, using only airport travel props",
+                "airport VIP lounge with floor-to-ceiling windows, runway view, suitcase nearby, boarding gate atmosphere, only airport lounge travel details",
+                "clean airport daylight through large windows, realistic smartphone travel photo ambience",
             )
 
         if has_any(["日料", "拉面", "餐", "吃", "饭", "面", "ramen", "restaurant", "noodle"]):
@@ -516,8 +583,47 @@ def detect_extension(img_data: bytes) -> str:
         return "jpg"
 
 
-def save_image(img_data: bytes, theme: str, model_name: str, style: Optional[str] = None):
+def _parse_target_size(target_size: Optional[str]) -> Optional[tuple[int, int]]:
+    if not target_size:
+        return None
+    match = re.fullmatch(r"\s*(\d{2,5})x(\d{2,5})\s*", str(target_size).lower())
+    if not match:
+        return None
+    width, height = int(match.group(1)), int(match.group(2))
+    if not (64 <= width <= 8192 and 64 <= height <= 8192):
+        return None
+    return width, height
+
+
+def _fit_image_bytes(img_data: bytes, target_size: Optional[str]) -> bytes:
+    parsed = _parse_target_size(target_size)
+    if not parsed:
+        return img_data
+    try:
+        with Image.open(io.BytesIO(img_data)) as src:
+            img = ImageOps.exif_transpose(src)
+            original_size = img.size
+            if original_size == parsed:
+                return img_data
+            if img.mode not in ("RGB", "RGBA"):
+                img = img.convert("RGB")
+            fitted = ImageOps.fit(img, parsed, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+            out = io.BytesIO()
+            if fitted.mode == "RGBA":
+                fitted.save(out, format="PNG", optimize=True)
+            else:
+                fitted.save(out, format="JPEG", quality=95, optimize=True)
+            print(f"📐 Adjusted image size from {original_size[0]}x{original_size[1]} to {parsed[0]}x{parsed[1]}", file=sys.stderr)
+            return out.getvalue()
+    except Exception as e:
+        print(f"Image size adjustment failed for {target_size}: {e}", file=sys.stderr)
+        return img_data
+
+
+def save_image(img_data: bytes, theme: str, model_name: str, style: Optional[str] = None,
+               target_size: Optional[str] = None):
     os.makedirs(WORKSPACE_MEDIA, exist_ok=True)
+    img_data = _fit_image_bytes(img_data, target_size)
     ts = int(time.time())
     ext = detect_extension(img_data)
     style_part = f"_{style}" if style else ""
@@ -682,12 +788,17 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
     today = time.strftime("%Y-%m-%d")
     style_name = (outfit_style or "").strip()
     base_style = style or ""  # cool/girly/sweet or empty
+    source_uses_base_style = source in {"chat", "custom"}
     if not style_name and base_style:
-        style_name = base_style_label(base_style)
+        style_name = "自定义" if source_uses_base_style and base_style in {"cool", "girly", "sweet"} else base_style_label(base_style)
     elif not style_name:
         base_style, style_name = theme_style_default(theme)
+        if source_uses_base_style and base_style:
+            style_name = "自定义" if base_style in {"cool", "girly", "sweet"} else base_style
     elif not base_style:
         base_style = outfit_style_to_base_style(style_name) or theme_style_default(theme)[0]
+    if source_uses_base_style and base_style in {"cool", "girly", "sweet"}:
+        style_name = "自定义"
 
     # Extract time from filename timestamp
     img_time = _extract_time_from_filename(filename)
@@ -872,16 +983,14 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
     persona = _runtime_persona()
     character = persona.get("name") or "角色"
     user_name = persona.get("user_name") or "用户"
-    persona_text = persona.get("persona") or f"你是{character}。"
-    caption_voice = persona.get("caption_voice") or "自然、亲切、贴近日常，可以适当用轻松的语气词。"
+    caption_voice = _caption_voice_hint(persona)
     system_msg = (
-        f"{persona_text}"
-        f"你现在以“{character}”的人设向“{user_name}”分享刚拍的照片。"
-        f"小心思/配文口吻：{caption_voice}"
-        "用最自然、撒娇、俏皮的口吻写一段中文图片配文（2-3句话），"
-        "仔细观察图片中的实际服饰颜色、款式、光影和氛围来写，"
-        f"让{user_name}充满期待和代入感。"
-        "不要提任何技术术语、英文提示词、模型名称。可以适当用 emoji。"
+        f"你正在为“{character}”刚拍的照片写一条画廊小心思，读者称呼“{user_name}”。"
+        f"语气参考：{caption_voice}。"
+        "只参考称呼和语气，不要复述、展开或透露 SOUL、人设、身份、关系或性格设定。"
+        "内容只写当时拍照的场景、穿搭亮点和心情。"
+        "输出 1-2 句中文，总长不超过 60 个汉字。"
+        "不要写长段落，不要提技术术语、英文提示词、模型名称。可以使用 0-1 个 emoji。"
         "直接输出配文内容，不要加引号或标题。"
         "绝对不要在末尾加「网页版」「查看详情」「点击查看」等任何引导性后缀。"
     )
@@ -904,10 +1013,10 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
     if img_b64:
         user_content = [
             {"type": "image_url", "image_url": {"url": f"data:{img_mime};base64,{img_b64}"}},
-            {"type": "text", "text": f"这是{character}刚拍的{scene}，请根据图片里的实际画面写配文。"},
+            {"type": "text", "text": f"这是{character}刚拍的{scene}，请只根据实际画面写短小心思：场景、穿搭、心情。"},
         ]
     else:
-        user_content = f"场景：{scene}，请写一段配文（不要描述具体衣服颜色款式）。"
+        user_content = f"场景：{scene}，请写一条短小心思，聚焦拍照场景、穿搭氛围和心情。"
 
     try:
         api_key = get_cpa_key()
@@ -922,7 +1031,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_content},
             ],
-            "max_tokens": config_int(_GALLERY_CONFIG, "llm.caption_max_tokens", 200, 1),
+            "max_tokens": min(config_int(_GALLERY_CONFIG, "llm.caption_max_tokens", 90, 1), 120),
             "temperature": config_float(_GALLERY_CONFIG, "llm.caption_temperature", 0.9, 0),
         }
         resp = REQUEST_SESSION.post(
@@ -934,7 +1043,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         if resp.status_code == 200:
             caption = resp.json()["choices"][0]["message"]["content"].strip()
             if caption:
-                return caption
+                return _scene_caption_fallback(theme, persona, caption)
     except Exception as e:
         print(f"[caption] llm failed: {e}", file=sys.stderr)
 

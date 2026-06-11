@@ -25,10 +25,18 @@ from image_gen import ImageGenerator
 from web_server import GalleryServer
 from store import ScheduleStore
 from settings import (
+    api_keys_path,
     apply_network_env,
+    auto_push_agent,
     configured_python,
+    custom_shot_label,
+    custom_shot_prompt,
     load_config,
+    load_json_file,
     load_runtime_persona,
+    normalize_custom_shot_type,
+    normalize_persona_source,
+    normalize_push_channel,
     reference_filename_to_style,
     resolve_config_path,
     resolve_data_dir,
@@ -123,8 +131,8 @@ class PortraitGalleryApp:
     def __init__(self, config_path: str):
         self.config = load_config(config_path)
         self.config_path = config_path
-        apply_network_env(self.config)
         self.data_dir = resolve_data_dir(self.config, config_path)
+        apply_network_env(self.config, data_dir=self.data_dir)
         os.makedirs(self.data_dir, exist_ok=True)
 
         # 初始化组件
@@ -150,6 +158,7 @@ class PortraitGalleryApp:
         self.web_server.on_refresh_schedule = self.refresh_schedule
         self.web_server.on_rebuild_photo_jobs = self.rebuild_photo_jobs
         self.web_server.on_retry_photo_job = self.retry_photo_job
+        self.web_server.on_reroll_image = self.reroll_image
 
         # APScheduler
         timezone = self.config.get("config", {}).get("timezone", "Asia/Shanghai")
@@ -198,11 +207,11 @@ class PortraitGalleryApp:
                 save_schedule_entry(self.data_dir, entry)
             return entry
 
-        logger.info(f"日程生成成功: {entry.outfit_style}")
+        logger.info(f"日程生成成功: {entry.outfit_style} | base_style={entry.base_style}")
 
         # 2. 生成图片
         if entry.prompt and entry.status == "ok":
-            filename = await self.image_gen.generate_for_outfit(entry.prompt, entry.outfit_style)
+            filename = await self.image_gen.generate_for_outfit(entry.prompt, entry.outfit_style, entry.base_style)
             if filename:
                 entry.image_filename = filename
                 entry.image_path = f"/images/{filename}"
@@ -214,10 +223,20 @@ class PortraitGalleryApp:
         save_schedule_entry(self.data_dir, entry)
         return entry
 
-    async def generate_custom(self, user_prompt: str, size: str = "1024x1024", ref_image: str = "") -> DailyEntry:
+    async def generate_custom(
+        self,
+        user_prompt: str,
+        size: str = "1024x1024",
+        ref_image: str = "",
+        shot_type: str = "selfie",
+    ) -> DailyEntry:
         """自定义 prompt 生图"""
         today_str = datetime.now().strftime("%Y-%m-%d")
         ts = int(datetime.now().timestamp())
+        shot_type = normalize_custom_shot_type(shot_type)
+        shot_label = custom_shot_label(shot_type)
+        shot_prompt = custom_shot_prompt(shot_type)
+        generation_prompt = f"{user_prompt}. {shot_prompt}"
 
         style = None
         ref_path = ref_image if ref_image else ""
@@ -239,7 +258,7 @@ class PortraitGalleryApp:
             kwargs["size"] = size
 
         filename = await self.image_gen.generate(
-            user_prompt,
+            generation_prompt,
             style=style,
             timeout=900,
             **kwargs
@@ -250,10 +269,10 @@ class PortraitGalleryApp:
 
         entry = DailyEntry(
             date=today_str,
-            outfit_style=style or "自定义",
-            outfit=f"风格：{style or '自定义'} 穿搭：{user_prompt[:80]}",
+            outfit_style="自定义",
+            outfit=f"风格：自定义 视角：{shot_label} 穿搭：{user_prompt[:80]}",
             schedule="",
-            prompt=user_prompt,
+            prompt=generation_prompt,
             caption=f"✨ {load_runtime_persona(self.config, self.data_dir).get('name') or '角色'}的定制专属造型完成啦～",
             image_filename=filename,
             image_path=f"/images/{filename}",
@@ -263,6 +282,107 @@ class PortraitGalleryApp:
         save_schedule_entry(self.data_dir, entry)
         logger.info(f"自定义生图成功: {filename}")
         return entry
+
+    @staticmethod
+    def _find_entry_by_image(all_data: dict, image_filename: str) -> tuple[str, dict]:
+        if image_filename in all_data and isinstance(all_data[image_filename], dict):
+            return image_filename, dict(all_data[image_filename])
+        for key, entry in all_data.items():
+            if isinstance(entry, dict) and entry.get("image_filename") == image_filename:
+                return key, dict(entry)
+        return "", {}
+
+    @staticmethod
+    def _engine_from_model_name(model_name: str) -> str:
+        name = (model_name or "").strip().lower()
+        if "gitee" in name or "z-image" in name:
+            return "gitee"
+        if "gemini" in name:
+            return "gemini"
+        if "gpt" in name:
+            return "gptimage"
+        return ""
+
+    @staticmethod
+    def _image_time_from_filename(filename: str) -> str:
+        match = re.search(r'_(\d{10})\.\w+$', filename or "")
+        if not match:
+            return ""
+        try:
+            return datetime.fromtimestamp(int(match.group(1))).strftime("%H:%M")
+        except (OSError, ValueError):
+            return ""
+
+    async def reroll_image(self, image_filename: str) -> dict:
+        """Generate a new card from an existing card's final prompt."""
+        store = ScheduleStore(self.data_dir)
+        all_data = store.load()
+        _, original = self._find_entry_by_image(all_data, image_filename)
+        if not original:
+            return {"status": "failed", "error": "not_found"}
+
+        metadata = load_json_file(os.path.join(self.data_dir, "image_metadata.json"))
+        meta = metadata.get(image_filename, {}) if isinstance(metadata, dict) else {}
+        prompt = (meta.get("prompt") or original.get("prompt") or "").strip()
+        if not prompt:
+            return {"status": "failed", "error": "prompt_missing"}
+
+        engine = self._engine_from_model_name(original.get("model_name", "") or meta.get("model", ""))
+        engine = engine or self.image_gen.default_engine or "gptimage"
+        base_style = (original.get("base_style") or "").strip().lower()
+        style = base_style if engine == "gptimage" and base_style in {"cool", "girly", "sweet"} else None
+        size = (meta.get("size") or "").strip()
+
+        filename = await self.image_gen.generate(
+            prompt,
+            style=style,
+            engine=engine,
+            timeout=900,
+            size=size,
+            source="custom",
+            prompt_final=True,
+        )
+        if not filename:
+            logger.error("图片重抽失败: %s", image_filename)
+            return {"status": "failed", "error": "generate_failed"}
+
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        now_time = self._image_time_from_filename(filename) or datetime.now().strftime("%H:%M")
+        result = {}
+
+        def _merge_reroll(all_data: dict):
+            generated_key, generated = self._find_entry_by_image(all_data, filename)
+            generated_key = generated_key or filename
+            generated = dict(generated or {})
+            generated.update({
+                "id": filename,
+                "date": generated.get("date") or today_str,
+                "time": generated.get("time") or now_time,
+                "image_filename": filename,
+                "image_path": f"/images/{filename}",
+                "prompt": prompt,
+                "status": "ok",
+                "source": "custom",
+                "favorite": False,
+                "rerolled_from": image_filename,
+            })
+            for field in ("outfit_style", "outfit", "schedule", "schedule_prompt", "schedule_time", "caption"):
+                value = original.get(field)
+                if value:
+                    generated[field] = value
+            if original.get("base_style"):
+                generated["base_style"] = original["base_style"]
+            if not generated.get("outfit_style"):
+                generated["outfit_style"] = "自定义"
+            if not generated.get("outfit"):
+                generated["outfit"] = original.get("outfit") or "风格：自定义 穿搭：重抽生成"
+            all_data[generated_key] = generated
+            result.update(generated)
+            return all_data
+
+        store.update(_merge_reroll)
+        logger.info("图片重抽成功: %s -> %s", image_filename, filename)
+        return result
 
     async def daily_job(self):
         """每日自动任务 - 生成日程并根据日程时间动态安排生图"""
@@ -313,6 +433,17 @@ class PortraitGalleryApp:
             return self.web_server.get_photo_job_limit()
         return int(self.config.get("config", {}).get("photo_job_limit", 6))
 
+    def _photo_image_exists(self, filename: str) -> bool:
+        if not filename:
+            return False
+        path = filename
+        if filename.startswith("/images/"):
+            path = os.path.basename(filename)
+        if os.path.isabs(path):
+            return os.path.isfile(path)
+        image_dir = getattr(self.web_server, "image_dir", os.path.join(self.data_dir, "images"))
+        return os.path.isfile(os.path.join(image_dir, os.path.basename(path)))
+
     def _today_completed_photo_count(self) -> int:
         today_str = datetime.now().strftime("%Y-%m-%d")
         seen = set()
@@ -328,11 +459,202 @@ class PortraitGalleryApp:
                 if entry.get("source", "") not in TODAY_PHOTO_SOURCES:
                     continue
                 img_file = entry.get("image_filename", "")
-                if img_file:
+                if img_file and self._photo_image_exists(img_file):
                     seen.add(img_file)
         except Exception as e:
             logger.error(f"统计今日已完成生图失败: {e}")
         return len(seen)
+
+    def _today_inflight_photo_count(self, today_str: str = "") -> int:
+        today_str = today_str or datetime.now().strftime("%Y-%m-%d")
+        return sum(1 for key in self._photo_jobs_inflight if key.startswith(f"{today_str} "))
+
+    def _today_scheduled_photo_count(self, today_str: str = "") -> int:
+        today_str = today_str or datetime.now().strftime("%Y-%m-%d")
+        try:
+            target_date = datetime.strptime(today_str, "%Y-%m-%d").date()
+        except ValueError:
+            target_date = datetime.now().date()
+        count = 0
+        for job in self.aps.get_jobs():
+            if not job.id.startswith("photo_dynamic_"):
+                continue
+            run_time = self._local_job_run_time(job)
+            if run_time and run_time.date() == target_date:
+                count += 1
+        return count
+
+    @staticmethod
+    def _slot_time_from_key(slot_key: str) -> str:
+        _date_text, _sep, time_text = (slot_key or "").partition(" ")
+        return time_text if re.match(r'^\d{2}:\d{2}$', time_text or "") else ""
+
+    def _today_completed_photo_times(self, today_str: str = "") -> set[str]:
+        today_str = today_str or datetime.now().strftime("%Y-%m-%d")
+        times: set[str] = set()
+        try:
+            all_data = ScheduleStore(self.data_dir).load()
+            for key, entry in all_data.items():
+                if not isinstance(entry, dict):
+                    continue
+                if re.match(r'^\d{4}-\d{2}-\d{2}$', key):
+                    continue
+                if entry.get("date") != today_str or entry.get("status") != "ok":
+                    continue
+                if entry.get("source", "") not in TODAY_PHOTO_SOURCES:
+                    continue
+                img_file = entry.get("image_filename", "")
+                if not img_file or not self._photo_image_exists(img_file):
+                    continue
+                raw_time = entry.get("schedule_time") or entry.get("time") or ""
+                match = re.match(r'\s*(\d{1,2}):(\d{2})', raw_time)
+                if match:
+                    times.add(f"{int(match.group(1)):02d}:{int(match.group(2)):02d}")
+        except Exception as e:
+            logger.error(f"统计今日已完成生图计划时间失败: {e}")
+        return times
+
+    def _today_failed_photo_times(self, today_str: str = "") -> set[str]:
+        today_str = today_str or datetime.now().strftime("%Y-%m-%d")
+        times = set()
+        for slot_key in self._failed_photo_jobs:
+            date_text, _, time_text = slot_key.partition(" ")
+            if date_text == today_str and re.match(r'^\d{2}:\d{2}$', time_text):
+                if not self._check_photo_exists_for_slot(today_str, time_text):
+                    times.add(time_text)
+        return times
+
+    def _today_inflight_photo_times(self, today_str: str = "") -> set[str]:
+        today_str = today_str or datetime.now().strftime("%Y-%m-%d")
+        times = set()
+        for slot_key in self._photo_jobs_inflight:
+            date_text, _, time_text = slot_key.partition(" ")
+            if date_text == today_str and re.match(r'^\d{2}:\d{2}$', time_text):
+                times.add(time_text)
+        return times
+
+    def _today_scheduled_photo_times(self, today_str: str = "") -> set[str]:
+        today_str = today_str or datetime.now().strftime("%Y-%m-%d")
+        try:
+            target_date = datetime.strptime(today_str, "%Y-%m-%d").date()
+        except ValueError:
+            target_date = datetime.now().date()
+        times = set()
+        for job in self.aps.get_jobs():
+            if not job.id.startswith("photo_dynamic_"):
+                continue
+            run_time = self._local_job_run_time(job)
+            if run_time and run_time.date() == target_date:
+                times.add(f"{run_time.hour:02d}:{run_time.minute:02d}")
+        return times
+
+    def _today_photo_plan_times(
+        self,
+        today_str: str = "",
+        *,
+        include_scheduled: bool = False,
+        exclude_slot_key: str = "",
+    ) -> set[str]:
+        today_str = today_str or datetime.now().strftime("%Y-%m-%d")
+        times = set()
+        times.update(self._today_completed_photo_times(today_str))
+        times.update(self._today_failed_photo_times(today_str))
+        times.update(self._today_inflight_photo_times(today_str))
+        if include_scheduled:
+            times.update(self._today_scheduled_photo_times(today_str))
+        exclude_time = self._slot_time_from_key(exclude_slot_key)
+        if exclude_time:
+            times.discard(exclude_time)
+        return times
+
+    def _today_photo_plan_periods(self, today_str: str = "", *, include_scheduled: bool = False) -> set[str]:
+        labels = set()
+        for time_text in self._today_photo_plan_times(today_str, include_scheduled=include_scheduled):
+            match = re.match(r'^(\d{2}):(\d{2})$', time_text)
+            if not match:
+                continue
+            label = self._schedule_period_label(int(match.group(1)), int(match.group(2)))
+            if label:
+                labels.add(label)
+        return labels
+
+    def _photo_quota_snapshot(
+        self,
+        today_str: str = "",
+        *,
+        include_scheduled: bool = False,
+        exclude_slot_key: str = "",
+    ) -> tuple[int, int, int, int, int, int, int]:
+        today_str = today_str or datetime.now().strftime("%Y-%m-%d")
+        max_daily = self._get_photo_job_limit()
+        completed_times = self._today_completed_photo_times(today_str)
+        failed_times = self._today_failed_photo_times(today_str)
+        inflight_times = self._today_inflight_photo_times(today_str)
+        scheduled_times = self._today_scheduled_photo_times(today_str) if include_scheduled else set()
+        exclude_time = self._slot_time_from_key(exclude_slot_key)
+        for slot_set in (completed_times, failed_times, inflight_times, scheduled_times):
+            if exclude_time:
+                slot_set.discard(exclude_time)
+        planned_times = set().union(completed_times, failed_times, inflight_times, scheduled_times)
+        remaining = max(0, max_daily - len(planned_times))
+        return (
+            max_daily,
+            len(completed_times),
+            len(failed_times),
+            len(inflight_times),
+            len(scheduled_times),
+            len(planned_times),
+            remaining,
+        )
+
+    def _local_job_run_time(self, job):
+        run_at = getattr(job, "next_run_time", None)
+        if not run_at:
+            return None
+        try:
+            return run_at.astimezone(self.aps.timezone) if run_at.tzinfo else run_at
+        except Exception:
+            return run_at
+
+    def _prune_photo_jobs_for_limit(self):
+        """Remove pending dynamic jobs that would exceed today's configured plan cap."""
+        today = datetime.now().date()
+        today_str = today.strftime("%Y-%m-%d")
+        max_daily = self._get_photo_job_limit()
+        existing_plan_times = self._today_photo_plan_times(today_str, include_scheduled=False)
+        existing_periods = self._today_photo_plan_periods(today_str, include_scheduled=False)
+        keep_count = max(0, max_daily - len(existing_plan_times))
+
+        scheduled = []
+        for job in self.aps.get_jobs():
+            if not job.id.startswith("photo_dynamic_"):
+                continue
+            run_time = self._local_job_run_time(job)
+            if not run_time or run_time.date() != today:
+                continue
+            scheduled.append({
+                "id": job.id,
+                "run_time": run_time,
+                "period_label": self._schedule_period_label(run_time.hour, run_time.minute),
+                "job": job,
+            })
+
+        selected = self._select_photo_job_candidates(scheduled, keep_count, existing_periods)
+        keep_ids = {item["id"] for item in selected}
+        for item in scheduled:
+            if item["id"] in keep_ids:
+                continue
+            job = item["job"]
+            run_time = item["run_time"]
+            logger.info(
+                f"移除超出每日计划上限的待执行生图任务: {job.id} "
+                f"run_at={run_time.strftime('%H:%M')} existing_plans={len(existing_plan_times)} "
+                f"max={max_daily}"
+            )
+            try:
+                job.remove()
+            except Exception as e:
+                logger.warning(f"移除超额生图任务失败: {job.id}, error={e}")
 
     def _schedule_period_label(self, hour: int, minute: int = 0) -> str:
         total_minutes = hour * 60 + minute
@@ -416,15 +738,20 @@ class PortraitGalleryApp:
             logger.error(f"检查指定时间点是否已有生图失败: date={date_str}, period={period}, error={e}")
         return False
 
-    def _select_photo_job_candidates(self, candidates: list[dict], limit: int) -> list[dict]:
+    def _select_photo_job_candidates(
+        self,
+        candidates: list[dict],
+        limit: int,
+        existing_periods: set[str] | None = None,
+    ) -> list[dict]:
         if limit <= 0:
             return []
         if len(candidates) <= limit:
-            return candidates
+            return sorted(candidates, key=lambda item: item["run_time"])
 
         selected = []
         selected_ids = set()
-        completed_periods = self._today_completed_photo_periods()
+        planned_periods = set(existing_periods if existing_periods is not None else self._today_photo_plan_periods())
         try:
             required_labels = [period["label"] for period in self.scheduler_gen._required_periods()]
         except Exception as e:
@@ -434,13 +761,14 @@ class PortraitGalleryApp:
         for label in required_labels:
             if len(selected) >= limit:
                 break
-            if label in completed_periods:
+            if label in planned_periods:
                 continue
             for candidate in candidates:
                 if candidate["id"] in selected_ids or candidate.get("period_label") != label:
                     continue
                 selected.append(candidate)
                 selected_ids.add(candidate["id"])
+                planned_periods.add(label)
                 break
 
         for candidate in candidates:
@@ -487,8 +815,13 @@ class PortraitGalleryApp:
     def _today_schedule_text(self) -> str:
         return self._today_schedule_entry().get("schedule", "")
 
+    def _today_schedule_base_style(self) -> str:
+        base_style = str(self._today_schedule_entry().get("base_style", "") or "").strip().lower()
+        return base_style if base_style in {"cool", "girly", "sweet"} else ""
+
     def rebuild_photo_jobs(self) -> list:
         """Rebuild dynamic photo jobs from today's saved schedule."""
+        self._prune_photo_jobs_for_limit()
         schedule_text = self._today_schedule_text()
         asyncio.create_task(self._schedule_dynamic_photos(schedule_text))
         return self.list_photo_jobs()
@@ -515,10 +848,14 @@ class PortraitGalleryApp:
         # Parse "HH:mm activity" lines
         time_matches = re.findall(r'(\d{1,2}):(\d{2})\s*(.*)', schedule_text)
         max_daily = self._get_photo_job_limit()
-        completed_count = self._today_completed_photo_count()
-        remaining_slots = max(0, max_daily - completed_count)
+        planned_times = self._today_photo_plan_times(today_str, include_scheduled=False)
+        planned_periods = self._today_photo_plan_periods(today_str, include_scheduled=False)
+        planned_count = len(planned_times)
+        remaining_slots = max(0, max_daily - planned_count)
         if remaining_slots <= 0:
-            logger.info(f"今日生图已达上限: completed={completed_count}, max={max_daily}")
+            logger.info(
+                f"今日生图计划已达上限: planned={planned_count}, max={max_daily}"
+            )
             return
 
         candidates = []
@@ -546,10 +883,13 @@ class PortraitGalleryApp:
                 if self._check_photo_exists_for_slot(today_str, schedule_time_str):
                     logger.info(f"跳过已过期的时间（已有图片）: {schedule_time_str}")
                     continue
-                if completed_count >= max_daily:
+                if schedule_time_str in planned_times:
+                    logger.info(f"跳过已过期的时间（已有计划记录）: {schedule_time_str}")
+                    continue
+                if len(planned_times) >= max_daily:
                     logger.info(
-                        f"跳过已过期的时间（今日生图已达上限）: {schedule_time_str} "
-                        f"(completed={completed_count}, max_daily={max_daily})"
+                        f"跳过已过期的时间（今日生图计划已达上限）: {schedule_time_str} "
+                        f"(planned={len(planned_times)}, max_daily={max_daily})"
                     )
                     continue
 
@@ -562,15 +902,26 @@ class PortraitGalleryApp:
                     if slot_key in self._photo_jobs_inflight:
                         logger.info(f"跳过已过期的时间（补拍任务进行中）: {schedule_time_str}")
                         continue
+                    snapshot = self._photo_quota_snapshot(today_str)
+                    max_daily, _completed, _failed, _inflight, _scheduled, planned_total, remaining = snapshot
+                    if remaining <= 0:
+                        logger.info(
+                            f"跳过已过期的时间（今日生图计划已达上限）: {schedule_time_str} "
+                            f"(planned={planned_total}, max_daily={max_daily})"
+                        )
+                        planned_times = self._today_photo_plan_times(today_str, include_scheduled=False)
+                        continue
                     self._photo_jobs_inflight.add(slot_key)
+                    planned_times.add(schedule_time_str)
 
                 period_label = self._schedule_period_label(h, m)
+                if period_label:
+                    planned_periods.add(period_label)
                 logger.info(
                     f"补拍已过期的时间点: {schedule_time_str} "
                     f"theme={theme} period={period_label or '-'} activity={activity.strip()[:30]}"
                 )
                 asyncio.create_task(self._backfill_photo_job(theme, schedule_text_for_job, slot_key))
-                completed_count += 1
                 continue
 
             candidates.append({
@@ -583,8 +934,8 @@ class PortraitGalleryApp:
                 "period_label": self._schedule_period_label(h, m),
             })
 
-        remaining_slots = max(0, max_daily - completed_count)
-        selected_jobs = self._select_photo_job_candidates(candidates, remaining_slots)
+        remaining_slots = max(0, max_daily - len(planned_times))
+        selected_jobs = self._select_photo_job_candidates(candidates, remaining_slots, planned_periods)
         for item in selected_jobs:
             self.aps.add_job(
                 self.photo_job,
@@ -601,7 +952,7 @@ class PortraitGalleryApp:
 
         logger.info(
             f"动态生图任务已创建: {len(selected_jobs)} 个 "
-            f"(completed={completed_count}, max_daily={max_daily})"
+            f"(existing_plans={len(planned_times)}, max_daily={max_daily})"
         )
 
     async def _backfill_photo_job(self, theme: str, schedule_text: str, slot_key: str):
@@ -609,7 +960,7 @@ class PortraitGalleryApp:
         try:
             async with self._backfill_semaphore:
                 try:
-                    ok = await self.photo_job(theme, schedule_text)
+                    ok = await self.photo_job(theme, schedule_text, quota_reserved=True)
                     if ok:
                         logger.info(f"补拍任务完成: {slot_key}")
                     else:
@@ -784,6 +1135,24 @@ class PortraitGalleryApp:
         async with self._inflight_lock:
             if slot_key in self._photo_jobs_inflight:
                 return {"status": "running", "time": time_text}
+            snapshot = self._photo_quota_snapshot(
+                today_str,
+                include_scheduled=True,
+                exclude_slot_key=slot_key,
+            )
+            max_daily, completed, failed, inflight, scheduled, planned_total, remaining = snapshot
+            if remaining <= 0:
+                return {
+                    "status": "limit_reached",
+                    "time": time_text,
+                    "message": f"今日生图计划已达上限 {planned_total}/{max_daily}",
+                    "max_daily": max_daily,
+                    "completed_today": completed,
+                    "failed_today": failed,
+                    "running_today": inflight,
+                    "scheduled_today": scheduled,
+                    "planned_today": planned_total,
+                }
             self._photo_jobs_inflight.add(slot_key)
             if self._failed_photo_jobs.pop(slot_key, None) is not None:
                 self._save_failed_photo_jobs()
@@ -794,10 +1163,37 @@ class PortraitGalleryApp:
         asyncio.create_task(self._backfill_photo_job(theme, schedule_text_for_job, slot_key))
         return {"status": "queued", "time": time_text, "theme": theme, "activity": activity}
 
-    async def photo_job(self, theme: str, schedule_time: str = "") -> bool:
+    async def photo_job(self, theme: str, schedule_time: str = "", quota_reserved: bool = False) -> bool:
         """定时生图任务 - 调用 generate.py 完整链路"""
         logger.info(f"开始定时生图: theme={theme}, schedule_time={schedule_time}")
         slot_key, time_text, activity = self._slot_key_for_schedule_time(schedule_time)
+        reserved_slot = False
+        if slot_key and time_text:
+            today_str, _, _ = slot_key.partition(" ")
+            async with self._inflight_lock:
+                if self._check_photo_exists_for_slot(today_str, time_text):
+                    logger.info(f"跳过生图任务（该时间点已有图片）: {time_text}")
+                    return True
+                already_inflight = slot_key in self._photo_jobs_inflight
+                if already_inflight and not quota_reserved:
+                    logger.info(f"跳过生图任务（该时间点已有任务进行中）: {time_text}")
+                    return True
+                if not already_inflight:
+                    snapshot = self._photo_quota_snapshot(today_str, exclude_slot_key=slot_key)
+                    max_daily, _completed, _failed, inflight, _scheduled, planned_total, remaining = snapshot
+                    if remaining <= 0:
+                        logger.info(
+                            f"跳过生图任务（今日生图计划已达上限）: {time_text} "
+                            f"planned={planned_total}, inflight={inflight}, max={max_daily}"
+                        )
+                        return True
+                    self._photo_jobs_inflight.add(slot_key)
+                    reserved_slot = True
+                elif quota_reserved:
+                    logger.info(
+                        f"复用已占用的生图额度: {time_text} "
+                        f"slot_key={slot_key}"
+                    )
         cmd = [
             self.image_gen.python_executable,
             self.image_gen.generate_script,
@@ -805,6 +1201,10 @@ class PortraitGalleryApp:
             "--caption",
             "--source", "cron",
         ]
+        base_style = self._today_schedule_base_style()
+        if base_style:
+            cmd.extend(["--style", base_style])
+            logger.info(f"定时生图使用当天 LLM 选择的底模: {base_style}")
         if schedule_time:
             cmd.extend(["--schedule-time", schedule_time])
         try:
@@ -838,11 +1238,11 @@ class PortraitGalleryApp:
                     if self._failed_photo_jobs.pop(slot_key, None) is not None:
                         self._save_failed_photo_jobs()
 
-                # 直接通过 hermes send 发送到微信
+                # 按设置的推送渠道发送到 TG / 微信。
                 if image_path:
-                    send_ok = await self._send_to_wechat(image_path, caption_text)
+                    send_ok = await self._send_generated_photo(image_path, caption_text)
                     if not send_ok:
-                        logger.warning(f"微信发送未完全成功: image={image_path}")
+                        logger.warning(f"推送未完全成功: image={image_path}")
                 return True
             else:
                 detail = (result.stderr or result.stdout or "").strip()
@@ -888,38 +1288,170 @@ class PortraitGalleryApp:
                 }
                 self._save_failed_photo_jobs()
             return False
+        finally:
+            if reserved_slot:
+                async with self._inflight_lock:
+                    self._photo_jobs_inflight.discard(slot_key)
+
+    def _runtime_keys_config(self) -> dict:
+        return load_json_file(api_keys_path(self.data_dir))
+
+    def _push_delivery_config(self) -> dict:
+        integrations = self.config.get("integrations", {}) if isinstance(self.config.get("integrations"), dict) else {}
+        keys = self._runtime_keys_config()
+        channel = normalize_push_channel(
+            keys.get("push_channel")
+            or os.getenv("ZHUZHU_SEND_CHANNEL", "")
+            or integrations.get("push_channel", "")
+        )
+        persona = load_runtime_persona(self.config, self.data_dir)
+        persona_source = normalize_persona_source(persona.get("persona_source") or keys.get("persona_source"))
+        agent = auto_push_agent(persona_source, channel)
+        return {
+            "channel": channel,
+            "agent": agent,
+            "telegram_target": (
+                str(keys.get("telegram_target") or "").strip()
+                or os.getenv("ZHUZHU_SEND_TARGET", "").strip()
+                or os.getenv("TELEGRAM_CHAT_ID", "").strip()
+                or str(integrations.get("telegram_target") or "").strip()
+            ),
+            "telegram_account": (
+                os.getenv("ZHUZHU_SEND_ACCOUNT", "").strip()
+                or str(integrations.get("telegram_account") or "default").strip()
+            ),
+            "wechat_target": str(integrations.get("wechat_target") or "weixin").strip(),
+        }
+
+    async def _send_generated_photo(self, image_path: str, caption: str) -> bool:
+        """Send generated image using the configured push channel."""
+        integrations = self.config.get("integrations", {}) if isinstance(self.config.get("integrations"), dict) else {}
+        if integrations.get("send_enabled") is False:
+            logger.info("图片推送已在配置中关闭")
+            return True
+
+        delivery = self._push_delivery_config()
+        channel = delivery["channel"]
+        agent = delivery["agent"]
+        logger.info(f"准备推送图片: channel={channel}, agent={agent}")
+
+        if agent == "openclaw":
+            openclaw_ok = await self._send_to_openclaw(channel, image_path, caption, delivery)
+            if openclaw_ok:
+                return True
+            logger.warning(f"OpenClaw 推送失败，尝试 Hermes fallback: channel={channel}")
+
+        return await self._send_to_hermes_channel(channel, image_path, caption, delivery)
 
     async def _send_to_wechat(self, image_path: str, caption: str) -> bool:
         """Send image and caption to WeChat via hermes CLI."""
+        return await self._send_to_hermes_channel("wechat", image_path, caption, self._push_delivery_config())
+
+    async def _send_to_hermes_channel(self, channel: str, image_path: str, caption: str, delivery: dict) -> bool:
+        """Send image and optional caption via Hermes CLI."""
         integrations = self.config.get("integrations", {})
-        if integrations.get("send_enabled") is False:
-            logger.info("Hermes 发送已在配置中关闭")
-            return True
         hermes_cmd = integrations.get("hermes_cli", "") or os.getenv("HERMES_CLI", "") or shutil.which("hermes")
         if not hermes_cmd:
             candidate = os.path.join(os.path.expanduser("~"), ".hermes", "hermes-agent", "venv", "bin", "hermes")
             if os.path.exists(candidate):
                 hermes_cmd = candidate
         if not hermes_cmd:
-            logger.warning("未找到 Hermes CLI，跳过微信发送")
+            logger.warning("未找到 Hermes CLI，跳过推送")
             return False
-        target = integrations.get("wechat_target", "weixin")
+        channel = normalize_push_channel(channel)
+        target = delivery.get("wechat_target") if channel == "wechat" else (
+            str(integrations.get("hermes_telegram_target") or "").strip()
+            or "telegram"
+        )
+        label = "微信" if channel == "wechat" else "TG"
 
-        image_ok = await self._run_hermes_send(hermes_cmd, target, f"MEDIA:{image_path}", "图片")
+        image_ok = await self._run_hermes_send(hermes_cmd, target, f"MEDIA:{image_path}", f"{label}图片")
         if not image_ok:
-            logger.error("微信发送失败: 图片未送达，跳过文案发送")
+            logger.error(f"{label}发送失败: 图片未送达，跳过文案发送")
             return False
 
         caption_ok = True
         if caption:
-            logger.info(f"微信图片发送成功，等待 {WECHAT_CAPTION_DELAY_SECONDS}s 后发送文案以降低限流概率")
+            logger.info(f"{label}图片发送成功，等待 {WECHAT_CAPTION_DELAY_SECONDS}s 后发送文案以降低限流概率")
             await asyncio.sleep(WECHAT_CAPTION_DELAY_SECONDS)
-            caption_ok = await self._run_hermes_send(hermes_cmd, target, caption, "文案")
+            caption_ok = await self._run_hermes_send(hermes_cmd, target, caption, f"{label}文案")
 
         if image_ok and caption_ok:
-            logger.info("微信发送完成")
+            logger.info(f"{label}发送完成")
             return True
-        logger.warning(f"微信发送部分成功: image_ok={image_ok}, caption_ok={caption_ok}")
+        logger.warning(f"{label}发送部分成功: image_ok={image_ok}, caption_ok={caption_ok}")
+        return False
+
+    async def _send_to_openclaw(self, channel: str, image_path: str, caption: str, delivery: dict) -> bool:
+        """Send image and optional caption through OpenClaw when available."""
+        integrations = self.config.get("integrations", {}) if isinstance(self.config.get("integrations"), dict) else {}
+        openclaw_cmd = integrations.get("openclaw_cli", "") or os.getenv("OPENCLAW_CLI", "") or shutil.which("openclaw")
+        if not openclaw_cmd:
+            logger.warning("未找到 OpenClaw CLI，无法使用 OpenClaw 推送")
+            return False
+
+        channel = normalize_push_channel(channel)
+        if channel == "telegram":
+            openclaw_channel = str(integrations.get("openclaw_telegram_channel") or "telegram").strip()
+            target = delivery.get("telegram_target", "")
+            account = delivery.get("telegram_account", "default") or "default"
+        else:
+            openclaw_channel = str(
+                integrations.get("openclaw_wechat_channel")
+                or os.getenv("OPENCLAW_WECHAT_CHANNEL", "")
+                or "openclaw-weixin"
+            ).strip()
+            target = (
+                os.getenv("OPENCLAW_WECHAT_TARGET", "").strip()
+                or str(integrations.get("openclaw_wechat_target") or "").strip()
+                or delivery.get("wechat_target", "")
+            )
+            account = str(integrations.get("openclaw_wechat_account") or "default").strip()
+
+        if not target:
+            logger.warning(f"OpenClaw 推送目标未配置: channel={channel}")
+            return False
+
+        cmd = [
+            openclaw_cmd,
+            "message",
+            "send",
+            "--channel",
+            openclaw_channel,
+            "--account",
+            account,
+            "--target",
+            target,
+            "--media",
+            image_path,
+            "--message",
+            caption or "",
+            "--json",
+        ]
+        label = "TG" if channel == "telegram" else "微信"
+        try:
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=WECHAT_SEND_TIMEOUT_SECONDS,
+                ),
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning(f"OpenClaw {label}推送超时")
+            return False
+        except Exception as e:
+            logger.warning(f"OpenClaw {label}推送异常: {e}")
+            return False
+
+        output = self._hermes_send_output(result.stdout, result.stderr)
+        if result.returncode == 0:
+            logger.info(f"OpenClaw {label}推送成功")
+            return True
+        logger.warning(f"OpenClaw {label}推送失败: exit={result.returncode}, output={output}")
         return False
 
     async def _run_hermes_send(self, hermes_cmd: str, target: str, message: str, label: str) -> bool:
@@ -931,10 +1463,10 @@ class PortraitGalleryApp:
             attempt_no = attempt_idx + 1
             if attempt_idx:
                 delay = WECHAT_RETRY_DELAYS_SECONDS[attempt_idx - 1]
-                logger.info(f"微信{label}发送重试等待 {delay}s ({attempt_no}/{attempts})")
+                logger.info(f"{label}发送重试等待 {delay}s ({attempt_no}/{attempts})")
                 await asyncio.sleep(delay)
 
-            logger.info(f"发送{label}到微信: attempt={attempt_no}/{attempts}")
+            logger.info(f"发送{label}: attempt={attempt_no}/{attempts}")
             try:
                 loop = asyncio.get_running_loop()
                 result = await loop.run_in_executor(
@@ -948,29 +1480,29 @@ class PortraitGalleryApp:
                 )
             except subprocess.TimeoutExpired:
                 last_output = f"hermes send timed out after {WECHAT_SEND_TIMEOUT_SECONDS}s"
-                logger.warning(f"微信{label}发送超时: attempt={attempt_no}/{attempts}")
+                logger.warning(f"{label}发送超时: attempt={attempt_no}/{attempts}")
                 continue
             except Exception as e:
                 last_output = str(e)
-                logger.warning(f"微信{label}发送异常: attempt={attempt_no}/{attempts}, error={e}")
+                logger.warning(f"{label}发送异常: attempt={attempt_no}/{attempts}, error={e}")
                 continue
 
             output = self._hermes_send_output(result.stdout, result.stderr)
             if result.returncode == 0:
-                logger.info(f"微信{label}发送成功")
+                logger.info(f"{label}发送成功")
                 return True
 
             last_output = output or f"exit code {result.returncode}"
             retryable = self._is_retryable_wechat_error(last_output)
             log_fn = logger.warning if retryable and attempt_no < attempts else logger.error
             log_fn(
-                f"微信{label}发送失败: attempt={attempt_no}/{attempts}, "
+                f"{label}发送失败: attempt={attempt_no}/{attempts}, "
                 f"exit={result.returncode}, retryable={retryable}, output={last_output}"
             )
             if not retryable:
                 break
 
-        logger.error(f"微信{label}发送最终失败: {last_output}")
+        logger.error(f"{label}发送最终失败: {last_output}")
         return False
 
     @staticmethod

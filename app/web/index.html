@@ -52,12 +52,30 @@ body {
   font-weight: 700;
   line-height: 1.15;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.app-logo {
+  flex: 0 0 auto;
+  line-height: 1;
+  background: none;
+  -webkit-text-fill-color: initial;
+  filter: drop-shadow(0 2px 6px rgba(233,30,99,0.16));
+}
+#appHeaderTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .version-tag {
   font-size: 12px;
   color: #999;
   font-weight: 400;
   -webkit-text-fill-color: #999;
+  flex: 0 0 auto;
 }
 .header-actions {
   grid-area: actions;
@@ -84,6 +102,27 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+button,
+.btn,
+.tab,
+.gallery-card,
+.style-pill,
+.cg-size-btn,
+.cg-ref-item,
+.ca-btn,
+.tc-btn,
+.mbtn {
+  touch-action: manipulation;
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid rgba(233,30,99,0.42);
+  outline-offset: 3px;
 }
 .btn-primary {
   background: linear-gradient(135deg, #e91e63, #9c27b0);
@@ -121,8 +160,14 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 6px;
   white-space: nowrap;
+}
+.tab-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 .tab.active {
   background: #fff;
@@ -138,12 +183,12 @@ body {
   padding: 0 5px;
   font-size: 10px;
   font-weight: 600;
-  line-height: 1;
+  line-height: 16px;
   border-radius: 8px;
   background: #ff4757;
   color: #fff;
-  margin-left: 4px;
-  vertical-align: middle;
+  flex: 0 0 auto;
+  transform: translateY(0);
 }
 
 /* ===== Settings Button ===== */
@@ -279,6 +324,9 @@ body {
   gap: 8px;
   margin: 8px 0 10px;
 }
+.sk-segmented.sk-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
 .sk-segmented label {
   margin: 0;
 }
@@ -332,6 +380,16 @@ body {
   color: #777;
   max-height: 72px;
   overflow: hidden;
+}
+.sk-push-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.sk-push-agent {
+  color: #c2185b;
+  font-weight: 800;
 }
 .sk-style-grid {
   display: grid;
@@ -655,9 +713,10 @@ body {
 }
 .sk-cleanup-controls {
   display: grid;
-  grid-template-columns: minmax(135px, 1fr) auto;
+  grid-template-columns: max-content auto;
   align-items: center;
   gap: 8px;
+  justify-content: space-between;
 }
 .sk-cleanup-row {
   display: flex;
@@ -666,7 +725,9 @@ body {
   min-width: 0;
 }
 .sk-cleanup-row select {
+  width: 164px;
   min-width: 0;
+  flex: 0 0 164px;
 }
 .sk-cleanup-row input[type="number"] {
   width: 86px;
@@ -675,16 +736,21 @@ body {
   border-radius: 10px;
 }
 .sk-cleanup-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  justify-content: flex-end;
-  flex-wrap: nowrap;
+  min-width: 116px;
 }
 .sk-cleanup-actions .btn {
   min-width: 0;
-  padding: 8px 11px;
+  width: 100%;
+  min-height: 34px;
+  padding: 8px 10px;
   border-radius: 999px;
   font-size: 12px;
+  line-height: 1;
+  justify-content: center;
+  text-align: center;
   white-space: nowrap;
 }
 .sk-cleanup-result {
@@ -814,9 +880,14 @@ body {
   }
   .sk-cleanup-controls {
     grid-template-columns: 1fr;
+    justify-content: stretch;
   }
-  .sk-cleanup-actions .btn {
-    flex: 1;
+  .sk-cleanup-row select {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+  .sk-cleanup-actions {
+    min-width: 0;
   }
   .egg-style-modal .sk-style-grid {
     grid-template-columns: 1fr;
@@ -1332,12 +1403,14 @@ body {
   z-index: 1;
   justify-content: center;
 }
-.today-compact .modal-info {
+.today-compact .modal-info,
+.modal-content .today-card-info {
   min-height: 0;
   justify-content: flex-start;
-  gap: 14px;
+  gap: 16px;
 }
-.today-compact .today-card-info {
+.today-compact .today-card-info,
+.modal-content .today-card-info {
   flex: 1;
   padding: 18px 16px 16px;
   border-radius: 20px;
@@ -1780,18 +1853,19 @@ body {
   margin-top: 4px;
 }
 .cg-size-group {
-  display: flex;
-  gap: 10px;
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
 }
 .cg-size-btn {
-  flex: 1;
   min-width: 0;
-  padding: 10px 8px;
-  border-radius: 14px;
+  min-height: 58px;
+  padding: 9px 8px;
+  border-radius: 12px;
   border: 1px solid #e0e0e0;
   background: #fff;
-  font-size: 15px;
+  font-size: 14px;
+  font-weight: 700;
   cursor: pointer;
   transition: all 0.2s;
   color: #888;
@@ -1806,6 +1880,28 @@ body {
   margin-top: 2px;
 }
 .cg-size-btn.active small { color: #e91e63; }
+.cg-resolution-group {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.cg-shot-group {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.cg-size-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: #fafafa;
+  color: #777;
+  font-size: 13px;
+}
+.cg-size-hint strong {
+  color: #e91e63;
+  font-size: 14px;
+}
 .cg-ref-grid {
   display: flex;
   flex-wrap: wrap;
@@ -1905,6 +2001,7 @@ body {
 /* Modal meta info */
 .modal-meta {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
   margin-top: -4px;
@@ -1915,7 +2012,40 @@ body {
   background: #f5f3f7;
   padding: 2px 8px;
   border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  line-height: 1.2;
 }
+.modal-reroll-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #f0d3e2;
+  border-radius: 50%;
+  background: #fff;
+  color: #d81b60;
+  font-size: 15px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease, transform 0.16s ease, border-color 0.16s ease;
+}
+.modal-reroll-btn:hover {
+  background: #fce4ec;
+  border-color: #e91e63;
+  transform: rotate(18deg);
+}
+.modal-reroll-btn:disabled {
+  opacity: 0.58;
+  cursor: default;
+  transform: none;
+}
+.modal-reroll-btn.spinning {
+  animation: modalRerollSpin 0.9s linear infinite;
+}
+@keyframes modalRerollSpin { to { transform: rotate(360deg); } }
 
 /* ===== Responsive ===== */
 @media (max-width: 1200px) {
@@ -1952,7 +2082,7 @@ body {
   .today-hero-title .subtitle { font-size: 13px; }
   .today-hero-title .gen-today-btn { font-size: 14px; padding: 10px 24px; }
 }
-@media (max-width: 500px) {
+@media (max-width: 560px) {
   .gallery-list { gap: 10px; }
   .gallery-grid { grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 8px; }
   .big-card-image { min-height: 200px; }
@@ -1971,8 +2101,31 @@ body {
   .settings-btn { width: 38px; height: 38px; }
   .tabs { padding: 3px; }
   .tab { min-height: 40px; padding: 8px 10px; font-size: 14px; }
-  .tab-badge { min-width: 15px; height: 15px; font-size: 9px; padding: 0 4px; margin-left: 2px; }
+  .tab-badge { min-width: 15px; height: 15px; font-size: 9px; line-height: 15px; padding: 0 4px; }
   .container { padding: 16px 14px; }
+  .cg-overlay { padding: 12px; }
+  .cg-modal {
+    width: min(100%, 460px);
+    max-height: calc(100vh - 28px);
+    padding: 20px 16px 18px;
+    border-radius: 20px;
+  }
+  .cg-modal h2 { font-size: 22px; margin-bottom: 14px; }
+  .cg-field { margin-bottom: 13px; }
+  .cg-field label { font-size: 14px; margin-bottom: 7px; }
+  .cg-field textarea { min-height: 82px; padding: 12px 14px; font-size: 14px; border-radius: 12px; }
+  .cg-field .hint { font-size: 12px; line-height: 1.45; }
+  .cg-size-group { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+  .cg-size-btn { min-height: 50px; padding: 7px 6px; font-size: 13px; border-radius: 12px; }
+  .cg-size-btn small { font-size: 10px; margin-top: 1px; }
+  .cg-size-hint { margin-top: 7px; padding: 7px 10px; font-size: 12px; }
+  .cg-ref-grid { gap: 7px; }
+  .cg-ref-item { width: calc((100% - 21px) / 4); border-width: 2px; border-radius: 9px; }
+  .cg-upload-hint { flex-direction: column; align-items: stretch !important; gap: 8px !important; }
+  .cg-upload-label { width: 100%; }
+  .cg-upload-btn { width: 100%; justify-content: center; min-height: 38px; }
+  .cg-actions { margin-top: 14px; padding-top: 12px; gap: 8px; }
+  .cg-actions .btn { flex: 1; min-width: 0; min-height: 42px; padding: 8px 10px; }
   .gallery-list .today-compact .tc-image { height: clamp(190px, 66vw, 320px); }
   .gallery-list .today-compact .tc-info { padding: 12px 14px; gap: 6px; }
   .gallery-list .today-compact .tc-outfit { font-size: 13px; line-height: 1.6; }
@@ -2078,15 +2231,15 @@ body {
 .gallery-grid.cols-4 .gallery-card .card-date-tag { font-size: 12px; padding: 3px 9px; }
 
 /* 🐷 日程彩蛋弹窗 */
-.egg-overlay { position: fixed; inset: 0; background: rgba(32,20,42,0.46); backdrop-filter: blur(10px); z-index: 9999; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.3s; padding: 14px; box-sizing: border-box; }
+.egg-overlay { position: fixed; inset: 0; background: rgba(32,20,42,0.42); backdrop-filter: none; -webkit-backdrop-filter: none; z-index: 9999; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.18s ease; padding: 14px; box-sizing: border-box; }
 .egg-overlay.show { opacity: 1; pointer-events: auto; }
-.egg-card { background: linear-gradient(180deg, #fff, #fff9fc 78%, #fbf8ff); border: 1px solid rgba(255,255,255,0.75); border-radius: 20px; width: min(520px, calc(100vw - 28px)); min-width: 0; max-height: min(82vh, 720px); overflow-y: auto; box-shadow: 0 28px 70px rgba(67,42,91,0.28), 0 0 0 1px rgba(192,132,252,0.08); transform: scale(0.85) translateY(22px); transition: box-shadow 0.25s ease; }
+.egg-card { background: linear-gradient(180deg, #fff, #fff9fc 78%, #fbf8ff); border: 1px solid rgba(255,255,255,0.75); border-radius: 20px; width: min(520px, calc(100vw - 28px)); min-width: 0; max-height: min(82vh, 720px); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; box-shadow: 0 18px 46px rgba(67,42,91,0.22), 0 0 0 1px rgba(192,132,252,0.08); transform: translateY(12px); opacity: 0; transition: transform 0.18s ease, opacity 0.18s ease; contain: layout paint; }
 .egg-card { scrollbar-width: none; -ms-overflow-style: none; }
 .egg-card::-webkit-scrollbar { display: none; }
-.egg-overlay.show .egg-card { transform: scale(1) translateY(0); animation: eggCardBeat 0.68s cubic-bezier(0.2,0.9,0.22,1.18) both; }
+.egg-overlay.show .egg-card { transform: translateY(0); opacity: 1; }
 .egg-header { background: linear-gradient(135deg, #ff6b9d, #c084fc 56%, #818cf8); padding: 23px 22px 18px; border-radius: 20px 20px 0 0; position: relative; overflow: hidden; }
-.egg-header::before { content: ''; position: absolute; inset: -18px; background: radial-gradient(circle, rgba(255,255,255,0.95) 0 1px, transparent 2px) 9% 22% / 78px 78px, radial-gradient(circle, rgba(255,255,255,0.7) 0 1px, transparent 2px) 72% 18% / 96px 96px, radial-gradient(circle, rgba(255,255,255,0.8) 0 1.5px, transparent 3px) 40% 82% / 112px 112px; opacity: 0.78; animation: eggStar 3.4s ease-in-out infinite; pointer-events: none; z-index: 0; }
-.egg-header::after { content: ''; position: absolute; inset: 0; background: radial-gradient(circle at 88% 20%, rgba(255,255,255,0.34), transparent 28%), radial-gradient(circle at 18% 78%, rgba(255,255,255,0.24), transparent 22%); animation: eggStar 4.6s ease-in-out infinite reverse; pointer-events: none; z-index: 0; }
+.egg-header::before { content: ''; position: absolute; inset: -18px; background: radial-gradient(circle, rgba(255,255,255,0.88) 0 1px, transparent 2px) 9% 22% / 78px 78px, radial-gradient(circle, rgba(255,255,255,0.62) 0 1px, transparent 2px) 72% 18% / 96px 96px, radial-gradient(circle, rgba(255,255,255,0.72) 0 1.5px, transparent 3px) 40% 82% / 112px 112px; opacity: 0.68; pointer-events: none; z-index: 0; }
+.egg-header::after { content: ''; position: absolute; inset: 0; background: radial-gradient(circle at 88% 20%, rgba(255,255,255,0.28), transparent 28%), radial-gradient(circle at 18% 78%, rgba(255,255,255,0.18), transparent 22%); pointer-events: none; z-index: 0; }
 .egg-header h2 { color: #fff; font-size: 22px; margin: 0; font-family: 'ZCOOL KuaiLe', cursive; text-shadow: 0 2px 10px rgba(64,24,80,0.22); position: relative; z-index: 1; }
 .egg-header .egg-date { color: rgba(255,255,255,0.88); font-size: 13px; margin-top: 6px; position: relative; z-index: 1; }
 .egg-close { position: absolute; top: 16px; right: 18px; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.24); color: #fff; width: 32px; height: 32px; border-radius: 50%; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s, transform 0.2s; z-index: 2; }
@@ -2097,8 +2250,8 @@ body {
 .egg-section-title { font-size: 14px; font-weight: 700; color: #8b5cf6; margin-bottom: 11px; display: flex; align-items: center; gap: 6px; }
 .egg-section-title .icon { font-size: 16px; }
 .egg-outfit-grid { display: flex; flex-direction: column; gap: 10px; }
-.egg-outfit-item { background: rgba(255,255,255,0.65); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid rgba(240,226,255,0.9); border-radius: 14px; padding: 12px 14px; width: 100%; box-sizing: border-box; box-shadow: 0 8px 18px rgba(168,85,247,0.06); transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease; }
-.egg-outfit-item:hover { transform: translateY(-2px); box-shadow: 0 14px 28px rgba(168,85,247,0.14), 0 4px 12px rgba(255,107,157,0.08); border-color: rgba(228,202,255,0.95); }
+.egg-outfit-item { background: rgba(255,255,255,0.88); backdrop-filter: none; -webkit-backdrop-filter: none; border: 1px solid rgba(240,226,255,0.9); border-radius: 14px; padding: 12px 14px; width: 100%; box-sizing: border-box; box-shadow: 0 3px 12px rgba(168,85,247,0.05); transition: background 0.16s ease, border-color 0.16s ease; }
+.egg-outfit-item:hover { background: #fff; border-color: rgba(228,202,255,0.95); }
 .egg-outfit-label { font-size: 11px; color: #a78bfa; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
 .egg-outfit-value { font-size: 14px; color: #333; line-height: 1.58; overflow-wrap: anywhere; }
 .egg-outfit-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
@@ -2121,7 +2274,7 @@ body {
 .egg-sched-item::before { content: ''; position: absolute; left: -22px; top: 14px; width: 12px; height: 12px; border-radius: 50%; border: 2px solid #c084fc; background: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,0.9); }
 .egg-sched-item.past { opacity: 0.5; }
 .egg-sched-item.past::before { border-color: #10b981; background: #10b981; }
-.egg-sched-item.now::before { border-color: #ff6b9d; background: #ff2d8d; box-shadow: 0 0 0 3px rgba(255,255,255,0.95), 0 0 0 7px rgba(255,107,157,0.16), 0 0 18px rgba(255,45,141,0.5); animation: eggNowDot 1.18s ease-in-out infinite; }
+.egg-sched-item.now::before { border-color: #ff6b9d; background: #ff2d8d; box-shadow: 0 0 0 3px rgba(255,255,255,0.95), 0 0 0 7px rgba(255,107,157,0.16), 0 0 16px rgba(255,45,141,0.38); }
 .egg-sched-item.future::before { border-color: #c084fc; background: #fff; }
 .egg-sched-time { font-size: 13px; font-weight: 700; color: #ff6b9d; font-variant-numeric: tabular-nums; }
 .egg-sched-activity { font-size: 14px; color: #444; margin-top: 2px; line-height: 1.5; }
@@ -2156,9 +2309,9 @@ body {
 .egg-photo-retry-btn { height: 24px; border: 0; border-radius: 8px; padding: 0 10px; background: #ff5fa2; color: #fff; font-size: 11px; font-weight: 800; cursor: pointer; margin-left: auto; }
 .egg-photo-retry-btn:disabled { opacity: 0.55; cursor: default; }
 .egg-header .egg-date-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; position: relative; z-index: 1; }
-.egg-refresh-btn { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.24); color: #fff; width: 32px; height: 32px; border-radius: 10px; font-size: 15px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: all 0.25s ease; padding: 0; line-height: 1; flex-shrink: 0; backdrop-filter: blur(4px); box-shadow: inset 0 1px 0 rgba(255,255,255,0.18); }
-.egg-refresh-btn:hover { background: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.4); transform: scale(1.08); }
-.egg-refresh-btn:active { transform: scale(0.95); }
+.egg-refresh-btn { background: rgba(255,255,255,0.18); border: 1px solid rgba(255,255,255,0.24); color: #fff; width: 32px; height: 32px; border-radius: 10px; font-size: 15px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background 0.16s ease, border-color 0.16s ease; padding: 0; line-height: 1; flex-shrink: 0; backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; }
+.egg-refresh-btn:hover { background: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.4); }
+.egg-refresh-btn:active { background: rgba(255,255,255,0.22); }
 .egg-refresh-btn.spinning .egg-refresh-icon { animation: eggSpin 0.8s ease-in-out; }
 .egg-refresh-icon { display: inline-block; }
 @keyframes eggSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -2166,6 +2319,30 @@ body {
 @keyframes eggNowDot { 0%, 100% { transform: scale(0.88); opacity: 0.78; } 50% { transform: scale(1.15); opacity: 1; } }
 @keyframes eggCardBeat { 0% { transform: scale(0.85) translateY(22px); } 54% { transform: scale(1.035) translateY(-2px); } 70% { transform: scale(0.985) translateY(1px); } 86% { transform: scale(1.012) translateY(0); } 100% { transform: scale(1) translateY(0); } }
 .egg-slot-empty { opacity: 0.5; font-style: italic; }
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+  .egg-overlay,
+  .egg-card,
+  .egg-refresh-btn,
+  .egg-outfit-item,
+  .gallery-card,
+  .gallery-card .card-img-wrap img,
+  .modal-image img,
+  .modal-style,
+  .modal-actions .mbtn,
+  .today-compact,
+  .today-compact img {
+    transform: none !important;
+    animation: none !important;
+  }
+}
 
 /* 📝 提示词弹窗 */
 .prompt-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(6px); z-index: 10000; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
@@ -2239,12 +2416,12 @@ body {
 
 <div class="header">
   <div class="header-left">
-    <h1 style="user-select:none;"><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.1.3</span></h1>
+    <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.1.4</span></h1>
   </div>
   <div class="tabs">
-    <button class="tab" data-tab="gallery" onclick="switchTab('gallery')">✨ 全部 <span class="tab-badge" id="badge-all">0</span></button>
-    <button class="tab" data-tab="today" onclick="switchTab('today')">🌸 今日 <span class="tab-badge" id="badge-today">0</span></button>
-    <button class="tab" data-tab="favorites" onclick="switchTab('favorites')">❤️ 收藏 <span class="tab-badge" id="badge-favorites">0</span></button>
+    <button class="tab" data-tab="gallery" onclick="switchTab('gallery')"><span class="tab-label">✨ 全部</span><span class="tab-badge" id="badge-all">0</span></button>
+    <button class="tab" data-tab="today" onclick="switchTab('today')"><span class="tab-label">🌸 今日</span><span class="tab-badge" id="badge-today">0</span></button>
+    <button class="tab" data-tab="favorites" onclick="switchTab('favorites')"><span class="tab-label">❤️ 收藏</span><span class="tab-badge" id="badge-favorites">0</span></button>
   </div>
   <div class="header-actions">
     <button class="btn btn-primary header-gen-btn" onclick="openCustomGen()">🎀 穿搭生成</button>
@@ -2321,6 +2498,25 @@ body {
         <option value="">加载中...</option>
       </select>
       <div class="sk-status" id="skLlmModelStatus">加载中...</div>
+    </div>
+    <div class="sk-field">
+      <label>📮 推送渠道</label>
+      <div class="sk-desc">生图完成后的发送目标；发送机器人会跟随人设来源自动选择</div>
+      <div class="sk-segmented sk-two" id="skPushChannelGroup">
+        <label>
+          <input type="radio" name="skPushChannel" value="telegram" onchange="setPushChannel(this.value)">
+          <span>TG</span>
+        </label>
+        <label>
+          <input type="radio" name="skPushChannel" value="wechat" onchange="setPushChannel(this.value)">
+          <span>微信</span>
+        </label>
+      </div>
+      <div class="sk-persona-preview sk-push-preview">
+        <span>发送机器人</span>
+        <span class="sk-push-agent" id="skPushAgent">自动</span>
+      </div>
+      <div class="sk-status" id="skPushStatus">加载中...</div>
     </div>
     <div class="sk-field">
       <label for="skGiteeKey">Gitee API Key</label>
@@ -2412,7 +2608,7 @@ body {
       <div class="sk-footer-main">
         <div class="sk-update-row">
           <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
-          <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.1.3</span></span>
+          <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.1.4</span></span>
         </div>
         <div class="sk-actions">
           <button class="btn btn-secondary" onclick="closeSettings()">关闭</button>
@@ -2436,13 +2632,33 @@ body {
       <div class="hint">支持中英文，越详细效果越好哦～</div>
     </div>
     <div class="cg-field">
-      <label>图片尺寸</label>
-      <div class="cg-size-group" id="cgSizeGroup">
-        <button class="cg-size-btn active" data-size="1024x1024">1:1 <small>1024x1024</small></button>
-        <button class="cg-size-btn" data-size="768x1024">3:4 <small>768x1024</small></button>
-        <button class="cg-size-btn" data-size="1024x768">4:3 <small>1024x768</small></button>
-        <button class="cg-size-btn" data-size="1024x1536">2:3 <small>1024x1536</small></button>
-        <button class="cg-size-btn" data-size="768x1366">9:16 <small>768x1366</small></button>
+      <label>图片比例</label>
+      <div class="cg-size-group" id="cgAspectGroup">
+        <button class="cg-size-btn active" data-aspect="1:1">1:1 <small>方图</small></button>
+        <button class="cg-size-btn" data-aspect="3:4">3:4 <small>竖图</small></button>
+        <button class="cg-size-btn" data-aspect="4:3">4:3 <small>横图</small></button>
+        <button class="cg-size-btn" data-aspect="2:3">2:3 <small>长竖</small></button>
+        <button class="cg-size-btn" data-aspect="9:16">9:16 <small>手机</small></button>
+      </div>
+    </div>
+    <div class="cg-field">
+      <label>分辨率</label>
+      <div class="cg-size-group cg-resolution-group" id="cgResolutionGroup">
+        <button class="cg-size-btn active" data-resolution="1k">1K <small>默认</small></button>
+        <button class="cg-size-btn" data-resolution="2k">2K <small>高清</small></button>
+        <button class="cg-size-btn" data-resolution="4k">4K <small>超清</small></button>
+      </div>
+      <div class="cg-size-hint">
+        <span>实际尺寸</span>
+        <strong id="cgSizeHint">1024x1024</strong>
+      </div>
+    </div>
+    <div class="cg-field">
+      <label>拍摄视角</label>
+      <div class="cg-size-group cg-shot-group" id="cgShotGroup">
+        <button class="cg-size-btn active" data-shot="selfie">自拍 <small>手持手机</small></button>
+        <button class="cg-size-btn" data-shot="half_body">半身照 <small>穿搭</small></button>
+        <button class="cg-size-btn" data-shot="full_body">全身照 <small>全套</small></button>
       </div>
     </div>
     <div class="cg-field">
@@ -2452,7 +2668,7 @@ body {
           <div class="cg-ref-none">📸</div>
         </div>
       </div>
-      <div class="hint" style="margin-top:8px;display:flex;align-items:center;gap:10px;">
+      <div class="hint cg-upload-hint" style="margin-top:8px;display:flex;align-items:center;gap:10px;">
         <span style="color:#999">选择上传的参考图（脸型/穿搭风格），或上传新图</span>
         <label class="cg-upload-label">
           <input type="file" id="cgRefUpload" accept="image/*" style="display:none" onchange="uploadRefImage(event)">
@@ -2517,6 +2733,8 @@ let showFavoritesOnly = false;
 let showTodayOnly = false;
 let photoRetryPollTimer = null;
 let settingsSnapshot = null;
+let scheduleEggCache = { html: "", dateText: "", updatedAt: 0 };
+let scheduleEggRequest = null;
 const appDisplay = {
   title: "每日穿搭画廊",
   characterName: "角色",
@@ -2527,13 +2745,17 @@ function compactDisplayText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+function cleanGalleryTitle(value) {
+  return compactDisplayText(value).replace(/^🖼️?\s*/, "");
+}
+
 function resolvedCharacterName(data) {
   const resolved = data && data.resolved_persona ? data.resolved_persona : {};
   return compactDisplayText(resolved.name || data?.character_name || data?.name || appDisplay.characterName || "角色");
 }
 
 function resolvedGalleryTitle(data) {
-  const configuredTitle = compactDisplayText(data && data.gallery_title);
+  const configuredTitle = cleanGalleryTitle(data && data.gallery_title);
   if (configuredTitle) return configuredTitle;
   const name = resolvedCharacterName(data);
   return name && name !== "角色" ? `${name}穿搭画廊` : "每日穿搭画廊";
@@ -2581,6 +2803,38 @@ function clearFilter() {
 function filterByTag(tag) {
   currentTagFilter = tag.replace(/^#/, '');
   switchTab('gallery');
+}
+
+function isBaseModelStyle(style) {
+  return ["cool", "girly", "sweet"].includes(String(style || "").trim().toLowerCase());
+}
+
+function displayOutfitStyle(e) {
+  const style = String((e && e.outfit_style) || "").trim();
+  if (!style) return "";
+  return isBaseModelStyle(style) ? "自定义" : style;
+}
+
+function displayBaseStyle(e) {
+  const style = String((e && e.base_style) || "").trim();
+  if (!style) return "";
+  return style;
+}
+
+function displayReferenceMeta(e) {
+  const style = displayBaseStyle(e);
+  if (!style) return "";
+  return `🖼 ${style}`;
+}
+
+function matchesOutfitStyleFilter(e, filterLower) {
+  const rawStyle = String((e && e.outfit_style) || "").trim();
+  const displayStyle = displayOutfitStyle(e);
+  const needle = String(filterLower || "").trim().toLowerCase();
+  if (!needle) return true;
+  if (rawStyle && rawStyle.toLowerCase() === needle) return true;
+  if (displayStyle && displayStyle.toLowerCase() === needle) return true;
+  return needle === "自定义".toLowerCase() && isBaseModelStyle(rawStyle);
 }
 
 function showToast(msg, d = 3000) {
@@ -2733,6 +2987,25 @@ function renderThoughtBlock(caption, className = "tc-thought") {
   return `<div class="${className}"><span class="tc-thought-label" title="思考" aria-label="思考">💭</span><span class="tc-thought-text">${captionHtml}</span></div>`;
 }
 
+function modalSourceLabel(e) {
+  const source = String((e && e.source) || "").toLowerCase();
+  if (e && e.metadata_only) return "聊天生图";
+  if (source === "chat") return "聊天生图";
+  if (source === "custom") return "自定义生图";
+  if (source === "web") return "即时生图";
+  if (source === "cron") return "日程生图";
+  if (source === "import" || source === "recovered" || source === "file") return "历史导入";
+  return "";
+}
+
+function modalSourceContext(e) {
+  const label = modalSourceLabel(e);
+  if (!label) return "";
+  const style = displayOutfitStyle(e);
+  if (style && style !== "自定义" && !label.includes(style)) return `${label} · ${style}`;
+  return label;
+}
+
 function openTodayModal(filename) {
   // Find the entry from todayData photos or allEntries
   const photos = (todayData && todayData.photos) ? todayData.photos : [];
@@ -2822,10 +3095,10 @@ function renderToday() {
         <div class="modal-info today-card-info">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
             <span class="modal-date" style="margin:0;padding:0;background:none;">${dateText} ${timeLabel}</span>
-            ${today.outfit_style ? `<span class="modal-style" onclick="event.stopPropagation();filterByTag('${today.outfit_style}');">${today.outfit_style}</span>` : ""}
+            ${displayOutfitStyle(today) ? `<span class="modal-style" onclick="event.stopPropagation();filterByTag('${displayOutfitStyle(today)}');">${displayOutfitStyle(today)}</span>` : ""}
           </div>
           <div>
-            <span class="modal-meta" style="margin:0;padding:0;background:none;">${today.model_name ? `<span class="meta-tag">🤖 ${today.model_name}</span>` : ""}${today.base_style ? `<span class="meta-tag">🎨 ${today.base_style}</span>` : ""}</span>
+            <span class="modal-meta" style="margin:0;padding:0;background:none;">${today.model_name ? `<span class="meta-tag">🤖 ${today.model_name}</span>` : ""}${displayReferenceMeta(today) ? `<span class="meta-tag">${displayReferenceMeta(today)}</span>` : ""}</span>
           </div>
           <div class="modal-outfit">${outfitText ? `<span class="outfit-label">穿搭</span><span class="outfit-divider">|</span><span class="outfit-text">${outfitText}</span>` : '--'}</div>
           ${schedHtml ? `<div class="modal-schedule">${schedHtml}</div>` : ""}
@@ -2882,8 +3155,8 @@ function renderGallery() {
   if (currentTagFilter) {
     const filterLower = currentTagFilter.toLowerCase();
     filtered = filtered.filter(e => {
-      // Match against outfit_style field
-      if (e.outfit_style && e.outfit_style.toLowerCase() === filterLower) return true;
+      // Match against normalized display style.
+      if (matchesOutfitStyleFilter(e, filterLower)) return true;
       // Also match against caption hashtags as fallback
       if (e.caption) {
         const tags = e.caption.match(/#[^\s#]+/g) || [];
@@ -2940,7 +3213,7 @@ function renderGallery() {
   }
   // Style filter bar for gallery tab
   if (!showTodayOnly && !showFavoritesOnly) {
-    const styles = [...new Set(allEntries.map(e => e.outfit_style).filter(Boolean))].sort();
+    const styles = [...new Set(allEntries.map(e => displayOutfitStyle(e)).filter(Boolean))].sort();
     if (styles.length) {
       const stylePills = styles.map(s => {
         const active = currentTagFilter && currentTagFilter.toLowerCase() === s.toLowerCase();
@@ -2968,7 +3241,8 @@ function renderGallery() {
           const timeDisplay = e.time ? e.time : "";
           let metaHtml = "";
           if (e.model_name) metaHtml += `<span class="tc-meta-tag">🤖 ${e.model_name}</span>`;
-          if (e.base_style) metaHtml += `<span class="tc-meta-tag">🎨 ${e.base_style}</span>`;
+          const referenceLabel = displayReferenceMeta(e);
+          if (referenceLabel) metaHtml += `<span class="tc-meta-tag">${referenceLabel}</span>`;
           // Period row: show matching schedule period or fallback to time
           let periodHtml = '';
           if (showTodayOnly) {
@@ -2988,7 +3262,7 @@ function renderGallery() {
               <div class="tc-info">
                 <div class="tc-top">
                   <span class="tc-date">${formatDate(e.date)}${timeDisplay ? ' ' + timeDisplay : ''}</span>
-                  ${e.outfit_style ? `<span class="tc-style" onclick="event.stopPropagation();filterByTag('${e.outfit_style}')">${e.outfit_style}</span>` : ''}
+                  ${displayOutfitStyle(e) ? `<span class="tc-style" onclick="event.stopPropagation();filterByTag('${displayOutfitStyle(e)}')">${displayOutfitStyle(e)}</span>` : ''}
                   ${metaHtml ? `<div class="tc-meta">${metaHtml}</div>` : ''}
                 </div>
                 <div class="tc-outfit">${e.outfit || '--'}</div>
@@ -3009,11 +3283,13 @@ function renderGallery() {
           const imgHtml = e.image_filename
             ? `<img src="/images/${e.image_filename}" alt="${e.date}" loading="lazy">`
             : `<div class="img-placeholder">📸</div>`;
-          const styleTag = e.outfit_style ? `<span class="card-style-tag" onclick="event.stopPropagation();filterByTag('${e.outfit_style}');">${e.outfit_style}</span>` : "";
+          const displayStyle = displayOutfitStyle(e);
+          const styleTag = displayStyle ? `<span class="card-style-tag" onclick="event.stopPropagation();filterByTag('${displayStyle}');">${displayStyle}</span>` : "";
           const timeDisplay = e.time ? e.time : "";
           let metaHtml = "";
           if (e.model_name) metaHtml += `<span class="meta-tag">🤖 ${e.model_name}</span>`;
-          if (e.base_style) metaHtml += `<span class="meta-tag">🎨 ${e.base_style}</span>`;
+          const referenceLabel = displayReferenceMeta(e);
+          if (referenceLabel) metaHtml += `<span class="meta-tag">${referenceLabel}</span>`;
           return `
             <div class="gallery-card" onclick="event.stopPropagation();openModal(allEntries.find(x=>x.image_filename==='${e.image_filename}'))">
               <div class="card-img-wrap">
@@ -3113,7 +3389,7 @@ ms.textContent = `
 @keyframes fadeIn { from{opacity:0} to{opacity:1} }
 .modal-content {
   background:#fff;border-radius:20px;max-width:960px;width:100%;
-  max-height:85vh;overflow-y:auto;display:flex;flex-direction:row;
+  max-height:85vh;overflow-y:auto;display:flex;flex-direction:row;align-items:stretch;
   box-shadow:0 25px 80px rgba(20,10,30,0.25);animation:slideUp 0.3s cubic-bezier(0.16,1,0.3,1);position:relative;
   border:1px solid rgba(255,255,255,0.3);
 }
@@ -3122,7 +3398,7 @@ ms.textContent = `
 .modal-content::-webkit-scrollbar-thumb { background: rgba(200,170,210,0.3); border-radius: 10px; }
 .modal-content::-webkit-scrollbar-thumb:hover { background: rgba(200,170,210,0.5); }
 @keyframes slideUp { from{opacity:0;transform:translateY(24px) scale(0.98)} to{opacity:1;transform:translateY(0) scale(1)} }
-.modal-image { flex:0 0 40%;background:#f0ecf4;display:flex;min-height:400px;overflow:hidden;border-radius:20px 0 0 20px;cursor:pointer; }
+.modal-image { flex:0 0 40%;background:#f0ecf4;display:flex;align-self:stretch;min-height:320px;overflow:hidden;border-radius:20px 0 0 20px;cursor:pointer; }
 .modal-image img { width:100%;height:100%;object-fit:cover;transition:transform 0.4s; }
 .modal-image img:hover { transform:scale(1.03); }
 /* Fullscreen image viewer */
@@ -3138,14 +3414,23 @@ ms.textContent = `
 .modal-outfit .outfit-label { background:#fff;color:#e91e63;padding:3px 14px;border-radius:14px;font-size:13px;font-weight:600;letter-spacing:0.5px;white-space:nowrap;border:1.5px solid #e91e63;box-shadow:0 2px 6px rgba(233,30,99,0.12); }
 .modal-outfit .outfit-divider { color:#ccc;font-size:14px; }
 .modal-outfit .outfit-text { color:#555;flex:1;min-width:200px; }
-.today-compact .modal-outfit .outfit-text { white-space:normal;overflow:visible;text-overflow:clip;max-width:none;-webkit-line-clamp:unset;display:block; }
-.today-compact .modal-outfit { padding:8px 0; }
-.today-compact .modal-schedule { margin-top:4px; }
-.today-compact .modal-caption.tc-thought { margin-top:6px; }
+.today-compact .modal-outfit .outfit-text,
+.modal-content .today-card-info .modal-outfit .outfit-text { white-space:normal;overflow:visible;text-overflow:clip;max-width:none;-webkit-line-clamp:unset;display:block; }
+.today-compact .modal-outfit,
+.modal-content .today-card-info .modal-outfit { padding:8px 0; }
+.today-compact .modal-schedule,
+.modal-content .today-card-info .modal-schedule { margin-top:4px; }
+.today-compact .modal-caption.tc-thought,
+.modal-content .today-card-info .modal-caption.tc-thought { margin-top:6px; }
+.modal-content .today-card-info .modal-info-top { margin-bottom:6px; }
+.modal-content .today-card-info .modal-meta { margin:0; }
 .modal-schedule { background:linear-gradient(135deg,#faf5ff,#fce4ec20);border-radius:14px;padding:12px 18px;font-size:15px;line-height:1.8;color:#555;max-height:200px;overflow-y:auto;border:1px solid #f0e8f4; }
 .modal-schedule .sched-item { padding: 5px 0; display: flex; align-items: baseline; gap: 10px; }
 .modal-schedule .sched-item .sched-label { font-weight: 700; color: #e91e63; white-space: nowrap; font-size: 15px; min-width: 56px; }
 .modal-schedule .sched-item .sched-text { color: #555; }
+.modal-schedule .modal-source-item { align-items:center; }
+.modal-schedule .modal-source-item .sched-label { color:#9c27b0; }
+.modal-schedule .modal-source-item .sched-text { color:#666; font-weight:600; }
 .modal-caption { font-size:15px;color:#d81b60;font-style:italic;padding:12px 0 0;line-height:1.8; }
 .modal-caption.tc-thought { padding:8px 10px;font-style:normal;line-height:1.55;color:#8a245d; }
 .modal-caption .tag-link { color: #7b1fa2; text-decoration: none; font-weight: 600; cursor: pointer; transition:color 0.15s; }
@@ -3158,7 +3443,19 @@ ms.textContent = `
   padding-top: 6px;
   gap: 7px;
 }
-.today-compact .modal-actions .mbtn {
+.modal-content .today-card-info .modal-actions {
+  margin-top: auto;
+  padding-top: 10px;
+  gap: 7px;
+}
+.modal-content.modal-fit-detail {
+  height: var(--modal-detail-height);
+}
+.modal-content.modal-fit-detail .modal-image {
+  min-height: 0;
+}
+.today-compact .modal-actions .mbtn,
+.modal-content .today-card-info .modal-actions .mbtn {
   min-height: 32px;
   padding: 5px 2px;
   border-radius: 10px;
@@ -3169,9 +3466,15 @@ ms.textContent = `
 .modal-actions .mbtn .fav-icon { font-size: 18px; line-height: 1; display:inline-block; }
 @keyframes zoomIn { from{opacity:0;transform:scale(0.9)} to{opacity:1;transform:scale(1)} }
 @media(max-width:768px){
-  .modal-content { flex-direction:column;max-height:95vh;border-radius:20px; }
-  .modal-image { flex:unset;min-height:280px;border-radius:20px 20px 0 0; }
-  .modal-info { padding:20px; }
+  .modal-overlay.open { align-items:flex-end; }
+  .modal-content { flex-direction:column;align-items:stretch;max-height:calc(100vh - 48px);border-radius:20px; }
+  .modal-image { flex:0 0 auto;width:100%;height:clamp(330px,74vw,500px);min-height:0;max-height:none;border-radius:20px 20px 0 0; }
+  .modal-info { padding:22px 20px 18px; }
+  .modal-content .today-card-info { flex:1 1 auto;min-height:0;gap:16px; }
+  .modal-content .today-card-info .modal-schedule { margin-top:6px; }
+  .modal-content .today-card-info .modal-caption.tc-thought { margin-top:8px;padding:10px 12px; }
+  .modal-content .today-card-info .modal-actions { margin-top:auto; }
+  .modal-content.modal-fit-detail { height:auto; }
 }
 }`;
 document.head.appendChild(ms);
@@ -3182,9 +3485,9 @@ modalOverlay.className = "modal-overlay";
 modalOverlay.id = "modalOverlay";
 modalOverlay.onclick = (e) => { if (e.target === modalOverlay) closeModal(); };
 modalOverlay.innerHTML = `
-  <div class="modal-content" onclick="event.stopPropagation()">
+  <div class="modal-content" id="modalContent" onclick="event.stopPropagation()">
     <div class="modal-image" id="modalImageWrap"></div>
-    <div class="modal-info">
+    <div class="modal-info today-card-info">
       <div class="modal-info-top">
         <span class="modal-date" id="modalDate"></span>
         <span class="modal-style" id="modalStyle" onclick="event.stopPropagation();filterByTag(this.textContent);"></span>
@@ -3216,18 +3519,59 @@ function openFullscreenImg(src) {
 }
 
 let currentModalImg = '';
+function resetModalDetailHeight() {
+  const modal = document.getElementById("modalContent");
+  if (!modal) return;
+  modal.classList.remove("modal-fit-detail");
+  modal.style.removeProperty("--modal-detail-height");
+}
+function syncModalDetailHeight() {
+  const modal = document.getElementById("modalContent");
+  if (!modal || !modalOverlay.classList.contains("open")) return;
+  resetModalDetailHeight();
+  if (window.matchMedia("(max-width: 768px)").matches) return;
+  requestAnimationFrame(() => {
+    const info = modal.querySelector(".modal-info");
+    const actions = modal.querySelector(".modal-actions");
+    if (!info || !actions) return;
+    const visibleBlocks = Array.from(info.children).filter(el => {
+      if (el === actions) return false;
+      return getComputedStyle(el).display !== "none";
+    });
+    const lastBlock = visibleBlocks[visibleBlocks.length - 1];
+    if (!lastBlock) return;
+    const modalRect = modal.getBoundingClientRect();
+    const lastRect = lastBlock.getBoundingClientRect();
+    const actionsRect = actions.getBoundingClientRect();
+    const currentGap = actionsRect.top - lastRect.bottom;
+    const targetGap = 22;
+    const surplus = currentGap - targetGap;
+    if (surplus <= 24) return;
+    const maxHeight = Math.floor(window.innerHeight * 0.85);
+    const minHeight = Math.min(maxHeight, 390);
+    const nextHeight = Math.min(maxHeight, Math.max(minHeight, Math.ceil(modalRect.height - surplus)));
+    modal.style.setProperty("--modal-detail-height", `${nextHeight}px`);
+    modal.classList.add("modal-fit-detail");
+  });
+}
 function openModal(e) {
   if (!e.image_filename) return;
   currentModalImg = e.image_filename;
+  resetModalDetailHeight();
   document.getElementById("modalImageWrap").innerHTML = `<img src="/images/${e.image_filename}" alt="${e.caption || appDisplay.shareTitle}" onclick="openFullscreenImg('/images/${e.image_filename}')">`;
+  const modalImg = document.querySelector("#modalImageWrap img");
+  if (modalImg) modalImg.onload = syncModalDetailHeight;
   document.getElementById("modalDate").textContent = formatDate(e.date) + (e.time ? ' ' + e.time : '');
   const styleEl = document.getElementById("modalStyle");
-  if (e.outfit_style) { styleEl.textContent = e.outfit_style; styleEl.style.display = "inline-block"; }
+  const displayStyle = displayOutfitStyle(e);
+  if (displayStyle) { styleEl.textContent = displayStyle; styleEl.style.display = "inline-block"; }
   else { styleEl.style.display = "none"; }
   // Meta tags (model + base_style)
   let metaHtml = "";
   if (e.model_name) metaHtml += `<span class="meta-tag">🤖 ${e.model_name}</span>`;
-  if (e.base_style) metaHtml += `<span class="meta-tag">🎨 ${e.base_style}</span>`;
+  const referenceLabel = displayReferenceMeta(e);
+  if (referenceLabel) metaHtml += `<span class="meta-tag">${referenceLabel}</span>`;
+  if (e.prompt) metaHtml += `<button class="modal-reroll-btn" id="modalRerollBtn" onclick="rerollModalImage(event)" title="抽卡新图" aria-label="抽卡新图">↻</button>`;
   document.getElementById("modalMeta").innerHTML = metaHtml;
   document.getElementById("modalMeta").style.display = metaHtml ? "flex" : "none";
   document.getElementById("modalOutfit").innerHTML = e.outfit
@@ -3236,7 +3580,7 @@ function openModal(e) {
   // Schedule
   const schedEl = document.getElementById("modalSchedule");
   if (e.schedule_time) {
-    schedEl.innerHTML = `<div class="sched-item"><span class="sched-label">⏰</span><span class="sched-text">${e.schedule_time}</span></div>`;
+    schedEl.innerHTML = `<div class="sched-item"><span class="sched-text">${e.schedule_time}</span></div>`;
     schedEl.style.display = "block";
   } else if (e.schedule) {
     const parsed = parseSchedule(e.schedule);
@@ -3248,8 +3592,20 @@ function openModal(e) {
         return `<div class="sched-item"><span class="sched-text">${text}</span></div>`;
       }).join('');
       schedEl.style.display = "block";
+    } else {
+      const contextText = modalSourceContext(e);
+      if (contextText) {
+        schedEl.innerHTML = `<div class="sched-item modal-source-item"><span class="sched-label">来源</span><span class="sched-text">${contextText}</span></div>`;
+        schedEl.style.display = "block";
+      } else { schedEl.style.display = "none"; }
+    }
+  } else {
+    const contextText = modalSourceContext(e);
+    if (contextText) {
+      schedEl.innerHTML = `<div class="sched-item modal-source-item"><span class="sched-label">来源</span><span class="sched-text">${contextText}</span></div>`;
+      schedEl.style.display = "block";
     } else { schedEl.style.display = "none"; }
-  } else { schedEl.style.display = "none"; }
+  }
   // Caption
   const capEl = document.getElementById("modalCaption");
   if (e.caption) {
@@ -3262,11 +3618,16 @@ function openModal(e) {
   document.getElementById("modalPromptBtn").setAttribute("data-prompt", encodeURIComponent(e.prompt || ""));
   modalOverlay.classList.add("open");
   document.body.style.overflow = "hidden";
+  syncModalDetailHeight();
 }
 function closeModal() {
   modalOverlay.classList.remove("open");
   document.body.style.overflow = "";
+  resetModalDetailHeight();
 }
+window.addEventListener("resize", () => {
+  if (modalOverlay.classList.contains("open")) syncModalDetailHeight();
+});
 function updateModalFavBtn(isFav) {
   const btn = document.getElementById("modalFav");
   if (isFav) { btn.innerHTML = '<span class="fav-icon">🩷</span> 已收藏'; btn.classList.add("active"); }
@@ -3292,6 +3653,44 @@ function modalDelete() {
   if (!currentModalImg) return;
   closeModal();
   deleteImage(currentModalImg);
+}
+
+async function rerollModalImage(event) {
+  if (event) event.stopPropagation();
+  if (!currentModalImg) return;
+  const btn = document.getElementById("modalRerollBtn");
+  if (btn && btn.disabled) return;
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add("spinning");
+    btn.textContent = "⟳";
+  }
+  showToast("🎲 正在抽一张新图...");
+  try {
+    const res = await fetch(`${API}/api/images/${encodeURIComponent(currentModalImg)}/reroll`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({})
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) {
+      showToast("❌ 抽卡失败" + (data.error ? ": " + data.error : ""));
+      return;
+    }
+    await loadGallery();
+    const fresh = allEntries.find(x => x.image_filename === data.image_filename) || data;
+    showToast("✨ 新图抽好啦");
+    openModal(fresh);
+  } catch(e) {
+    showToast("❌ " + e.message);
+  } finally {
+    const activeBtn = document.getElementById("modalRerollBtn");
+    if (activeBtn) {
+      activeBtn.disabled = false;
+      activeBtn.classList.remove("spinning");
+      activeBtn.textContent = "↻";
+    }
+  }
 }
 
 // ===== Delete & Share =====
@@ -3363,9 +3762,58 @@ function shareImage(imgId, event) {
 }
 
 // ===== Custom Gen Modal =====
+const CG_SIZE_MAP = {
+  "1:1": { "1k": "1024x1024", "2k": "2048x2048", "4k": "4096x4096" },
+  "3:4": { "1k": "768x1024", "2k": "1536x2048", "4k": "3072x4096" },
+  "4:3": { "1k": "1024x768", "2k": "2048x1536", "4k": "4096x3072" },
+  "2:3": { "1k": "1024x1536", "2k": "1365x2048", "4k": "2731x4096" },
+  "9:16": { "1k": "768x1366", "2k": "1152x2048", "4k": "2304x4096" }
+};
+const BUILTIN_REF_FALLBACKS = [
+  { filename: "reference_face.jpg", url: "/local-refs/reference_face.jpg", style: "cool", label: "冷御风", builtin: true },
+  { filename: "ref_style_girly.jpg", url: "/local-refs/ref_style_girly.jpg", style: "girly", label: "少女风", builtin: true },
+  { filename: "ref_style_sweet.jpg", url: "/local-refs/ref_style_sweet.jpg", style: "sweet", label: "甜妹风", builtin: true }
+];
+
+function selectedCustomGenValue(groupId, key, fallback) {
+  const btn = document.querySelector(`#${groupId} .cg-size-btn.active`);
+  return btn && btn.dataset[key] ? btn.dataset[key] : fallback;
+}
+
+function getCustomGenSize() {
+  const aspect = selectedCustomGenValue("cgAspectGroup", "aspect", "1:1");
+  const resolution = selectedCustomGenValue("cgResolutionGroup", "resolution", "1k");
+  const size = (CG_SIZE_MAP[aspect] && CG_SIZE_MAP[aspect][resolution]) || CG_SIZE_MAP["1:1"]["1k"];
+  return { aspect, resolution, size };
+}
+
+function getCustomShotType() {
+  return selectedCustomGenValue("cgShotGroup", "shot", "selfie");
+}
+
+function updateCustomSizeHint() {
+  const hint = document.getElementById("cgSizeHint");
+  if (!hint) return;
+  const selected = getCustomGenSize();
+  hint.textContent = selected.size;
+}
+
+function bindCustomGenOptionGroup(groupId) {
+  const group = document.getElementById(groupId);
+  if (!group) return;
+  group.addEventListener("click", e => {
+    const btn = e.target.closest(".cg-size-btn");
+    if (!btn) return;
+    group.querySelectorAll(".cg-size-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    updateCustomSizeHint();
+  });
+}
+
 function openCustomGen() {
   document.getElementById("cgOverlay").classList.add("open");
   document.body.style.overflow = "hidden";
+  updateCustomSizeHint();
   // Load gallery images as reference options
   loadRefImages();
 }
@@ -3373,22 +3821,62 @@ function closeCustomGen() {
   document.getElementById("cgOverlay").classList.remove("open");
   document.body.style.overflow = "";
 }
-// Size selector
 document.addEventListener("DOMContentLoaded", () => {
-  const sizeGroup = document.getElementById("cgSizeGroup");
-  if (sizeGroup) {
-    sizeGroup.addEventListener("click", e => {
-      const btn = e.target.closest(".cg-size-btn");
-      if (!btn) return;
-      sizeGroup.querySelectorAll(".cg-size-btn").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-    });
-  }
+  bindCustomGenOptionGroup("cgAspectGroup");
+  bindCustomGenOptionGroup("cgResolutionGroup");
+  bindCustomGenOptionGroup("cgShotGroup");
+  updateCustomSizeHint();
 });
 // Reference image selector
 let uploadedRefs = [];
-async function loadRefImages() {
+function mergeBuiltinRefs(refList) {
+  const refs = new Map();
+  BUILTIN_REF_FALLBACKS.forEach(ref => refs.set(ref.filename, ref));
+  (Array.isArray(refList) ? refList : []).filter(ref => ref && ref.builtin).forEach(ref => {
+    refs.set(ref.filename || ref.url, Object.assign({}, ref));
+  });
+  return Array.from(refs.values());
+}
+function bindReferenceGridSelection(grid) {
+  grid.querySelectorAll(".cg-ref-item").forEach(item => {
+    item.addEventListener("click", () => {
+      grid.querySelectorAll(".cg-ref-item").forEach(x => x.classList.remove("active"));
+      item.classList.add("active");
+    });
+  });
+}
+function renderRefImages(builtinRefs, uploadRefs) {
   const grid = document.getElementById("cgRefGrid");
+  if (!grid) return;
+  let html = `<div class="cg-ref-item active" data-ref=""><div class="cg-ref-none">📸</div></div>`;
+
+  builtinRefs.forEach(ref => {
+    const label = escapeHtml(ref.label || ref.style || "参考图");
+    const url = escapeHtml(ref.url || "");
+    html += `<div class="cg-ref-item" data-ref="${url}" title="${label}">
+      <img src="${url}" alt="${label}" loading="lazy" style="object-fit:cover;width:100%;height:100%;">
+      <span style="position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:10px;color:#fff;background:rgba(0,0,0,0.5);border-radius:0 0 8px 8px;">${label}</span>
+    </div>`;
+  });
+
+  uploadRefs.forEach((u, idx) => {
+    const label = escapeHtml(u.label || "自定义上传");
+    const url = escapeHtml(u.url || "");
+    html += `<div class="cg-ref-item uploaded" data-ref="${url}" data-idx="${idx}" title="${label}">
+      <img src="${url}" alt="${label}" loading="lazy" style="object-fit:cover;width:100%;height:100%;">
+      <button class="cg-ref-del" onclick="event.stopPropagation();deleteUploadedRef(${idx})">✕</button>
+    </div>`;
+  });
+
+  if (builtinRefs.length === 0 && uploadRefs.length === 0) {
+    html += `<div style="padding:10px;color:#999;font-size:13px;">暂无参考图，点击"📤 上传参考图"添加</div>`;
+  }
+
+  grid.innerHTML = html;
+  bindReferenceGridSelection(grid);
+}
+async function loadRefImages() {
+  renderRefImages(BUILTIN_REF_FALLBACKS, uploadedRefs);
   try {
     // 同时加载内置底模 + 用户上传
     const [refListRes, uploadedRes] = await Promise.all([
@@ -3398,40 +3886,10 @@ async function loadRefImages() {
     const refList = await refListRes.json();
     const uploadedRefsFromServer = await uploadedRes.json();
     uploadedRefs = uploadedRefsFromServer;
-
-    let html = `<div class="cg-ref-item active" data-ref=""><div class="cg-ref-none">📸</div></div>`;
-
-    // 内置底模参考图
-    refList.filter(r => r.builtin).forEach(ref => {
-      html += `<div class="cg-ref-item" data-ref="${ref.url}" title="${ref.label}">
-        <img src="${ref.url}" alt="${ref.label}" loading="lazy" style="object-fit:cover;width:100%;height:100%;">
-        <span style="position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:10px;color:#fff;background:rgba(0,0,0,0.5);border-radius:0 0 8px 8px;">${ref.label}</span>
-      </div>`;
-    });
-
-    // 用户上传的参考图
-    uploadedRefs.forEach((u, idx) => {
-      html += `<div class="cg-ref-item uploaded" data-ref="${u.url}" data-idx="${idx}" title="${u.label}">
-        <img src="${u.url}" alt="${u.label}" loading="lazy" style="object-fit:cover;width:100%;height:100%;">
-        <button class="cg-ref-del" onclick="event.stopPropagation();deleteUploadedRef(${idx})">✕</button>
-      </div>`;
-    });
-
-    if (refList.filter(r => r.builtin).length === 0 && uploadedRefs.length === 0) {
-      html += `<div style="padding:10px;color:#999;font-size:13px;">暂无参考图，点击"📤 上传参考图"添加</div>`;
-    }
-
-    grid.innerHTML = html;
-    grid.querySelectorAll(".cg-ref-item").forEach(item => {
-      item.addEventListener("click", () => {
-        grid.querySelectorAll(".cg-ref-item").forEach(x => x.classList.remove("active"));
-        item.classList.add("active");
-      });
-    });
+    renderRefImages(mergeBuiltinRefs(refList), uploadedRefs);
   } catch(e) {
     console.error("load refs:", e);
-    // Fallback to empty grid
-    grid.innerHTML = `<div class="cg-ref-item active" data-ref=""><div class="cg-ref-none">📸</div></div>`;
+    renderRefImages(BUILTIN_REF_FALLBACKS, uploadedRefs);
   }
 }
 async function uploadRefImage(event) {
@@ -3477,8 +3935,8 @@ function deleteUploadedRef(idx) {
 async function submitCustomGen() {
   const prompt = document.getElementById("cgPrompt").value.trim();
   if (!prompt) { showToast("✍️ 先输入穿搭描述呀～"); return; }
-  const sizeBtn = document.querySelector("#cgSizeGroup .cg-size-btn.active");
-  const size = sizeBtn ? sizeBtn.dataset.size : "1024x1024";
+  const customSize = getCustomGenSize();
+  const shotType = getCustomShotType();
   const refItem = document.querySelector("#cgRefGrid .cg-ref-item.active");
   const refImage = refItem ? refItem.dataset.ref : "";
   
@@ -3487,7 +3945,13 @@ async function submitCustomGen() {
   showToast("🌸 按你的描述开始生成～");
   
   try {
-    const body = { prompt, size };
+    const body = {
+      prompt,
+      aspect: customSize.aspect,
+      resolution: customSize.resolution,
+      size: customSize.size,
+      shot_type: shotType
+    };
     if (refImage) body.ref_image = refImage;
     const res = await fetch(`${API}/api/generate-custom`, {
       method: "POST",
@@ -3566,6 +4030,7 @@ function openSettings() {
   document.getElementById("skAppearance").value = "";
   document.getElementById("skPersona").value = "";
   document.getElementById("skGiteeFallback").checked = false;
+  setPushChannel("wechat");
   syncGiteeFallbackVisual(false);
   const cleanupResult = document.getElementById("skCleanupResult");
   if (cleanupResult) cleanupResult.textContent = "";
@@ -3586,6 +4051,7 @@ function setPersonaSource(source) {
   });
   const customWrap = document.getElementById("skPersonaCustomWrap");
   if (customWrap) customWrap.classList.toggle("show", normalized === "custom");
+  updatePushAgentPreview();
 }
 
 function getPersonaSource() {
@@ -3597,6 +4063,42 @@ function personaSourceLabel(source) {
   if (source === "hermes") return "Hermes";
   if (source === "openclaw") return "OpenClaw";
   return "自定义";
+}
+
+function setPushChannel(channel) {
+  const normalized = channel === "telegram" ? "telegram" : "wechat";
+  document.querySelectorAll('input[name="skPushChannel"]').forEach(input => {
+    input.checked = input.value === normalized;
+  });
+  updatePushAgentPreview();
+}
+
+function getPushChannel() {
+  const checked = document.querySelector('input[name="skPushChannel"]:checked');
+  return checked ? checked.value : "wechat";
+}
+
+function pushChannelLabel(channel) {
+  return channel === "telegram" ? "TG" : "微信";
+}
+
+function autoPushAgentLabel(source, channel) {
+  if (source === "openclaw") return "OpenClaw";
+  return "Hermes";
+}
+
+function updatePushAgentPreview(data) {
+  const source = (data && (data.persona_source || data.resolved_persona?.persona_source)) || getPersonaSource();
+  const channel = (data && data.push_channel) || getPushChannel();
+  const agent = (data && data.push_agent) || autoPushAgentLabel(source, channel).toLowerCase();
+  const label = agent === "openclaw" ? "OpenClaw" : "Hermes";
+  const agentEl = document.getElementById("skPushAgent");
+  const statusEl = document.getElementById("skPushStatus");
+  if (agentEl) agentEl.textContent = label + " · " + pushChannelLabel(channel);
+  if (statusEl) {
+    statusEl.textContent = "✓ 当前: " + pushChannelLabel(channel) + " / " + label + " 自动";
+    statusEl.className = "sk-status set";
+  }
 }
 
 function updatePersonaPreview(data) {
@@ -3633,6 +4135,7 @@ function updatePersonaPreview(data) {
       statusEl.className = "sk-status unset";
     }
   }
+  updatePushAgentPreview(data);
 }
 
 function syncGiteeFallbackVisual(enabled) {
@@ -3780,6 +4283,7 @@ async function loadSettingsStatus() {
     const modelsData = await modelsRes.json();
     settingsSnapshot = data;
     applyDisplayConfig(data);
+    setPushChannel(data.push_channel || "wechat");
 
     // Update status indicators
     updateStatus("skGiteeStatus", data.gitee_key);
@@ -4016,6 +4520,7 @@ async function saveSettings() {
   const appearance = document.getElementById("skAppearance").value.trim();
   const personaSource = getPersonaSource();
   const persona = document.getElementById("skPersona").value.trim();
+  const pushChannel = getPushChannel();
   const llmModel = document.getElementById("skLlmModel").value;
   const giteeFallbackEnabled = document.getElementById("skGiteeFallback").checked;
 
@@ -4036,6 +4541,7 @@ async function saveSettings() {
     body.appearance = appearance;
     body.persona_source = personaSource;
     body.persona = personaSource === "custom" ? persona : "";
+    body.push_channel = pushChannel;
     body.gitee_fallback_enabled = giteeFallbackEnabled;
     // llm_model: always send
     body.llm_model = llmModel;
@@ -4286,13 +4792,25 @@ function loadScheduleEggData(options) {
   options = options || {};
   var body = document.getElementById('eggBody');
   var dateEl = document.getElementById('eggDate');
+  var force = options.force === true;
+  var hasCache = !!(scheduleEggCache && scheduleEggCache.html);
+  var cacheFresh = hasCache && (Date.now() - scheduleEggCache.updatedAt < 30000);
   if (!options.silent) {
-    body.innerHTML = '<div class="egg-loading">🔮 正在读取' + escapeHtml(appDisplay.characterName) + '的日程...</div>';
+    if (hasCache) {
+      body.innerHTML = scheduleEggCache.html;
+      if (dateEl) dateEl.textContent = scheduleEggCache.dateText || dateEl.textContent;
+      if (cacheFresh && !force) return Promise.resolve();
+    } else {
+      body.innerHTML = '<div class="egg-loading">🔮 正在读取' + escapeHtml(appDisplay.characterName) + '的日程...</div>';
+    }
+  }
+  if (scheduleEggRequest && !force) {
+    return scheduleEggRequest;
   }
 
   // 并行拉取日程详情、今日照片和真实待执行生图任务
   var apiSuffix = apiKeyQuery();
-  return Promise.all([
+  scheduleEggRequest = Promise.all([
     fetch('/api/schedule-detail' + apiSuffix).then(function(r){ return r.json(); }).catch(function(){ return null; }),
     fetch('/api/today' + apiSuffix).then(function(r){ return r.json(); }).catch(function(){ return null; }),
     fetch('/api/photo-jobs' + apiSuffix).then(function(r){ return r.json(); }).catch(function(){ return null; }),
@@ -4304,6 +4822,9 @@ function loadScheduleEggData(options) {
     var minDaily = Math.max(1, parseInt((jobsData && jobsData.min) || 1, 10) || 1);
     var maxCap = Math.max(minDaily, Math.min(6, parseInt((jobsData && jobsData.max) || 6, 10) || 6));
     var completedToday = Math.max(0, parseInt((jobsData && jobsData.completed_today) || 0, 10) || 0);
+    var activeToday = Math.max(0, parseInt((jobsData && jobsData.active_today) || 0, 10) || 0);
+    var failedToday = Math.max(0, parseInt((jobsData && jobsData.failed_today) || 0, 10) || 0);
+    var plannedToday = Math.max(completedToday + activeToday + failedToday, parseInt((jobsData && jobsData.planned_today) || 0, 10) || 0);
 
     if (!detail || (detail.status !== 'ok' && detail.status !== 'no_schedule')) {
       body.innerHTML = '<div class="egg-empty"><div class="icon">😴</div><p>今天还没有生成日程哦～<br>每天早上 7 点自动生成！</p></div>';
@@ -4311,7 +4832,8 @@ function loadScheduleEggData(options) {
     }
 
     var currentOutfitStyle = (detail.outfit_style || (detail.outfit && detail.outfit['风格']) || '').trim();
-    dateEl.textContent = detail.date + (detail.outfit_style ? ' · ' + escapeHtml(detail.outfit_style) : '');
+    var eggDateText = detail.date + (detail.outfit_style ? ' · ' + escapeHtml(detail.outfit_style) : '');
+    dateEl.textContent = eggDateText;
 
     var html = '';
 
@@ -4466,13 +4988,16 @@ function loadScheduleEggData(options) {
     // 显示今日真实生图计划
     html += '<div class="egg-photo-status">';
     html += '<div class="egg-photo-status-title"><span class="icon">📸</span>今日生图计划</div>';
-    var plannedToday = completedToday + jobs.length;
+    var retryableToday = Math.max(0, jobs.length - activeToday);
+    var usageText = '已创建 ' + plannedToday + '/' + maxDaily + ' · 已完成 ' + completedToday;
+    if (activeToday > 0) usageText += ' · 待执行 ' + activeToday;
+    if (retryableToday > 0) usageText += ' · 可重试 ' + retryableToday;
     html += '<div class="egg-limit-control">';
-    html += '<span>每日上限</span>';
+    html += '<span>计划上限</span>';
     html += '<input class="egg-limit-input" id="eggPhotoLimit" type="number" min="' + minDaily + '" max="' + maxCap + '" step="1" value="' + maxDaily + '">';
     html += '<span>/ ' + maxCap + '</span>';
     html += '<button class="egg-limit-btn" id="eggPhotoLimitBtn" onclick="savePhotoJobLimit()">保存</button>';
-    html += '<span class="egg-limit-used">已用 ' + plannedToday + '/' + maxDaily + '</span>';
+    html += '<span class="egg-limit-used">' + usageText + '</span>';
     html += '</div>';
     html += '<div class="egg-photo-list">';
 
@@ -4546,10 +5071,16 @@ function loadScheduleEggData(options) {
       html = '<div class="egg-empty"><div class="icon">🫥</div><p>日程数据还在酝酿中...</p></div>';
     }
 
+    scheduleEggCache = { html: html, dateText: eggDateText, updatedAt: Date.now() };
     body.innerHTML = html;
   }).catch(function() {
-    body.innerHTML = '<div class="egg-empty"><div class="icon">😵</div><p>加载失败了...</p></div>';
+    if (!options.silent || !hasCache) {
+      body.innerHTML = '<div class="egg-empty"><div class="icon">😵</div><p>加载失败了...</p></div>';
+    }
+  }).finally(function() {
+    scheduleEggRequest = null;
   });
+  return scheduleEggRequest;
 }
 
 function readPhotoJobState(timeText) {
@@ -4644,6 +5175,8 @@ function retryPhotoJob(timeText, btn) {
       keepDisabled = true;
       showToast('这个时间点正在生成中');
       startPhotoRetryPolling(timeText);
+    } else if (data.status === 'limit_reached') {
+      showToast(data.message || '今日生图计划已达上限');
     } else {
       keepDisabled = true;
       showToast('已开始补拍：' + timeText);
@@ -4686,8 +5219,8 @@ function savePhotoJobLimit() {
     if (!r.ok) throw new Error('save_failed');
     return r.json();
   }).then(function() {
-    showToast('已更新每日生图上限');
-    return loadScheduleEggData();
+    showToast('已更新每日生图计划上限');
+    return loadScheduleEggData({ force: true });
   }).catch(function() {
     showToast('保存失败，请稍后再试');
   }).finally(function() {
@@ -4732,12 +5265,12 @@ function refreshScheduleEgg() {
       } else {
         showToast((data && data.message) || '✨ 日程已刷新');
       }
-      return loadScheduleEggData();
+      return loadScheduleEggData({ force: true });
     })
     .catch(function(err) {
       console.error('refresh schedule failed', err);
       showToast('刷新日程失败，请检查 LLM 配置');
-      loadScheduleEggData();
+      loadScheduleEggData({ force: true });
     })
     .finally(function() {
       if (btn) btn.classList.remove('spinning');
