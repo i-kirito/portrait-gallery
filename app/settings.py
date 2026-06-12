@@ -328,6 +328,27 @@ def config_int(config: dict, path: str, default: int, min_value: int | None = No
     return value
 
 
+def image_process_timeout(config: dict, with_reference_fallback: bool = True) -> int:
+    """Return a safe outer timeout for the image-generation child process."""
+    explicit = config_int(config, "image_gen.process_timeout", 0, 0)
+    if explicit:
+        return explicit
+
+    max_retries = config_int(config, "image_gen.max_retries", 3, 1)
+    retry_delay = config_int(config, "image_gen.retry_delay_seconds", 3, 0)
+    text_timeout = config_int(config, "image_gen.text2img_timeout", 180, 1)
+    img_timeout = config_int(config, "image_gen.img2img_timeout", 300, 1)
+    enhance_timeout = config_int(config, "llm.enhance_timeout", 25, 1)
+    caption_timeout = config_int(config, "llm.caption_timeout", 30, 1)
+    retry_delay_window = retry_delay * sum(range(1, max_retries))
+    text_window = text_timeout * max_retries + retry_delay_window
+    image_window = text_window
+    if with_reference_fallback:
+        image_window += img_timeout * max_retries + retry_delay_window
+    total = image_window + enhance_timeout + caption_timeout + 120
+    return max(900, ((total + 59) // 60) * 60)
+
+
 def config_float(config: dict, path: str, default: float, min_value: float | None = None, max_value: float | None = None) -> float:
     try:
         value = float(get_nested(config, path, default))

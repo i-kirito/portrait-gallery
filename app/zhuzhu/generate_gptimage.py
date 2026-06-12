@@ -395,7 +395,7 @@ def generate(theme: str, send: bool = False, caption: bool = False,
              prompt_override: Optional[str] = None, ref_image: Optional[str] = None,
              style: Optional[str] = None, size: Optional[str] = None,
              prompt_is_final: bool = False, source: str = "chat",
-             sync_gallery: bool = True):
+             sync_gallery: bool = True, schedule_time: str = ""):
     """GPT Image 生成入口 — 使用当前配置的 GPT Image Base URL
 
     Args:
@@ -411,13 +411,20 @@ def generate(theme: str, send: bool = False, caption: bool = False,
         sync_gallery: 是否直接写入画廊索引；统一入口会自行同步一次
     """
     prompt = prompt_override if prompt_is_final and prompt_override else build_prompt(theme, prompt_override)
-    mode = "img2img" if ref_image else "text2img"
+    requested_mode = "img2img" if ref_image else "text2img"
+    final_mode = requested_mode
+    requested_ref_image = ref_image or ""
+    used_ref_image = requested_ref_image
+    fallback_used = False
     endpoint_label = _gpt_endpoint_label()
-    print(f"🎨 GPT Image via {endpoint_label} ({mode})...", file=sys.stderr)
+    print(f"🎨 GPT Image via {endpoint_label} ({requested_mode})...", file=sys.stderr)
 
     result = _generate_via_direct_gpt(prompt, ref_image, size)
     if not result and ref_image:
         print(f"GPT Image img2img failed via {endpoint_label}; retrying text2img without reference image", file=sys.stderr)
+        fallback_used = True
+        final_mode = "text2img"
+        used_ref_image = ""
         result = _generate_via_direct_gpt(prompt, None, size)
 
     if not result:
@@ -426,11 +433,29 @@ def generate(theme: str, send: bool = False, caption: bool = False,
 
     img_data, gen_time = result
     path, filename, ts = save_image(img_data, theme, GPTIMAGE_DIRECT_MODEL, style=style, target_size=size)
-    update_metadata(filename, theme, prompt, GPTIMAGE_DIRECT_MODEL, ts, gen_time)
+    update_metadata(
+        filename,
+        theme,
+        prompt,
+        GPTIMAGE_DIRECT_MODEL,
+        ts,
+        gen_time,
+        {
+            "requested_generation_mode": requested_mode,
+            "generation_mode": final_mode,
+            "ref_image": os.path.basename(used_ref_image) if used_ref_image else "",
+            "ref_image_path": used_ref_image,
+            "requested_ref_image": os.path.basename(requested_ref_image) if requested_ref_image else "",
+            "requested_ref_image_path": requested_ref_image,
+            "fallback_used": fallback_used,
+            "fallback_from": "img2img" if fallback_used else "",
+            "fallback_to": "text2img" if fallback_used else "",
+        },
+    )
 
     cap_text = None
     if caption:
-        cap_text = build_caption(theme)
+        cap_text = build_caption(theme, schedule_time=schedule_time)
     if send:
         send_photo(path, cap_text)
 
@@ -445,6 +470,12 @@ def generate(theme: str, send: bool = False, caption: bool = False,
             gen_time=gen_time,
             model_name=GPTIMAGE_DIRECT_MODEL,
             source=source,
+            schedule_time=schedule_time,
+            generation_mode=final_mode,
+            requested_generation_mode=requested_mode,
+            ref_image=used_ref_image,
+            requested_ref_image=requested_ref_image,
+            fallback_used=fallback_used,
         )
 
     print(f"SUCCESS:{path}")
@@ -462,8 +493,10 @@ if __name__ == "__main__":
     parser.add_argument("--ref-image", type=str, default=None, help="参考图本地路径（图生图/img2img 模式）")
     parser.add_argument("--size", type=str, default=None, help="图片尺寸")
     parser.add_argument("--source", choices=["cron", "web", "chat", "custom"], default="chat", help="来源标识")
+    parser.add_argument("--schedule-time", type=str, default="", help="对应的日程时间和活动，如 '11:00 做奶茶'")
     args = parser.parse_args()
-    path = generate(args.theme, args.send, args.caption, args.prompt, args.ref_image, size=args.size, source=args.source)
+    path = generate(args.theme, args.send, args.caption, args.prompt, args.ref_image,
+                    size=args.size, source=args.source, schedule_time=args.schedule_time)
     if not path:
         print("ERROR: GPT Image generation failed", file=sys.stderr)
         sys.exit(1)

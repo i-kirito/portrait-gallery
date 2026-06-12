@@ -6,7 +6,7 @@ import subprocess
 import sys
 from typing import Optional
 
-from settings import build_child_env, configured_python, resolve_image_dir
+from settings import build_child_env, configured_python, image_process_timeout, resolve_image_dir
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class ImageGenerator:
         prompt: str,
         style: Optional[str] = None,
         engine: str = "",
-        timeout: int = 300,
+        timeout: int = 0,
         ref_image: str = "",
         size: str = "",
         source: str = "custom",
@@ -59,6 +59,8 @@ class ImageGenerator:
     ) -> Optional[str]:
         """生成图片，返回图片文件名（相对路径）（异步，不阻塞事件循环）"""
         engine = engine or self.default_engine
+        if not timeout:
+            timeout = image_process_timeout(self.config, with_reference_fallback=bool(style or ref_image))
         logger.info(f"开始生图: engine={engine}, style={style}, size={size or '-'}, prompt={prompt[:80]}...")
 
         generate_script = self.generate_script

@@ -11,6 +11,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 import requests
 from PIL import Image, ImageOps
@@ -33,9 +34,11 @@ from settings import (
     load_runtime_persona,
     normalize_chat_url,
     outfit_style_to_base_style,
+    resolve_builtin_reference_dir,
     resolve_config_path,
     resolve_data_dir,
     resolve_project_root,
+    resolve_reference_dir,
     theme_style_default,
 )
 
@@ -88,6 +91,42 @@ def get_reference_path(filename: str = "reference_face.jpg") -> str:
         if candidate.is_file():
             return str(candidate.resolve())
     return ""
+
+
+def _reference_url_bases() -> list[tuple[Path, str]]:
+    bases: list[tuple[Path, str]] = []
+    for directory, prefix in (
+        (resolve_reference_dir(_GALLERY_CONFIG, str(_DATA_DIR), _GALLERY_CONFIG_PATH), "/local-refs"),
+        (resolve_builtin_reference_dir(_GALLERY_CONFIG, _GALLERY_CONFIG_PATH), "/refs"),
+        (str(_DATA_DIR / "references"), "/local-refs"),
+        (str(_PROJECT_ROOT / "app" / "references"), "/refs"),
+    ):
+        try:
+            resolved = Path(directory).expanduser().resolve()
+        except OSError:
+            continue
+        if not any(existing == resolved and existing_prefix == prefix for existing, existing_prefix in bases):
+            bases.append((resolved, prefix))
+    return bases
+
+
+def _gallery_reference_url(ref_image: str) -> str:
+    if not ref_image:
+        return ""
+    path = Path(ref_image).expanduser()
+    if not path.is_absolute():
+        return str(ref_image)
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return path.name
+    for base, prefix in _reference_url_bases():
+        try:
+            rel = resolved.relative_to(base).as_posix()
+            return f"{prefix}/{quote(rel)}"
+        except ValueError:
+            continue
+    return resolved.name
 
 
 REFERENCE_IMAGE_PATH = get_reference_path("reference_face.jpg")
@@ -348,9 +387,48 @@ def _read_custom_appearance() -> str:
     return (_runtime_persona().get("appearance") or "").strip()
 
 
-def _personalized_caption_fallback(theme: str, persona: dict) -> str:
+def _caption_activity(schedule_time: str = "") -> str:
+    text = re.sub(r"\s+", " ", str(schedule_time or "")).strip()
+    if not text:
+        return ""
+    match = re.match(r"^\d{1,2}:\d{2}\s*(.+)$", text)
+    if match:
+        return match.group(1).strip()
+    return text
+
+
+def _trim_caption_piece(text: str, limit: int = 28) -> str:
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip(" ，,、；;。.!！?")
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[:limit].rstrip(" ，,、；;。.!！?") + "..."
+
+
+def _caption_conflicts_with_schedule(caption: str, schedule_time: str = "") -> bool:
+    activity = _caption_activity(schedule_time)
+    if not activity or not caption:
+        return False
+    text = re.sub(r"\s+", "", str(caption))
+    act = re.sub(r"\s+", "", str(activity))
+    conflict_groups = (
+        (("刚起床", "起床", "刚醒", "睡醒"), ("起床", "醒来")),
+        (("被窝", "窝在床", "床上", "赖床", "抱着枕头", "枕头"), ("床", "被窝", "赖床", "枕头")),
+        (("睡前", "晚安", "入睡", "夜色", "深夜"), ("睡前", "晚安", "入睡", "夜", "晚")),
+        (("晨光", "清晨", "早安", "晨间"), ("晨", "早", "上午", "阳光", "窗边")),
+    )
+    for conflict_words, allowed_words in conflict_groups:
+        if any(word in text for word in conflict_words) and not any(word in act for word in allowed_words):
+            return True
+    return False
+
+
+def _personalized_caption_fallback(theme: str, persona: dict, schedule_time: str = "") -> str:
     character = persona.get("name") or "角色"
     user_name = persona.get("user_name") or "你"
+    activity = _caption_activity(schedule_time)
+    if activity:
+        activity_text = _trim_caption_piece(activity)
+        return _shorten_caption(f"刚刚{activity_text}时拍下这一刻，{character}想把穿搭和心情分享给{user_name}。", 60)
     templates = {
         "morning": f"早安，{user_name}～{character}刚拍完晨间穿搭，光线很好，心情也亮起来了。",
         "noon": f"{user_name}，{character}把午间穿搭拍好啦，阳光和状态都刚刚好。",
@@ -380,12 +458,16 @@ def _caption_voice_hint(persona: dict) -> str:
     return hint[:36]
 
 
-def _scene_caption_fallback(theme: str, persona: dict, caption: str = "") -> str:
-    if caption and not _caption_has_persona_leak(caption):
+def _scene_caption_fallback(theme: str, persona: dict, caption: str = "", schedule_time: str = "") -> str:
+    if (
+        caption
+        and not _caption_has_persona_leak(caption)
+        and not _caption_conflicts_with_schedule(caption, schedule_time)
+    ):
         short = _shorten_caption(caption)
         if short:
             return short
-    return _personalized_caption_fallback(theme, persona)
+    return _personalized_caption_fallback(theme, persona, schedule_time)
 
 
 def _caption_has_persona_leak(caption: str) -> bool:
@@ -776,7 +858,10 @@ def _translate_outfit(prompt: str, style_name: str) -> str:
 def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] = None,
                     prompt: str = "", caption: str = "", gen_time: float = 0,
                     model_name: str = "", source: str = "cron", schedule_time: str = "",
-                    outfit_style: str = ""):
+                    outfit_style: str = "", generation_mode: str = "",
+                    requested_generation_mode: str = "", ref_image: str = "",
+                    requested_ref_image: str = "",
+                    fallback_used: bool = False):
     """Sync generated image to Docker portrait gallery (18889)."""
     # 1. Copy image (skip if already in gallery dir)
     os.makedirs(SECRETARY_GALLERY_DIR, exist_ok=True)
@@ -841,6 +926,18 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
         "source": source,
         "schedule_time": schedule_time,
     }
+    if generation_mode:
+        entry["generation_mode"] = generation_mode
+    if requested_generation_mode:
+        entry["requested_generation_mode"] = requested_generation_mode
+    if ref_image:
+        entry["ref_image"] = os.path.basename(ref_image)
+        entry["ref_image_path"] = _gallery_reference_url(ref_image)
+    if requested_ref_image:
+        entry["requested_ref_image"] = os.path.basename(requested_ref_image)
+        entry["requested_ref_image_path"] = _gallery_reference_url(requested_ref_image)
+    if generation_mode or requested_generation_mode or ref_image or requested_ref_image or fallback_used:
+        entry["fallback_used"] = bool(fallback_used)
 
     # 3. Load schedule_data.json
     store = ScheduleStore(os.path.dirname(SECRETARY_SCHEDULE_PATH))
@@ -903,7 +1000,8 @@ def _write_metadata(path: str, metadata: dict):
         print(f"[metadata] Failed to write to {path}: {e}", file=sys.stderr)
 
 
-def update_metadata(filename: str, theme: str, prompt: str, model_name: str, ts: int, gen_time: float):
+def update_metadata(filename: str, theme: str, prompt: str, model_name: str, ts: int,
+                    gen_time: float, extra_metadata: Optional[dict] = None):
     new_entry = {
         "category": get_image_model("metadata_category", "portrait"),
         "prompt": prompt,
@@ -912,6 +1010,8 @@ def update_metadata(filename: str, theme: str, prompt: str, model_name: str, ts:
         "created_at": ts,
         "generation_time": gen_time,
     }
+    if extra_metadata:
+        new_entry.update(extra_metadata)
 
     # 写入三个地方：画廊插件目录、工作区备份
     paths = [
@@ -971,7 +1071,8 @@ def enhance_prompt(user_input: str, theme: Optional[str] = None) -> str:
     return user_input
 
 
-def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "image/jpeg") -> str:
+def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "image/jpeg",
+                  schedule_time: str = "") -> str:
     theme_hint = {
         "morning": "早上刚起床的慵懒美照",
         "noon": "中午阳光下的外出美照",
@@ -979,7 +1080,13 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         "bedtime": "睡前洗完澡的暧昧美照",
         "sexy": "带点坏坏氛围的性感美照",
     }
-    scene = theme_hint.get(theme, "一张精心拍摄的美照")
+    activity = _caption_activity(schedule_time)
+    slot = re.match(r"^(\d{1,2}:\d{2})", str(schedule_time or "").strip())
+    scene = (
+        f"{slot.group(1)} 的拍照计划：{activity}" if activity and slot
+        else f"拍照计划：{activity}" if activity
+        else theme_hint.get(theme, "一张精心拍摄的美照")
+    )
     persona = _runtime_persona()
     character = persona.get("name") or "角色"
     user_name = persona.get("user_name") or "用户"
@@ -988,6 +1095,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         f"你正在为“{character}”刚拍的照片写一条画廊小心思，读者称呼“{user_name}”。"
         f"语气参考：{caption_voice}。"
         "只参考称呼和语气，不要复述、展开或透露 SOUL、人设、身份、关系或性格设定。"
+        "如果提供了具体日程，必须严格贴合该时间、地点和活动，不要写与日程冲突的起床、被窝、睡前等内容。"
         "内容只写当时拍照的场景、穿搭亮点和心情。"
         "输出 1-2 句中文，总长不超过 60 个汉字。"
         "不要写长段落，不要提技术术语、英文提示词、模型名称。可以使用 0-1 个 emoji。"
@@ -1013,17 +1121,17 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
     if img_b64:
         user_content = [
             {"type": "image_url", "image_url": {"url": f"data:{img_mime};base64,{img_b64}"}},
-            {"type": "text", "text": f"这是{character}刚拍的{scene}，请只根据实际画面写短小心思：场景、穿搭、心情。"},
+            {"type": "text", "text": f"这是{character}刚拍的照片。当前日程：{scene}。请只根据实际画面和当前日程写短小心思：场景、穿搭、心情。"},
         ]
     else:
-        user_content = f"场景：{scene}，请写一条短小心思，聚焦拍照场景、穿搭氛围和心情。"
+        user_content = f"当前日程：{scene}。请写一条短小心思，聚焦拍照场景、穿搭氛围和心情。"
 
     try:
         api_key = get_cpa_key()
         models = get_llm_models()
         chat_url = get_cpa_chat_url()
         if not api_key or not models or not chat_url:
-            return _personalized_caption_fallback(theme, persona)
+            return _personalized_caption_fallback(theme, persona, schedule_time)
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
         payload = {
             "model": models[0],
@@ -1043,11 +1151,11 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         if resp.status_code == 200:
             caption = resp.json()["choices"][0]["message"]["content"].strip()
             if caption:
-                return _scene_caption_fallback(theme, persona, caption)
+                return _scene_caption_fallback(theme, persona, caption, schedule_time)
     except Exception as e:
         print(f"[caption] llm failed: {e}", file=sys.stderr)
 
-    return _personalized_caption_fallback(theme, persona)
+    return _personalized_caption_fallback(theme, persona, schedule_time)
 
 
 def send_photo(path: str, caption: Optional[str] = None):

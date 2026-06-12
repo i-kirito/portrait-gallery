@@ -24,6 +24,7 @@ from settings import (
     builtin_reference_map,
     build_child_env,
     configured_python,
+    image_process_timeout,
     llm_request_config,
     load_enabled_outfit_styles,
     load_runtime_persona,
@@ -448,7 +449,7 @@ class GalleryServer:
                     continue
                 if entry.get("date") != today_str or entry.get("status") != "ok":
                     continue
-                if not self._is_today_photo_source(entry.get("source", "")):
+                if entry.get("source", "") != "cron":
                     continue
                 img_file = entry.get("image_filename", "")
                 if not img_file or img_file in seen:
@@ -823,8 +824,7 @@ class GalleryServer:
             return "Gemini"
         return name
 
-    @classmethod
-    def _normalize_entry_display(cls, entry: dict, metadata: Optional[dict] = None, fallback_caption: str = "") -> dict:
+    def _normalize_entry_display(self, entry: dict, metadata: Optional[dict] = None, fallback_caption: str = "") -> dict:
         if not isinstance(entry, dict):
             return entry
         normalized = dict(entry)
@@ -840,17 +840,24 @@ class GalleryServer:
                 normalized["outfit"] = re.sub(r'风格[：:]\s*[^ \n，,。；;]+', "风格：自定义", outfit, count=1)
 
         if metadata and img_file:
-            meta_prompt = (metadata.get(img_file, {}) or {}).get("prompt", "")
+            meta_entry = metadata.get(img_file, {}) or {}
+            meta_prompt = meta_entry.get("prompt", "")
             current_prompt = normalized.get("prompt", "") or ""
             if meta_prompt and len(meta_prompt) > len(current_prompt):
                 normalized["prompt"] = meta_prompt
+            if not normalized.get("size") and meta_entry.get("size"):
+                normalized["size"] = meta_entry.get("size")
+        if img_file and not normalized.get("file_size_bytes"):
+            stat = self._image_stat(img_file)
+            if stat:
+                normalized["file_size_bytes"] = stat.st_size
 
-        model_label = cls._display_model_name(normalized.get("model_name", ""))
+        model_label = self._display_model_name(normalized.get("model_name", ""))
         if model_label and model_label != normalized.get("model_name"):
             normalized["model_name"] = model_label
 
-        if cls._entry_outfit_needs_repair(normalized.get("outfit", "")):
-            repaired = cls._fallback_outfit_keywords_from_prompt(normalized.get("prompt", ""))
+        if self._entry_outfit_needs_repair(normalized.get("outfit", "")):
+            repaired = self._fallback_outfit_keywords_from_prompt(normalized.get("prompt", ""))
             if repaired:
                 style_name = normalized.get("outfit_style") or "自定义"
                 normalized["outfit"] = f"风格：{style_name} 穿搭：{repaired}"
@@ -1598,7 +1605,7 @@ class GalleryServer:
                 ))
         return refs
 
-    def _resolve_reference_image(self, ref_image: str) -> str:
+    def _resolve_reference_image(self, ref_image: str, allow_any_path: bool = False) -> str:
         raw = str(ref_image or "").strip()
         if not raw:
             return ""
@@ -1620,6 +1627,14 @@ class GalleryServer:
             return ""
 
         if os.path.isabs(ref_path):
+            # 宽松模式：允许任意绝对路径（用于 generate-custom）
+            if allow_any_path:
+                candidate = Path(ref_path).resolve()
+                if candidate.is_file() and self._is_reference_image_file(str(candidate)):
+                    return str(candidate)
+                return ""
+
+            # 严格模式：必须在 references/ 目录下（用于 hermes/image-to-image）
             for base_dir in (self.reference_dir, self.app_reference_dir):
                 try:
                     candidate = Path(ref_path).resolve()
@@ -1965,7 +1980,8 @@ class GalleryServer:
                 cwd=os.path.dirname(generate_script),
                 env=child_env,
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=900)
+            process_timeout = image_process_timeout(self.config, with_reference_fallback=True)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=process_timeout)
 
             if proc.returncode != 0:
                 logger.error(f"generate.py failed: {stderr.decode(errors='replace')[-500:]}")
@@ -2021,11 +2037,12 @@ class GalleryServer:
                 "schedule_time": schedule_time,
             })
         except asyncio.TimeoutError:
-            logger.error("Generate now timeout")
+            process_timeout = image_process_timeout(self.config, with_reference_fallback=True)
+            logger.error(f"Generate now timeout ({process_timeout}s)")
             if proc and proc.returncode is None:
                 proc.kill()
                 await proc.wait()
-            return web.json_response({"error": "timeout"}, status=504)
+            return web.json_response({"error": "timeout", "message": f"生图请求超时（{process_timeout}s）"}, status=504)
         except Exception as e:
             logger.error(f"Generate now error: {e}")
             return web.json_response({"error": str(e)}, status=500)
@@ -2046,7 +2063,7 @@ class GalleryServer:
             )
             shot_type = normalize_custom_shot_type(body.get("shot_type", ""))
             raw_ref_image = body.get("ref_image", "")
-            ref_image = self._resolve_reference_image(raw_ref_image)
+            ref_image = self._resolve_reference_image(raw_ref_image, allow_any_path=True)
             if raw_ref_image and not ref_image:
                 return web.json_response({"error": "invalid_ref_image"}, status=400)
             entry = await self.on_generate_custom(user_prompt, size, ref_image, shot_type)

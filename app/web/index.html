@@ -2416,7 +2416,7 @@ textarea:focus-visible,
 
 <div class="header">
   <div class="header-left">
-    <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.1.4</span></h1>
+    <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.1.5</span></h1>
   </div>
   <div class="tabs">
     <button class="tab" data-tab="gallery" onclick="switchTab('gallery')"><span class="tab-label">✨ 全部</span><span class="tab-badge" id="badge-all">0</span></button>
@@ -2608,7 +2608,7 @@ textarea:focus-visible,
       <div class="sk-footer-main">
         <div class="sk-update-row">
           <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
-          <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.1.4</span></span>
+          <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.1.5</span></span>
         </div>
         <div class="sk-actions">
           <button class="btn btn-secondary" onclick="closeSettings()">关闭</button>
@@ -2825,6 +2825,19 @@ function displayReferenceMeta(e) {
   const style = displayBaseStyle(e);
   if (!style) return "";
   return `🖼 ${style}`;
+}
+
+function displayImageSizeMeta(e) {
+  const size = String((e && e.size) || "").trim().toLowerCase();
+  if (!/^\d{2,5}x\d{2,5}$/.test(size)) return "";
+  return `📐 ${size}`;
+}
+
+function displayFileSizeMeta(e) {
+  const bytes = Number((e && e.file_size_bytes) || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  if (bytes >= 1024 * 1024) return `💾 ${(bytes / (1024 * 1024)).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)} MB`;
+  return `💾 ${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
 function matchesOutfitStyleFilter(e, filterLower) {
@@ -3098,7 +3111,7 @@ function renderToday() {
             ${displayOutfitStyle(today) ? `<span class="modal-style" onclick="event.stopPropagation();filterByTag('${displayOutfitStyle(today)}');">${displayOutfitStyle(today)}</span>` : ""}
           </div>
           <div>
-            <span class="modal-meta" style="margin:0;padding:0;background:none;">${today.model_name ? `<span class="meta-tag">🤖 ${today.model_name}</span>` : ""}${displayReferenceMeta(today) ? `<span class="meta-tag">${displayReferenceMeta(today)}</span>` : ""}</span>
+            <span class="modal-meta" style="margin:0;padding:0;background:none;">${today.model_name ? `<span class="meta-tag">🤖 ${today.model_name}</span>` : ""}${displayReferenceMeta(today) ? `<span class="meta-tag">${displayReferenceMeta(today)}</span>` : ""}${displayImageSizeMeta(today) ? `<span class="meta-tag">${displayImageSizeMeta(today)}</span>` : ""}${displayFileSizeMeta(today) ? `<span class="meta-tag">${displayFileSizeMeta(today)}</span>` : ""}</span>
           </div>
           <div class="modal-outfit">${outfitText ? `<span class="outfit-label">穿搭</span><span class="outfit-divider">|</span><span class="outfit-text">${outfitText}</span>` : '--'}</div>
           ${schedHtml ? `<div class="modal-schedule">${schedHtml}</div>` : ""}
@@ -3243,6 +3256,10 @@ function renderGallery() {
           if (e.model_name) metaHtml += `<span class="tc-meta-tag">🤖 ${e.model_name}</span>`;
           const referenceLabel = displayReferenceMeta(e);
           if (referenceLabel) metaHtml += `<span class="tc-meta-tag">${referenceLabel}</span>`;
+          const sizeLabel = displayImageSizeMeta(e);
+          if (sizeLabel) metaHtml += `<span class="tc-meta-tag">${sizeLabel}</span>`;
+          const fileSizeLabel = displayFileSizeMeta(e);
+          if (fileSizeLabel) metaHtml += `<span class="tc-meta-tag">${fileSizeLabel}</span>`;
           // Period row: show matching schedule period or fallback to time
           let periodHtml = '';
           if (showTodayOnly) {
@@ -3432,7 +3449,7 @@ ms.textContent = `
 .modal-schedule .modal-source-item .sched-label { color:#9c27b0; }
 .modal-schedule .modal-source-item .sched-text { color:#666; font-weight:600; }
 .modal-caption { font-size:15px;color:#d81b60;font-style:italic;padding:12px 0 0;line-height:1.8; }
-.modal-caption.tc-thought { padding:8px 10px;font-style:normal;line-height:1.55;color:#8a245d; }
+.modal-caption.tc-thought { padding:17px 16px;font-style:normal;line-height:1.55;color:#8a245d; }
 .modal-caption .tag-link { color: #7b1fa2; text-decoration: none; font-weight: 600; cursor: pointer; transition:color 0.15s; }
 .modal-caption .tag-link:hover { color: #e91e63; text-decoration: underline; }
 .modal-actions { display: flex; gap: 10px; margin-top: auto; padding-top: 16px; }
@@ -3472,7 +3489,7 @@ ms.textContent = `
   .modal-info { padding:22px 20px 18px; }
   .modal-content .today-card-info { flex:1 1 auto;min-height:0;gap:16px; }
   .modal-content .today-card-info .modal-schedule { margin-top:6px; }
-  .modal-content .today-card-info .modal-caption.tc-thought { margin-top:8px;padding:10px 12px; }
+  .modal-content .today-card-info .modal-caption.tc-thought { margin-top:8px;padding:17px 16px; }
   .modal-content .today-card-info .modal-actions { margin-top:auto; }
   .modal-content.modal-fit-detail { height:auto; }
 }
@@ -3571,6 +3588,10 @@ function openModal(e) {
   if (e.model_name) metaHtml += `<span class="meta-tag">🤖 ${e.model_name}</span>`;
   const referenceLabel = displayReferenceMeta(e);
   if (referenceLabel) metaHtml += `<span class="meta-tag">${referenceLabel}</span>`;
+  const sizeLabel = displayImageSizeMeta(e);
+  if (sizeLabel) metaHtml += `<span class="meta-tag">${sizeLabel}</span>`;
+  const fileSizeLabel = displayFileSizeMeta(e);
+  if (fileSizeLabel) metaHtml += `<span class="meta-tag">${fileSizeLabel}</span>`;
   if (e.prompt) metaHtml += `<button class="modal-reroll-btn" id="modalRerollBtn" onclick="rerollModalImage(event)" title="抽卡新图" aria-label="抽卡新图">↻</button>`;
   document.getElementById("modalMeta").innerHTML = metaHtml;
   document.getElementById("modalMeta").style.display = metaHtml ? "flex" : "none";

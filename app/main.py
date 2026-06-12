@@ -31,6 +31,7 @@ from settings import (
     configured_python,
     custom_shot_label,
     custom_shot_prompt,
+    image_process_timeout,
     load_config,
     load_json_file,
     load_runtime_persona,
@@ -260,7 +261,7 @@ class PortraitGalleryApp:
         filename = await self.image_gen.generate(
             generation_prompt,
             style=style,
-            timeout=900,
+            timeout=image_process_timeout(self.config, with_reference_fallback=bool(style or ref_path)),
             **kwargs
         )
         if not filename:
@@ -337,7 +338,7 @@ class PortraitGalleryApp:
             prompt,
             style=style,
             engine=engine,
-            timeout=900,
+            timeout=image_process_timeout(self.config, with_reference_fallback=bool(style)),
             size=size,
             source="custom",
             prompt_final=True,
@@ -456,7 +457,7 @@ class PortraitGalleryApp:
                     continue
                 if entry.get("date") != today_str or entry.get("status") != "ok":
                     continue
-                if entry.get("source", "") not in TODAY_PHOTO_SOURCES:
+                if entry.get("source", "") != "cron":
                     continue
                 img_file = entry.get("image_filename", "")
                 if img_file and self._photo_image_exists(img_file):
@@ -501,7 +502,7 @@ class PortraitGalleryApp:
                     continue
                 if entry.get("date") != today_str or entry.get("status") != "ok":
                     continue
-                if entry.get("source", "") not in TODAY_PHOTO_SOURCES:
+                if entry.get("source", "") != "cron":
                     continue
                 img_file = entry.get("image_filename", "")
                 if not img_file or not self._photo_image_exists(img_file):
@@ -815,9 +816,44 @@ class PortraitGalleryApp:
     def _today_schedule_text(self) -> str:
         return self._today_schedule_entry().get("schedule", "")
 
-    def _today_schedule_base_style(self) -> str:
-        base_style = str(self._today_schedule_entry().get("base_style", "") or "").strip().lower()
+    @staticmethod
+    def _normalize_base_style(value: str) -> str:
+        base_style = str(value or "").strip().lower()
         return base_style if base_style in {"cool", "girly", "sweet"} else ""
+
+    def _today_existing_photo_base_style(self) -> str:
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        latest_ts = -1
+        latest_style = ""
+        try:
+            all_data = ScheduleStore(self.data_dir).load()
+            for entry in all_data.values():
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("date") != today_str or entry.get("status") != "ok":
+                    continue
+                if entry.get("source", "") != "cron":
+                    continue
+                img_file = entry.get("image_filename", "")
+                if not img_file or not self._photo_image_exists(img_file):
+                    continue
+                base_style = self._normalize_base_style(entry.get("base_style", ""))
+                if not base_style:
+                    continue
+                match = re.search(r'_(\d{10})\.\w+$', img_file)
+                ts = int(match.group(1)) if match else 0
+                if ts >= latest_ts:
+                    latest_ts = ts
+                    latest_style = base_style
+        except Exception as e:
+            logger.error(f"读取今日已完成生图底模失败: {e}")
+        return latest_style
+
+    def _today_schedule_base_style(self) -> str:
+        base_style = self._normalize_base_style(self._today_schedule_entry().get("base_style", ""))
+        if base_style:
+            return base_style
+        return self._today_existing_photo_base_style()
 
     def rebuild_photo_jobs(self) -> list:
         """Rebuild dynamic photo jobs from today's saved schedule."""
@@ -1215,7 +1251,7 @@ class PortraitGalleryApp:
                     cmd,
                     capture_output=True,
                     text=True,
-                    timeout=900,
+                    timeout=image_process_timeout(self.config, with_reference_fallback=True),
                     cwd=self.image_gen.script_dir,
                     env=self.image_gen.build_env(),
                 )
@@ -1262,14 +1298,15 @@ class PortraitGalleryApp:
                     self._save_failed_photo_jobs()
                 return False
         except subprocess.TimeoutExpired:
-            logger.error(f"定时生图超时: theme={theme} (900s)")
+            timeout = image_process_timeout(self.config, with_reference_fallback=True)
+            logger.error(f"定时生图超时: theme={theme} ({timeout}s)")
             if slot_key:
                 self._failed_photo_jobs[slot_key] = {
                     "theme": theme,
                     "time": time_text,
                     "activity": activity,
                     "failed_at": datetime.now().isoformat(),
-                    "error": "timeout",
+                    "error": f"timeout after {timeout}s",
                     "error_summary": "生图请求超时",
                 }
                 self._save_failed_photo_jobs()

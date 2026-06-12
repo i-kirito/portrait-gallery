@@ -618,6 +618,7 @@ def generate(
             prompt_is_final=True,
             source=source,
             sync_gallery=False,
+            schedule_time=schedule_raw,
         )
         if path:
             used_model = GITEE_MODEL_NAME
@@ -633,6 +634,7 @@ def generate(
             prompt_is_final=True,
             source=source,
             sync_gallery=False,
+            schedule_time=schedule_raw,
         )
         if path:
             used_model = GPTIMAGE_DIRECT_MODEL
@@ -647,6 +649,7 @@ def generate(
                     prompt_is_final=True,
                     source=source,
                     sync_gallery=False,
+                    schedule_time=schedule_raw,
                 )
                 if path:
                     used_model = GITEE_MODEL_NAME
@@ -667,6 +670,7 @@ def generate(
                     prompt_is_final=True,
                     source=source,
                     sync_gallery=False,
+                    schedule_time=schedule_raw,
                 )
                 if path:
                     used_model = GITEE_MODEL_NAME
@@ -681,6 +685,7 @@ def generate(
             prompt_is_final=True,
             source=source,
             sync_gallery=False,
+            schedule_time=schedule_raw,
         )
         if path:
             used_model = GITEE_MODEL_NAME
@@ -697,13 +702,14 @@ def generate(
                 prompt_is_final=True,
                 source=source,
                 sync_gallery=False,
+                schedule_time=schedule_raw,
             )
             if path:
                 used_model = GPTIMAGE_DIRECT_MODEL
 
     caption_text = None
     if path and caption:
-        caption_text = build_caption(theme)
+        caption_text = build_caption(theme, schedule_time=schedule_raw)
         if caption_text and send:
             send_photo(path, caption_text)
             print(f"CAPTION:{caption_text}")
