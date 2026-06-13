@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Shared constants and helpers for zhuzhu image generation."""
 import base64
+import hashlib
 import io
 import json
 import os
@@ -404,6 +405,18 @@ def _trim_caption_piece(text: str, limit: int = 28) -> str:
     return cleaned[:limit].rstrip(" ，,、；;。.!！?") + "..."
 
 
+def _caption_seed(*parts: str) -> int:
+    raw = "|".join(str(part or "") for part in parts)
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
+    return int(digest[:8], 16)
+
+
+def _caption_pick(options: list[str], *seed_parts: str) -> str:
+    if not options:
+        return ""
+    return options[_caption_seed(*seed_parts) % len(options)]
+
+
 def _caption_conflicts_with_schedule(caption: str, schedule_time: str = "") -> bool:
     activity = _caption_activity(schedule_time)
     if not activity or not caption:
@@ -428,15 +441,55 @@ def _personalized_caption_fallback(theme: str, persona: dict, schedule_time: str
     activity = _caption_activity(schedule_time)
     if activity:
         activity_text = _trim_caption_piece(activity)
-        return _shorten_caption(f"刚刚{activity_text}时拍下这一刻，{character}想把穿搭和心情分享给{user_name}。", 60)
+        activity_key = re.sub(r"\s+", "", activity)
+        specific_templates = []
+        if any(word in activity_key for word in ("直播", "歌会", "唱歌", "情歌", "开播")):
+            specific_templates.extend([
+                f"歌会灯光一亮，{character}这身穿搭也跟着甜起来了；这张先留给{user_name}看。",
+                f"唱到最软的一句时顺手拍了下来，今天的毛衣和眼神都很配这场歌会。",
+                f"{user_name}，直播间刚热起来，{character}把这点亮晶晶的状态藏进照片里了。",
+            ])
+        if any(word in activity_key for word in ("厨房", "牛排", "奶茶", "做饭", "晚餐", "甜点", "午餐")):
+            specific_templates.extend([
+                f"厨房的香气还没散，{character}顺手留了张今天的穿搭小记录。",
+                f"{activity_text}的时候，衣服细节和灯光都刚好有点生活感。",
+                f"{user_name}，这张带着一点热乎乎的日常味道，连穿搭都显得更软了。",
+            ])
+        if any(word in activity_key for word in ("电脑", "游戏", "速通", "Live2D", "平板", "建模", "耳机")):
+            specific_templates.extend([
+                f"屏幕光落在脸上的时候很适合自拍，{character}把今天的专注感也拍进去了。",
+                f"{activity_text}中途偷偷拍一张，耳边和衣角的小细节都刚刚好。",
+                f"{user_name}，这张有一点认真工作的气息，也有一点想被夸的心情。",
+            ])
+        if any(word in activity_key for word in ("床", "睡", "护肤", "洗澡", "被窝", "枕头", "晚安")):
+            specific_templates.extend([
+                f"灯光软下来之后，这张照片也变得安静了，像给{user_name}留的一句晚安。",
+                f"{activity_text}前后拍下的小瞬间，穿搭和表情都比白天更放松。",
+                f"{character}把夜里的柔软留在这张图里，悄悄递给{user_name}看。",
+            ])
+        if any(word in activity_key for word in ("街", "散步", "路灯", "公园", "出门", "逛")):
+            specific_templates.extend([
+                f"路上的光刚好落下来，{character}这套穿搭在画面里显得很有呼吸感。",
+                f"{activity_text}时随手留的一张，背景和今天的心情正好同频。",
+                f"{user_name}，外面的风把衣摆吹得很好看，所以这张不能不存。",
+            ])
+
+        templates = specific_templates + [
+            f"{activity_text}这一段刚好被镜头收住，{character}今天的穿搭也有了自己的小情绪。",
+            f"{user_name}，这张是{activity_text}前后的瞬间，衣服细节和心情都刚刚好。",
+            f"{character}在{activity_text}时留了一张，想把当下的现场感放进画廊里。",
+            f"这一刻和日程刚好对上了，{character}的穿搭、表情和光线都很有记忆点。",
+            f"{activity_text}的时候拍下这张，像给今天夹了一枚小小的书签。",
+        ]
+        return _shorten_caption(_caption_pick(templates, theme, schedule_time, character, user_name), 72)
     templates = {
         "morning": f"早安，{user_name}～{character}刚拍完晨间穿搭，光线很好，心情也亮起来了。",
         "noon": f"{user_name}，{character}把午间穿搭拍好啦，阳光和状态都刚刚好。",
-        "evening": f"傍晚的光很温柔，{character}想把今天这套穿搭和心情分享给{user_name}。",
+        "evening": f"傍晚的光很温柔，{character}把今天这套穿搭留成了一张小小的晚间记录。",
         "bedtime": f"夜色安静下来啦，{character}把睡前这一刻留给{user_name}看。",
         "sexy": f"{character}今天的镜头氛围更大胆一点，穿搭和心情都很特别。",
     }
-    return templates.get(theme, f"{character}的新照片来啦～想把这一刻分享给{user_name}。")
+    return templates.get(theme, f"{character}的新照片来啦～这一刻很适合放进画廊。")
 
 
 def _caption_voice_hint(persona: dict) -> str:
@@ -463,6 +516,7 @@ def _scene_caption_fallback(theme: str, persona: dict, caption: str = "", schedu
         caption
         and not _caption_has_persona_leak(caption)
         and not _caption_conflicts_with_schedule(caption, schedule_time)
+        and not _caption_is_generic_template(caption)
     ):
         short = _shorten_caption(caption)
         if short:
@@ -477,6 +531,12 @@ def _caption_has_persona_leak(caption: str) -> bool:
         "恋爱脑", "系统提示", "提示词", "SOUL", "Soul", "工程师",
     )
     return any(marker in text for marker in leak_markers)
+
+
+def _caption_is_generic_template(caption: str) -> bool:
+    text = re.sub(r"\s+", "", str(caption or ""))
+    markers = ("刚刚", "拍下这一刻", "穿搭和心情", "分享给")
+    return sum(1 for marker in markers if marker in text) >= 3
 
 
 def _shorten_caption(caption: str, limit: int = 90) -> str:
@@ -511,106 +571,14 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
 
     theme_cfg = THEMES.get(theme, THEMES["morning"])
     
-    # Schedule-aware element selection
-    def _match_by_keywords(pool: list, keywords: dict, fallback_pool: list = None) -> str:
-        """Select element from pool based on keyword matching with schedule activity."""
-        if not schedule_activity:
-            return random.choice(pool)
-        act_lower = schedule_activity.lower()
-        for kw_list, indices in keywords.items():
-            if any(kw in act_lower for kw in kw_list):
-                valid = [i for i in indices if i < len(pool)]
-                if valid:
-                    return pool[random.choice(valid)]
-        return random.choice(fallback_pool or pool)
-    
-    # Schedule activity → element keywords mapping
-    _ACTIVITY_KEYWORDS = {
-        # 旅行/飞机/机场。放在餐饮前面，避免 airline lunch 被普通午餐场景吞掉。
-        "travel": (["飞机", "机场", "登机", "航班", "航空", "机舱", "候机", "贵宾厅", "plane", "airline", "flight", "airport", "boarding", "cabin", "vip lounge"],
-                   {"clothing": [1, 4, 6], "pose": [4, 10, 11, 12, 13, 14], "env": [9, 10, 11]}),
-        # 咖啡/餐厅/美食
-        "food": (["咖啡", "餐", "吃", "饭", "面", "奶茶", "蛋糕", "甜点", "可颂", "午餐", "早餐", "晚餐", "boba", "cafe", "ramen", "noodle", "bento"],
-                 {"clothing": [1, 4, 6], "pose": [11, 12, 13, 14, 15], "env": [1, 5, 9, 10, 11]}),
-        # 运动/瑜伽/跑步
-        "sport": (["运动", "瑜伽", "跑步", "健身", "拉伸", "散步", "公园", "yoga", "run", "jog", "stretch"],
-                  {"clothing": [0, 4], "pose": [0, 1, 5], "env": [3, 4]}),
-        # 直播/聊天。放在创作前面，避免“直播”被当成泛创作场景。
-        "stream": (["直播", "开播", "粉丝", "好物", "聊天", "stream", "livestream", "live stream", "chat"],
-                   {"clothing": [0, 1, 4], "pose": [0, 3], "env": [0, 2]}),
-        # 创作/画画/写作/阅读
-        "creative": (["画", "写", "读", "书", "创作", "journal", "write", "read", "paint", "sketch"],
-                     {"clothing": [0, 1, 3], "pose": [0, 8], "env": [0, 2, 4]}),
-        # 散步/外出/逛街
-        "outdoor": (["出门", "散步", "逛街", "拍摄", "vlog", "外", "街", "walk", "shop", "photo", "stroll"],
-                    {"clothing": [1, 2, 4, 6], "pose": [2, 6, 7, 16, 17, 18], "env": [0, 1, 3, 5, 6]}),
-        # 护肤/洗澡/睡前
-        "skincare": (["护肤", "洗", "澡", "面膜", "泡脚", "skincare", "bath", "shower", "lotion"],
-                     {"clothing": [2, 3, 4], "pose": [4, 6, 9], "env": [1, 3, 5]}),
-    }
-
-    def _slot_scene_override(activity: str):
-        """High-confidence per-slot scenes that should beat generic theme pools."""
-        act = (activity or "").lower()
-
-        def has_any(words):
-            return any(word in act for word in words)
-
-        if has_any(["直播", "开播", "粉丝", "好物", "livestream", "live stream", "stream"]):
-            return (
-                "sitting at a cozy home livestream desk, holding up today's shopping finds toward the phone camera, smiling brightly as if chatting with fans",
-                "cozy home livestream corner with a ring light, phone tripod, neatly arranged shopping bags, small product display shelf, warm room decor",
-                "soft ring light mixed with warm indoor evening lamp light, realistic smartphone livestream ambience",
-            )
-
-        if has_any(["飞机", "航空", "航班", "机舱", "plane", "airline", "flight", "cabin"]):
-            return (
-                "sitting in an airplane window seat, with a small airline meal tray on the fold-down table, relaxing calmly and looking gently toward the phone camera, using only airplane cabin props",
-                "inside a modern airplane cabin with oval window, seat row, fold-down tray table, delicate airline lunch, soft clouds visible outside, only airplane cabin travel details",
-                "bright natural daylight through the airplane window, realistic smartphone travel photo ambience",
-            )
-
-        if has_any(["机场", "登机", "候机", "贵宾厅", "airport", "boarding", "vip lounge", "lounge"]):
-            return (
-                "sitting in an airport VIP lounge beside a silver suitcase, holding a boarding pass or coffee, waiting calmly for the flight, using only airport travel props",
-                "airport VIP lounge with floor-to-ceiling windows, runway view, suitcase nearby, boarding gate atmosphere, only airport lounge travel details",
-                "clean airport daylight through large windows, realistic smartphone travel photo ambience",
-            )
-
-        if has_any(["日料", "拉面", "餐", "吃", "饭", "面", "ramen", "restaurant", "noodle"]):
-            return (
-                "sitting at a restaurant table, holding chopsticks near a steaming ramen bowl, smiling warmly at the camera",
-                "top-floor Japanese ramen restaurant with warm wooden booths, a steaming ramen bowl, menu cards, city lights beyond the window",
-                "warm restaurant lighting with gentle evening window glow, natural smartphone photo ambience",
-            )
-
-        if has_any(["回家", "居家", "家里", "home"]):
-            return (
-                "sitting casually at home after coming back, looking relaxed and smiling at the camera",
-                "cozy apartment living room in the evening with a sofa, warm lamp, tidy shopping bags by the wall",
-                "warm indoor evening lamp light, relaxed home atmosphere, natural smartphone photo ambience",
-            )
-
-        return None
-    
     # ★ LLM 关键词优先：如果有 outfit_keywords，直接用，不从池子选
     if outfit_keywords:
         clothing = outfit_keywords
-        matched = True
         print(f"👔 Using LLM outfit keywords: {clothing[:60]}", file=sys.stderr)
     elif is_sexy:
         clothing = random.choice(theme_cfg["clothing"])
     else:
-        # Fallback: keyword matching from pool
-        matched = False
-        for act_type, (kw_list, idx_map) in _ACTIVITY_KEYWORDS.items():
-            if any(kw in schedule_activity.lower() for kw in kw_list):
-                clothing_pool = theme_cfg["clothing"]
-                clothing = random.choice([clothing_pool[i] for i in idx_map.get("clothing", []) if i < len(clothing_pool)] or [random.choice(clothing_pool)])
-                matched = True
-                break
-        if not matched:
-            clothing = random.choice(theme_cfg["clothing"])
+        clothing = random.choice(theme_cfg["clothing"])
 
     if is_sexy:
         hair = random.choice(theme_cfg["hair"])
@@ -619,31 +587,40 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
         lighting = random.choice(theme_cfg["lighting"])
     else:
         hair = random.choice(theme_cfg["hair"])
-        pose = random.choice(theme_cfg["pose"])
-        environment = random.choice(theme_cfg["env"])
-        lighting = random.choice(theme_cfg["light"])
-        
-        # ★ LLM 关键词优先：如果有 scene_keywords，替换 environment
-        if scene_keywords:
-            environment = scene_keywords
-            print(f"🏠 Using LLM scene keywords: {environment[:60]}", file=sys.stderr)
-        elif matched:
-            # Pool-based matching for pose and env
-            for act_type, (kw_list, idx_map) in _ACTIVITY_KEYWORDS.items():
-                if any(kw in schedule_activity.lower() for kw in kw_list):
-                    pose_pool = theme_cfg["pose"]
-                    env_pool = theme_cfg["env"]
-                    pose = random.choice([pose_pool[i] for i in idx_map.get("pose", []) if i < len(pose_pool)] or [random.choice(pose_pool)])
-                    environment = random.choice([env_pool[i] for i in idx_map.get("env", []) if i < len(env_pool)] or [random.choice(env_pool)])
-                    break
+        if schedule_activity:
+            pose = (
+                "naturally engaged in the current scheduled scene, "
+                "with pose, hands, props, and expression chosen to fit that exact activity"
+            )
+            environment = scene_keywords or (
+                "the setting implied by the current scheduled scene, including only props "
+                "and surroundings that fit that activity"
+            )
+            lighting = "lighting that fits the scheduled time and scene, realistic smartphone photo ambience"
+            if scene_keywords:
+                print(f"🏠 Using LLM scene keywords: {environment[:60]}", file=sys.stderr)
+            print(f"🎬 Using LLM schedule scene directly: {schedule_activity[:60]}", file=sys.stderr)
+        else:
+            pose = random.choice(theme_cfg["pose"])
+            environment = random.choice(theme_cfg["env"])
+            lighting = random.choice(theme_cfg["light"])
 
-        slot_scene = _slot_scene_override(schedule_activity)
-        if slot_scene:
-            pose, environment, lighting = slot_scene
-            print(f"🎬 Using slot-specific scene for activity: {schedule_activity[:40]}", file=sys.stderr)
+            # ★ LLM 关键词优先：如果有 scene_keywords，替换 environment
+            if scene_keywords:
+                environment = scene_keywords
+                print(f"🏠 Using LLM scene keywords: {environment[:60]}", file=sys.stderr)
+
+    activity_focus = ""
+    if schedule_activity:
+        activity_focus = (
+            f"Current scheduled scene from today's LLM plan: {schedule_activity}. "
+            "Use this schedule text as the source of truth for the action, props, setting, mood, and time of day. "
+            "Do not replace it with a generic routine or another activity. "
+        )
 
     return (
         f"{quality} {appearance}. "
+        f"{activity_focus}"
         f"Her hair is {hair}. "
         f"She is {pose}. "
         f"She is wearing {clothing}. "
@@ -685,17 +662,17 @@ def _fit_image_bytes(img_data: bytes, target_size: Optional[str]) -> bytes:
         with Image.open(io.BytesIO(img_data)) as src:
             img = ImageOps.exif_transpose(src)
             original_size = img.size
-            if original_size == parsed:
+            if original_size == parsed and detect_extension(img_data) == "png":
                 return img_data
             if img.mode not in ("RGB", "RGBA"):
-                img = img.convert("RGB")
-            fitted = ImageOps.fit(img, parsed, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+                img = img.convert("RGBA" if ("transparency" in img.info or "A" in img.getbands()) else "RGB")
+            fitted = img if original_size == parsed else ImageOps.fit(img, parsed, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
             out = io.BytesIO()
-            if fitted.mode == "RGBA":
-                fitted.save(out, format="PNG", optimize=True)
+            fitted.save(out, format="PNG", optimize=True)
+            if original_size == parsed:
+                print(f"📐 Normalized image format to PNG at {parsed[0]}x{parsed[1]}", file=sys.stderr)
             else:
-                fitted.save(out, format="JPEG", quality=95, optimize=True)
-            print(f"📐 Adjusted image size from {original_size[0]}x{original_size[1]} to {parsed[0]}x{parsed[1]}", file=sys.stderr)
+                print(f"📐 Adjusted image size from {original_size[0]}x{original_size[1]} to {parsed[0]}x{parsed[1]} as PNG", file=sys.stderr)
             return out.getvalue()
     except Exception as e:
         print(f"Image size adjustment failed for {target_size}: {e}", file=sys.stderr)
@@ -716,6 +693,27 @@ def save_image(img_data: bytes, theme: str, model_name: str, style: Optional[str
         f.write(img_data)
 
     return path, filename, ts
+
+
+def _image_file_metadata(filename: str) -> dict:
+    path = os.path.join(WORKSPACE_MEDIA, filename)
+    info = {}
+    try:
+        stat = os.stat(path)
+        info["file_size_bytes"] = stat.st_size
+    except OSError:
+        pass
+    try:
+        with Image.open(path) as img:
+            width, height = img.size
+        info.update({
+            "width": width,
+            "height": height,
+            "size": f"{width}x{height}",
+        })
+    except Exception:
+        pass
+    return info
 
 
 def _extract_time_from_filename(filename: str) -> str:
@@ -759,6 +757,16 @@ def _translate_outfit(prompt: str, style_name: str) -> str:
         lower = text.lower()
         keywords = []
         phrase_map = [
+            (["oversized", "black", "knit", "off-the-shoulder", "sweater"], "黑色宽松露肩针织毛衣"),
+            (["black", "lace-trimmed", "pumpkin", "shorts"], "黑色蕾丝边南瓜短裤"),
+            (["black", "white", "striped", "over-knee", "socks"], "黑白条纹过膝袜"),
+            (["velvet", "choker"], "丝绒颈圈"),
+            (["cat-ear", "headband"], "猫耳发箍"),
+            (["black", "cat", "slippers"], "黑猫拖鞋"),
+            (["knit", "sweater"], "针织毛衣"),
+            (["off-the-shoulder"], "露肩上衣"),
+            (["pumpkin", "shorts"], "南瓜短裤"),
+            (["over-knee", "socks"], "过膝袜"),
             (["light gray", "knit", "cardigan"], "浅灰色针织开衫"),
             (["gray", "knit", "cardigan"], "灰色针织开衫"),
             (["white", "lace", "camisole"], "白色蕾丝吊带睡裙"),
@@ -816,10 +824,18 @@ def _translate_outfit(prompt: str, style_name: str) -> str:
             return "缎面连衣裙、蕾丝外搭、精致项链"
         return ""
 
+    def _fallback_from_prompt() -> str:
+        fallback = _fallback_keywords(extraction_input)
+        if fallback:
+            return fallback
+        if outfit_line:
+            return ""
+        return _contextual_fallback_keywords(prompt, style_name)
+
     try:
         api_key = get_cpa_key()
         if not api_key:
-            return _fallback_keywords(extraction_input) or _contextual_fallback_keywords(prompt, style_name)
+            return _fallback_from_prompt()
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
         sys_prompt = (
             "你是一个穿搭关键词提取器。从英文AI生图prompt中提取服装，用中文列出3-5个关键词，用顿号分隔。\n"
@@ -833,7 +849,7 @@ def _translate_outfit(prompt: str, style_name: str) -> str:
         )
         models = get_llm_models()
         if not models:
-            return _fallback_keywords(extraction_input) or _contextual_fallback_keywords(prompt, style_name)
+            return _fallback_from_prompt()
         payload = {
             "model": models[0],
             "messages": [
@@ -852,7 +868,7 @@ def _translate_outfit(prompt: str, style_name: str) -> str:
                 return content
     except Exception as e:
         print(f"[translate_outfit] LLM failed: {e}", file=sys.stderr)
-    return _fallback_keywords(extraction_input) or _contextual_fallback_keywords(prompt, style_name)
+    return _fallback_from_prompt()
 
 
 def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] = None,
@@ -1012,6 +1028,7 @@ def update_metadata(filename: str, theme: str, prompt: str, model_name: str, ts:
     }
     if extra_metadata:
         new_entry.update(extra_metadata)
+    new_entry.update(_image_file_metadata(filename))
 
     # 写入三个地方：画廊插件目录、工作区备份
     paths = [
@@ -1097,6 +1114,8 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         "只参考称呼和语气，不要复述、展开或透露 SOUL、人设、身份、关系或性格设定。"
         "如果提供了具体日程，必须严格贴合该时间、地点和活动，不要写与日程冲突的起床、被窝、睡前等内容。"
         "内容只写当时拍照的场景、穿搭亮点和心情。"
+        "每张都必须写出不同观察角度，禁止套用固定句式。"
+        "不要写“刚刚X时拍下这一刻，想把穿搭和心情分享给Y”这类模板句。"
         "输出 1-2 句中文，总长不超过 60 个汉字。"
         "不要写长段落，不要提技术术语、英文提示词、模型名称。可以使用 0-1 个 emoji。"
         "直接输出配文内容，不要加引号或标题。"
@@ -1156,6 +1175,18 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         print(f"[caption] llm failed: {e}", file=sys.stderr)
 
     return _personalized_caption_fallback(theme, persona, schedule_time)
+
+
+def build_caption_for_image(theme: str, image_path: str, schedule_time: str = "") -> str:
+    try:
+        with open(image_path, "rb") as f:
+            img_b64 = base64.b64encode(f.read()).decode("utf-8")
+        ext = os.path.splitext(image_path)[1].lower()
+        img_mime = "image/png" if ext == ".png" else "image/jpeg"
+        return build_caption(theme, img_b64=img_b64, img_mime=img_mime, schedule_time=schedule_time)
+    except Exception as e:
+        print(f"[caption] image read failed: {e}", file=sys.stderr)
+        return build_caption(theme, schedule_time=schedule_time)
 
 
 def send_photo(path: str, caption: Optional[str] = None):

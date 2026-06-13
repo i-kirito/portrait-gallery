@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700;800&amp;family=Noto+Sans+SC:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -140,6 +141,7 @@ textarea:focus-visible,
   padding: 3px;
   border-radius: 14px;
   justify-self: center;
+  width: fit-content;
   max-width: 100%;
   min-width: 0;
   overflow-x: auto;
@@ -1084,13 +1086,19 @@ textarea:focus-visible,
 
 .today-hero-title {
   text-align: center;
+  width: min(430px, 100%);
+  margin: 0 auto;
   padding: 0 0 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
 }
 .today-hero-title h2 {
   font-size: 28px;
   font-weight: 800;
   color: #e91e63;
   letter-spacing: 2px;
+  margin: 0;
 }
 .today-hero-title h2 .pig-emoji { font-size: 26px; }
 .today-hero-title .subtitle {
@@ -1100,7 +1108,9 @@ textarea:focus-visible,
 }
 .today-hero-title .subtitle .heart { color: #e91e63; }
 .today-hero-title .gen-today-btn {
+  align-self: center;
   margin-top: 16px;
+  min-width: 170px;
   padding: 12px 32px;
   border-radius: 26px;
   border: none;
@@ -1146,6 +1156,9 @@ textarea:focus-visible,
   max-width: 960px;
   margin: 0 auto;
 }
+#todayList {
+  max-width: 880px;
+}
 
 /* ===== Gallery Grid (original, for full gallery) ===== */
 .gallery-grid {
@@ -1162,6 +1175,7 @@ textarea:focus-visible,
   transition: all 0.25s ease;
   cursor: pointer;
   position: relative;
+  container-type: inline-size;
 }
 .gallery-card:hover {
   transform: translateY(-4px);
@@ -1234,7 +1248,7 @@ textarea:focus-visible,
 .gallery-card .card-body .card-row1 .date {
   display: inline-block;
   flex: 1 1 auto;
-  font-size: 12px;
+  font-size: clamp(10px, 6cqw, 12px);
   color: #bbb;
   letter-spacing: 0;
   min-width: 0;
@@ -1244,29 +1258,38 @@ textarea:focus-visible,
 }
 .gallery-card .card-body .card-row1 .time {
   flex: 0 0 auto;
-  font-size: 12px;
+  font-size: clamp(10px, 6cqw, 12px);
   color: #aaa;
   letter-spacing: 0;
   white-space: nowrap;
   text-align: right;
 }
 .gallery-card .card-body .card-meta {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
+  gap: 3px 4px;
+  min-width: 0;
 }
 .gallery-card .card-body .card-meta .meta-tag {
-  font-size: 10px;
+  max-width: 100%;
+  font-size: clamp(9px, 5.2cqw, 10.5px);
   color: #999;
   background: #f5f3f7;
-  padding: 1px 6px;
+  padding: 1px clamp(4px, 2.8cqw, 6px);
   border-radius: 10px;
+  line-height: 1.25;
+  letter-spacing: 0;
   white-space: nowrap;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.gallery-card .card-body .card-meta .meta-model {
+  justify-self: start;
+}
+.gallery-card .card-body .card-meta .meta-ref {
+  justify-self: end;
 }
 .gallery-card .card-body .card-sched {
   font-size: 11px;
@@ -1282,35 +1305,56 @@ textarea:focus-visible,
 .gallery-card .card-body .card-actions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 5px;
-  margin-top: 5px;
-  padding-top: 5px;
-  border-top: 1px solid #f0f0f0;
+  gap: 6px;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid #f4edf5;
 }
 .gallery-card .card-body .card-actions .ca-btn {
   min-width: 0;
-  min-height: 30px;
-  padding: 4px 2px;
-  border-radius: 9px;
-  border: 1.5px solid #eee;
-  background: #fff;
-  font-size: 13px;
-  font-weight: 600;
+  min-height: 32px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid #eadfea;
+  background: linear-gradient(180deg,#fff,#fffafd);
+  font-size: 12px;
+  font-weight: 700;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  color: #888;
-  transition: all 0.18s;
-  line-height: 1.15;
+  gap: 3px;
+  color: #786d7c;
+  transition: background 0.16s, border-color 0.16s, color 0.16s, box-shadow 0.16s, transform 0.16s;
+  line-height: 1;
   white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(60,35,70,0.03);
+}
+.gallery-card .card-body .card-actions .ca-btn .ca-icon {
+  flex: 0 0 auto;
+  width: 1em;
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.gallery-card .card-body .card-actions .ca-btn .ca-label {
+  min-width: 0;
+  overflow: visible;
+  text-overflow: clip;
 }
 .gallery-card .card-body .card-actions .ca-btn:hover {
   border-color: #e91e63;
   color: #e91e63;
-  background: #fce4ec;
+  background: #fff1f7;
   transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(233,30,99,0.12);
+}
+.gallery-card .card-body .card-actions .ca-btn.liked {
+  border-color: #ff4f93;
+  color: #e91e63;
+  background: linear-gradient(180deg,#fff5fa,#ffeaf3);
 }
 .gallery-card .card-body .card-actions .ca-btn.danger:hover {
   border-color: #e53935;
@@ -1659,6 +1703,15 @@ textarea:focus-visible,
   line-height: 1.15;
   white-space: nowrap;
   box-shadow: none;
+}
+.tc-actions .tc-btn .btn-icon {
+  width: 1em;
+  flex: 0 0 auto;
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .tc-actions .tc-btn:hover {
   background: #f5f5f5;
@@ -2057,6 +2110,23 @@ textarea:focus-visible,
   .big-card-info .bc-schedule { padding: 10px 14px; }
   .big-card-info .bc-schedule .sched-row { font-size: 13px; }
 }
+@media (max-width: 980px) {
+  .header {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand actions"
+      "tabs tabs";
+    gap: 12px 12px;
+  }
+  .tabs {
+    justify-self: center;
+    width: min(430px, 100%);
+  }
+  .tab {
+    flex: 1 1 0;
+    padding-inline: 12px;
+  }
+}
 @media (max-width: 700px) {
   .header {
     grid-template-columns: minmax(0, 1fr) auto;
@@ -2162,6 +2232,10 @@ textarea:focus-visible,
   user-select: none;
 }
 #colSliderWrap.hidden { opacity: 0; pointer-events: none; }
+#colSliderWrap.single-value {
+  gap: 6px;
+  padding-inline: 14px;
+}
 #colSliderWrap .col-icon { font-size: 16px; }
 #colSliderWrap .col-val {
   min-width: 20px;
@@ -2180,6 +2254,11 @@ textarea:focus-visible,
   outline: none;
   cursor: pointer;
 }
+#colSliderWrap.single-value #colSlider { display: none; }
+#colSlider:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 #colSlider::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 20px;
@@ -2191,44 +2270,84 @@ textarea:focus-visible,
   transition: transform 0.15s;
 }
 #colSlider::-webkit-slider-thumb:hover { transform: scale(1.2); }
+#colSlider:disabled::-webkit-slider-thumb {
+  cursor: default;
+  transform: none;
+}
 
 /* ===== Column-responsive card scaling ===== */
 /* 8 columns: smallest */
 .gallery-grid.cols-8 .gallery-card .card-body { padding: 6px 8px; }
 .gallery-grid.cols-8 .gallery-card .card-body .card-row1 .date,
-.gallery-grid.cols-8 .gallery-card .card-body .card-row1 .time { font-size: 11px; }
-.gallery-grid.cols-8 .gallery-card .card-body .card-meta .meta-tag { font-size: 9px; padding: 1px 5px; border-radius: 8px; }
+.gallery-grid.cols-8 .gallery-card .card-body .card-row1 .time { font-size: 10px; }
+.gallery-grid.cols-8 .gallery-card .card-body .card-meta .meta-tag { font-size: 9px; padding: 1px 4px; border-radius: 8px; }
 .gallery-grid.cols-8 .gallery-card .card-body .card-sched { font-size: 9px; padding: 3px 6px; border-radius: 6px; }
-.gallery-grid.cols-8 .gallery-card .card-body .card-actions .ca-btn { min-height: 25px; font-size: 10px; padding: 3px 1px; border-radius: 6px; }
+.gallery-grid.cols-8 .gallery-card .card-body .card-actions { gap: 2px; padding-top: 5px; }
+.gallery-grid.cols-8 .gallery-card .card-body .card-actions .ca-btn { min-height: 28px; font-size: 10px; padding: 0 2px; gap: 2px; overflow: hidden; }
+.gallery-grid.cols-8 .gallery-card .card-body .card-actions .ca-btn .ca-icon { font-size: 10.5px; }
 .gallery-grid.cols-8 .gallery-card .card-date-tag { font-size: 10px; padding: 2px 5px; }
 
 /* 7 columns */
 .gallery-grid.cols-7 .gallery-card .card-body { padding: 7px 8px; }
 .gallery-grid.cols-7 .gallery-card .card-body .card-row1 .date,
-.gallery-grid.cols-7 .gallery-card .card-body .card-row1 .time { font-size: 11px; }
-.gallery-grid.cols-7 .gallery-card .card-body .card-meta .meta-tag { font-size: 10px; padding: 1px 6px; border-radius: 9px; }
+.gallery-grid.cols-7 .gallery-card .card-body .card-row1 .time { font-size: 10.5px; }
+.gallery-grid.cols-7 .gallery-card .card-body .card-meta .meta-tag { font-size: 9.5px; padding: 1px 5px; border-radius: 9px; }
 .gallery-grid.cols-7 .gallery-card .card-body .card-sched { font-size: 10px; padding: 3px 8px; border-radius: 7px; }
-.gallery-grid.cols-7 .gallery-card .card-body .card-actions .ca-btn { min-height: 27px; font-size: 11px; padding: 4px 1px; border-radius: 7px; }
+.gallery-grid.cols-7 .gallery-card .card-body .card-actions { gap: 3px; padding-top: 5px; }
+.gallery-grid.cols-7 .gallery-card .card-body .card-actions .ca-btn { min-height: 29px; font-size: 10.5px; padding: 0 3px; gap: 2px; overflow: hidden; }
+.gallery-grid.cols-7 .gallery-card .card-body .card-actions .ca-btn .ca-icon { font-size: 11px; }
 .gallery-grid.cols-7 .gallery-card .card-date-tag { font-size: 10px; padding: 2px 6px; }
 
 /* 6 columns */
 .gallery-grid.cols-6 .gallery-card .card-body { padding: 8px; }
 .gallery-grid.cols-6 .gallery-card .card-body .card-row1 .date,
-.gallery-grid.cols-6 .gallery-card .card-body .card-row1 .time { font-size: 12px; }
-.gallery-grid.cols-6 .gallery-card .card-body .card-meta .meta-tag { font-size: 11px; padding: 2px 7px; border-radius: 10px; }
+.gallery-grid.cols-6 .gallery-card .card-body .card-row1 .time { font-size: 11px; }
+.gallery-grid.cols-6 .gallery-card .card-body .card-meta .meta-tag { font-size: 10px; padding: 1px 6px; border-radius: 10px; }
 .gallery-grid.cols-6 .gallery-card .card-body .card-sched { font-size: 10px; padding: 3px 8px; border-radius: 7px; }
-.gallery-grid.cols-6 .gallery-card .card-body .card-actions .ca-btn { min-height: 29px; font-size: 12px; padding: 4px 2px; border-radius: 8px; }
+.gallery-grid.cols-6 .gallery-card .card-body .card-actions { gap: 4px; padding-top: 6px; }
+.gallery-grid.cols-6 .gallery-card .card-body .card-actions .ca-btn { min-height: 29px; font-size: 10.5px; padding: 0 4px; gap: 2px; }
+.gallery-grid.cols-6 .gallery-card .card-body .card-actions .ca-btn .ca-icon { font-size: 11px; }
 
 /* 5 columns (default) — no override needed, uses base CSS */
 
 /* 4 columns: largest */
 .gallery-grid.cols-4 .gallery-card .card-body { padding: 10px 8px 12px; }
 .gallery-grid.cols-4 .gallery-card .card-body .card-row1 .date,
-.gallery-grid.cols-4 .gallery-card .card-body .card-row1 .time { font-size: 14px; }
-.gallery-grid.cols-4 .gallery-card .card-body .card-meta .meta-tag { font-size: 13px; padding: 2px 10px; border-radius: 12px; }
+.gallery-grid.cols-4 .gallery-card .card-body .card-row1 .time { font-size: 12px; }
+.gallery-grid.cols-4 .gallery-card .card-body .card-meta .meta-tag { font-size: 10.5px; padding: 1px 6px; border-radius: 10px; }
 .gallery-grid.cols-4 .gallery-card .card-body .card-sched { font-size: 12px; padding: 5px 12px; border-radius: 10px; }
-.gallery-grid.cols-4 .gallery-card .card-body .card-actions .ca-btn { min-height: 31px; font-size: 13px; padding: 4px 2px; border-radius: 10px; }
+.gallery-grid.cols-4 .gallery-card .card-body .card-actions .ca-btn { min-height: 33px; font-size: 12px; padding: 0 7px; }
 .gallery-grid.cols-4 .gallery-card .card-date-tag { font-size: 12px; padding: 3px 9px; }
+
+@container (max-width: 168px) {
+  .gallery-card .card-body .card-actions {
+    gap: 4px;
+  }
+  .gallery-card .card-body .card-actions .ca-btn {
+    padding-inline: 3px;
+    gap: 2px;
+    font-size: 11px;
+  }
+  .gallery-card .card-body .card-actions .ca-btn .ca-icon {
+    font-size: 12px;
+  }
+}
+
+@container (max-width: 136px) {
+  .gallery-card .card-body .card-actions {
+    gap: 3px;
+  }
+  .gallery-card .card-body .card-actions .ca-btn {
+    min-height: 29px;
+    padding: 0 2px;
+  }
+  .gallery-card .card-body .card-actions .ca-btn .ca-label {
+    display: none;
+  }
+  .gallery-card .card-body .card-actions .ca-btn .ca-icon {
+    font-size: 14px;
+  }
+}
 
 /* 🐷 日程彩蛋弹窗 */
 .egg-overlay { position: fixed; inset: 0; background: rgba(32,20,42,0.42); backdrop-filter: none; -webkit-backdrop-filter: none; z-index: 9999; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.18s ease; padding: 14px; box-sizing: border-box; }
@@ -2247,8 +2366,68 @@ textarea:focus-visible,
 .egg-body { padding: 20px 22px 22px; }
 .egg-section { margin-bottom: 24px; }
 .egg-section:last-child { margin-bottom: 0; }
+.egg-outfit-section { margin-top: 28px; }
 .egg-section-title { font-size: 14px; font-weight: 700; color: #8b5cf6; margin-bottom: 11px; display: flex; align-items: center; gap: 6px; }
 .egg-section-title .icon { font-size: 16px; }
+.egg-section-title.with-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+}
+.egg-outfit-section .egg-section-title.with-action {
+  margin-bottom: 15px;
+  padding-top: 2px;
+}
+.egg-section-title-main { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.egg-title-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
+.egg-outfit-fav-btn {
+  min-height: 36px;
+  min-width: 94px;
+  max-width: 136px;
+  padding: 0 14px;
+  border: 1px solid rgba(233,30,99,0.22);
+  border-radius: 999px;
+  background: #fff;
+  color: #c2185b;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  box-shadow: 0 6px 14px rgba(233,30,99,0.08);
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+.egg-outfit-fav-btn span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.egg-outfit-fav-btn:hover { background: #fff7fb; border-color: rgba(233,30,99,0.36); }
+.egg-outfit-fav-btn.active { background: linear-gradient(135deg, #ff2d8d, #c026d3); border-color: transparent; color: #fff; box-shadow: 0 8px 18px rgba(233,30,99,0.22); }
+.egg-outfit-fav-btn:disabled { cursor: default; opacity: 0.58; box-shadow: none; }
+.egg-outfit-view-btn {
+  min-height: 30px;
+  min-width: 52px;
+  padding: 0 10px;
+  border: 1px solid rgba(139,92,246,0.2);
+  border-radius: 999px;
+  background: rgba(255,255,255,0.88);
+  color: #7c3aed;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  white-space: nowrap;
+  box-shadow: 0 5px 12px rgba(139,92,246,0.08);
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+.egg-outfit-view-btn:hover { background: #f8f5ff; border-color: rgba(139,92,246,0.36); }
+.egg-outfit-view-btn[aria-expanded="true"] { background: #f3ecff; color: #6d28d9; border-color: rgba(139,92,246,0.34); }
+.egg-outfit-view-btn:disabled { cursor: default; opacity: 0.58; box-shadow: none; }
 .egg-outfit-grid { display: flex; flex-direction: column; gap: 10px; }
 .egg-outfit-item { background: rgba(255,255,255,0.88); backdrop-filter: none; -webkit-backdrop-filter: none; border: 1px solid rgba(240,226,255,0.9); border-radius: 14px; padding: 12px 14px; width: 100%; box-sizing: border-box; box-shadow: 0 3px 12px rgba(168,85,247,0.05); transition: background 0.16s ease, border-color 0.16s ease; }
 .egg-outfit-item:hover { background: #fff; border-color: rgba(228,202,255,0.95); }
@@ -2268,6 +2447,33 @@ textarea:focus-visible,
   flex-shrink: 0;
 }
 .egg-style-manage:hover { background: #ffeaf3; }
+.egg-fav-overlay { position: fixed; inset: 0; z-index: 10001; display: flex; align-items: center; justify-content: center; padding: 18px; background: rgba(32,20,42,0.46); opacity: 0; pointer-events: none; transition: opacity 0.18s ease; box-sizing: border-box; }
+.egg-fav-overlay.show { opacity: 1; pointer-events: auto; }
+.egg-fav-modal { width: min(560px, 100%); max-height: min(720px, 88vh); display: flex; flex-direction: column; border: 1px solid rgba(221,214,254,0.92); border-radius: 18px; background: linear-gradient(135deg, rgba(255,255,255,0.98), rgba(249,247,255,0.96)); box-shadow: 0 24px 70px rgba(58,30,82,0.28); overflow: hidden; transform: translateY(10px) scale(0.98); transition: transform 0.18s ease; }
+.egg-fav-overlay.show .egg-fav-modal { transform: translateY(0) scale(1); }
+.egg-fav-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 18px 12px; border-bottom: 1px solid rgba(240,226,255,0.88); }
+.egg-fav-modal-title { display: flex; align-items: center; gap: 8px; color: #7c3aed; font-size: 15px; font-weight: 800; }
+.egg-fav-modal-close { width: 30px; height: 30px; border: 1px solid rgba(139,92,246,0.18); border-radius: 999px; background: #fff; color: #7c3aed; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.egg-fav-modal-close:hover { background: #f8f5ff; border-color: rgba(139,92,246,0.34); }
+.egg-fav-body { min-height: 160px; overflow: auto; padding: 12px 14px 14px; }
+.egg-fav-panel-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 7px; color: #7c3aed; font-size: 12px; font-weight: 800; }
+.egg-fav-panel-count { color: #a78bfa; font-size: 11px; font-weight: 700; }
+.egg-fav-panel-note { margin-bottom: 10px; padding: 8px 10px; border-radius: 10px; background: #fff7fb; color: #9d2f69; font-size: 11px; line-height: 1.45; border: 1px solid rgba(244,194,220,0.78); }
+.egg-fav-list { display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
+.egg-fav-item { background: #fff; border: 1px solid rgba(240,226,255,0.94); border-radius: 12px; padding: 10px 12px; }
+.egg-fav-meta { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 10px; margin-bottom: 6px; color: #a78bfa; font-size: 11px; font-weight: 700; }
+.egg-fav-title { min-width: 0; display: inline-flex; align-items: center; gap: 6px; }
+.egg-fav-style { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.egg-fav-ref { flex: 0 0 auto; padding: 2px 6px; border-radius: 999px; background: #f3ecff; color: #7c3aed; font-size: 10px; }
+.egg-fav-date { color: #b0a4c9; font-weight: 600; white-space: nowrap; }
+.egg-fav-line { color: #3f3154; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.egg-fav-line + .egg-fav-line { margin-top: 4px; }
+.egg-fav-line strong { color: #7c3aed; }
+.egg-fav-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+.egg-fav-remove-btn { min-height: 26px; padding: 0 10px; border: 1px solid rgba(233,30,99,0.2); border-radius: 999px; background: #fff7fb; color: #c2185b; font-size: 11px; font-weight: 700; cursor: pointer; }
+.egg-fav-remove-btn:hover { background: #ffeaf3; border-color: rgba(233,30,99,0.34); }
+.egg-fav-remove-btn:disabled { cursor: default; opacity: 0.58; }
+.egg-fav-empty { padding: 12px; color: #a78bfa; font-size: 12px; text-align: center; }
 .egg-schedule-list { position: relative; padding-left: 24px; }
 .egg-schedule-list::before { content: ''; position: absolute; left: 8px; top: 7px; bottom: 7px; width: 2px; background: linear-gradient(to bottom, #ff6b9d, #c084fc, #818cf8); border-radius: 1px; opacity: 0.75; }
 .egg-sched-item { position: relative; padding: 9px 0 9px 2px; }
@@ -2296,17 +2502,20 @@ textarea:focus-visible,
 .egg-limit-btn:disabled { opacity: 0.55; cursor: default; }
 .egg-limit-used { color: #999; margin-left: auto; }
 .egg-photo-list { display: flex; flex-direction: column; gap: 8px; }
-.egg-photo-item { display: flex; align-items: center; gap: 10px; row-gap: 7px; flex-wrap: wrap; font-size: 13px; padding: 9px 12px; background: rgba(255,255,255,0.82); border: 1px solid rgba(244,232,255,0.85); border-radius: 10px; box-shadow: 0 1px 4px rgba(86,45,120,0.05); }
+.egg-photo-item { display: grid; grid-template-columns: auto 48px auto minmax(0, 1fr) auto auto; align-items: center; column-gap: 10px; row-gap: 7px; font-size: 13px; padding: 9px 12px; background: rgba(255,255,255,0.82); border: 1px solid rgba(244,232,255,0.85); border-radius: 10px; box-shadow: 0 1px 4px rgba(86,45,120,0.05); }
 .egg-photo-status-badge { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 10px; white-space: nowrap; }
 .egg-photo-status-badge.done { background: #d1fae5; color: #065f46; }
 .egg-photo-status-badge.pending { background: #fef3c7; color: #92400e; }
 .egg-photo-status-badge.past { background: #e5e7eb; color: #6b7280; }
 .egg-photo-status-badge.failed { background: #fee2e2; color: #991b1b; }
 .egg-photo-status-badge.running { background: #dbeafe; color: #1d4ed8; }
-.egg-photo-time { font-weight: 600; color: #ff6b9d; min-width: 48px; }
+.egg-photo-time { font-weight: 600; color: #ff6b9d; min-width: 48px; font-variant-numeric: tabular-nums; }
 .egg-photo-theme { font-size: 11px; color: #888; background: #f5f3f7; padding: 2px 8px; border-radius: 6px; }
-.egg-photo-error { flex-basis: 100%; font-size: 11px; line-height: 1.45; color: #b91c1c; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; padding: 5px 8px; overflow-wrap: anywhere; }
-.egg-photo-retry-btn { height: 24px; border: 0; border-radius: 8px; padding: 0 10px; background: #ff5fa2; color: #fff; font-size: 11px; font-weight: 800; cursor: pointer; margin-left: auto; }
+.egg-photo-activity { grid-column: 1 / -1; min-width: 0; font-size: 12px; color: #666; line-height: 1.55; overflow-wrap: anywhere; word-break: break-word; }
+.egg-photo-style { grid-column: 5; grid-row: 1; justify-self: end; font-size: 11px; color: #888; white-space: nowrap; }
+.egg-photo-error { font-size: 11px; line-height: 1.45; color: #b91c1c; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; padding: 5px 8px; overflow-wrap: anywhere; }
+.egg-photo-error { grid-column: 1 / -1; }
+.egg-photo-retry-btn { grid-column: 6; grid-row: 1; justify-self: end; height: 24px; border: 0; border-radius: 8px; padding: 0 10px; background: #ff5fa2; color: #fff; font-size: 11px; font-weight: 800; cursor: pointer; }
 .egg-photo-retry-btn:disabled { opacity: 0.55; cursor: default; }
 .egg-header .egg-date-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; position: relative; z-index: 1; }
 .egg-refresh-btn { background: rgba(255,255,255,0.18); border: 1px solid rgba(255,255,255,0.24); color: #fff; width: 32px; height: 32px; border-radius: 10px; font-size: 15px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background 0.16s ease, border-color 0.16s ease; padding: 0; line-height: 1; flex-shrink: 0; backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; }
@@ -2319,6 +2528,15 @@ textarea:focus-visible,
 @keyframes eggNowDot { 0%, 100% { transform: scale(0.88); opacity: 0.78; } 50% { transform: scale(1.15); opacity: 1; } }
 @keyframes eggCardBeat { 0% { transform: scale(0.85) translateY(22px); } 54% { transform: scale(1.035) translateY(-2px); } 70% { transform: scale(0.985) translateY(1px); } 86% { transform: scale(1.012) translateY(0); } 100% { transform: scale(1) translateY(0); } }
 .egg-slot-empty { opacity: 0.5; font-style: italic; }
+@media (max-width: 420px) {
+  .egg-section-title.with-action { grid-template-columns: 1fr; align-items: start; }
+  .egg-title-actions { justify-self: end; flex-wrap: wrap; max-width: 100%; }
+  .egg-outfit-fav-btn { min-width: 94px; }
+  .egg-outfit-view-btn { min-width: 52px; }
+  .egg-photo-item { grid-template-columns: auto 48px auto minmax(0, 1fr) auto; }
+  .egg-photo-style { grid-column: 5; grid-row: 1; justify-self: end; }
+  .egg-photo-retry-btn { grid-column: 5; grid-row: auto; }
+}
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -2380,6 +2598,18 @@ textarea:focus-visible,
   </div>
 </div>
 
+<div class="egg-fav-overlay" id="eggFavoriteOutfitsOverlay" onclick="if(event.target===this)closeFavoriteOutfitModal()">
+  <div class="egg-fav-modal" role="dialog" aria-modal="true" aria-labelledby="eggFavoriteOutfitsTitle" onclick="event.stopPropagation()">
+    <div class="egg-fav-modal-head">
+      <div class="egg-fav-modal-title" id="eggFavoriteOutfitsTitle"><i class="fa-regular fa-folder-open" aria-hidden="true"></i><span>收藏穿搭方案</span></div>
+      <button class="egg-fav-modal-close" type="button" onclick="closeFavoriteOutfitModal()" aria-label="关闭收藏穿搭方案"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+    </div>
+    <div class="egg-fav-body" id="eggFavoriteOutfitsBody">
+      <div class="egg-fav-empty">正在读取收藏方案...</div>
+    </div>
+  </div>
+</div>
+
 <div class="egg-style-overlay" id="eggStyleOverlay">
   <div class="egg-style-modal">
     <h3>✨ 调整风格池</h3>
@@ -2416,7 +2646,7 @@ textarea:focus-visible,
 
 <div class="header">
   <div class="header-left">
-    <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.1.5</span></h1>
+    <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.1.6</span></h1>
   </div>
   <div class="tabs">
     <button class="tab" data-tab="gallery" onclick="switchTab('gallery')"><span class="tab-label">✨ 全部</span><span class="tab-badge" id="badge-all">0</span></button>
@@ -2608,7 +2838,7 @@ textarea:focus-visible,
       <div class="sk-footer-main">
         <div class="sk-update-row">
           <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
-          <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.1.5</span></span>
+          <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.1.6</span></span>
         </div>
         <div class="sk-actions">
           <button class="btn btn-secondary" onclick="closeSettings()">关闭</button>
@@ -2732,6 +2962,7 @@ let currentTagFilter = "";
 let showFavoritesOnly = false;
 let showTodayOnly = false;
 let photoRetryPollTimer = null;
+const favoriteRequests = new Set();
 let settingsSnapshot = null;
 let scheduleEggCache = { html: "", dateText: "", updatedAt: 0 };
 let scheduleEggRequest = null;
@@ -2840,6 +3071,16 @@ function displayFileSizeMeta(e) {
   return `💾 ${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
+function displayGenerationTimeMeta(e) {
+  const seconds = Number((e && e.generation_time) || 0);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  const total = Math.max(1, Math.round(seconds));
+  if (total < 60) return `⏱ ${total}s`;
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  return rest ? `⏱ ${minutes}m${rest}s` : `⏱ ${minutes}m`;
+}
+
 function matchesOutfitStyleFilter(e, filterLower) {
   const rawStyle = String((e && e.outfit_style) || "").trim();
   const displayStyle = displayOutfitStyle(e);
@@ -2883,6 +3124,42 @@ function updateBadges() {
   if (bAll) bAll.textContent = allCount;
   if (bFav) bFav.textContent = favCount;
   if (bToday) bToday.textContent = todayCount;
+}
+
+function renderActivePhotoView() {
+  const activeTab = document.querySelector(".tab.active")?.dataset.tab || "";
+  if (activeTab === "today" || showTodayOnly) {
+    renderToday();
+  } else {
+    renderGallery();
+  }
+}
+
+function updateLocalFavorite(imgId, isFavorite) {
+  let changed = false;
+  allEntries.forEach(entry => {
+    if (entry && entry.image_filename === imgId) {
+      entry.favorite = isFavorite;
+      changed = true;
+    }
+  });
+  if (todayData && Array.isArray(todayData.photos)) {
+    todayData.photos.forEach(entry => {
+      if (entry && entry.image_filename === imgId) {
+        entry.favorite = isFavorite;
+        changed = true;
+      }
+    });
+  }
+  if (currentModalImg === imgId) updateModalFavBtn(isFavorite);
+  return changed;
+}
+
+function removeLocalImage(imgId) {
+  allEntries = allEntries.filter(e => e.image_filename !== imgId && e.date !== imgId);
+  if (todayData && Array.isArray(todayData.photos)) {
+    todayData.photos = todayData.photos.filter(e => e.image_filename !== imgId && e.date !== imgId);
+  }
 }
 
 // ===== Tab switching =====
@@ -3111,16 +3388,16 @@ function renderToday() {
             ${displayOutfitStyle(today) ? `<span class="modal-style" onclick="event.stopPropagation();filterByTag('${displayOutfitStyle(today)}');">${displayOutfitStyle(today)}</span>` : ""}
           </div>
           <div>
-            <span class="modal-meta" style="margin:0;padding:0;background:none;">${today.model_name ? `<span class="meta-tag">🤖 ${today.model_name}</span>` : ""}${displayReferenceMeta(today) ? `<span class="meta-tag">${displayReferenceMeta(today)}</span>` : ""}${displayImageSizeMeta(today) ? `<span class="meta-tag">${displayImageSizeMeta(today)}</span>` : ""}${displayFileSizeMeta(today) ? `<span class="meta-tag">${displayFileSizeMeta(today)}</span>` : ""}</span>
+            <span class="modal-meta" style="margin:0;padding:0;background:none;">${today.model_name ? `<span class="meta-tag">🤖 ${today.model_name}</span>` : ""}${displayReferenceMeta(today) ? `<span class="meta-tag">${displayReferenceMeta(today)}</span>` : ""}${displayImageSizeMeta(today) ? `<span class="meta-tag">${displayImageSizeMeta(today)}</span>` : ""}${displayFileSizeMeta(today) ? `<span class="meta-tag">${displayFileSizeMeta(today)}</span>` : ""}${displayGenerationTimeMeta(today) ? `<span class="meta-tag">${displayGenerationTimeMeta(today)}</span>` : ""}</span>
           </div>
           <div class="modal-outfit">${outfitText ? `<span class="outfit-label">穿搭</span><span class="outfit-divider">|</span><span class="outfit-text">${outfitText}</span>` : '--'}</div>
           ${schedHtml ? `<div class="modal-schedule">${schedHtml}</div>` : ""}
           ${captionHtml}
           <div class="modal-actions" onclick="event.stopPropagation()">
-            <button class="mbtn" onclick="event.stopPropagation();toggleFavorite('${today.image_filename}');">${today.favorite ? '🩷' : '🤍'} 收藏</button>
-            <button class="mbtn" onclick="event.stopPropagation();shareImage('${today.image_filename}');">📤 分享</button>
-            <button class="mbtn" onclick="event.stopPropagation();showPrompt(this)" data-prompt="${encodeURIComponent(today.prompt || '')}">📝 提示词</button>
-            <button class="mbtn danger" onclick="event.stopPropagation();deleteImage('${today.image_filename}');">🗑 删除</button>
+            <button class="mbtn" onclick="event.stopPropagation();toggleFavorite('${today.image_filename}');"><i class="${today.favorite ? 'fa-solid' : 'fa-regular'} fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
+            <button class="mbtn" onclick="event.stopPropagation();shareImage('${today.image_filename}');"><i class="fa-solid fa-share-nodes btn-icon" aria-hidden="true"></i> 分享</button>
+            <button class="mbtn" onclick="event.stopPropagation();showPrompt(this)" data-prompt="${encodeURIComponent(today.prompt || '')}"><i class="fa-regular fa-pen-to-square btn-icon" aria-hidden="true"></i> 提示词</button>
+            <button class="mbtn danger" onclick="event.stopPropagation();deleteImage('${today.image_filename}');"><i class="fa-regular fa-trash-can btn-icon" aria-hidden="true"></i> 删除</button>
           </div>
         </div>
       </div>`;
@@ -3260,6 +3537,8 @@ function renderGallery() {
           if (sizeLabel) metaHtml += `<span class="tc-meta-tag">${sizeLabel}</span>`;
           const fileSizeLabel = displayFileSizeMeta(e);
           if (fileSizeLabel) metaHtml += `<span class="tc-meta-tag">${fileSizeLabel}</span>`;
+          const generationTimeLabel = displayGenerationTimeMeta(e);
+          if (generationTimeLabel) metaHtml += `<span class="tc-meta-tag">${generationTimeLabel}</span>`;
           // Period row: show matching schedule period or fallback to time
           let periodHtml = '';
           if (showTodayOnly) {
@@ -3286,10 +3565,10 @@ function renderGallery() {
                 ${renderThoughtBlock(e.caption)}
                 ${periodHtml}
                 <div class="tc-actions">
-                  <button class="tc-btn ${e.favorite ? 'liked' : ''}" onclick="toggleFavorite('${e.image_filename}', event)" data-img="${e.image_filename}">${e.favorite ? '🩷' : '♡'} 收藏</button>
-                  <button class="tc-btn" onclick="shareImage('${e.image_filename}', event)">📤 分享</button>
-                  <button class="tc-btn" onclick="showPrompt(this)" data-prompt="${encodeURIComponent(e.prompt || '')}">📝 提示词</button>
-                  <button class="tc-btn danger" onclick="deleteImage('${e.image_filename || e.date}', event)">🗑 删除</button>
+                  <button class="tc-btn ${e.favorite ? 'liked' : ''}" onclick="toggleFavorite('${e.image_filename}', event)" data-img="${e.image_filename}"><i class="${e.favorite ? 'fa-solid' : 'fa-regular'} fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
+                  <button class="tc-btn" onclick="shareImage('${e.image_filename}', event)"><i class="fa-solid fa-share-nodes btn-icon" aria-hidden="true"></i> 分享</button>
+                  <button class="tc-btn" onclick="showPrompt(this)" data-prompt="${encodeURIComponent(e.prompt || '')}"><i class="fa-regular fa-pen-to-square btn-icon" aria-hidden="true"></i> 提示词</button>
+                  <button class="tc-btn danger" onclick="deleteImage('${e.image_filename || e.date}', event)"><i class="fa-regular fa-trash-can btn-icon" aria-hidden="true"></i> 删除</button>
                 </div>
               </div>
             </div>`;
@@ -3304,9 +3583,9 @@ function renderGallery() {
           const styleTag = displayStyle ? `<span class="card-style-tag" onclick="event.stopPropagation();filterByTag('${displayStyle}');">${displayStyle}</span>` : "";
           const timeDisplay = e.time ? e.time : "";
           let metaHtml = "";
-          if (e.model_name) metaHtml += `<span class="meta-tag">🤖 ${e.model_name}</span>`;
+          if (e.model_name) metaHtml += `<span class="meta-tag meta-model">🤖 ${e.model_name}</span>`;
           const referenceLabel = displayReferenceMeta(e);
-          if (referenceLabel) metaHtml += `<span class="meta-tag">${referenceLabel}</span>`;
+          if (referenceLabel) metaHtml += `<span class="meta-tag meta-ref">${referenceLabel}</span>`;
           return `
             <div class="gallery-card" onclick="event.stopPropagation();openModal(allEntries.find(x=>x.image_filename==='${e.image_filename}'))">
               <div class="card-img-wrap">
@@ -3321,9 +3600,9 @@ function renderGallery() {
                 </div>
                 ${metaHtml ? `<div class="card-meta">${metaHtml}</div>` : ''}
                 <div class="card-actions">
-                  <button class="ca-btn" onclick="event.stopPropagation();toggleFavorite('${e.image_filename}', event)" data-img="${e.image_filename}" style="${e.favorite ? 'color:#e91e63;border-color:#e91e63;' : ''}">${e.favorite ? '🩷' : '♡'} 收藏</button>
-                  <button class="ca-btn" onclick="event.stopPropagation();shareImage('${e.image_filename}', event)">📤 分享</button>
-                  <button class="ca-btn danger" onclick="event.stopPropagation();deleteImage('${e.image_filename || e.date}', event)">🗑 删除</button>
+                  <button class="ca-btn ${e.favorite ? 'liked' : ''}" aria-label="${e.favorite ? '取消收藏' : '收藏'}" onclick="event.stopPropagation();toggleFavorite('${e.image_filename}', event)" data-img="${e.image_filename}"><i class="${e.favorite ? 'fa-solid' : 'fa-regular'} fa-heart ca-icon" aria-hidden="true"></i><span class="ca-label">收藏</span></button>
+                  <button class="ca-btn" aria-label="分享" onclick="event.stopPropagation();shareImage('${e.image_filename}', event)"><i class="fa-solid fa-share-nodes ca-icon" aria-hidden="true"></i><span class="ca-label">分享</span></button>
+                  <button class="ca-btn danger" aria-label="删除" onclick="event.stopPropagation();deleteImage('${e.image_filename || e.date}', event)"><i class="fa-regular fa-trash-can ca-icon" aria-hidden="true"></i><span class="ca-label">删除</span></button>
                 </div>
               </div>
             </div>`;
@@ -3456,15 +3735,51 @@ ms.textContent = `
 .modal-actions .mbtn { flex: 1; min-height: 36px; padding: 7px 2px; border-radius: 12px; border: 1.5px solid #ede5f0; background: #fff; font-size: 15px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 5px; color: #777; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.02); line-height: 1.15; white-space: nowrap; }
 .modal-actions .mbtn:hover { border-color: #e91e63; color: #e91e63; background: #fce4ec; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(233,30,99,0.15); }
 .today-compact .modal-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: 100%;
   margin-top: 6px;
   padding-top: 6px;
   gap: 7px;
+  justify-content: stretch;
+  align-items: stretch;
 }
 .modal-content .today-card-info .modal-actions {
   margin-top: auto;
   padding-top: 10px;
   gap: 7px;
 }
+.delete-confirm-overlay {
+  position:fixed;inset:0;z-index:10020;display:none;align-items:center;justify-content:center;
+  padding:24px;background:rgba(24,12,30,0.48);backdrop-filter:blur(14px);
+  animation:fadeIn 0.18s ease;
+}
+.delete-confirm-overlay.open { display:flex; }
+.delete-confirm-card {
+  width:min(360px,calc(100vw - 40px));background:linear-gradient(180deg,#fff 0%,#fff8fb 100%);
+  border:1px solid rgba(255,255,255,0.8);border-radius:24px;padding:24px 22px 20px;
+  box-shadow:0 24px 80px rgba(35,16,45,0.26);display:flex;flex-direction:column;align-items:center;gap:16px;
+  animation:deleteConfirmIn 0.2s cubic-bezier(0.16,1,0.3,1);
+}
+@keyframes deleteConfirmIn { from{opacity:0;transform:translateY(10px) scale(0.97)} to{opacity:1;transform:translateY(0) scale(1)} }
+.delete-confirm-icon {
+  width:54px;height:54px;border-radius:18px;background:linear-gradient(135deg,#fff0f5,#ffe2ec);
+  display:flex;align-items:center;justify-content:center;color:#e91e63;font-size:24px;
+  box-shadow:inset 0 0 0 1px rgba(233,30,99,0.12),0 8px 20px rgba(233,30,99,0.14);
+}
+.delete-confirm-copy { text-align:center;display:flex;flex-direction:column;gap:7px;color:#5d4a61; }
+.delete-confirm-copy strong { font-size:18px;color:#2f2434;font-weight:800;letter-spacing:0; }
+.delete-confirm-copy span { font-size:13px;line-height:1.6;color:#8b7a91; }
+.delete-confirm-actions { width:100%;display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:2px; }
+.delete-confirm-btn {
+  height:42px;border:1.5px solid #eadfea;border-radius:14px;background:#fff;color:#706176;
+  font-size:14px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
+  transition:background 0.16s,border-color 0.16s,color 0.16s,box-shadow 0.16s,transform 0.16s;
+}
+.delete-confirm-btn:hover { transform:translateY(-1px);box-shadow:0 8px 18px rgba(80,45,90,0.1); }
+.delete-confirm-btn:focus-visible { outline:3px solid rgba(233,30,99,0.22);outline-offset:2px; }
+.delete-confirm-btn.danger { border-color:#e91e63;background:linear-gradient(135deg,#e91e63,#c2185b);color:#fff;box-shadow:0 10px 24px rgba(233,30,99,0.22); }
+.delete-confirm-btn.danger:hover { box-shadow:0 12px 28px rgba(233,30,99,0.28); }
 .modal-content.modal-fit-detail {
   height: var(--modal-detail-height);
 }
@@ -3478,9 +3793,22 @@ ms.textContent = `
   border-radius: 10px;
   font-size: 14px;
 }
+.today-compact .modal-actions .mbtn {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 6px;
+}
 .modal-actions .mbtn.danger:hover { border-color: #e53935; color: #e53935; background: #ffebee; box-shadow: 0 6px 16px rgba(229,57,53,0.12); }
 .modal-actions .mbtn.active { border-color: #e91e63; color: #e91e63; background: #fce4ec; box-shadow: 0 2px 8px rgba(233,30,99,0.12); }
-.modal-actions .mbtn .fav-icon { font-size: 18px; line-height: 1; display:inline-block; }
+.modal-actions .mbtn .btn-icon {
+  width: 1em;
+  flex: 0 0 auto;
+  font-size: 13px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 @keyframes zoomIn { from{opacity:0;transform:scale(0.9)} to{opacity:1;transform:scale(1)} }
 @media(max-width:768px){
   .modal-overlay.open { align-items:flex-end; }
@@ -3514,14 +3842,32 @@ modalOverlay.innerHTML = `
       <div class="modal-schedule" id="modalSchedule"></div>
       <div class="modal-caption tc-thought" id="modalCaption"></div>
       <div class="modal-actions">
-        <button class="mbtn" id="modalFav" onclick="modalToggleFav()">♡ 收藏</button>
-        <button class="mbtn" onclick="modalShare()">📤 分享</button>
-        <button class="mbtn" id="modalPromptBtn" onclick="showPrompt(this)">📝 提示词</button>
-        <button class="mbtn danger" onclick="modalDelete()">🗑 删除</button>
+        <button class="mbtn" id="modalFav" onclick="modalToggleFav()"><i class="fa-regular fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
+        <button class="mbtn" onclick="modalShare()"><i class="fa-solid fa-share-nodes btn-icon" aria-hidden="true"></i> 分享</button>
+        <button class="mbtn" id="modalPromptBtn" onclick="showPrompt(this)"><i class="fa-regular fa-pen-to-square btn-icon" aria-hidden="true"></i> 提示词</button>
+        <button class="mbtn danger" onclick="modalDelete()"><i class="fa-regular fa-trash-can btn-icon" aria-hidden="true"></i> 删除</button>
       </div>
     </div>
   </div>`;
 document.body.appendChild(modalOverlay);
+
+const deleteConfirmOverlay = document.createElement("div");
+deleteConfirmOverlay.className = "delete-confirm-overlay";
+deleteConfirmOverlay.id = "deleteConfirmOverlay";
+deleteConfirmOverlay.innerHTML = `
+  <div class="delete-confirm-card" role="dialog" aria-modal="true" aria-labelledby="deleteConfirmTitle" onclick="event.stopPropagation()">
+    <div class="delete-confirm-icon" aria-hidden="true">🗑</div>
+    <div class="delete-confirm-copy">
+      <strong id="deleteConfirmTitle">删除这条穿搭？</strong>
+      <span>图片和记录会一起移除，收藏状态也会同步更新。</span>
+    </div>
+    <div class="delete-confirm-actions">
+      <button class="delete-confirm-btn ghost" id="deleteConfirmCancel" type="button">取消</button>
+      <button class="delete-confirm-btn danger" id="deleteConfirmOk" type="button">删除</button>
+    </div>
+  </div>`;
+document.body.appendChild(deleteConfirmOverlay);
+deleteConfirmOverlay.addEventListener("click", () => closeDeleteConfirm(false));
 
 // Fullscreen image viewer
 const imgFs = document.createElement("div");
@@ -3592,6 +3938,8 @@ function openModal(e) {
   if (sizeLabel) metaHtml += `<span class="meta-tag">${sizeLabel}</span>`;
   const fileSizeLabel = displayFileSizeMeta(e);
   if (fileSizeLabel) metaHtml += `<span class="meta-tag">${fileSizeLabel}</span>`;
+  const generationTimeLabel = displayGenerationTimeMeta(e);
+  if (generationTimeLabel) metaHtml += `<span class="meta-tag">${generationTimeLabel}</span>`;
   if (e.prompt) metaHtml += `<button class="modal-reroll-btn" id="modalRerollBtn" onclick="rerollModalImage(event)" title="抽卡新图" aria-label="抽卡新图">↻</button>`;
   document.getElementById("modalMeta").innerHTML = metaHtml;
   document.getElementById("modalMeta").style.display = metaHtml ? "flex" : "none";
@@ -3651,29 +3999,58 @@ window.addEventListener("resize", () => {
 });
 function updateModalFavBtn(isFav) {
   const btn = document.getElementById("modalFav");
-  if (isFav) { btn.innerHTML = '<span class="fav-icon">🩷</span> 已收藏'; btn.classList.add("active"); }
-  else { btn.innerHTML = '<span class="fav-icon">♡</span> 收藏'; btn.classList.remove("active"); }
+  if (isFav) { btn.innerHTML = '<i class="fa-solid fa-heart btn-icon" aria-hidden="true"></i> 已收藏'; btn.classList.add("active"); }
+  else { btn.innerHTML = '<i class="fa-regular fa-heart btn-icon" aria-hidden="true"></i> 收藏'; btn.classList.remove("active"); }
 }
 async function modalToggleFav() {
   if (!currentModalImg) return;
-  const entry = allEntries.find(x => x.image_filename === currentModalImg);
-  if (!entry) return;
-  entry.favorite = !entry.favorite;
-  updateModalFavBtn(entry.favorite === true);
-  // Sync backend
-  try {
-    await fetch(`${API}/api/images/${encodeURIComponent(currentModalImg)}/favorite`, {
-      method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({favorite: entry.favorite})
-    });
-  } catch(e) { console.error(e); }
-  renderGallery();
-  updateBadges();
+  return toggleFavorite(currentModalImg);
 }
 function modalShare() { if (currentModalImg) shareImage(currentModalImg); }
 function modalDelete() {
   if (!currentModalImg) return;
-  closeModal();
   deleteImage(currentModalImg);
+}
+
+let deleteConfirmResolve = null;
+let deleteConfirmLastFocus = null;
+
+function closeDeleteConfirm(confirmed) {
+  if (!deleteConfirmResolve) return;
+  const resolve = deleteConfirmResolve;
+  deleteConfirmResolve = null;
+  deleteConfirmOverlay.classList.remove("open");
+  deleteConfirmOverlay.setAttribute("aria-hidden", "true");
+  document.removeEventListener("keydown", handleDeleteConfirmKeydown, true);
+  if (deleteConfirmLastFocus && typeof deleteConfirmLastFocus.focus === "function") {
+    deleteConfirmLastFocus.focus({ preventScroll: true });
+  }
+  resolve(Boolean(confirmed));
+}
+
+function handleDeleteConfirmKeydown(event) {
+  if (!deleteConfirmResolve) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeDeleteConfirm(false);
+    return;
+  }
+  if (event.key === "Enter" || event.key === " " || event.code === "Space") {
+    event.preventDefault();
+    closeDeleteConfirm(true);
+  }
+}
+
+function confirmDeleteImage() {
+  if (deleteConfirmResolve) closeDeleteConfirm(false);
+  deleteConfirmLastFocus = document.activeElement;
+  deleteConfirmOverlay.classList.add("open");
+  deleteConfirmOverlay.removeAttribute("aria-hidden");
+  document.getElementById("deleteConfirmCancel").onclick = () => closeDeleteConfirm(false);
+  document.getElementById("deleteConfirmOk").onclick = () => closeDeleteConfirm(true);
+  document.addEventListener("keydown", handleDeleteConfirmKeydown, true);
+  requestAnimationFrame(() => document.getElementById("deleteConfirmOk")?.focus({ preventScroll: true }));
+  return new Promise(resolve => { deleteConfirmResolve = resolve; });
 }
 
 async function rerollModalImage(event) {
@@ -3721,7 +4098,7 @@ async function deleteImage(imgId, event) {
     showToast("❌ 无法删除：缺少标识");
     return;
   }
-  if (!confirm('确定要删除这条穿搭吗？🫣')) return;
+  if (!(await confirmDeleteImage())) return;
 
   try {
     const res = await fetch(`${API}/api/images/${encodeURIComponent(imgId)}`, { method: "DELETE" });
@@ -3737,8 +4114,12 @@ async function deleteImage(imgId, event) {
     }
     if (data.success) {
       // Remove from local entries: match by image_filename OR by date key
-      allEntries = allEntries.filter(e => e.image_filename !== imgId && e.date !== imgId);
-      renderGallery();
+      removeLocalImage(imgId);
+      if (currentModalImg === imgId) {
+        currentModalImg = "";
+        closeModal();
+      }
+      renderActivePhotoView();
       updateBadges();
       showToast("🗑 已删除");
     } else {
@@ -3755,17 +4136,39 @@ async function toggleFavorite(imgId, event) {
     showToast("❌ 无法收藏：缺少图片");
     return;
   }
-  const entry = allEntries.find(x => x.image_filename === imgId);
+  const entry = allEntries.find(x => x.image_filename === imgId)
+    || (todayData && Array.isArray(todayData.photos) ? todayData.photos.find(x => x.image_filename === imgId) : null);
   if (!entry) return;
-  entry.favorite = !entry.favorite;
-  // Sync backend
-  try {
-    await fetch(`${API}/api/images/${encodeURIComponent(imgId)}/favorite`, {
-      method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({favorite: entry.favorite})
-    });
-  } catch(e) { console.error(e); }
-  renderGallery();
+  if (favoriteRequests.has(imgId)) return;
+  favoriteRequests.add(imgId);
+  const previousFavorite = entry.favorite === true;
+  const optimisticFavorite = !previousFavorite;
+  const btn = event && event.currentTarget ? event.currentTarget : null;
+  if (btn) btn.disabled = true;
+  updateLocalFavorite(imgId, optimisticFavorite);
+  renderActivePhotoView();
   updateBadges();
+  try {
+    const res = await fetch(`${API}/api/images/${encodeURIComponent(imgId)}/favorite`, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({favorite: optimisticFavorite})
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+    const serverFavorite = typeof data.success === "boolean" ? data.success : optimisticFavorite;
+    updateLocalFavorite(imgId, serverFavorite);
+    renderActivePhotoView();
+    updateBadges();
+  } catch(e) {
+    updateLocalFavorite(imgId, previousFavorite);
+    renderActivePhotoView();
+    updateBadges();
+    showToast("❌ 收藏失败" + (e.message ? ": " + e.message : ""));
+  } finally {
+    favoriteRequests.delete(imgId);
+    if (btn) btn.disabled = false;
+  }
 }
 
 function shareImage(imgId, event) {
@@ -4675,7 +5078,11 @@ loadVersion();
 // Close settings on Escape key
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    if (document.getElementById("eggStyleOverlay").classList.contains("open")) {
+    var favOverlay = document.getElementById("eggFavoriteOutfitsOverlay");
+    if (favOverlay && favOverlay.classList.contains("show")) {
+      closeFavoriteOutfitModal();
+      e.stopImmediatePropagation();
+    } else if (document.getElementById("eggStyleOverlay").classList.contains("open")) {
       closeOutfitStyleDialog();
     } else if (document.getElementById("imgFullscreen").classList.contains("open")) {
       document.getElementById("imgFullscreen").classList.remove("open");
@@ -4701,38 +5108,59 @@ document.addEventListener("keydown", e => {
   const valEl = document.getElementById('colVal');
   const wrap = document.getElementById('colSliderWrap');
   const saved = localStorage.getItem('gallery_cols');
-  if (saved) { slider.value = saved; valEl.textContent = saved; }
 
-  const MIN_CARD_WIDTH = 168;
+  const COL_MIN = 4;
+  const COL_MAX = 8;
+  const MIN_CARD_WIDTH = 164;
+  let preferredCols = Math.max(COL_MIN, Math.min(COL_MAX, parseInt(saved || slider.value, 10) || 5));
 
-  function safeColumnCount(grid, requested) {
+  function maxColumnCount(grid) {
     const width = grid.clientWidth || grid.getBoundingClientRect().width || window.innerWidth;
     const gap = parseFloat(getComputedStyle(grid).columnGap || "12") || 12;
-    const maxByWidth = Math.max(1, Math.floor((width + gap) / (MIN_CARD_WIDTH + gap)));
-    return Math.max(1, Math.min(requested, maxByWidth));
+    return Math.max(COL_MIN, Math.min(COL_MAX, Math.floor((width + gap) / (MIN_CARD_WIDTH + gap))));
+  }
+
+  function currentMaxColumns() {
+    const grids = Array.from(document.querySelectorAll('.gallery-grid'));
+    if (!grids.length) return COL_MAX;
+    return grids.reduce((max, grid) => Math.min(max, maxColumnCount(grid)), COL_MAX);
+  }
+
+  function syncSlider(actual, maxAvailable) {
+    slider.min = String(COL_MIN);
+    slider.max = String(maxAvailable);
+    slider.value = String(actual);
+    slider.disabled = maxAvailable <= COL_MIN;
+    wrap.classList.toggle('single-value', maxAvailable <= COL_MIN);
+    valEl.textContent = String(actual);
+    const title = maxAvailable < COL_MAX
+      ? `当前宽度最多 ${maxAvailable} 列，放宽窗口可调到 ${COL_MAX} 列`
+      : `可调 ${COL_MIN}-${COL_MAX} 列`;
+    slider.title = title;
+    valEl.title = title;
+    wrap.title = title;
   }
 
   function applyCols(n, persist = true) {
-    let actual = n;
+    preferredCols = Math.max(COL_MIN, Math.min(COL_MAX, parseInt(n, 10) || preferredCols || 5));
+    const maxAvailable = currentMaxColumns();
+    const actual = Math.min(preferredCols, maxAvailable);
     document.querySelectorAll('.gallery-grid').forEach(g => {
-      const safeCount = safeColumnCount(g, n);
-      actual = Math.min(actual, safeCount);
-      g.style.gridTemplateColumns = `repeat(${safeCount}, minmax(0, 1fr))`;
+      g.style.gridTemplateColumns = `repeat(${actual}, minmax(0, 1fr))`;
       // Remove old cols-N classes and add new one
-      for (let i = 4; i <= 8; i++) g.classList.remove('cols-' + i);
-      if (safeCount !== 5 && safeCount >= 4) g.classList.add('cols-' + safeCount); // 5 is default, no class needed
+      for (let i = COL_MIN; i <= COL_MAX; i++) g.classList.remove('cols-' + i);
+      if (actual !== 5) g.classList.add('cols-' + actual); // 5 is default, no class needed
     });
-    valEl.textContent = String(actual);
-    valEl.title = actual === n ? `${n} 列` : `已按宽度从 ${n} 列适配为 ${actual} 列`;
-    if (persist) localStorage.setItem('gallery_cols', n);
+    syncSlider(actual, maxAvailable);
+    if (persist) localStorage.setItem('gallery_cols', preferredCols);
   }
 
-  window.applyGalleryColumns = () => applyCols(parseInt(slider.value), false);
+  window.applyGalleryColumns = () => applyCols(preferredCols, false);
 
   // Apply saved value on load
-  if (saved) applyCols(parseInt(saved));
+  applyCols(preferredCols, false);
 
-  slider.addEventListener('input', () => applyCols(parseInt(slider.value)));
+  slider.addEventListener('input', () => applyCols(parseInt(slider.value, 10)));
   window.addEventListener('resize', () => window.applyGalleryColumns());
 
   // Show/hide based on active tab
@@ -4742,7 +5170,7 @@ document.addEventListener("keydown", e => {
     if (tab === 'gallery' || tab === 'favorites') {
       wrap.classList.remove('hidden');
       // Re-apply columns after render
-      requestAnimationFrame(() => applyCols(parseInt(slider.value)));
+      requestAnimationFrame(() => applyCols(preferredCols, false));
     } else {
       wrap.classList.add('hidden');
     }
@@ -4753,7 +5181,7 @@ document.addEventListener("keydown", e => {
     const activeTab = document.querySelector('.tab.active');
     if (activeTab && (activeTab.dataset.tab === 'gallery' || activeTab.dataset.tab === 'favorites')) {
       wrap.classList.remove('hidden');
-      applyCols(parseInt(slider.value));
+      applyCols(preferredCols, false);
     }
   });
 })();
@@ -5046,18 +5474,18 @@ function loadScheduleEggData(options) {
         html += '<span class="egg-photo-status-badge ' + planStatusCls + '">' + planStatusText + '</span>';
         html += '<span class="egg-photo-time">' + escapeHtml(plan.time) + '</span>';
         html += '<span class="egg-photo-theme">' + themeLabel(planTheme) + '</span>';
-        if (plan.activity) html += '<span style="font-size:12px;color:#666;margin-left:8px;">' + escapeHtml(plan.activity) + '</span>';
+        html += '<span class="egg-photo-activity">' + escapeHtml(plan.activity || '') + '</span>';
         if (planFailed && planErrorText) html += '<span class="egg-photo-error" title="' + escapeAttr(planErrorText) + '">' + escapeHtml(planErrorText) + '</span>';
         var planOutfitStyle = (plan.job && plan.job.outfit_style) || currentOutfitStyle || (planPhoto && planPhoto.outfit_style) || '';
-        if (planOutfitStyle) html += '<span style="font-size:11px;color:#888;margin-left:' + (planRetryable ? '8px' : 'auto') + ';">' + escapeHtml(planOutfitStyle) + '</span>';
+        if (planOutfitStyle) html += '<span class="egg-photo-style">' + escapeHtml(planOutfitStyle) + '</span>';
         if (planRetryable) html += '<button class="egg-photo-retry-btn" data-time="' + escapeHtml(plan.time) + '" onclick="retryPhotoJob(this.dataset.time, this)">重试</button>';
-        else if (plan.scheduleOnly) html += '<span style="font-size:11px;color:#aaa;margin-left:auto;">刷新时已过</span>';
+        else if (plan.scheduleOnly) html += '<span class="egg-photo-style">刷新时已过</span>';
         html += '</div>';
       }
     } else {
       html += '<div class="egg-photo-item egg-slot-empty">';
       html += '<span class="egg-photo-status-badge past">暂无</span>';
-      html += '<span style="font-size:12px;color:#999;">当前没有待执行生图 job，也没有已完成生图记录</span>';
+      html += '<span class="egg-photo-activity">当前没有待执行生图 job，也没有已完成生图记录</span>';
       html += '</div>';
     }
 
@@ -5069,7 +5497,22 @@ function loadScheduleEggData(options) {
     var outfitIcons = { '风格': '✨', '发型': '💇‍♀️', '穿搭': '👗', '动作': '💃', '场景': '📍' };
     var hasOutfit = outfitKeys.some(function(k){ return outfit[k]; });
     if (hasOutfit) {
-      html += '<div class="egg-section"><div class="egg-section-title"><span class="icon">👗</span>今日穿搭方案</div>';
+      var outfitFavorite = detail.outfit_favorite === true;
+      var favoriteOutfit = {};
+      ['风格', '发型', '穿搭'].forEach(function(k) {
+        if (outfit[k]) favoriteOutfit[k] = outfit[k];
+      });
+      var outfitPayload = {
+        id: detail.outfit_favorite_id || '',
+        date: detail.date || '',
+        outfit_style: detail.outfit_style || outfit['风格'] || '',
+        base_style: detail.base_style || '',
+        outfit: favoriteOutfit,
+        outfit_keywords: detail.outfit_keywords || '',
+        favorite: !outfitFavorite
+      };
+      var outfitPayloadAttr = escapeAttr(encodeURIComponent(JSON.stringify(outfitPayload)));
+      html += '<div class="egg-section egg-outfit-section"><div class="egg-section-title with-action"><span class="egg-section-title-main"><span class="icon">👗</span>今日穿搭方案</span><span class="egg-title-actions"><button class="egg-outfit-fav-btn ' + (outfitFavorite ? 'active' : '') + '" type="button" data-payload="' + outfitPayloadAttr + '" onclick="toggleFavoriteOutfitPlan(this)" aria-label="' + (outfitFavorite ? '取消收藏这套穿搭方案' : '收藏这套穿搭方案') + '" title="' + (outfitFavorite ? '取消收藏这套穿搭方案' : '收藏这套穿搭方案') + '"><i class="' + (outfitFavorite ? 'fa-solid' : 'fa-regular') + ' fa-bookmark" aria-hidden="true"></i><span>' + (outfitFavorite ? '已收藏' : '收藏方案') + '</span></button><button class="egg-outfit-view-btn" type="button" onclick="toggleFavoriteOutfitPanel(this)" aria-expanded="false" aria-controls="eggFavoriteOutfitsOverlay" aria-label="查看收藏方案" title="查看收藏方案"><i class="fa-regular fa-folder-open" aria-hidden="true"></i><span>查看</span></button></span></div>';
       html += '<div class="egg-outfit-grid">';
       for (var m = 0; m < outfitKeys.length; m++) {
         if (outfit[outfitKeys[m]]) {
@@ -5102,6 +5545,206 @@ function loadScheduleEggData(options) {
     scheduleEggRequest = null;
   });
   return scheduleEggRequest;
+}
+
+function toggleFavoriteOutfitPlan(btn) {
+  if (!btn || btn.disabled) return;
+  var payload = readFavoriteOutfitPayload(btn);
+  if (!payload) {
+    showToast('收藏方案失败：数据不完整');
+    return;
+  }
+  if (!payload || !payload.outfit) {
+    showToast('收藏方案失败：缺少穿搭数据');
+    return;
+  }
+
+  btn.disabled = true;
+  fetch('/api/favorite-outfits' + apiKeyQuery(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }).then(function(r) {
+    return r.json().then(function(data) {
+      if (!r.ok || data.error) throw new Error(data.error || 'favorite_failed');
+      return data;
+    });
+  }).then(function(data) {
+    showToast(data.favorite ? '已收藏这套穿搭方案' : '已取消收藏穿搭方案');
+    setFavoriteOutfitButtonState(btn, data.favorite, data.id);
+    scheduleEggCache = { html: '', dateText: '', updatedAt: 0 };
+    var overlay = document.getElementById('eggFavoriteOutfitsOverlay');
+    var body = document.getElementById('eggFavoriteOutfitsBody');
+    if (overlay && overlay.classList.contains('show') && body) {
+      return loadFavoriteOutfitPanel(body);
+    }
+  }).catch(function(e) {
+    showToast('收藏方案失败：' + (e && e.message ? e.message : '未知错误'));
+  }).finally(function() {
+    btn.disabled = false;
+  });
+}
+
+function readFavoriteOutfitPayload(btn) {
+  if (!btn) return null;
+  try {
+    return JSON.parse(decodeURIComponent(btn.dataset.payload || ''));
+  } catch(e) {
+    return null;
+  }
+}
+
+function encodeFavoriteOutfitPayload(payload) {
+  return encodeURIComponent(JSON.stringify(payload || {}));
+}
+
+function favoriteOutfitPayloadFromItem(item, favorite) {
+  item = item || {};
+  var outfit = item.outfit || {};
+  var payloadOutfit = {};
+  ['风格', '发型', '穿搭'].forEach(function(k) {
+    if (outfit[k]) payloadOutfit[k] = outfit[k];
+  });
+  return {
+    id: item.id || '',
+    date: item.date || '',
+    outfit_style: item.outfit_style || outfit['风格'] || '',
+    base_style: item.base_style || '',
+    outfit: payloadOutfit,
+    outfit_keywords: item.outfit_keywords || '',
+    favorite: favorite === true
+  };
+}
+
+function favoriteOutfitPayloadAttrFromItem(item, favorite) {
+  return escapeAttr(encodeFavoriteOutfitPayload(favoriteOutfitPayloadFromItem(item, favorite)));
+}
+
+function setFavoriteOutfitButtonState(btn, isFavorite, favoriteId) {
+  if (!btn) return;
+  var payload = readFavoriteOutfitPayload(btn) || {};
+  payload.favorite = !isFavorite;
+  if (favoriteId) payload.id = favoriteId;
+  btn.dataset.payload = encodeFavoriteOutfitPayload(payload);
+  btn.classList.toggle('active', !!isFavorite);
+  btn.setAttribute('aria-label', isFavorite ? '取消收藏这套穿搭方案' : '收藏这套穿搭方案');
+  btn.setAttribute('title', isFavorite ? '取消收藏这套穿搭方案' : '收藏这套穿搭方案');
+  var icon = btn.querySelector('i');
+  if (icon) {
+    icon.classList.toggle('fa-solid', !!isFavorite);
+    icon.classList.toggle('fa-regular', !isFavorite);
+  }
+  var label = btn.querySelector('span');
+  if (label) label.textContent = isFavorite ? '已收藏' : '收藏方案';
+}
+
+function syncCurrentFavoriteButtonAfterRemoval(favoriteId) {
+  var btn = document.querySelector('.egg-outfit-fav-btn');
+  if (!btn || !favoriteId) return;
+  var payload = readFavoriteOutfitPayload(btn);
+  if (payload && payload.id === favoriteId) {
+    setFavoriteOutfitButtonState(btn, false, favoriteId);
+  }
+}
+
+function renderFavoriteOutfitPlans(items) {
+  items = Array.isArray(items) ? items : [];
+  if (!items.length) {
+    return '<div class="egg-fav-empty">还没有收藏穿搭方案</div>';
+  }
+  var html = '<div class="egg-fav-panel-title"><span>收藏穿搭方案</span><span class="egg-fav-panel-count">' + items.length + ' 套</span></div>';
+  html += '<div class="egg-fav-panel-note">生成参考：只借鉴发型、穿搭气质、配色、版型和材质；不带入原动作、场景和日程。</div>';
+  html += '<div class="egg-fav-list">';
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i] || {};
+    var outfit = item.outfit || {};
+    var style = outfit['风格'] || item.outfit_style || '收藏方案';
+    var hair = outfit['发型'] || '';
+    var wear = outfit['穿搭'] || '';
+    var dateText = item.date || '';
+    var removePayloadAttr = favoriteOutfitPayloadAttrFromItem(item, false);
+    html += '<div class="egg-fav-item">';
+    html += '<div class="egg-fav-meta"><span class="egg-fav-title"><span class="egg-fav-style">' + escapeHtml(style) + '</span><span class="egg-fav-ref">参考中</span></span><span class="egg-fav-date">' + escapeHtml(dateText) + '</span></div>';
+    if (hair) html += '<div class="egg-fav-line"><strong>发型：</strong>' + escapeHtml(hair) + '</div>';
+    if (wear) html += '<div class="egg-fav-line"><strong>穿搭：</strong>' + escapeHtml(wear) + '</div>';
+    if (!hair && !wear) html += '<div class="egg-fav-line">这套方案没有可展示的发型/穿搭内容</div>';
+    html += '<div class="egg-fav-actions"><button class="egg-fav-remove-btn" type="button" data-payload="' + removePayloadAttr + '" onclick="removeFavoriteOutfitPlan(this)">取消收藏</button></div>';
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function loadFavoriteOutfitPanel(panel) {
+  if (!panel) return Promise.resolve();
+  panel.innerHTML = '<div class="egg-fav-empty">正在读取收藏方案...</div>';
+  return fetch('/api/favorite-outfits' + apiKeyQuery())
+    .then(function(r) {
+      return r.json().then(function(data) {
+        if (!r.ok || data.error) throw new Error(data.error || 'favorite_list_failed');
+        return data;
+      });
+    })
+    .then(function(data) {
+      panel.innerHTML = renderFavoriteOutfitPlans(data.items || []);
+      panel.dataset.loaded = '1';
+      panel.dataset.count = String((data.items || []).length);
+    })
+    .catch(function(e) {
+      panel.innerHTML = '<div class="egg-fav-empty">收藏方案加载失败</div>';
+      showToast('查看收藏方案失败：' + (e && e.message ? e.message : '未知错误'));
+    });
+}
+
+function toggleFavoriteOutfitPanel(btn) {
+  var overlay = document.getElementById('eggFavoriteOutfitsOverlay');
+  var body = document.getElementById('eggFavoriteOutfitsBody');
+  if (!overlay || !body || !btn) return;
+  overlay.classList.add('show');
+  btn.setAttribute('aria-expanded', 'true');
+  btn.disabled = true;
+  loadFavoriteOutfitPanel(body)
+    .finally(function() {
+      btn.disabled = false;
+    });
+}
+
+function closeFavoriteOutfitModal() {
+  var overlay = document.getElementById('eggFavoriteOutfitsOverlay');
+  if (overlay) overlay.classList.remove('show');
+  var btn = document.querySelector('.egg-outfit-view-btn');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+function removeFavoriteOutfitPlan(btn) {
+  if (!btn || btn.disabled) return;
+  var payload = readFavoriteOutfitPayload(btn);
+  if (!payload || !payload.outfit) {
+    showToast('取消收藏失败：数据不完整');
+    return;
+  }
+  payload.favorite = false;
+  btn.disabled = true;
+  fetch('/api/favorite-outfits' + apiKeyQuery(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }).then(function(r) {
+    return r.json().then(function(data) {
+      if (!r.ok || data.error) throw new Error(data.error || 'favorite_remove_failed');
+      return data;
+    });
+  }).then(function(data) {
+    showToast('已取消收藏穿搭方案');
+    scheduleEggCache = { html: '', dateText: '', updatedAt: 0 };
+    syncCurrentFavoriteButtonAfterRemoval(data.id || payload.id || '');
+    var panel = btn.closest('.egg-fav-body') || document.getElementById('eggFavoriteOutfitsBody');
+    return loadFavoriteOutfitPanel(panel);
+  }).catch(function(e) {
+    showToast('取消收藏失败：' + (e && e.message ? e.message : '未知错误'));
+  }).finally(function() {
+    btn.disabled = false;
+  });
 }
 
 function readPhotoJobState(timeText) {
@@ -5398,7 +6041,7 @@ function copyPrompt() {
 }
 
 // ESC 关闭
-document.addEventListener('keydown', function(e) { if (e.key === 'Escape') { closeScheduleEgg(); closePrompt(); } });
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') { closeFavoriteOutfitModal(); closeScheduleEgg(); closePrompt(); } });
 </script>
 </body>
 </html>

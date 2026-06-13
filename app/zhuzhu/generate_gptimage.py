@@ -18,7 +18,7 @@ from core import (
     REQUEST_SESSION,
     RETRYABLE_STATUS,
     RETRY_DELAY_SECONDS,
-    build_caption,
+    build_caption_for_image,
     build_prompt,
     get_image_int,
     get_image_model,
@@ -455,7 +455,7 @@ def generate(theme: str, send: bool = False, caption: bool = False,
 
     cap_text = None
     if caption:
-        cap_text = build_caption(theme, schedule_time=schedule_time)
+        cap_text = build_caption_for_image(theme, path, schedule_time=schedule_time)
     if send:
         send_photo(path, cap_text)
 

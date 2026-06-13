@@ -11,7 +11,7 @@ from core import (
     REQUEST_SESSION,
     RETRYABLE_STATUS,
     RETRY_DELAY_SECONDS,
-    build_caption,
+    build_caption_for_image,
     build_prompt,
     sync_to_gallery,
     get_gitee_key,
@@ -75,7 +75,7 @@ def generate(theme: str, send: bool = False, caption: bool = False,
 
     caption_text = None
     if caption:
-        caption_text = build_caption(theme, schedule_time=schedule_time)
+        caption_text = build_caption_for_image(theme, path, schedule_time=schedule_time)
     if send:
         send_photo(path, caption_text)
 

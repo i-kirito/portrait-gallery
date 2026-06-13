@@ -268,13 +268,29 @@ class PortraitGalleryApp:
             logger.error("自定义生图失败")
             return DailyEntry(date=today_str, outfit="生成失败", status="failed")
 
+        persona = load_runtime_persona(self.config, self.data_dir)
+        character_name = persona.get("name") or "角色"
+        user_name = persona.get("user_name") or "你"
+        prompt_hint = re.sub(r"\s+", " ", user_prompt or "").strip(" ，,。.!！?")
+        if len(prompt_hint) > 24:
+            prompt_hint = prompt_hint[:24].rstrip(" ，,。.!！?") + "..."
+        caption_templates = [
+            f"这张{shot_label}把「{prompt_hint or '定制灵感'}」的感觉留住了，{character_name}自己也有点喜欢。",
+            f"{user_name}，这次按你的想法拍了{shot_label}，画面里的小细节比想象中更贴合。",
+            f"{shot_label}这一张刚好有点特别，{character_name}把今天的定制灵感收进画廊里。",
+            f"不是日常排程里的瞬间，是专门为{user_name}留的一张{shot_label}定制小记录。",
+        ]
+        caption = caption_templates[
+            sum(ord(ch) for ch in f"{filename}|{user_prompt}|{shot_label}") % len(caption_templates)
+        ]
+
         entry = DailyEntry(
             date=today_str,
             outfit_style="自定义",
             outfit=f"风格：自定义 视角：{shot_label} 穿搭：{user_prompt[:80]}",
             schedule="",
             prompt=generation_prompt,
-            caption=f"✨ {load_runtime_persona(self.config, self.data_dir).get('name') or '角色'}的定制专属造型完成啦～",
+            caption=caption,
             image_filename=filename,
             image_path=f"/images/{filename}",
             status="ok",
@@ -325,7 +341,10 @@ class PortraitGalleryApp:
         metadata = load_json_file(os.path.join(self.data_dir, "image_metadata.json"))
         meta = metadata.get(image_filename, {}) if isinstance(metadata, dict) else {}
         prompt = (meta.get("prompt") or original.get("prompt") or "").strip()
-        if not prompt:
+        schedule_time = (original.get("schedule_time") or meta.get("schedule_time") or "").strip()
+        original_source = (original.get("source") or meta.get("source") or "").strip()
+        is_scheduled_reroll = original_source == "cron" and bool(schedule_time)
+        if not prompt and not is_scheduled_reroll:
             return {"status": "failed", "error": "prompt_missing"}
 
         engine = self._engine_from_model_name(original.get("model_name", "") or meta.get("model", ""))
@@ -333,15 +352,31 @@ class PortraitGalleryApp:
         base_style = (original.get("base_style") or "").strip().lower()
         style = base_style if engine == "gptimage" and base_style in {"cool", "girly", "sweet"} else None
         size = (meta.get("size") or "").strip()
+        reroll_theme = "custom"
+        reroll_source = "custom"
+        reroll_prompt = prompt
+        reroll_prompt_final = True
+        reroll_caption = False
+        if is_scheduled_reroll:
+            match = re.match(r'\s*(\d{1,2}):(\d{2})', schedule_time)
+            if match:
+                reroll_theme = self._theme_for_hour(int(match.group(1)))
+            reroll_source = "cron"
+            reroll_prompt = ""
+            reroll_prompt_final = False
+            reroll_caption = True
 
         filename = await self.image_gen.generate(
-            prompt,
+            reroll_prompt,
             style=style,
             engine=engine,
             timeout=image_process_timeout(self.config, with_reference_fallback=bool(style)),
             size=size,
-            source="custom",
-            prompt_final=True,
+            source=reroll_source,
+            prompt_final=reroll_prompt_final,
+            theme=reroll_theme,
+            schedule_time=schedule_time if is_scheduled_reroll else "",
+            caption=reroll_caption,
         )
         if not filename:
             logger.error("图片重抽失败: %s", image_filename)
@@ -361,16 +396,18 @@ class PortraitGalleryApp:
                 "time": generated.get("time") or now_time,
                 "image_filename": filename,
                 "image_path": f"/images/{filename}",
-                "prompt": prompt,
+                "prompt": generated.get("prompt") or prompt,
                 "status": "ok",
-                "source": "custom",
+                "source": reroll_source,
                 "favorite": False,
                 "rerolled_from": image_filename,
             })
-            for field in ("outfit_style", "outfit", "schedule", "schedule_prompt", "schedule_time", "caption"):
+            for field in ("outfit_style", "outfit", "schedule", "schedule_prompt", "schedule_time"):
                 value = original.get(field)
                 if value:
                     generated[field] = value
+            if not generated.get("caption") and original.get("caption"):
+                generated["caption"] = original["caption"]
             if original.get("base_style"):
                 generated["base_style"] = original["base_style"]
             if not generated.get("outfit_style"):

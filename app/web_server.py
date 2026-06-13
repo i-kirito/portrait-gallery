@@ -1,6 +1,7 @@
 """Web 画廊服务器 - aiohttp"""
 import asyncio
 import fcntl
+import hashlib
 import json
 import logging
 import os
@@ -16,6 +17,7 @@ from urllib.parse import unquote
 import uuid
 
 from aiohttp import web
+from PIL import Image
 
 from store import ScheduleStore
 from settings import (
@@ -84,6 +86,7 @@ class GalleryServer:
         self.reference_dir = resolve_reference_dir(config, data_dir, config_path)
         self.uploaded_reference_dir = os.path.join(self.reference_dir, "uploads")
         self.legacy_uploaded_reference_dir = os.path.join(self.app_reference_dir, "uploads")
+        self._image_info_cache = {}
         os.makedirs(self.default_image_dir, exist_ok=True)
         os.makedirs(self.image_dir, exist_ok=True)
         os.makedirs(self.reference_dir, exist_ok=True)
@@ -162,6 +165,8 @@ class GalleryServer:
         self.app.router.add_post("/api/photo-jobs/retry", self.handle_retry_photo_job)
         self.app.router.add_get("/api/photo-job-limit", self.handle_photo_job_limit)
         self.app.router.add_post("/api/photo-job-limit", self.handle_photo_job_limit)
+        self.app.router.add_get("/api/favorite-outfits", self.handle_favorite_outfits)
+        self.app.router.add_post("/api/favorite-outfits", self.handle_favorite_outfits)
 
         # 图片服务
         self.app.router.add_get("/images/{filename:.*}", self.handle_image_file)
@@ -182,6 +187,197 @@ class GalleryServer:
 
     async def handle_health(self, request: web.Request):
         return web.json_response({"status": "ok"})
+
+    def _favorite_outfits_path(self) -> str:
+        return os.path.join(self.data_dir, "favorite_outfits.json")
+
+    def _favorite_outfits_lock_path(self) -> str:
+        return os.path.join(self.data_dir, "favorite_outfits.lock")
+
+    @staticmethod
+    def _favorite_outfit_payload(outfit: dict) -> dict:
+        if not isinstance(outfit, dict):
+            return {}
+        result = {}
+        for key in ("风格", "发型", "穿搭"):
+            value = str(outfit.get(key) or "").strip()
+            if value:
+                result[key] = value
+        return result
+
+    @classmethod
+    def _favorite_outfit_id(cls, date_text: str, outfit_style: str, outfit: dict) -> str:
+        payload = {
+            "date": str(date_text or ""),
+            "outfit_style": str(outfit_style or ""),
+            "outfit": cls._favorite_outfit_payload(outfit),
+        }
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+    @classmethod
+    def _favorite_outfit_item_id(cls, item: dict) -> str:
+        if not isinstance(item, dict):
+            return ""
+        outfit = item.get("outfit") if isinstance(item.get("outfit"), dict) else {}
+        outfit_style = str(item.get("outfit_style") or outfit.get("风格") or "").strip()
+        return cls._favorite_outfit_id(str(item.get("date") or ""), outfit_style, outfit)
+
+    @classmethod
+    def _favorite_outfit_response_item(cls, item: dict) -> dict:
+        cleaned = dict(item)
+        cleaned["outfit"] = cls._favorite_outfit_payload(cleaned.get("outfit"))
+        cleaned.pop("prompt", None)
+        cleaned.pop("scene_keywords", None)
+        return cleaned
+
+    @classmethod
+    def _favorite_outfit_prompt_lines(cls, items: list[dict], limit: int = 5) -> list[str]:
+        lines = []
+        for item in sorted(
+            [x for x in items if isinstance(x, dict)],
+            key=lambda x: x.get("created_at", 0),
+            reverse=True,
+        )[:limit]:
+            outfit = cls._favorite_outfit_payload(item.get("outfit"))
+            if not outfit:
+                continue
+            parts = []
+            for key in ("风格", "发型", "穿搭"):
+                value = str(outfit.get(key) or "").strip()
+                if value:
+                    parts.append(f"{key}：{value[:140]}")
+            if not parts:
+                continue
+            style = str(item.get("outfit_style") or outfit.get("风格") or "").strip()
+            date_text = str(item.get("date") or "").strip()
+            meta = f"[{date_text}]"
+            if style:
+                meta += f" 风格：{style}"
+            lines.append(meta + "；" + "；".join(parts))
+        return lines
+
+    def _favorite_outfit_generation_context(self, limit: int = 5) -> str:
+        lines = self._favorite_outfit_prompt_lines(self._load_favorite_outfits(), limit=limit)
+        return "\n".join(lines)
+
+    def _load_favorite_outfits(self) -> list[dict]:
+        path = self._favorite_outfits_path()
+        if not os.path.exists(path):
+            return []
+        try:
+            with open(self._favorite_outfits_lock_path(), "w") as lock_file:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_SH)
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                finally:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            if isinstance(data, dict):
+                data = data.get("items", [])
+            return [item for item in data if isinstance(item, dict)]
+        except Exception as e:
+            logger.error("Load favorite outfits error: %s", e)
+            return []
+
+    def _update_favorite_outfits(self, callback) -> list[dict]:
+        path = self._favorite_outfits_path()
+        os.makedirs(self.data_dir, exist_ok=True)
+        with open(self._favorite_outfits_lock_path(), "w") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                items = []
+                if os.path.exists(path):
+                    try:
+                        with open(path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        if isinstance(data, dict):
+                            data = data.get("items", [])
+                        if isinstance(data, list):
+                            items = [item for item in data if isinstance(item, dict)]
+                    except Exception:
+                        items = []
+                items = callback(items) or []
+                tmp_path = f"{path}.tmp"
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump({"items": items}, f, ensure_ascii=False, indent=2)
+                os.replace(tmp_path, path)
+                return items
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    async def handle_favorite_outfits(self, request: web.Request):
+        """收藏今日穿搭方案，供后续日程 LLM 参考。"""
+        if request.method == "GET":
+            items = sorted(
+                [self._favorite_outfit_response_item(item) for item in self._load_favorite_outfits()],
+                key=lambda item: item.get("created_at", 0),
+                reverse=True,
+            )
+            return web.json_response({
+                "items": items,
+                "count": len(items),
+                "generation_reference": bool(items),
+                "reference_scope": "hair_outfit_style_only",
+            })
+
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid_json"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "invalid_json"}, status=400)
+
+        outfit = self._favorite_outfit_payload(body.get("outfit"))
+        if not isinstance(outfit, dict) or not outfit:
+            return web.json_response({"error": "outfit_required"}, status=400)
+
+        date_text = str(body.get("date") or date.today().isoformat()).strip()
+        outfit_style = str(body.get("outfit_style") or outfit.get("风格") or "").strip()
+        outfit_id = self._favorite_outfit_id(date_text, outfit_style, outfit)
+
+        existing_items = self._load_favorite_outfits()
+        existing_ids = {
+            favorite_id
+            for item in existing_items
+            for favorite_id in (item.get("id"), self._favorite_outfit_item_id(item))
+            if favorite_id
+        }
+        desired_state = body.get("favorite")
+        should_favorite = (not (outfit_id in existing_ids)) if not isinstance(desired_state, bool) else desired_state
+
+        item = {
+            "id": outfit_id,
+            "date": date_text,
+            "outfit_style": outfit_style,
+            "base_style": str(body.get("base_style") or "").strip(),
+            "outfit": outfit,
+            "outfit_keywords": str(body.get("outfit_keywords") or "").strip(),
+            "created_at": int(time.time()),
+        }
+
+        def _apply(items: list[dict]) -> list[dict]:
+            next_items = [
+                x for x in items
+                if x.get("id") != outfit_id and self._favorite_outfit_item_id(x) != outfit_id
+            ]
+            if should_favorite:
+                next_items.insert(0, item)
+            next_items.sort(key=lambda x: x.get("created_at", 0), reverse=True)
+            return next_items[:50]
+
+        try:
+            items = self._update_favorite_outfits(_apply)
+        except Exception as e:
+            logger.error("Favorite outfit update error: %s", e)
+            return web.json_response({"error": "save_failed", "detail": str(e)}, status=500)
+
+        return web.json_response({
+            "success": True,
+            "favorite": should_favorite,
+            "id": outfit_id,
+            "count": len(items),
+        })
 
     def _plugin_config_path(self) -> str:
         return os.path.join(self.data_dir, "plugin_config.json")
@@ -258,6 +454,36 @@ class GalleryServer:
             return os.stat(path)
         except OSError:
             return None
+
+    def _image_file_info(self, filename: str) -> dict:
+        path = self._image_file_path(filename)
+        if not path:
+            return {}
+        try:
+            stat = os.stat(path)
+        except OSError:
+            return {}
+
+        cache_key = path
+        signature = (stat.st_mtime_ns, stat.st_size)
+        cached = self._image_info_cache.get(cache_key)
+        if cached and cached.get("signature") == signature:
+            return dict(cached.get("info") or {})
+
+        info = {"file_size_bytes": stat.st_size}
+        try:
+            with Image.open(path) as img:
+                width, height = img.size
+            info.update({
+                "width": width,
+                "height": height,
+                "size": f"{width}x{height}",
+            })
+        except Exception as exc:
+            logger.debug("Failed to probe image dimensions for %s: %s", filename, exc)
+
+        self._image_info_cache[cache_key] = {"signature": signature, "info": dict(info)}
+        return info
 
     def _delete_image_files(self, filename: str) -> tuple[int, list[str]]:
         rel = self._safe_image_relative_path(filename)
@@ -519,7 +745,7 @@ class GalleryServer:
         try:
             result = await self.on_retry_photo_job(schedule_time)
             status = result.get("status") if isinstance(result, dict) else ""
-            http_status = 409 if status == "limit_reached" else (400 if status == "error" else 200)
+            http_status = 400 if status == "error" else 200
             return web.json_response(result, status=http_status)
         except Exception as e:
             logger.error(f"Retry photo job error: {e}", exc_info=True)
@@ -811,6 +1037,16 @@ class GalleryServer:
             return f"{GalleryServer._display_model_name(model_name)} 生图完成"
         return "生图完成"
 
+    def _display_photo_schedule_activity(self, entry: dict, activity: str) -> str:
+        cleaned = self._clean_activity_text(activity)
+        if cleaned:
+            return cleaned
+
+        fallback = self._clean_activity_text(self._photo_schedule_activity(entry), max_len=64)
+        if fallback:
+            return fallback
+        return "即时生图完成"
+
     @staticmethod
     def _display_model_name(model_name: str) -> str:
         """Normalize stored model ids to stable gallery display labels."""
@@ -824,7 +1060,7 @@ class GalleryServer:
             return "Gemini"
         return name
 
-    def _normalize_entry_display(self, entry: dict, metadata: Optional[dict] = None, fallback_caption: str = "") -> dict:
+    def _normalize_entry_display(self, entry: dict, metadata: Optional[dict] = None) -> dict:
         if not isinstance(entry, dict):
             return entry
         normalized = dict(entry)
@@ -847,10 +1083,16 @@ class GalleryServer:
                 normalized["prompt"] = meta_prompt
             if not normalized.get("size") and meta_entry.get("size"):
                 normalized["size"] = meta_entry.get("size")
-        if img_file and not normalized.get("file_size_bytes"):
-            stat = self._image_stat(img_file)
-            if stat:
-                normalized["file_size_bytes"] = stat.st_size
+            if normalized.get("generation_time") is None and meta_entry.get("generation_time") is not None:
+                normalized["generation_time"] = meta_entry.get("generation_time")
+        if img_file:
+            image_info = self._image_file_info(img_file)
+            if image_info.get("size"):
+                normalized["size"] = image_info["size"]
+                normalized["width"] = image_info.get("width")
+                normalized["height"] = image_info.get("height")
+            if image_info.get("file_size_bytes"):
+                normalized["file_size_bytes"] = image_info["file_size_bytes"]
 
         model_label = self._display_model_name(normalized.get("model_name", ""))
         if model_label and model_label != normalized.get("model_name"):
@@ -862,8 +1104,6 @@ class GalleryServer:
                 style_name = normalized.get("outfit_style") or "自定义"
                 normalized["outfit"] = f"风格：{style_name} 穿搭：{repaired}"
 
-        if not normalized.get("caption") and fallback_caption and normalized.get("source") != "custom":
-            normalized["caption"] = fallback_caption
         return normalized
 
     @staticmethod
@@ -1133,18 +1373,6 @@ class GalleryServer:
             "metadata_only": True,
         }
 
-    @staticmethod
-    def _date_caption_map(all_data: dict) -> dict:
-        captions = {}
-        for key, entry in all_data.items():
-            if not isinstance(entry, dict):
-                continue
-            caption = entry.get("caption", "")
-            date_text = entry.get("date", "")
-            if caption and date_text and (DATE_KEY_RE.match(key) or entry.get("schedule")):
-                captions.setdefault(date_text, caption)
-        return captions
-
     def _photo_schedule_item(self, entry: dict) -> dict:
         """Build a schedule item from a generated photo entry."""
         if not isinstance(entry, dict):
@@ -1155,16 +1383,23 @@ class GalleryServer:
         if not schedule_time:
             return {}
 
-        if not activity:
-            activity = self._photo_schedule_activity(entry)
+        activity = self._display_photo_schedule_activity(entry, activity)
         return {"time": schedule_time, "activity": activity}
 
-    def _enrich_photo_schedule_time(self, entry: dict, metadata: Optional[dict] = None, fallback_caption: str = "") -> dict:
+    def _enrich_photo_schedule_time(self, entry: dict, metadata: Optional[dict] = None) -> dict:
         """Return a normalized copy with any parseable schedule_time preserved."""
         if not isinstance(entry, dict):
             return entry
-        entry = self._normalize_entry_display(entry, metadata, fallback_caption)
+        entry = self._normalize_entry_display(entry, metadata)
         if entry.get("schedule_time"):
+            schedule_time, activity = self._parse_time_activity(entry.get("schedule_time", ""))
+            if schedule_time:
+                cleaned_activity = self._display_photo_schedule_activity(entry, activity)
+                cleaned_schedule_time = f"{schedule_time} {cleaned_activity}".strip()
+                if cleaned_schedule_time != entry.get("schedule_time"):
+                    enriched = dict(entry)
+                    enriched["schedule_time"] = cleaned_schedule_time
+                    return enriched
             return entry
 
         item = self._photo_schedule_item(entry)
@@ -1359,7 +1594,6 @@ class GalleryServer:
 
             # 2. 获取今日所有照片
             metadata = self._load_image_metadata()
-            fallback_caption = schedule_info.get("caption", "") if isinstance(schedule_info, dict) else ""
             photos = []
             seen = set()
             for key, e in all_data.items():
@@ -1374,7 +1608,7 @@ class GalleryServer:
                     if img_file and img_file not in seen:
                         if self._image_exists(img_file):
                             seen.add(img_file)
-                            photos.append(self._enrich_photo_schedule_time(e, metadata, fallback_caption))
+                            photos.append(self._enrich_photo_schedule_time(e, metadata))
 
             if photos:
                 # Sort by timestamp in filename (newest first)
@@ -1451,10 +1685,18 @@ class GalleryServer:
             outfit_parts = {}
             schedule_items = []
             outfit_style = ""
+            base_style = ""
+            prompt = ""
+            outfit_keywords = ""
+            scene_keywords = ""
             caption = ""
 
             if schedule_entry:
                 outfit_style = schedule_entry.get("outfit_style", "")
+                base_style = schedule_entry.get("base_style", "")
+                prompt = schedule_entry.get("prompt", "")
+                outfit_keywords = schedule_entry.get("outfit_keywords", "")
+                scene_keywords = schedule_entry.get("scene_keywords", "")
                 caption = schedule_entry.get("caption", "")
                 outfit_parts.update(self._parse_outfit_parts(schedule_entry.get("outfit", "")))
                 self._enrich_outfit_parts_from_entry(outfit_parts, schedule_entry)
@@ -1468,9 +1710,8 @@ class GalleryServer:
 
             # 从图片条目补充 schedule_time：日程原文可能缺少手动/补生成的照片
             metadata = self._load_image_metadata()
-            fallback_caption = caption
             today_photos = [
-                self._normalize_entry_display(p, metadata, fallback_caption)
+                self._normalize_entry_display(p, metadata)
                 for p in today_photos
             ]
             if today_photos:
@@ -1488,10 +1729,19 @@ class GalleryServer:
                 best = sorted(today_photos, key=lambda x: x.get("time", ""), reverse=True)[0]
                 outfit_raw = best.get("outfit", "")
                 outfit_style = outfit_style or best.get("outfit_style", "")
+                base_style = base_style or best.get("base_style", "")
+                prompt = prompt or best.get("prompt", "")
+                outfit_keywords = outfit_keywords or best.get("outfit_keywords", "")
+                scene_keywords = scene_keywords or best.get("scene_keywords", "")
                 outfit_parts.update(self._parse_outfit_parts(outfit_raw))
                 self._enrich_outfit_parts_from_entry(outfit_parts, best)
             elif today_photos and not schedule_entry:
                 best = sorted(today_photos, key=lambda x: x.get("time", ""), reverse=True)[0]
+                outfit_style = outfit_style or best.get("outfit_style", "")
+                base_style = base_style or best.get("base_style", "")
+                prompt = prompt or best.get("prompt", "")
+                outfit_keywords = outfit_keywords or best.get("outfit_keywords", "")
+                scene_keywords = scene_keywords or best.get("scene_keywords", "")
                 self._enrich_outfit_parts_from_entry(outfit_parts, best)
 
             if not caption and today_photos:
@@ -1500,37 +1750,30 @@ class GalleryServer:
                         caption = p["caption"]
                         break
 
-            # 最终 fallback：从当前时间生成占位日程
-            if not schedule_items:
-                now = datetime.now()
-                h = now.hour
-                fallback_map = {
-                    (6, 11): ("morning", ["晨间护肤routine", "喝咖啡看日出", "整理穿搭出门"]),
-                    (11, 14): ("noon", ["午后小憩", "咖啡厅办公", "和闺蜜约饭"]),
-                    (14, 18): ("noon", ["逛街shopping", "公园散步拍照", "喝下午茶吃甜点"]),
-                    (18, 21): ("evening", ["下班后放松时刻", "健身房运动", "弹琴唱歌"]),
-                    (21, 24): ("bedtime", ["睡前护肤敷面膜", "窝在被窝看小说", "泡澡放松"]),
-                    (0, 6): ("bedtime", ["深夜emo时间", "安静说晚安"]),
-                }
-                for (lo, hi), (theme, activities) in fallback_map.items():
-                    if lo <= h < hi:
-                        import random
-                        schedule_items.append({
-                            "time": f"{h:02d}:{now.minute:02d}",
-                            "activity": random.choice(activities)
-                        })
-                        break
-
             if not schedule_items and not outfit_parts:
                 return web.json_response({"status": "no_schedule"})
+
+            outfit_id = self._favorite_outfit_id(today_str, outfit_style, outfit_parts) if outfit_parts else ""
+            favorite_ids = {
+                favorite_id
+                for item in self._load_favorite_outfits()
+                for favorite_id in (item.get("id"), self._favorite_outfit_item_id(item))
+                if favorite_id
+            }
 
             return web.json_response({
                 "status": "ok",
                 "date": today_str,
                 "outfit_style": outfit_style,
+                "base_style": base_style,
                 "outfit": outfit_parts,
                 "schedule": schedule_items,
                 "caption": caption,
+                "prompt": prompt,
+                "outfit_keywords": outfit_keywords,
+                "scene_keywords": scene_keywords,
+                "outfit_favorite_id": outfit_id,
+                "outfit_favorite": bool(outfit_id and outfit_id in favorite_ids),
             })
         except Exception as e:
             logger.error(f"Schedule detail error: {e}")
@@ -1765,8 +2008,7 @@ class GalleryServer:
             for entry in all_data.values():
                 if isinstance(entry, dict) and entry.get("date") == date_str:
                     metadata = self._load_image_metadata()
-                    fallback_caption = self._date_caption_map(all_data).get(date_str, "")
-                    return self._enrich_photo_schedule_time(entry, metadata, fallback_caption)
+                    return self._enrich_photo_schedule_time(entry, metadata)
         except Exception as e:
             logger.error(f"Load entry error: {e}")
         return None
@@ -1787,6 +2029,36 @@ class GalleryServer:
     @staticmethod
     def _has_cjk(value: str) -> bool:
         return bool(re.search(r'[\u4e00-\u9fff]', value or ""))
+
+    @staticmethod
+    def _clean_activity_text(value: str, max_len: int = 56) -> str:
+        text = re.sub(r'\s+', ' ', str(value or "")).strip().strip('"').strip("'")
+        text = re.sub(r'^\d{1,2}:\d{2}\s*', '', text).strip()
+        if not text:
+            return ""
+
+        lower = text.lower()
+        leaked_markers = (
+            "activity_zh",
+            "image_prompt",
+            "outfit_en",
+            "reasoning_content",
+            "json",
+            "字段",
+            "只输出",
+            "当前时间",
+            "我们根据",
+            "所以当前",
+            "可以确定",
+            "当前活动",
+        )
+        if any(marker in lower for marker in leaked_markers):
+            return ""
+        if len(text) > max_len:
+            return ""
+        if not GalleryServer._has_cjk(text):
+            return ""
+        return text
 
     def _parse_generate_now_llm(self, text: str) -> tuple[str, str, str]:
         raw = (text or "").strip()
@@ -1816,14 +2088,10 @@ class GalleryServer:
             except json.JSONDecodeError:
                 pass
 
-        if not activity and not image_prompt and raw:
-            if self._has_cjk(raw):
-                activity = raw
-            else:
-                image_prompt = raw
+        if not activity and not image_prompt and raw and not self._has_cjk(raw):
+            image_prompt = raw
 
-        activity = re.sub(r'\s+', ' ', activity).strip().strip('"').strip("'")
-        activity = re.sub(r'^\d{1,2}:\d{2}\s*', '', activity).strip()
+        activity = self._clean_activity_text(activity)
         image_prompt = re.sub(r'\s+', ' ', image_prompt).strip().strip('"').strip("'")
         if self._has_cjk(image_prompt):
             image_prompt = ""
@@ -1908,15 +2176,23 @@ class GalleryServer:
             cpa_url = request_config["chat_url"]
 
             schedule_hint = f"\n今日日程参考：\n{schedule_text}" if schedule_text else ""
+            favorite_context = self._favorite_outfit_generation_context()
+            favorite_hint = (
+                "\n收藏穿搭偏好（只用于 outfit_en 的服饰审美参考，不能用于动作、场景或日程）：\n"
+                f"{favorite_context}"
+                if favorite_context else ""
+            )
             llm_prompt = (
-                f"现在是 {now_str}。{schedule_hint}\n\n"
-                "请根据当前时间和日程生成两个字段，只输出 JSON：\n"
+                f"现在是 {now_str}。{schedule_hint}{favorite_hint}\n\n"
+                "请根据当前时间和日程生成三个字段，只输出 JSON：\n"
                 "{\n"
                 '  "activity_zh": "给 WebUI 展示的中文活动，15-30 个汉字，不要带时间",\n'
                 '  "image_prompt_en": "给 AI 生图用的英文场景描述，25-55 words, no Chinese, include pose/action/scene/props/lighting, do not include character appearance, quality prefix, or clothing",\n'
                 '  "outfit_en": "英文服装描述，8-20 words, must name visible clothing, shoes/accessories if visible, no Chinese"\n'
                 "}\n"
-                "activity_zh 必须中文；image_prompt_en 和 outfit_en 必须纯英文。不要解释。"
+                "activity_zh 必须中文；image_prompt_en 和 outfit_en 必须纯英文。\n"
+                "如果有收藏穿搭偏好，outfit_en 只提取其发型/服装气质、配色、版型、材质和搭配层次做软参考，生成相近但新的组合；不要照抄旧单品或旧描述。\n"
+                "收藏偏好绝不能影响 activity_zh 或 image_prompt_en 的动作、场景、道具、日程安排。不要解释。"
             )
 
             activity = ""
@@ -1929,7 +2205,7 @@ class GalleryServer:
                     body = _json.dumps({
                         "model": model_name,
                         "messages": [{"role": "user", "content": llm_prompt}],
-                        "max_tokens": 100,
+                        "max_tokens": 220,
                     }).encode()
                     req = urllib.request.Request(
                         cpa_url, data=body,
@@ -2189,7 +2465,7 @@ class GalleryServer:
                     status=500 if (entry or {}).get("error") != "not_found" else 404,
                 )
             metadata = self._load_image_metadata()
-            normalized = self._enrich_photo_schedule_time(entry, metadata, "")
+            normalized = self._enrich_photo_schedule_time(entry, metadata)
             return web.json_response(normalized)
         except Exception as e:
             logger.error(f"Reroll image error: {e}")
@@ -2199,6 +2475,11 @@ class GalleryServer:
         """切换收藏状态"""
         img_id = request.match_info.get("img_id")
         try:
+            try:
+                payload = await request.json()
+            except Exception:
+                payload = {}
+            requested_fav = payload.get("favorite") if isinstance(payload, dict) else None
             store = ScheduleStore(self.data_dir)
             result = {"new_fav": None}
             def _toggle(all_data):
@@ -2212,7 +2493,7 @@ class GalleryServer:
                     return all_data
                 entry = all_data[key]
                 current_fav = entry.get("favorite", False)
-                new_fav = not current_fav
+                new_fav = bool(requested_fav) if isinstance(requested_fav, bool) else not current_fav
                 entry["favorite"] = new_fav
                 all_data[key] = entry
                 result["new_fav"] = new_fav
@@ -2235,7 +2516,6 @@ class GalleryServer:
             result = []
             seen_filenames = set()
             metadata = self._load_image_metadata()
-            date_captions = self._date_caption_map(all_data)
             for key, entry in all_data.items():
                 if not isinstance(entry, dict):
                     continue
@@ -2259,8 +2539,7 @@ class GalleryServer:
                     else:
                         # Non-date-key entry without image_filename is broken, skip
                         continue
-                    fallback_caption = date_captions.get(entry.get("date", ""), "")
-                    result.append(self._enrich_photo_schedule_time(entry, metadata, fallback_caption))
+                    result.append(self._enrich_photo_schedule_time(entry, metadata))
             for img_file, meta in metadata.items():
                 if not isinstance(img_file, str) or img_file in seen_filenames:
                     continue
@@ -2270,7 +2549,7 @@ class GalleryServer:
                     continue
                 seen_filenames.add(img_file)
                 entry = self._metadata_gallery_entry(img_file, meta)
-                result.append(self._normalize_entry_display(entry, metadata, ""))
+                result.append(self._normalize_entry_display(entry, metadata))
             return result
         except Exception as e:
             logger.error(f"Load entries error: {e}")

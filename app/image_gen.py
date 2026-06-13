@@ -56,12 +56,15 @@ class ImageGenerator:
         size: str = "",
         source: str = "custom",
         prompt_final: bool = False,
+        theme: str = "custom",
+        schedule_time: str = "",
+        caption: bool = False,
     ) -> Optional[str]:
         """生成图片，返回图片文件名（相对路径）（异步，不阻塞事件循环）"""
         engine = engine or self.default_engine
         if not timeout:
             timeout = image_process_timeout(self.config, with_reference_fallback=bool(style or ref_image))
-        logger.info(f"开始生图: engine={engine}, style={style}, size={size or '-'}, prompt={prompt[:80]}...")
+        logger.info(f"开始生图: theme={theme}, engine={engine}, style={style}, size={size or '-'}, prompt={prompt[:80]}...")
 
         generate_script = self.generate_script
         if not os.path.isfile(generate_script):
@@ -72,19 +75,24 @@ class ImageGenerator:
         cmd = [
             self.python_executable,
             generate_script,
-            "--theme", "custom",
+            "--theme", theme or "custom",
             "--engine", engine,
             "--source", source,
         ]
+        if caption:
+            cmd.append("--caption")
         if style:
             cmd.extend(["--style", style])
         if ref_image:
             cmd.extend(["--ref-image", ref_image])
         if size:
             cmd.extend(["--size", size])
+        if schedule_time:
+            cmd.extend(["--schedule-time", schedule_time])
         if prompt_final:
             cmd.append("--prompt-final")
-        cmd.extend(["--prompt", prompt])
+        if prompt:
+            cmd.extend(["--prompt", prompt])
 
         try:
             # 用 run_in_executor 避免阻塞事件循环

@@ -14,7 +14,7 @@ import requests
 from core import (
     CONFIG_PATH,
     SECRETARY_SCHEDULE_PATH,
-    build_caption,
+    build_caption_for_image,
     build_prompt,
     enhance_prompt,
     get_cpa_chat_url,
@@ -407,27 +407,8 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple
                     return ctx, f"{raw_slot} {display_best}".strip(), outfit_kw, scene_kw
     
     if not schedule:
-        # Fallback: no schedule found, generate context from current time + theme
-        from datetime import datetime
-        now = datetime.now()
-        # 优先用 schedule_time_override 的精确时间
-        if schedule_time_override:
-            time_str = schedule_time_override.strip()
-        else:
-            time_str = f"{now.hour:02d}:{now.minute:02d}"
-        
-        _FALLBACK_ACTIVITIES = {
-            "morning": ["晨间护肤routine", "喝咖啡看日出", "晨跑后拉伸放松", "做早餐中", "阳台看书晒太阳", "整理穿搭出门"],
-            "noon": ["午后小憩", "咖啡厅办公", "和闺蜜约饭", "逛街shopping", "公园散步拍照", "喝下午茶吃甜点"],
-            "evening": ["下班后放松时刻", "健身房运动", "弹琴唱歌", "做饭时间", "夜晚城市漫步", "居家追剧放松"],
-            "bedtime": ["睡前护肤敷面膜", "窝在被窝看小说", "泡澡放松", "床头灯下看书", "深夜emo时间", "安静说晚安"],
-        }
-        import random as _rnd
-        activity = _rnd.choice(_FALLBACK_ACTIVITIES.get(theme, ["日常活动"]))
-        ctx = f"Today's plan: {activity}"
-        raw_slot = f"{time_str} {activity}"
-        print(f"📋 Schedule fallback: {ctx}", file=sys.stderr)
-        return ctx, raw_slot, "", ""
+        print("📋 No daily LLM schedule found; skipping schedule action injection", file=sys.stderr)
+        return "", "", "", ""
     
     # Time-based schedule format: "HH:MM activity" or "period：activity"
     # Try period-based matching first (上午/中午/下午/晚上/深夜)
@@ -548,7 +529,7 @@ def generate(
     if schedule_ctx and theme in DAILY_THEMES and not prompt_final:
         # Extract activity text for schedule-aware prompt building
         import re
-        m = re.search(r"Today's plan:\s*(.+?)(?:\.|$)", schedule_ctx)
+        m = re.search(r"Today's plan:\s*(.+?)(?:\.\s*Style:|$)", schedule_ctx)
         if m:
             schedule_activity = m.group(1).strip()
         resolved_prompt = f"{resolved_prompt}. {schedule_ctx}"
@@ -556,10 +537,14 @@ def generate(
     
     # Re-build prompt with schedule-aware element selection if we have activity
     if schedule_activity and theme in DAILY_THEMES and not prompt_final:
+        # `scene_kw` comes from the day's overall prompt, not the matched time slot.
+        # Keep outfit keywords, but let the matched LLM schedule line drive action/scene.
+        if scene_kw:
+            print(f"🏠 Keeping day-level scene keywords out of timed slot: {scene_kw[:60]}", file=sys.stderr)
         resolved_prompt = build_prompt(theme, schedule_activity=schedule_activity,
-                                       outfit_keywords=outfit_kw, scene_keywords=scene_kw)
+                                       outfit_keywords=outfit_kw, scene_keywords="")
         resolved_prompt = f"{resolved_prompt}. {schedule_ctx}"
-        print(f"🎨 Rebuilt prompt with schedule-matched elements (outfit_kw={outfit_kw[:40]}, scene_kw={scene_kw[:40]})", file=sys.stderr)
+        print(f"🎨 Rebuilt prompt from LLM schedule line (outfit_kw={outfit_kw[:40]})", file=sys.stderr)
 
     # Resolve style to ref_image path (only supported by gptimage engine)
     requested_ref_image = ref_image
@@ -709,7 +694,7 @@ def generate(
 
     caption_text = None
     if path and caption:
-        caption_text = build_caption(theme, schedule_time=schedule_raw)
+        caption_text = build_caption_for_image(theme, path, schedule_time=schedule_raw)
         if caption_text and send:
             send_photo(path, caption_text)
             print(f"CAPTION:{caption_text}")
