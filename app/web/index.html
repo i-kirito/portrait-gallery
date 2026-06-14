@@ -2245,6 +2245,41 @@ textarea:focus-visible,
   gap: 6px;
   padding-inline: 14px;
 }
+#galleryScrollNav {
+  position: fixed;
+  right: 24px;
+  bottom: 78px;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: flex-end;
+  gap: 8px;
+  transition: opacity 0.3s;
+  user-select: none;
+}
+#galleryScrollNav.hidden { opacity: 0; pointer-events: none; }
+#galleryScrollNav .scroll-nav-btn {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(233,30,99,0.15);
+  border-radius: 50%;
+  background: rgba(255,255,255,0.94);
+  color: #e91e63;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.12);
+  backdrop-filter: blur(12px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.15s, color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+#galleryScrollNav .scroll-nav-btn:hover {
+  transform: translateY(-1px);
+  color: #fff;
+  background: #e91e63;
+  box-shadow: 0 6px 20px rgba(233,30,99,0.22);
+}
 #colSliderWrap .col-icon { font-size: 16px; }
 #colSliderWrap .col-val {
   min-width: 20px;
@@ -5216,6 +5251,14 @@ document.addEventListener("keydown", e => {
 });
 </script>
 <!-- Column Slider -->
+<div id="galleryScrollNav" class="hidden" aria-label="画廊快速滚动">
+  <button type="button" class="scroll-nav-btn" onclick="scrollGalleryEdge('top')" title="回到顶部" aria-label="回到顶部">
+    <i class="fa-solid fa-arrow-up" aria-hidden="true"></i>
+  </button>
+  <button type="button" class="scroll-nav-btn" onclick="scrollGalleryEdge('bottom')" title="到底部" aria-label="到底部">
+    <i class="fa-solid fa-arrow-down" aria-hidden="true"></i>
+  </button>
+</div>
 <div id="colSliderWrap" class="hidden">
   <span class="col-icon">🖼️</span>
   <input type="range" id="colSlider" min="4" max="8" step="1" value="5">
@@ -5228,12 +5271,24 @@ document.addEventListener("keydown", e => {
   const slider = document.getElementById('colSlider');
   const valEl = document.getElementById('colVal');
   const wrap = document.getElementById('colSliderWrap');
+  const scrollNav = document.getElementById('galleryScrollNav');
   const saved = window.galleryStorageGet('gallery_cols', '');
 
   const COL_MIN = 4;
   const COL_MAX = 8;
   const MIN_CARD_WIDTH = 164;
   let preferredCols = Math.max(COL_MIN, Math.min(COL_MAX, parseInt(saved || slider.value, 10) || 5));
+
+  window.scrollGalleryEdge = function(edge) {
+    const root = document.scrollingElement || document.documentElement;
+    const maxTop = Math.max(0, root.scrollHeight - window.innerHeight);
+    window.scrollTo({ top: edge === 'bottom' ? maxTop : 0, behavior: 'smooth' });
+  };
+
+  function setFloatToolsVisible(visible) {
+    wrap.classList.toggle('hidden', !visible);
+    if (scrollNav) scrollNav.classList.toggle('hidden', !visible);
+  }
 
   function maxColumnCount(grid) {
     const width = grid.clientWidth || grid.getBoundingClientRect().width || window.innerWidth;
@@ -5296,11 +5351,11 @@ document.addEventListener("keydown", e => {
   window.switchTab = function(tab) {
     origSwitchTab(tab);
     if (tab === 'gallery' || tab === 'favorites') {
-      wrap.classList.remove('hidden');
+      setFloatToolsVisible(true);
       // Re-apply columns after render
       requestAnimationFrame(() => applyCols(preferredCols, false));
     } else {
-      wrap.classList.add('hidden');
+      setFloatToolsVisible(false);
     }
   };
 
@@ -5308,7 +5363,7 @@ document.addEventListener("keydown", e => {
   document.addEventListener('DOMContentLoaded', () => {
     const activeTab = document.querySelector('.tab.active');
     if (activeTab && (activeTab.dataset.tab === 'gallery' || activeTab.dataset.tab === 'favorites')) {
-      wrap.classList.remove('hidden');
+      setFloatToolsVisible(true);
       applyCols(preferredCols, false);
     }
   });
