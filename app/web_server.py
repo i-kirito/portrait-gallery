@@ -1114,6 +1114,11 @@ class GalleryServer:
     def _display_photo_schedule_activity(self, entry: dict, activity: str) -> str:
         cleaned = self._clean_activity_text(activity)
         if cleaned:
+            prompt = (entry.get("prompt") or "").strip()
+            if (entry.get("source") or "") == "web" and prompt and self._generate_now_prompt_conflicts(cleaned, prompt):
+                fallback = self._clean_activity_text(self._photo_schedule_activity(entry), max_len=64)
+                if fallback and not self._generate_now_prompt_conflicts(fallback, prompt):
+                    return fallback
             return cleaned
 
         fallback = self._clean_activity_text(self._photo_schedule_activity(entry), max_len=64)
@@ -2177,6 +2182,115 @@ class GalleryServer:
             outfit_prompt = ""
         return activity, image_prompt, outfit_prompt
 
+    @staticmethod
+    def _fallback_visual_for_activity(activity: str, hour: int) -> tuple[str, str]:
+        key = re.sub(r"\s+", "", str(activity or ""))
+        if not key:
+            return "", ""
+
+        def has(words: tuple[str, ...]) -> bool:
+            return any(word in key for word in words)
+
+        meal = has(("早餐", "午餐", "晚餐", "早饭", "午饭", "晚饭", "吃饭", "用餐", "做饭", "料理", "厨房", "甜点", "松饼", "奶茶", "牛排"))
+        stream = has(("直播", "开播", "歌会", "唱歌", "麦克风", "台本", "互动", "内容"))
+        if meal and stream:
+            return (
+                "at home at a small dining table with a simple dinner, checking a laptop and handwritten livestream notes, warm apartment lighting, relaxed candid pose, cozy evening atmosphere",
+                "soft white camisole dress, light cardigan, delicate necklace, simple slippers",
+            )
+        if meal:
+            return (
+                "enjoying or preparing a simple meal at home, tidy kitchen or dining table, warm natural light, gentle everyday pose, cozy domestic atmosphere, visible plates and small dishes",
+                "cream knit cardigan, white camisole top, relaxed skirt, delicate necklace",
+            )
+        if stream:
+            return (
+                "sitting at a tidy livestream desk, reviewing notes beside a microphone and soft monitor glow, focused gentle expression, cozy room lighting, ready-to-start evening broadcast mood",
+                "soft satin camisole, sheer cardigan, delicate earrings, neat skirt",
+            )
+        if has(("电脑", "游戏", "速通", "Live2D", "建模", "平板", "剪辑", "耳机")):
+            return (
+                "working at a desk with a laptop or tablet, screen glow on her face, focused casual pose, organized room, small tech accessories nearby, calm productive atmosphere",
+                "oversized hoodie, pleated skirt, simple earrings, soft socks",
+            )
+        if has(("动漫", "新番", "追番", "电视", "沙发", "抱枕", "电影")):
+            return (
+                "curled up on a sofa watching anime or a show, holding a soft pillow, warm living room light, relaxed playful expression, cozy afternoon or evening atmosphere",
+                "loose knit sweater, camisole dress, lace socks, small hair ribbon",
+            )
+        if has(("阳台", "摇椅", "小憩", "打盹", "发呆", "薄毯")):
+            return (
+                "resting on a balcony rocking chair under soft daylight, thin blanket over her lap, relaxed sleepy expression, plants nearby, quiet breezy home atmosphere",
+                "light cardigan, soft camisole dress, delicate necklace, bare shoulders",
+            )
+        if has(("整理", "房间", "收拾", "浇水", "多肉", "植物", "打扫")):
+            return (
+                "tidying a bright room and watering small plants, natural window light, gentle focused pose, clean shelves and soft home details, peaceful everyday atmosphere",
+                "white blouse, high-waisted skirt, soft cardigan, simple flats",
+            )
+        if has(("床", "睡", "睡前", "护肤", "洗澡", "泡澡", "被窝", "枕头", "晚安")):
+            return (
+                "winding down in a cozy bedroom after skincare, soft bedside lamp, relaxed sleepy pose near a bed with pillows, quiet intimate late-night atmosphere",
+                "white lace camisole sleep dress, soft robe, delicate bracelet",
+            )
+        if has(("咖啡", "咖啡馆", "下午茶", "蛋糕", "茶")):
+            return (
+                "sitting in a quiet cafe with a drink and small dessert, soft window light, relaxed candid pose, warm table details, gentle slow-life atmosphere",
+                "fitted knit top, high-waisted skirt, small shoulder bag, earrings",
+            )
+        if has(("街", "散步", "路灯", "公园", "出门", "逛", "夜市", "外出")):
+            return (
+                "taking a relaxed walk outside under city lights, gentle candid pose near a sidewalk or park path, soft evening breeze, lively but romantic urban atmosphere",
+                "elegant satin slip dress, sheer lace cardigan, delicate necklace, low heels",
+            )
+        if hour < 11:
+            return (
+                "doing a quiet morning routine at home in soft window light, natural relaxed pose, tidy room and mirror nearby, calm start-of-day atmosphere",
+                "cream knit cardigan, white camisole top, light pleated skirt, mary jane shoes",
+            )
+        if hour < 18:
+            return (
+                "spending a relaxed daytime moment indoors with soft sunlight, natural candid pose, small personal items nearby, clean cozy everyday atmosphere",
+                "fitted crop top, high-waisted wide-leg trousers, simple earrings",
+            )
+        return (
+            "spending a calm evening at home in warm ambient light, relaxed candid pose, cozy room details, gentle private atmosphere, soft shadows around her",
+            "elegant satin slip dress, light cardigan, delicate necklace, low heels",
+        )
+
+    @classmethod
+    def _generate_now_prompt_conflicts(cls, activity: str, image_prompt: str) -> bool:
+        key = re.sub(r"\s+", "", str(activity or ""))
+        prompt = str(image_prompt or "").lower()
+        if not key or not prompt:
+            return False
+
+        def activity_has(words: tuple[str, ...]) -> bool:
+            return any(word in key for word in words)
+
+        def prompt_has(words: tuple[str, ...]) -> bool:
+            return any(word in prompt for word in words)
+
+        outdoor_prompt = prompt_has(("street", "sidewalk", "road", "city lights", "night market", "park path", "railing", "outdoor walk", "evening walk"))
+        home_prompt = prompt_has(("home", "apartment", "bedroom", "kitchen", "dining table", "livestream desk", "sofa", "living room", "bedside"))
+        meal_prompt = prompt_has(("meal", "dinner", "breakfast", "lunch", "supper", "food", "cooking", "kitchen", "dining", "table", "plates", "dishes", "dessert"))
+        stream_prompt = prompt_has(("livestream", "microphone", "broadcast", "streaming", "monitor glow", "notes", "script", "desk setup"))
+
+        home_activity = activity_has(("在家", "家里", "房间", "卧室", "厨房", "晚餐", "晚饭", "直播", "开播", "追番", "沙发", "睡前", "护肤", "泡澡"))
+        outdoor_activity = activity_has(("街", "散步", "路灯", "公园", "出门", "逛", "夜市", "外出", "户外", "路边", "夜景", "栏杆", "城市"))
+        meal_activity = activity_has(("早餐", "午餐", "晚餐", "早饭", "午饭", "晚饭", "吃饭", "用餐", "做饭", "料理"))
+        stream_activity = activity_has(("直播", "开播", "歌会", "唱歌", "麦克风", "台本", "互动", "内容"))
+
+        if home_activity and outdoor_prompt and not home_prompt:
+            return True
+        if outdoor_activity and home_prompt and not outdoor_prompt:
+            return True
+        if meal_activity and not meal_prompt:
+            return True
+        if stream_activity and not stream_prompt:
+            return True
+        return False
+
     def _fallback_generate_now_context(self, now_str: str, schedule_text: str = "") -> tuple[str, str, str]:
         time_value, nearest_activity = "", ""
         target_time, _ = self._parse_time_activity(now_str)
@@ -2191,6 +2305,11 @@ class GalleryServer:
                 _, nearest_activity = min(candidates, key=lambda item: item[0])
 
         hour = int((target_time or now_str or "00:00").split(":", 1)[0])
+        if nearest_activity:
+            prompt, outfit = self._fallback_visual_for_activity(nearest_activity, hour)
+            if prompt and outfit:
+                return nearest_activity, prompt, outfit
+
         if 0 <= hour < 6 or hour >= 22:
             activity = nearest_activity or "在柔软床边安静放松准备入睡"
             prompt = "relaxing beside a soft bed late at night, sleepy gentle expression, cozy bedroom, warm bedside lamp, quiet intimate atmosphere"
@@ -2268,6 +2387,7 @@ class GalleryServer:
                 '  "outfit_en": "英文服装描述，8-20 words, must name visible clothing, shoes/accessories if visible, no Chinese"\n'
                 "}\n"
                 "activity_zh 必须中文；image_prompt_en 和 outfit_en 必须纯英文。\n"
+                "activity_zh 和 image_prompt_en 必须描述同一地点、同一动作、同一时刻；如果活动在家吃饭/准备直播，场景也必须在家，不能写成户外散步或街拍。\n"
                 "如果有收藏穿搭偏好，outfit_en 只提取其发型/服装气质、配色、版型、材质和搭配层次做软参考，生成相近但新的组合；不要照抄旧单品或旧描述。\n"
                 "收藏偏好绝不能影响 activity_zh 或 image_prompt_en 的动作、场景、道具、日程安排。不要解释。"
             )
@@ -2301,6 +2421,15 @@ class GalleryServer:
                         break
                 except Exception as e:
                     logger.warning(f"LLM activity generation failed with {model_name}: {e}")
+
+            if activity and image_prompt and self._generate_now_prompt_conflicts(activity, image_prompt):
+                logger.warning("LLM image prompt conflicts with activity, using activity-aligned fallback: %s", activity)
+                image_prompt = ""
+
+            if activity and (not image_prompt or not outfit_prompt):
+                activity_prompt, activity_outfit = self._fallback_visual_for_activity(activity, now.hour)
+                image_prompt = image_prompt or activity_prompt
+                outfit_prompt = outfit_prompt or activity_outfit
 
             if not activity or not image_prompt or not outfit_prompt:
                 fallback_activity, fallback_prompt, fallback_outfit = self._fallback_generate_now_context(now_str, schedule_text)
