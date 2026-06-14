@@ -545,22 +545,27 @@ def _personalized_caption_fallback(theme: str, persona: dict, schedule_time: str
 
 
 def _caption_voice_hint(persona: dict) -> str:
-    """Use persona tone as a tiny style hint without leaking the full Soul text."""
+    """Use persona tone as a style hint. Keep enough text to truly guide the voice,
+    but strip only真·安全敏感词（防止系统提示/越狱注入泄露），放行语气/性格描述词。"""
     voice = str(persona.get("caption_voice") or "").strip()
     if not voice:
         return "自然、亲切、贴近日常"
     voice = re.sub(r"\s+", " ", voice)
-    pieces = re.split(r"[。！？!?；;\n]", voice)
-    hint = next((piece.strip(" ，,、") for piece in pieces if piece.strip(" ，,、")), "")
-    if not hint:
-        return "自然、亲切、贴近日常"
-    blocked = (
-        "人设", "身份", "设定", "体质", "人格", "痴迷", "占有欲",
-        "恋爱脑", "系统", "提示词", "SOUL", "Soul", "工程师",
+    # 只过滤可能泄露系统/注入的真·危险标记，语气性格词（撒娇/黏人/占有欲等）保留作风格引导
+    safety_blocked = (
+        "系统提示", "提示词", "system prompt", "SOUL", "Soul", "soul",
+        "godmode", "GODMODE", "end of input", "start of output", "ignore previous",
     )
-    if any(marker in hint for marker in blocked):
-        return "自然、亲切、贴近日常"
-    return hint[:36]
+    if any(marker in voice for marker in safety_blocked):
+        # 命中危险标记时，逐句过滤，保留干净句子
+        pieces = re.split(r"[。！？!?；;\n]", voice)
+        clean = [
+            p.strip(" ，,、")
+            for p in pieces
+            if p.strip(" ，,、") and not any(m in p for m in safety_blocked)
+        ]
+        voice = " ".join(clean) if clean else "自然、亲切、贴近日常"
+    return voice[:180]
 
 
 def _scene_caption_fallback(theme: str, persona: dict, caption: str = "", schedule_time: str = "") -> str:
@@ -581,8 +586,9 @@ def _scene_caption_fallback(theme: str, persona: dict, caption: str = "", schedu
 def _caption_has_persona_leak(caption: str) -> bool:
     text = str(caption or "")
     leak_markers = (
-        "人设", "身份", "设定", "体质", "人格", "痴迷", "占有欲",
-        "恋爱脑", "系统提示", "提示词", "SOUL", "Soul", "工程师",
+        "系统提示", "提示词", "system prompt",
+        "SOUL", "Soul", "soul", "godmode", "GODMODE",
+        "end of input", "start of output", "ignore previous",
     )
     return any(marker in text for marker in leak_markers)
 
@@ -1163,18 +1169,17 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
     user_name = persona.get("user_name") or "用户"
     caption_voice = _caption_voice_hint(persona)
     system_msg = (
-        f"你正在为“{character}”刚拍的照片写一条画廊小心思，读者称呼“{user_name}”。"
-        f"语气参考：{caption_voice}。"
-        "只参考称呼和语气，不要复述、展开或透露 SOUL、人设、身份、关系或性格设定。"
+        f"你正在以“{character}”的第一人称口吻，为刚拍的照片写一句俏皮的画廊小心思，读者称呼“{user_name}”。"
+        f"务必完全用下面这种语气和性格来写，让文案有鲜明的个人风格：{caption_voice}。"
+        "用第一人称自称（可用角色名或“我/人家”），自然亲昵地称呼读者，让读者一眼就感觉到是这个角色在说话。"
+        "可以自然带上语气词（呀/啦/嘛/哦/呢/嘿嘿/～）和 1-2 个 emoji 或颜文字，要可爱、生动、有感染力，避免干巴巴的归档腔。"
+        "但不要直接复述、罗列或解释 SOUL、人设、身份、关系定义或性格设定原文，只用它来决定说话的口吻。"
         "如果提供了具体日程，必须严格贴合该时间、地点和活动，不要写与日程冲突的起床、被窝、睡前等内容。"
-        "内容只写当时拍照的场景、穿搭亮点和心情。"
-        "小心思要像当时脑内一闪而过的心理活动，不要写成画廊归档说明。"
-        "不要复述当前日程原句，不要使用“日程内容 + 的时候/前后 + 心情”这种结构；只能提炼物件、光线、气味或心情。"
-        "每张都必须写出不同观察角度，禁止套用固定句式。"
-        "不要写“刚刚X时拍下这一刻，想把穿搭和心情分享给Y”这类模板句。"
-        "禁止使用“留了一张”“放进画廊”“现场感”“收进画廊”“不能不存”等记录/收藏话术。"
-        "输出 1-2 句中文，总长不超过 60 个汉字。"
-        "不要写长段落，不要提技术术语、英文提示词、模型名称。可以使用 0-1 个 emoji。"
+        "内容聚焦当时拍照的场景、穿搭亮点和心情，每张都要写出不同的观察角度，不要套用固定句式。"
+        "不要复述当前日程原句，不要写“刚刚X时拍下这一刻，想把穿搭和心情分享给Y”这类模板句。"
+        "禁止使用“留了一张”“放进画廊”“收进画廊”“现场感”“不能不存”等记录/收藏话术。"
+        "输出 1-2 句中文，总长不超过 70 个汉字。"
+        "不要写长段落，不要提技术术语、英文提示词、模型名称。"
         "直接输出配文内容，不要加引号或标题。"
         "绝对不要在末尾加「网页版」「查看详情」「点击查看」等任何引导性后缀。"
     )
