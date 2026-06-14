@@ -330,11 +330,45 @@ class PortraitGalleryApp:
         except (OSError, ValueError):
             return ""
 
+    def _remove_image_metadata(self, filename: str):
+        if not filename:
+            return
+        path = os.path.join(self.data_dir, "image_metadata.json")
+        metadata = load_json_file(path)
+        if not isinstance(metadata, dict) or filename not in metadata:
+            return
+        metadata.pop(filename, None)
+        tmp_path = f"{path}.tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)
+        except Exception as e:
+            logger.error("移除旧图片元数据失败: %s, %s", filename, e)
+            if os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+    def _delete_replaced_image(self, filename: str):
+        if not filename:
+            return
+        self._remove_image_metadata(filename)
+        delete_files = getattr(self.web_server, "_delete_image_files", None)
+        if not callable(delete_files):
+            return
+        deleted, errors = delete_files(filename)
+        if errors:
+            logger.warning("删除被替换图片时有错误: %s, errors=%s", filename, errors)
+        elif deleted:
+            logger.info("已删除被替换图片文件: %s", filename)
+
     async def reroll_image(self, image_filename: str) -> dict:
         """Generate a new card from an existing card's final prompt."""
         store = ScheduleStore(self.data_dir)
         all_data = store.load()
-        _, original = self._find_entry_by_image(all_data, image_filename)
+        original_key, original = self._find_entry_by_image(all_data, image_filename)
         if not original:
             return {"status": "failed", "error": "not_found"}
 
@@ -383,6 +417,8 @@ class PortraitGalleryApp:
             return {"status": "failed", "error": "generate_failed"}
 
         today_str = datetime.now().strftime("%Y-%m-%d")
+        original_date = original.get("date") or today_str
+        original_time = original.get("time") or self._image_time_from_filename(image_filename)
         now_time = self._image_time_from_filename(filename) or datetime.now().strftime("%H:%M")
         result = {}
 
@@ -390,16 +426,19 @@ class PortraitGalleryApp:
             generated_key, generated = self._find_entry_by_image(all_data, filename)
             generated_key = generated_key or filename
             generated = dict(generated or {})
+            replacement_key = original_key or image_filename
+            if re.match(r'^\d{4}-\d{2}-\d{2}$', str(replacement_key)):
+                replacement_key = image_filename
             generated.update({
                 "id": filename,
-                "date": generated.get("date") or today_str,
-                "time": generated.get("time") or now_time,
+                "date": original_date,
+                "time": original_time or generated.get("time") or now_time,
                 "image_filename": filename,
                 "image_path": f"/images/{filename}",
                 "prompt": generated.get("prompt") or prompt,
                 "status": "ok",
-                "source": reroll_source,
-                "favorite": False,
+                "source": original_source or reroll_source,
+                "favorite": bool(original.get("favorite", False)),
                 "rerolled_from": image_filename,
             })
             for field in ("outfit_style", "outfit", "schedule", "schedule_prompt", "schedule_time"):
@@ -414,11 +453,23 @@ class PortraitGalleryApp:
                 generated["outfit_style"] = "自定义"
             if not generated.get("outfit"):
                 generated["outfit"] = original.get("outfit") or "风格：自定义 穿搭：重抽生成"
-            all_data[generated_key] = generated
+            for key, entry in list(all_data.items()):
+                if key == replacement_key:
+                    continue
+                if re.match(r'^\d{4}-\d{2}-\d{2}$', str(key)):
+                    continue
+                if key == generated_key:
+                    del all_data[key]
+                    continue
+                if isinstance(entry, dict) and entry.get("image_filename") in {image_filename, filename}:
+                    del all_data[key]
+            all_data[replacement_key] = generated
             result.update(generated)
             return all_data
 
         store.update(_merge_reroll)
+        if filename != image_filename:
+            self._delete_replaced_image(image_filename)
         logger.info("图片重抽成功: %s -> %s", image_filename, filename)
         return result
 

@@ -1685,12 +1685,18 @@ class GalleryServer:
                             photos.append(self._enrich_photo_schedule_time(e, metadata))
 
             if photos:
-                # Sort by timestamp in filename (newest first)
+                # Sort by the card's original time slot so rerolled replacement
+                # images do not jump just because the filename timestamp changed.
                 def _ts_key(p):
                     fn = p.get("image_filename", "")
                     m = re.search(r'_(\d{10})\.\w+$', fn)
                     return int(m.group(1)) if m else 0
-                photos.sort(key=_ts_key, reverse=True)
+                def _photo_sort_key(p):
+                    slot = self._time_sort_value(p.get("schedule_time") or p.get("time", ""))
+                    if slot >= 24 * 60:
+                        slot = -1
+                    return (slot, _ts_key(p))
+                photos.sort(key=_photo_sort_key, reverse=True)
                 for p in photos:
                     if not p.get("schedule") and schedule_info.get("schedule"):
                         p["schedule"] = schedule_info["schedule"]
