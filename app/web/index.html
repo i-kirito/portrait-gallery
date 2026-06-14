@@ -5326,6 +5326,7 @@ function loadScheduleEggData(options) {
     var activeToday = Math.max(0, parseInt((jobsData && jobsData.active_today) || 0, 10) || 0);
     var failedToday = Math.max(0, parseInt((jobsData && jobsData.failed_today) || 0, 10) || 0);
     var plannedToday = Math.max(completedToday + activeToday + failedToday, parseInt((jobsData && jobsData.planned_today) || 0, 10) || 0);
+    var remainingToday = Math.max(0, parseInt((jobsData && jobsData.remaining_today) || (maxDaily - plannedToday), 10) || 0);
 
     if (!detail || (detail.status !== 'ok' && detail.status !== 'no_schedule')) {
       body.innerHTML = '<div class="egg-empty"><div class="icon">😴</div><p>今天还没有生成日程哦～<br>每天早上 7 点自动生成！</p></div>';
@@ -5389,9 +5390,10 @@ function loadScheduleEggData(options) {
       }
     }
 
-    // 过滤：只显示真实生图计划相关时间，避免全天日程混进生图弹窗。
+    // 过滤：显示真实生图计划相关时间；若计划还有余量，再显示下一条未来日程。
     var visibleSchedule = [];
     var activeScheduleIdx = -1;
+    var nextFutureCandidate = null;
     for (var i = 0; i < schedule.length; i++) {
       var normalizedTime = extractJobTime(schedule[i].time);
       if (!normalizedTime) continue;
@@ -5407,6 +5409,26 @@ function loadScheduleEggData(options) {
       normalizedItem.isNext = !normalizedItem.isPast;
       visibleSchedule.push(normalizedItem);
       if (activeScheduleIdx < 0 && normalizedItem.isNext) activeScheduleIdx = visibleSchedule.length - 1;
+    }
+    if (remainingToday > 0 && activeToday === 0) {
+      for (var nf = 0; nf < schedule.length; nf++) {
+        var futureTime = extractJobTime(schedule[nf].time);
+        if (!futureTime || isPastOrNow(futureTime) || photoTimeMap[futureTime] || jobTimeMap[futureTime]) continue;
+        nextFutureCandidate = {
+          time: futureTime,
+          activity: schedule[nf].activity || '',
+          hasPhoto: false,
+          hasJob: false,
+          isPast: false,
+          isNext: true,
+        };
+        break;
+      }
+      if (nextFutureCandidate) {
+        visibleSchedule.push(nextFutureCandidate);
+        visibleSchedule.sort(function(a, b) { return timeSortValue(a.time) - timeSortValue(b.time); });
+        activeScheduleIdx = visibleSchedule.indexOf(nextFutureCandidate);
+      }
     }
 
     if (visibleSchedule.length > 0) {
