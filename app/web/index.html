@@ -3217,6 +3217,51 @@ function removeLocalImage(imgId) {
   }
 }
 
+function findGalleryCardByImg(imgId) {
+  if (!imgId) return null;
+  return Array.from(document.querySelectorAll("[data-gallery-img]"))
+    .find(el => el.dataset.galleryImg === imgId) || null;
+}
+
+function nearestGalleryCard(card) {
+  if (!card) return null;
+  let candidate = card.nextElementSibling;
+  while (candidate && !candidate.dataset.galleryImg) candidate = candidate.nextElementSibling;
+  if (candidate) return candidate;
+  candidate = card.previousElementSibling;
+  while (candidate && !candidate.dataset.galleryImg) candidate = candidate.previousElementSibling;
+  return candidate || null;
+}
+
+function captureGalleryViewportAnchor(imgId, event) {
+  const scrollEl = document.scrollingElement || document.documentElement;
+  const sourceCard = (event && event.currentTarget && event.currentTarget.closest("[data-gallery-img]"))
+    || findGalleryCardByImg(imgId);
+  const anchorCard = nearestGalleryCard(sourceCard);
+  return {
+    scrollTop: scrollEl ? scrollEl.scrollTop : window.scrollY,
+    anchorImg: anchorCard ? anchorCard.dataset.galleryImg : "",
+    anchorTop: anchorCard ? anchorCard.getBoundingClientRect().top : 0
+  };
+}
+
+function restoreGalleryViewportAnchor(anchor) {
+  if (!anchor) return;
+  const restore = () => {
+    const scrollEl = document.scrollingElement || document.documentElement;
+    const anchorCard = findGalleryCardByImg(anchor.anchorImg);
+    if (anchorCard) {
+      window.scrollBy(0, anchorCard.getBoundingClientRect().top - anchor.anchorTop);
+    } else if (scrollEl) {
+      scrollEl.scrollTop = anchor.scrollTop;
+    }
+  };
+  requestAnimationFrame(() => {
+    restore();
+    setTimeout(restore, 80);
+  });
+}
+
 // ===== Tab switching =====
 function switchTab(tab) {
   const todaySec = document.getElementById("todaySection");
@@ -3437,7 +3482,7 @@ function renderToday() {
     const metaHtml = `${today.model_name ? `<span class="meta-tag">🤖 ${today.model_name}</span>` : ""}${displayReferenceMeta(today) ? `<span class="meta-tag">${displayReferenceMeta(today)}</span>` : ""}${displayImageSizeMeta(today) ? `<span class="meta-tag">${displayImageSizeMeta(today)}</span>` : ""}${displayFileSizeMeta(today) ? `<span class="meta-tag">${displayFileSizeMeta(today)}</span>` : ""}${displayGenerationTimeMeta(today) ? `<span class="meta-tag">${displayGenerationTimeMeta(today)}</span>` : ""}${renderRerollButton(today)}`;
 
     html += `
-      <div class="today-compact" style="cursor:default;">
+      <div class="today-compact" data-gallery-img="${escapeAttr(today.image_filename || '')}" style="cursor:default;">
         <div class="tc-image">
           <img src="/images/${today.image_filename}" alt="今日穿搭" decoding="async" onclick="openViewer('/images/${today.image_filename}')" style="cursor:pointer;">
         </div>
@@ -3456,7 +3501,7 @@ function renderToday() {
             <button class="mbtn" onclick="event.stopPropagation();toggleFavorite('${today.image_filename}');"><i class="${today.favorite ? 'fa-solid' : 'fa-regular'} fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
             <button class="mbtn" onclick="event.stopPropagation();shareImage('${today.image_filename}');"><i class="fa-solid fa-share-nodes btn-icon" aria-hidden="true"></i> 分享</button>
             <button class="mbtn" onclick="event.stopPropagation();showPrompt(this)" data-prompt="${encodeURIComponent(today.prompt || '')}"><i class="fa-regular fa-pen-to-square btn-icon" aria-hidden="true"></i> 提示词</button>
-            <button class="mbtn danger" onclick="event.stopPropagation();deleteImage('${today.image_filename}');"><i class="fa-regular fa-trash-can btn-icon" aria-hidden="true"></i> 删除</button>
+            <button class="mbtn danger" onclick="event.stopPropagation();deleteImage('${today.image_filename}', event);"><i class="fa-regular fa-trash-can btn-icon" aria-hidden="true"></i> 删除</button>
           </div>
         </div>
       </div>`;
@@ -3617,7 +3662,7 @@ function renderGallery() {
             }
           }
           return `
-            <div class="today-compact">
+            <div class="today-compact" data-gallery-img="${escapeAttr(e.image_filename || '')}">
               <div class="tc-image" onclick="event.stopPropagation();openViewer('/images/${e.image_filename}')" style="cursor:zoom-in;">
                 ${imgHtml}
               </div>
@@ -3653,7 +3698,7 @@ function renderGallery() {
           const referenceLabel = displayReferenceMeta(e);
           if (referenceLabel) metaHtml += `<span class="meta-tag meta-ref">${referenceLabel}</span>`;
           return `
-            <div class="gallery-card" onclick="event.stopPropagation();openModal(allEntries.find(x=>x.image_filename==='${e.image_filename}'))">
+            <div class="gallery-card" data-gallery-img="${escapeAttr(e.image_filename || '')}" onclick="event.stopPropagation();openModal(allEntries.find(x=>x.image_filename==='${e.image_filename}'))">
               <div class="card-img-wrap">
                 ${imgHtml}
                 <span class="card-date-tag">${shortDate(e.date)}</span>
@@ -4188,6 +4233,7 @@ async function deleteImage(imgId, event) {
     }
     if (data.success) {
       // Remove from local entries: match by image_filename OR by date key
+      const viewportAnchor = captureGalleryViewportAnchor(imgId, event);
       removeLocalImage(imgId);
       if (currentModalImg === imgId) {
         currentModalImg = "";
@@ -4195,6 +4241,7 @@ async function deleteImage(imgId, event) {
       }
       renderActivePhotoView();
       updateBadges();
+      restoreGalleryViewportAnchor(viewportAnchor);
       showToast("🗑 已删除");
     } else {
       showToast("❌ 删除失败" + (data.error ? ": " + data.error : ""));
