@@ -295,6 +295,7 @@ class PortraitGalleryApp:
             image_path=f"/images/{filename}",
             status="ok",
             source="custom",
+            shot_type=shot_type,
         )
         save_schedule_entry(self.data_dir, entry)
         logger.info(f"自定义生图成功: {filename}")

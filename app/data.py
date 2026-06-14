@@ -18,6 +18,7 @@ class DailyEntry:
     caption: str = ""
     status: str = "ok"  # ok / failed / generating
     source: str = ""  # cron / web / custom
+    shot_type: str = ""  # selfie / half_body / full_body for custom generation
     outfit_keywords: str = ""  # LLM 提取的穿搭关键词（英文，逗号分隔）
     scene_keywords: str = ""   # LLM 提取的场景关键词（英文，逗号分隔）
 
@@ -39,6 +40,7 @@ class DailyEntry:
             caption=data.get("caption", ""),
             status=data.get("status", "ok"),
             source=data.get("source", ""),
+            shot_type=data.get("shot_type", ""),
             outfit_keywords=data.get("outfit_keywords", ""),
             scene_keywords=data.get("scene_keywords", ""),
         )

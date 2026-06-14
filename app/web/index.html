@@ -3426,12 +3426,34 @@ function modalSourceLabel(e) {
   return "";
 }
 
+function customShotLabelFromType(value) {
+  const shot = String(value || "").toLowerCase();
+  if (shot === "selfie") return "自拍";
+  if (shot === "half_body" || shot === "halfbody") return "半身照";
+  if (shot === "full_body" || shot === "fullbody") return "全身照";
+  return "";
+}
+
+function customShotAngleLabel(e) {
+  if (!e) return "";
+  const fieldLabel = customShotLabelFromType(e.shot_type || e.custom_shot_type || e.shot);
+  if (fieldLabel) return fieldLabel;
+  const outfit = String(e.outfit || "");
+  const match = outfit.match(/视角[:：]\s*([^ \n，,。；;]+)(?=\s*穿搭[:：]|[\s，,。；;]|$)/);
+  return match ? match[1].trim() : "";
+}
+
 function modalSourceContext(e) {
   const label = modalSourceLabel(e);
   if (!label) return "";
+  let context = label;
   const style = displayOutfitStyle(e);
-  if (style && style !== "自定义" && !label.includes(style)) return `${label} · ${style}`;
-  return label;
+  if (style && style !== "自定义" && !context.includes(style)) context += ` · ${style}`;
+  if (String((e && e.source) || "").toLowerCase() === "custom") {
+    const shotLabel = customShotAngleLabel(e);
+    if (shotLabel && !context.includes(shotLabel)) context += ` · 视角 ${shotLabel}`;
+  }
+  return context;
 }
 
 function openTodayModal(filename) {
