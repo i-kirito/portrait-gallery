@@ -4397,6 +4397,46 @@ function getCustomShotType() {
   return selectedCustomGenValue("cgShotGroup", "shot", "selfie");
 }
 
+function setCustomGenActiveValue(groupId, key, value) {
+  const group = document.getElementById(groupId);
+  if (!group || !value) return;
+  const btn = Array.from(group.querySelectorAll(".cg-size-btn"))
+    .find(item => item.dataset[key] === value);
+  if (!btn) return;
+  group.querySelectorAll(".cg-size-btn").forEach(item => item.classList.remove("active"));
+  btn.classList.add("active");
+}
+
+function readCustomGenState() {
+  try {
+    return JSON.parse(window.galleryStorageGet("custom_gen_state", "{}")) || {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveCustomGenState() {
+  const promptEl = document.getElementById("cgPrompt");
+  const state = {
+    prompt: promptEl ? promptEl.value : "",
+    aspect: getCustomGenSize().aspect,
+    resolution: getCustomGenSize().resolution,
+    shot: getCustomShotType(),
+    ref: (document.querySelector("#cgRefGrid .cg-ref-item.active") || {}).dataset?.ref || ""
+  };
+  window.galleryStorageSet("custom_gen_state", JSON.stringify(state));
+}
+
+function restoreCustomGenState() {
+  const state = readCustomGenState();
+  const promptEl = document.getElementById("cgPrompt");
+  if (promptEl && typeof state.prompt === "string") promptEl.value = state.prompt;
+  setCustomGenActiveValue("cgAspectGroup", "aspect", state.aspect);
+  setCustomGenActiveValue("cgResolutionGroup", "resolution", state.resolution);
+  setCustomGenActiveValue("cgShotGroup", "shot", state.shot);
+  updateCustomSizeHint();
+}
+
 function updateCustomSizeHint() {
   const hint = document.getElementById("cgSizeHint");
   if (!hint) return;
@@ -4413,10 +4453,21 @@ function bindCustomGenOptionGroup(groupId) {
     group.querySelectorAll(".cg-size-btn").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
     updateCustomSizeHint();
+    saveCustomGenState();
   });
 }
 
+function restoreCustomRefSelection(grid, refValue) {
+  if (!grid) return;
+  const items = Array.from(grid.querySelectorAll(".cg-ref-item"));
+  const target = items.find(item => item.dataset.ref === refValue) || items[0];
+  if (!target) return;
+  items.forEach(item => item.classList.remove("active"));
+  target.classList.add("active");
+}
+
 function openCustomGen() {
+  restoreCustomGenState();
   document.getElementById("cgOverlay").classList.add("open");
   document.body.style.overflow = "hidden";
   updateCustomSizeHint();
@@ -4424,6 +4475,7 @@ function openCustomGen() {
   loadRefImages();
 }
 function closeCustomGen() {
+  saveCustomGenState();
   document.getElementById("cgOverlay").classList.remove("open");
   document.body.style.overflow = "";
 }
@@ -4431,6 +4483,9 @@ document.addEventListener("DOMContentLoaded", () => {
   bindCustomGenOptionGroup("cgAspectGroup");
   bindCustomGenOptionGroup("cgResolutionGroup");
   bindCustomGenOptionGroup("cgShotGroup");
+  const promptEl = document.getElementById("cgPrompt");
+  if (promptEl) promptEl.addEventListener("input", saveCustomGenState);
+  restoreCustomGenState();
   updateCustomSizeHint();
 });
 // Reference image selector
@@ -4448,6 +4503,7 @@ function bindReferenceGridSelection(grid) {
     item.addEventListener("click", () => {
       grid.querySelectorAll(".cg-ref-item").forEach(x => x.classList.remove("active"));
       item.classList.add("active");
+      saveCustomGenState();
     });
   });
 }
@@ -4479,6 +4535,7 @@ function renderRefImages(builtinRefs, uploadRefs) {
   }
 
   grid.innerHTML = html;
+  restoreCustomRefSelection(grid, readCustomGenState().ref || "");
   bindReferenceGridSelection(grid);
 }
 async function loadRefImages() {
@@ -4569,7 +4626,6 @@ async function submitCustomGen() {
     else {
       showToast("✨ 定制造型生成完成啦！");
       closeCustomGen();
-      document.getElementById("cgPrompt").value = "";
       await loadGallery();
     }
   } catch(e) { showToast("❌ " + e.message); }
