@@ -2675,7 +2675,7 @@ textarea:focus-visible,
     <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.1.6</span></h1>
   </div>
   <div class="tabs">
-    <button class="tab" data-tab="gallery" onclick="switchTab('gallery')"><span class="tab-label">✨ 全部</span><span class="tab-badge" id="badge-all">0</span></button>
+    <button class="tab" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="showUnfavoriteGallery(event)"><span class="tab-label">✨ 全部</span><span class="tab-badge" id="badge-all">0</span></button>
     <button class="tab" data-tab="today" onclick="switchTab('today')"><span class="tab-label">🌸 今日</span><span class="tab-badge" id="badge-today">0</span></button>
     <button class="tab" data-tab="favorites" onclick="switchTab('favorites')"><span class="tab-label">❤️ 收藏</span><span class="tab-badge" id="badge-favorites">0</span></button>
   </div>
@@ -2985,6 +2985,7 @@ let allEntries = [];
 let todayData = null;  // {date, photos: [...], schedule, outfit_style}
 let currentTagFilter = "";
 let showFavoritesOnly = false;
+let showUnfavoritesOnly = false;
 let showTodayOnly = false;
 let photoRetryPollTimer = null;
 const favoriteRequests = new Set();
@@ -3059,6 +3060,25 @@ function clearFilter() {
 function filterByTag(tag) {
   currentTagFilter = tag.replace(/^#/, '');
   switchTab('gallery');
+}
+
+function showUnfavoriteGallery(event) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  currentTagFilter = "";
+  const todaySec = document.getElementById("todaySection");
+  const gallerySec = document.getElementById("gallerySection");
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.querySelector('.tab[data-tab="gallery"]')?.classList.add("active");
+  window.galleryStorageSet('active_tab', 'gallery');
+  if (todaySec) todaySec.classList.remove("visible");
+  if (gallerySec) gallerySec.classList.remove("hidden");
+  showFavoritesOnly = false;
+  showUnfavoritesOnly = true;
+  showTodayOnly = false;
+  renderGallery();
 }
 
 function isBaseModelStyle(style) {
@@ -3209,18 +3229,21 @@ function switchTab(tab) {
     todaySec.classList.add("visible");
     gallerySec.classList.add("hidden");
     showFavoritesOnly = false;
+    showUnfavoritesOnly = false;
     showTodayOnly = true;
     renderToday();
   } else if (tab === "favorites") {
     todaySec.classList.remove("visible");
     gallerySec.classList.remove("hidden");
     showFavoritesOnly = true;
+    showUnfavoritesOnly = false;
     showTodayOnly = false;
     renderGallery();
   } else {
     todaySec.classList.remove("visible");
     gallerySec.classList.remove("hidden");
     showFavoritesOnly = false;
+    showUnfavoritesOnly = false;
     showTodayOnly = false;
     renderGallery();
   }
@@ -3478,6 +3501,9 @@ function renderGallery() {
   if (showFavoritesOnly) {
     filtered = filtered.filter(e => e.favorite === true);
   }
+  if (showUnfavoritesOnly) {
+    filtered = filtered.filter(e => e.favorite !== true);
+  }
   if (currentTagFilter) {
     const filterLower = currentTagFilter.toLowerCase();
     filtered = filtered.filter(e => {
@@ -3537,8 +3563,11 @@ function renderGallery() {
   if (showFavoritesOnly) {
     headerHtml = `<div class="filter-bar">🩷 只看收藏 <button class="filter-clear" onclick="switchTab('gallery')">✕ 查看全部</button></div>`;
   }
+  if (showUnfavoritesOnly) {
+    headerHtml = `<div class="filter-bar">🤍 只看未收藏 <button class="filter-clear" onclick="switchTab('gallery')">✕ 查看全部</button></div>`;
+  }
   // Style filter bar for gallery tab
-  if (!showTodayOnly && !showFavoritesOnly) {
+  if (!showTodayOnly && !showFavoritesOnly && !showUnfavoritesOnly) {
     const styles = [...new Set(allEntries.map(e => displayOutfitStyle(e)).filter(Boolean))].sort();
     if (styles.length) {
       const stylePills = styles.map(s => {
