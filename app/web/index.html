@@ -3443,6 +3443,10 @@ function customShotAngleLabel(e) {
   return match ? match[1].trim() : "";
 }
 
+function modalOutfitLabel(e) {
+  return String((e && e.source) || "").toLowerCase() === "custom" ? "注入" : "穿搭";
+}
+
 function modalSourceContext(e) {
   const label = modalSourceLabel(e);
   if (!label) return "";
@@ -4112,7 +4116,7 @@ function openModal(e) {
   document.getElementById("modalMeta").innerHTML = metaHtml;
   document.getElementById("modalMeta").style.display = metaHtml ? "flex" : "none";
   document.getElementById("modalOutfit").innerHTML = e.outfit
-    ? `<span class="outfit-label">穿搭</span><span class="outfit-divider">|</span><span class="outfit-text">${extractOutfitText(e.outfit)}</span>`
+    ? `<span class="outfit-label">${modalOutfitLabel(e)}</span><span class="outfit-divider">|</span><span class="outfit-text">${extractOutfitText(e.outfit)}</span>`
     : '--';
   // Schedule
   const schedEl = document.getElementById("modalSchedule");
