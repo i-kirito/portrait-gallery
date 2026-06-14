@@ -5389,10 +5389,9 @@ function loadScheduleEggData(options) {
       }
     }
 
-    // 过滤：显示已完成/已过日程 + 下一条未来计划
+    // 过滤：只显示真实生图计划相关时间，避免全天日程混进生图弹窗。
     var visibleSchedule = [];
-    var lastPastIdx = -1;
-    var nextFutureIdx = -1;
+    var activeScheduleIdx = -1;
     for (var i = 0; i < schedule.length; i++) {
       var normalizedTime = extractJobTime(schedule[i].time);
       if (!normalizedTime) continue;
@@ -5402,24 +5401,13 @@ function loadScheduleEggData(options) {
         hasPhoto: !!photoTimeMap[normalizedTime],
         hasJob: !!jobTimeMap[normalizedTime],
       };
+      if (!normalizedItem.hasPhoto && !normalizedItem.hasJob) continue;
       var itemPast = isPastOrNow(normalizedTime);
-      
-      if (itemPast || normalizedItem.hasPhoto) {
-        // 已完成/已过时段：显示为完成态，不再拿最后一条已过日程冒充当前项。
-        normalizedItem.isPast = true;
-        normalizedItem.isNext = false;
-        visibleSchedule.push(normalizedItem);
-        lastPastIdx = visibleSchedule.length - 1;
-      } else if (nextFutureIdx < 0) {
-        // 下一条未来计划：显示为高亮预告。
-        normalizedItem.isPast = false;
-        normalizedItem.isNext = true;
-        visibleSchedule.push(normalizedItem);
-        nextFutureIdx = visibleSchedule.length - 1;
-      }
-      // 其他未来计划：不显示
+      normalizedItem.isPast = itemPast || normalizedItem.hasPhoto;
+      normalizedItem.isNext = !normalizedItem.isPast;
+      visibleSchedule.push(normalizedItem);
+      if (activeScheduleIdx < 0 && normalizedItem.isNext) activeScheduleIdx = visibleSchedule.length - 1;
     }
-    var activeScheduleIdx = nextFutureIdx;
 
     if (visibleSchedule.length > 0) {
       html += '<div class="egg-section"><div class="egg-section-title"><span class="icon">📅</span>今日日程</div>';
@@ -5438,10 +5426,10 @@ function loadScheduleEggData(options) {
       html += '</div></div>';
     } else {
       html += '<div class="egg-section"><div class="egg-section-title"><span class="icon">📅</span>今日日程</div>';
-      html += '<div class="egg-empty" style="padding:20px 0;font-size:13px;color:#aaa;">还没有已完成的日程哦～</div></div>';
+      html += '<div class="egg-empty" style="padding:20px 0;font-size:13px;color:#aaa;">还没有生图计划日程哦～</div></div>';
     }
 
-    // 生图计划：待执行项来自真实 job，完成项来自图片记录，当前错过项来自日程。
+    // 生图计划：待执行项来自真实 job，完成项来自图片记录。
     var planItems = [];
     var planSeen = {};
     for (var ji = 0; ji < jobs.length; ji++) {
@@ -5470,19 +5458,6 @@ function loadScheduleEggData(options) {
         status: 'done',
         photo: photo,
       });
-    }
-    if (lastPastIdx >= 0) {
-      var currentItem = visibleSchedule[lastPastIdx];
-      if (currentItem && !currentItem.hasPhoto && !currentItem.hasJob && !planSeen[currentItem.time]) {
-        planSeen[currentItem.time] = true;
-        planItems.push({
-          time: currentItem.time,
-          activity: currentItem.activity,
-          theme: inferTheme(currentItem.time),
-          status: 'skipped',
-          scheduleOnly: true,
-        });
-      }
     }
     planItems.sort(function(a, b) { return timeSortValue(a.time) - timeSortValue(b.time); });
 
