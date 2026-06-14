@@ -995,6 +995,80 @@ class GalleryServer:
         return int(hour) * 60 + int(minute)
 
     @staticmethod
+    def _caption_activity_label(activity: str, limit: int = 18) -> str:
+        text = re.sub(r"\s+", "", str(activity or ""))
+        text = re.sub(r"(?:，|,).*$", "", text)
+        replacements = (
+            ("给自己做一份", "做份"),
+            ("一份", ""),
+            ("水果松饼早餐", "水果松饼"),
+            ("窝在沙发上看动漫新番", "窝着看会儿新番"),
+            ("在阳台的摇椅上小憩打盹", "去阳台眯一小会儿"),
+            ("整理房间，顺便给多肉植物浇水", "收拾下房间，给多肉浇浇水"),
+            ("调一杯冰柠薄荷水", "给自己调杯冰柠薄荷水"),
+            ("坐在窗边发呆看夕阳", "坐窗边看看夕阳"),
+            ("打开直播和主人聊天互动，对着镜头撒娇", "开个直播聊聊天"),
+            ("泡个香香的热水澡，涂上身体乳准备休息", "泡个热水澡再慢慢休息"),
+        )
+        for old, new in replacements:
+            text = text.replace(old, new)
+        text = text.replace("主人", "").replace("对着镜头撒娇", "开播互动")
+        text = text.strip("，,。.!！?；;、")
+        if len(text) > limit:
+            return text[:limit].rstrip("，,。.!！?；;、") + "…"
+        return text
+
+    @classmethod
+    def _build_schedule_plan_caption(cls, schedule_items: list[dict]) -> str:
+        buckets = {"上午": [], "午后": [], "晚上": []}
+        for item in schedule_items:
+            time_text = str(item.get("time") or "")
+            if not re.match(r"^\d{1,2}:\d{2}$", time_text):
+                continue
+            hour = int(time_text.split(":", 1)[0])
+            label = cls._caption_activity_label(item.get("activity", ""))
+            if not label:
+                continue
+            if hour < 12:
+                buckets["上午"].append(label)
+            elif hour < 18:
+                buckets["午后"].append(label)
+            else:
+                buckets["晚上"].append(label)
+
+        morning = buckets["上午"][0] if buckets["上午"] else ""
+        noon = buckets["午后"][:2]
+        evening = buckets["晚上"][0] if buckets["晚上"] else ""
+        parts = []
+        if morning:
+            parts.append("早上" + morning)
+        if noon:
+            parts.append("午后" + "，再".join(noon))
+        if evening:
+            parts.append("晚上" + evening)
+        if not parts:
+            return ""
+
+        caption = "今天想过得松一点：" + "，".join(parts) + "，慢慢把心放下来。"
+        return caption[:90].rstrip("，,。.!！?；;、") + "。"
+
+    @staticmethod
+    def _caption_is_schedule_plan(caption: str) -> bool:
+        text = re.sub(r"\s+", "", str(caption or ""))
+        if not text:
+            return False
+        bad_markers = (
+            "主人", "亲一口", "抱抱", "怀里", "来找我玩", "被夸",
+            "美照", "自拍", "拍照", "照片", "画面", "造型", "画廊",
+            "记录", "收藏", "穿得这么", "好看", "性感",
+        )
+        if any(marker in text for marker in bad_markers):
+            return False
+        intent_markers = ("想过", "想怎么过", "打算", "准备", "安排", "计划", "节奏", "先", "再", "然后")
+        time_markers = ("一整天", "早上", "上午", "午后", "下午", "晚上")
+        return any(marker in text for marker in intent_markers) and any(marker in text for marker in time_markers)
+
+    @staticmethod
     def _is_today_photo_source(source: str) -> bool:
         return source in TODAY_PHOTO_SOURCES
 
@@ -1744,11 +1818,8 @@ class GalleryServer:
                 scene_keywords = scene_keywords or best.get("scene_keywords", "")
                 self._enrich_outfit_parts_from_entry(outfit_parts, best)
 
-            if not caption and today_photos:
-                for p in sorted(today_photos, key=lambda x: x.get("time", ""), reverse=True):
-                    if p.get("caption"):
-                        caption = p["caption"]
-                        break
+            if schedule_items and not self._caption_is_schedule_plan(caption):
+                caption = self._build_schedule_plan_caption(schedule_items)
 
             if not schedule_items and not outfit_parts:
                 return web.json_response({"status": "no_schedule"})

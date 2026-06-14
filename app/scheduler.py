@@ -203,7 +203,15 @@ class DailyScheduler:
    如果只有 5 条，也必须至少包含 1 条早、1 条中、1 条晚；不要把所有安排都集中在上午和下午。
    schedule_prompt 的时间必须和 schedule 一一对应，也要覆盖同样的早/中/晚时间段。
 
-caption 要符合「{character_name}」的人设和小心思口吻，带一点自然情绪，根据穿搭和日程写出今日心情。
+⚠️ caption 是 WebUI「今日穿搭方案」里的“小心思”，不是单张照片配文。
+   它必须写成「{character_name}」在心里自然冒出来的全天计划小念头：
+   - 像刚醒来或出门前在心里嘀咕“今天想怎么过”，轻轻带到 schedule 里的 2-4 个安排。
+   - 不要用“心里把今天的节奏排了一遍”“上午先/午后留给/晚上再收尾”这类总结式模板。
+   - 少用时段标签和清单感，句子要像自然想法，而不是系统概括日程。
+   - 可以有一点自然期待和情绪，但不要写成自拍/画面/穿搭点评。
+   - 禁止写主人互动、调情、亲一口、抱抱、被夸、等人来找、穿得好不好看等内容。
+   - 禁止出现“画廊、拍照、美照、造型、穿搭很美、今天穿得”等记录或外观评价话术。
+   - 输出 1-2 句中文，总长 40-90 个汉字；不要加标题、引号或 emoji。
 
 ⚠️ outfit_keywords 字段：从 prompt 中提取穿搭相关英文关键词（服装+鞋子+配饰），逗号分隔，5-10个词。必须和 prompt 中的穿搭描述完全一致。
 ⚠️ scene_keywords 字段：从 prompt 中提取场景相关英文关键词（环境+道具+光线），逗号分隔，3-6个词。必须和 prompt 中的场景描述完全一致。
@@ -216,7 +224,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
     "schedule": "HH:mm 中文活动描述\\nHH:mm 中文活动描述\\n...",
     "schedule_prompt": "HH:mm English activity\\nHH:mm English activity\\n...",
     "prompt": "English prompt with hairstyle, outfit details, pose, scene, lighting...",
-    "caption": "{character_name}的今日心情文案～",
+    "caption": "{character_name}自然想着今天想怎么过的小心思。",
     "outfit_keywords": "JK uniform, pleated skirt, white blouse, red ribbon, loafers",
     "scene_keywords": "coffee shop, cafe counter, warm ambient light"
 }}"""
@@ -327,6 +335,94 @@ JSON 格式（字段名固定，value 替换为实际内容）：
             if not has_item:
                 missing.append(period["label"])
         return missing
+
+    @staticmethod
+    def _schedule_plan_items(schedule: str) -> list[tuple[str, str]]:
+        items = []
+        for line in str(schedule or "").splitlines():
+            match = re.match(r'\s*(\d{1,2}):(\d{2})\s+(.+)', line)
+            if not match:
+                continue
+            hour = int(match.group(1))
+            minute = int(match.group(2))
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                items.append((f"{hour:02d}:{minute:02d}", match.group(3).strip()))
+        return items
+
+    @staticmethod
+    def _caption_activity_label(activity: str, limit: int = 18) -> str:
+        text = re.sub(r"\s+", "", str(activity or ""))
+        text = re.sub(r"(?:，|,).*$", "", text)
+        replacements = (
+            ("给自己做一份", "做份"),
+            ("一份", ""),
+            ("水果松饼早餐", "水果松饼"),
+            ("窝在沙发上看动漫新番", "窝着看会儿新番"),
+            ("在阳台的摇椅上小憩打盹", "去阳台眯一小会儿"),
+            ("整理房间，顺便给多肉植物浇水", "收拾下房间，给多肉浇浇水"),
+            ("调一杯冰柠薄荷水", "给自己调杯冰柠薄荷水"),
+            ("坐在窗边发呆看夕阳", "坐窗边看看夕阳"),
+            ("打开直播和主人聊天互动，对着镜头撒娇", "开个直播聊聊天"),
+            ("泡个香香的热水澡，涂上身体乳准备休息", "泡个热水澡再慢慢休息"),
+        )
+        for old, new in replacements:
+            text = text.replace(old, new)
+        text = text.replace("主人", "").replace("对着镜头撒娇", "开播互动")
+        text = text.strip("，,。.!！?；;、")
+        if len(text) > limit:
+            return text[:limit].rstrip("，,。.!！?；;、") + "…"
+        return text
+
+    def _build_schedule_plan_caption(self, schedule: str, character_name: str = "") -> str:
+        items = self._schedule_plan_items(schedule)
+        if not items:
+            name = character_name or "她"
+            return f"{name}今天想过得松一点，认真做点事，也给自己留一点发呆和慢慢休息的空隙。"
+
+        buckets = {"上午": [], "午后": [], "晚上": []}
+        for time_text, activity in items:
+            hour = int(time_text.split(":", 1)[0])
+            label = self._caption_activity_label(activity)
+            if not label:
+                continue
+            if hour < 12:
+                buckets["上午"].append(label)
+            elif hour < 18:
+                buckets["午后"].append(label)
+            else:
+                buckets["晚上"].append(label)
+
+        morning = buckets["上午"][0] if buckets["上午"] else ""
+        noon = buckets["午后"][:2]
+        evening = buckets["晚上"][0] if buckets["晚上"] else ""
+        parts = []
+        if morning:
+            parts.append("早上" + morning)
+        if noon:
+            parts.append("午后" + "，再".join(noon))
+        if evening:
+            parts.append("晚上" + evening)
+        if not parts:
+            parts = [self._caption_activity_label(items[0][1], 24)]
+
+        caption = "今天想过得松一点：" + "，".join(parts) + "，慢慢把心放下来。"
+        return caption[:90].rstrip("，,。.!！?；;、") + "。"
+
+    @staticmethod
+    def _caption_is_schedule_plan(caption: str) -> bool:
+        text = re.sub(r"\s+", "", str(caption or ""))
+        if not text:
+            return False
+        bad_markers = (
+            "主人", "亲一口", "抱抱", "怀里", "来找我玩", "被夸",
+            "美照", "自拍", "拍照", "照片", "画面", "造型", "画廊",
+            "记录", "收藏", "穿得这么", "好看", "性感",
+        )
+        if any(marker in text for marker in bad_markers):
+            return False
+        intent_markers = ("想过", "想怎么过", "打算", "准备", "安排", "计划", "节奏", "先", "再", "然后")
+        time_markers = ("一整天", "早上", "上午", "午后", "下午", "晚上")
+        return any(marker in text for marker in intent_markers) and any(marker in text for marker in time_markers)
 
     def _get_history(self, today: date, days: int = 7) -> str:
         """获取最近几天的历史日程"""
@@ -452,6 +548,12 @@ JSON 格式（字段名固定，value 替换为实际内容）：
                 logger.warning(f"outfit 展示字段不完整或非中文 (attempt {attempt+1})")
                 continue
 
+            persona = self._runtime_persona()
+            character_name = persona.get("name") or "角色"
+            caption = (data.get("caption", "") or "").strip()
+            if not self._caption_is_schedule_plan(caption):
+                caption = self._build_schedule_plan_caption(schedule_display, character_name)
+
             entry = DailyEntry(
                 date=date_str,
                 outfit_style=data.get("outfit_style", ""),
@@ -460,7 +562,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
                 schedule=schedule_display,
                 schedule_prompt=schedule_prompt,
                 prompt=llm_prompt,
-                caption=data.get("caption", ""),
+                caption=caption,
                 status="ok",
                 outfit_keywords=outfit_kw,
                 scene_keywords=scene_kw,

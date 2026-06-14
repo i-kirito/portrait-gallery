@@ -1172,10 +1172,11 @@ textarea:focus-visible,
   border-radius: 16px;
   overflow: hidden;
   box-shadow: 0 2px 12px rgba(0,0,0,0.05);
-  transition: all 0.25s ease;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
   cursor: pointer;
   position: relative;
   container-type: inline-size;
+  contain: layout paint style;
 }
 .gallery-card:hover {
   transform: translateY(-4px);
@@ -1193,6 +1194,7 @@ textarea:focus-visible,
   height: 100%;
   object-fit: cover;
   transition: transform 0.4s;
+  content-visibility: auto;
 }
 .gallery-card:hover .card-img-wrap img { transform: scale(1.06); }
 .gallery-card .card-img-wrap .img-placeholder {
@@ -2624,9 +2626,26 @@ textarea:focus-visible,
 </div>
 
 <script>
+// Scope browser-local preferences by app path so multiple deployments on the
+// same origin do not reuse each other's API key or UI state.
+(function installScopedStorage() {
+  const pathScope = window.location.pathname.replace(/\/+$/, "") || "/";
+  const prefix = `portrait_gallery:${pathScope}:`;
+  window.galleryStorageKey = key => prefix + key;
+  window.galleryStorageGet = (key, fallback = "") => {
+    const scopedKey = window.galleryStorageKey(key);
+    const scopedValue = localStorage.getItem(scopedKey);
+    if (scopedValue !== null) return scopedValue;
+    return fallback;
+  };
+  window.galleryStorageSet = (key, value) => {
+    localStorage.setItem(window.galleryStorageKey(key), value);
+  };
+})();
+
 // Immediately restore saved tab to prevent flash
 (function() {
-  const savedTab = localStorage.getItem('active_tab') || 'today';
+  const savedTab = window.galleryStorageGet('active_tab', 'today');
   document.addEventListener('DOMContentLoaded', function() {
     const todaySec = document.getElementById('todaySection');
     const gallerySec = document.getElementById('gallerySection');
@@ -2915,15 +2934,14 @@ textarea:focus-visible,
 
 <script>
 const API = "";
-const API_KEY_STORAGE = "gallery_api_key";
 
 function initApiKey() {
   const params = new URLSearchParams(window.location.search);
   const keyFromUrl = params.get("key") || params.get("api_key") || "";
   if (keyFromUrl) {
-    localStorage.setItem(API_KEY_STORAGE, keyFromUrl);
+    window.galleryStorageSet("gallery_api_key", keyFromUrl);
   }
-  window.__API_KEY = keyFromUrl || localStorage.getItem(API_KEY_STORAGE) || "";
+  window.__API_KEY = keyFromUrl || window.galleryStorageGet("gallery_api_key", "");
 }
 
 function apiKeyQuery() {
@@ -3168,7 +3186,7 @@ function switchTab(tab) {
   const gallerySec = document.getElementById("gallerySection");
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
   document.querySelector(`.tab[data-tab="${tab}"]`).classList.add("active");
-  localStorage.setItem('active_tab', tab);
+  window.galleryStorageSet('active_tab', tab);
   
   if (tab === "today") {
     todaySec.classList.add("visible");
@@ -3380,7 +3398,7 @@ function renderToday() {
     html += `
       <div class="today-compact" style="cursor:default;">
         <div class="tc-image">
-          <img src="/images/${today.image_filename}" alt="今日穿搭" onclick="openViewer('/images/${today.image_filename}')" style="cursor:pointer;">
+          <img src="/images/${today.image_filename}" alt="今日穿搭" decoding="async" onclick="openViewer('/images/${today.image_filename}')" style="cursor:pointer;">
         </div>
         <div class="modal-info today-card-info">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
@@ -3526,7 +3544,7 @@ function renderGallery() {
     ? `<div class="gallery-list">${
         filtered.map(e => {
           const imgHtml = e.image_filename
-            ? `<img src="/images/${e.image_filename}" alt="${e.date}" loading="lazy">`
+            ? `<img src="/images/${e.image_filename}" alt="${e.date}" loading="lazy" decoding="async">`
             : `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#ddd;font-size:32px;">📸</div>`;
           const timeDisplay = e.time ? e.time : "";
           let metaHtml = "";
@@ -3577,7 +3595,7 @@ function renderGallery() {
     : `<div class="gallery-grid">${
         filtered.map(e => {
           const imgHtml = e.image_filename
-            ? `<img src="/images/${e.image_filename}" alt="${e.date}" loading="lazy">`
+            ? `<img src="/images/${e.image_filename}" alt="${e.date}" loading="lazy" decoding="async">`
             : `<div class="img-placeholder">📸</div>`;
           const displayStyle = displayOutfitStyle(e);
           const styleTag = displayStyle ? `<span class="card-style-tag" onclick="event.stopPropagation();filterByTag('${displayStyle}');">${displayStyle}</span>` : "";
@@ -3622,7 +3640,7 @@ viewerOverlay.id = "viewerOverlay";
 viewerOverlay.innerHTML = `
   <button class="viewer-close" onclick="closeViewer()">✕</button>
   <div class="viewer-image-wrap" id="viewerImageWrap" onclick="if(event.target===this)closeViewer()">
-    <img id="viewerImage" src="" alt="放大查看">
+    <img id="viewerImage" src="" alt="放大查看" decoding="async">
   </div>`;
 viewerOverlay.onclick = (e) => { if (e.target === viewerOverlay) closeViewer(); };
 document.body.appendChild(viewerOverlay);
@@ -3877,7 +3895,7 @@ imgFs.onclick = () => { imgFs.classList.remove("open"); };
 document.body.appendChild(imgFs);
 
 function openFullscreenImg(src) {
-  imgFs.innerHTML = `<img src="${src}" alt="放大查看">`;
+  imgFs.innerHTML = `<img src="${src}" alt="放大查看" decoding="async">`;
   imgFs.classList.add("open");
 }
 
@@ -3921,7 +3939,7 @@ function openModal(e) {
   if (!e.image_filename) return;
   currentModalImg = e.image_filename;
   resetModalDetailHeight();
-  document.getElementById("modalImageWrap").innerHTML = `<img src="/images/${e.image_filename}" alt="${e.caption || appDisplay.shareTitle}" onclick="openFullscreenImg('/images/${e.image_filename}')">`;
+  document.getElementById("modalImageWrap").innerHTML = `<img src="/images/${e.image_filename}" alt="${e.caption || appDisplay.shareTitle}" decoding="async" onclick="openFullscreenImg('/images/${e.image_filename}')">`;
   const modalImg = document.querySelector("#modalImageWrap img");
   if (modalImg) modalImg.onload = syncModalDetailHeight;
   document.getElementById("modalDate").textContent = formatDate(e.date) + (e.time ? ' ' + e.time : '');
@@ -3994,8 +4012,13 @@ function closeModal() {
   document.body.style.overflow = "";
   resetModalDetailHeight();
 }
+let modalResizeRaf = 0;
 window.addEventListener("resize", () => {
-  if (modalOverlay.classList.contains("open")) syncModalDetailHeight();
+  if (!modalOverlay.classList.contains("open") || modalResizeRaf) return;
+  modalResizeRaf = requestAnimationFrame(() => {
+    modalResizeRaf = 0;
+    syncModalDetailHeight();
+  });
 });
 function updateModalFavBtn(isFav) {
   const btn = document.getElementById("modalFav");
@@ -4278,7 +4301,7 @@ function renderRefImages(builtinRefs, uploadRefs) {
     const label = escapeHtml(ref.label || ref.style || "参考图");
     const url = escapeHtml(ref.url || "");
     html += `<div class="cg-ref-item" data-ref="${url}" title="${label}">
-      <img src="${url}" alt="${label}" loading="lazy" style="object-fit:cover;width:100%;height:100%;">
+      <img src="${url}" alt="${label}" loading="lazy" decoding="async" style="object-fit:cover;width:100%;height:100%;">
       <span style="position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:10px;color:#fff;background:rgba(0,0,0,0.5);border-radius:0 0 8px 8px;">${label}</span>
     </div>`;
   });
@@ -4287,7 +4310,7 @@ function renderRefImages(builtinRefs, uploadRefs) {
     const label = escapeHtml(u.label || "自定义上传");
     const url = escapeHtml(u.url || "");
     html += `<div class="cg-ref-item uploaded" data-ref="${url}" data-idx="${idx}" title="${label}">
-      <img src="${url}" alt="${label}" loading="lazy" style="object-fit:cover;width:100%;height:100%;">
+      <img src="${url}" alt="${label}" loading="lazy" decoding="async" style="object-fit:cover;width:100%;height:100%;">
       <button class="cg-ref-del" onclick="event.stopPropagation();deleteUploadedRef(${idx})">✕</button>
     </div>`;
   });
@@ -4427,7 +4450,7 @@ async function loadGallery() {
       }
     }
     // Default to saved tab or today
-    const savedTab = localStorage.getItem('active_tab') || 'today';
+    const savedTab = window.galleryStorageGet('active_tab', 'today');
     switchTab(savedTab);
     updateBadges();
   } catch(e) {
@@ -5107,7 +5130,7 @@ document.addEventListener("keydown", e => {
   const slider = document.getElementById('colSlider');
   const valEl = document.getElementById('colVal');
   const wrap = document.getElementById('colSliderWrap');
-  const saved = localStorage.getItem('gallery_cols');
+  const saved = window.galleryStorageGet('gallery_cols', '');
 
   const COL_MIN = 4;
   const COL_MAX = 8;
@@ -5152,7 +5175,7 @@ document.addEventListener("keydown", e => {
       if (actual !== 5) g.classList.add('cols-' + actual); // 5 is default, no class needed
     });
     syncSlider(actual, maxAvailable);
-    if (persist) localStorage.setItem('gallery_cols', preferredCols);
+    if (persist) window.galleryStorageSet('gallery_cols', preferredCols);
   }
 
   window.applyGalleryColumns = () => applyCols(preferredCols, false);
@@ -5161,7 +5184,14 @@ document.addEventListener("keydown", e => {
   applyCols(preferredCols, false);
 
   slider.addEventListener('input', () => applyCols(parseInt(slider.value, 10)));
-  window.addEventListener('resize', () => window.applyGalleryColumns());
+  let resizeRaf = 0;
+  window.addEventListener('resize', () => {
+    if (resizeRaf) return;
+    resizeRaf = requestAnimationFrame(() => {
+      resizeRaf = 0;
+      window.applyGalleryColumns();
+    });
+  });
 
   // Show/hide based on active tab
   const origSwitchTab = window.switchTab;
@@ -5493,8 +5523,8 @@ function loadScheduleEggData(options) {
 
     // ===== 服饰详情 =====
     var outfit = detail.outfit || {};
-    var outfitKeys = ['风格', '发型', '穿搭', '动作', '场景'];
-    var outfitIcons = { '风格': '✨', '发型': '💇‍♀️', '穿搭': '👗', '动作': '💃', '场景': '📍' };
+    var outfitKeys = ['风格', '发型', '穿搭'];
+    var outfitIcons = { '风格': '✨', '发型': '💇‍♀️', '穿搭': '👗' };
     var hasOutfit = outfitKeys.some(function(k){ return outfit[k]; });
     if (hasOutfit) {
       var outfitFavorite = detail.outfit_favorite === true;

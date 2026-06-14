@@ -14,7 +14,7 @@ from core import CONFIG_PATH, _personalized_caption_fallback, _runtime_persona
 
 DAILY_THEMES = {"morning", "noon", "evening", "bedtime"}
 ALL_THEMES = sorted(DAILY_THEMES | {"sexy"})
-SEND_TARGET = os.getenv("ZHUZHU_SEND_TARGET", "5509078392")
+SEND_TARGET = os.getenv("ZHUZHU_SEND_TARGET", "")
 SEND_CHANNEL = os.getenv("ZHUZHU_SEND_CHANNEL", "telegram")
 SEND_ACCOUNT = os.getenv("ZHUZHU_SEND_ACCOUNT", "default")
 
@@ -67,6 +67,9 @@ def send_photo(path: str, caption_text: str):
         raise FileNotFoundError(path)
     if os.path.getsize(path) <= 0:
         raise ValueError(f"empty file: {path}")
+    if not SEND_TARGET:
+        print("[scheduled] ZHUZHU_SEND_TARGET is not configured; skip sending to avoid cross-user delivery", file=sys.stderr)
+        return subprocess.CompletedProcess([], 0, "", "")
 
     cmd = [
         "openclaw",

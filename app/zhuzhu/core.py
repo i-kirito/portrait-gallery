@@ -435,52 +435,104 @@ def _caption_conflicts_with_schedule(caption: str, schedule_time: str = "") -> b
     return False
 
 
+def _caption_is_gallery_record(caption: str) -> bool:
+    text = re.sub(r"\s+", "", str(caption or ""))
+    if not text:
+        return False
+    record_markers = (
+        "想把当下的现场感放进画廊",
+        "现场感放进画廊",
+        "放进画廊里",
+        "收进画廊里",
+    )
+    if any(marker in text for marker in record_markers):
+        return True
+    return (
+        ("画廊" in text and any(marker in text for marker in ("留了一张", "拍下这张", "存下这张", "收进")))
+        or ("现场感" in text and any(marker in text for marker in ("留一张", "留了一张", "拍下", "画廊")))
+        or "在在" in text
+    )
+
+
+def _caption_repeats_schedule(caption: str, schedule_time: str = "") -> bool:
+    activity = _caption_activity(schedule_time)
+    if not activity or not caption:
+        return False
+    text = re.sub(r"\s+", "", str(caption or ""))
+    act = re.sub(r"\s+", "", str(activity or "")).strip("，,。.!！?；;、")
+    if not text or not act:
+        return False
+    if act and act in text:
+        return True
+    pieces = [piece for piece in re.split(r"[，,。.!！?；;、\s]+", activity) if len(piece) >= 4]
+    long_piece_hits = sum(1 for piece in pieces if re.sub(r"\s+", "", piece) in text)
+    return long_piece_hits >= 2 or any(f"{piece}前后" in text or f"{piece}的时候" in text for piece in pieces)
+
+
 def _personalized_caption_fallback(theme: str, persona: dict, schedule_time: str = "") -> str:
     character = persona.get("name") or "角色"
     user_name = persona.get("user_name") or "你"
     activity = _caption_activity(schedule_time)
     if activity:
-        activity_text = _trim_caption_piece(activity)
         activity_key = re.sub(r"\s+", "", activity)
         specific_templates = []
         if any(word in activity_key for word in ("直播", "歌会", "唱歌", "情歌", "开播")):
             specific_templates.extend([
-                f"歌会灯光一亮，{character}这身穿搭也跟着甜起来了；这张先留给{user_name}看。",
-                f"唱到最软的一句时顺手拍了下来，今天的毛衣和眼神都很配这场歌会。",
-                f"{user_name}，直播间刚热起来，{character}把这点亮晶晶的状态藏进照片里了。",
+                f"歌会灯光一亮，{character}突然有点想把这一句唱得更甜一点。",
+                f"唱到最软的一句时，心里悄悄希望{user_name}刚好听见。",
+                f"{user_name}，直播间刚热起来，{character}心里也跟着亮了一下。",
             ])
-        if any(word in activity_key for word in ("厨房", "牛排", "奶茶", "做饭", "晚餐", "甜点", "午餐")):
+        if any(word in activity_key for word in ("厨房", "牛排", "奶茶", "做饭", "晚餐", "甜点", "午餐", "早餐", "牛奶", "松饼")):
             specific_templates.extend([
-                f"厨房的香气还没散，{character}顺手留了张今天的穿搭小记录。",
-                f"{activity_text}的时候，衣服细节和灯光都刚好有点生活感。",
-                f"{user_name}，这张带着一点热乎乎的日常味道，连穿搭都显得更软了。",
+                f"厨房的香气还没散，{character}心里已经开始期待第一口的味道了。",
+                "热气慢慢冒出来的时候，连等待都变得有点甜。",
+                f"{user_name}，这一刻有点热乎乎的，像把小日子过甜了一点。",
             ])
         if any(word in activity_key for word in ("电脑", "游戏", "速通", "Live2D", "平板", "建模", "耳机")):
             specific_templates.extend([
-                f"屏幕光落在脸上的时候很适合自拍，{character}把今天的专注感也拍进去了。",
-                f"{activity_text}中途偷偷拍一张，耳边和衣角的小细节都刚刚好。",
-                f"{user_name}，这张有一点认真工作的气息，也有一点想被夸的心情。",
+                f"屏幕光落下来时，{character}忽然觉得认真起来的自己也挺可爱。",
+                f"卡住的细节终于顺了一点，{character}心里也悄悄松了口气。",
+                f"{user_name}，认真到一半的时候，{character}还是有一点想被夸。",
+            ])
+        if any(word in activity_key for word in ("动漫", "新番", "追番", "电视", "沙发", "抱枕")):
+            specific_templates.extend([
+                f"片头曲一响，{character}心里只剩下一点软软的期待。",
+                f"抱枕被悄悄抱紧了一点，{character}也跟着慢慢放松下来。",
+                f"{user_name}，这一刻不用赶时间，{character}只想把呼吸放慢一点。",
             ])
         if any(word in activity_key for word in ("床", "睡", "护肤", "洗澡", "被窝", "枕头", "晚安")):
             specific_templates.extend([
-                f"灯光软下来之后，这张照片也变得安静了，像给{user_name}留的一句晚安。",
-                f"{activity_text}前后拍下的小瞬间，穿搭和表情都比白天更放松。",
-                f"{character}把夜里的柔软留在这张图里，悄悄递给{user_name}看。",
+                f"灯光软下来之后，{character}只想把今天慢慢放轻一点。",
+                "夜里的小事一件件收好，心情也跟着松了下来。",
+                f"{character}把夜里的柔软藏在心里，悄悄想起了{user_name}。",
             ])
         if any(word in activity_key for word in ("街", "散步", "路灯", "公园", "出门", "逛")):
             specific_templates.extend([
-                f"路上的光刚好落下来，{character}这套穿搭在画面里显得很有呼吸感。",
-                f"{activity_text}时随手留的一张，背景和今天的心情正好同频。",
-                f"{user_name}，外面的风把衣摆吹得很好看，所以这张不能不存。",
+                f"路上的光刚好落下来，{character}心里也跟着轻快了一点。",
+                "外面有一点吵，心情却意外安静。",
+                f"{user_name}，外面的风一吹，{character}忽然觉得今天很适合开心。",
+            ])
+        if any(word in activity_key for word in ("阳台", "摇椅", "小憩", "打盹", "薄毯", "沙发", "抱枕", "发呆")):
+            specific_templates.extend([
+                f"{character}脑袋慢慢放空，只想再赖一小会儿。",
+                f"薄薄的困意盖上来，{character}心里安静得像被阳光揉了一下。",
+                f"{user_name}，这一刻不用赶时间，{character}只想把呼吸放慢一点。",
+            ])
+        if any(word in activity_key for word in ("整理", "房间", "收拾", "浇水", "多肉", "植物")):
+            specific_templates.extend([
+                f"水珠落到叶尖上时，{character}觉得心情也被擦亮了一点。",
+                f"房间一点点清爽起来，{character}心里那团乱线也跟着松开了。",
+                f"{user_name}，窗边的绿色很安静，{character}忽然也想变得乖一点。",
             ])
 
-        templates = specific_templates + [
-            f"{activity_text}这一段刚好被镜头收住，{character}今天的穿搭也有了自己的小情绪。",
-            f"{user_name}，这张是{activity_text}前后的瞬间，衣服细节和心情都刚刚好。",
-            f"{character}在{activity_text}时留了一张，想把当下的现场感放进画廊里。",
-            f"这一刻和日程刚好对上了，{character}的穿搭、表情和光线都很有记忆点。",
-            f"{activity_text}的时候拍下这张，像给今天夹了一枚小小的书签。",
+        generic_templates = [
+            f"{character}心里冒出一点软软的小情绪，像被今天轻轻碰了一下。",
+            f"{user_name}，这一刻{character}忽然很想把节奏放慢。",
+            f"{character}觉得今天好像比平时更松弛，也更适合慢慢过。",
+            f"日程走到这里时，{character}突然觉得今天也有被温柔照顾到。",
+            f"{character}像给心情夹了一枚小小的书签，悄悄记住这一刻。",
         ]
+        templates = specific_templates or generic_templates
         return _shorten_caption(_caption_pick(templates, theme, schedule_time, character, user_name), 72)
     templates = {
         "morning": f"早安，{user_name}～{character}刚拍完晨间穿搭，光线很好，心情也亮起来了。",
@@ -516,6 +568,8 @@ def _scene_caption_fallback(theme: str, persona: dict, caption: str = "", schedu
         caption
         and not _caption_has_persona_leak(caption)
         and not _caption_conflicts_with_schedule(caption, schedule_time)
+        and not _caption_is_gallery_record(caption)
+        and not _caption_repeats_schedule(caption, schedule_time)
         and not _caption_is_generic_template(caption)
     ):
         short = _shorten_caption(caption)
@@ -1114,8 +1168,11 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         "只参考称呼和语气，不要复述、展开或透露 SOUL、人设、身份、关系或性格设定。"
         "如果提供了具体日程，必须严格贴合该时间、地点和活动，不要写与日程冲突的起床、被窝、睡前等内容。"
         "内容只写当时拍照的场景、穿搭亮点和心情。"
+        "小心思要像当时脑内一闪而过的心理活动，不要写成画廊归档说明。"
+        "不要复述当前日程原句，不要使用“日程内容 + 的时候/前后 + 心情”这种结构；只能提炼物件、光线、气味或心情。"
         "每张都必须写出不同观察角度，禁止套用固定句式。"
         "不要写“刚刚X时拍下这一刻，想把穿搭和心情分享给Y”这类模板句。"
+        "禁止使用“留了一张”“放进画廊”“现场感”“收进画廊”“不能不存”等记录/收藏话术。"
         "输出 1-2 句中文，总长不超过 60 个汉字。"
         "不要写长段落，不要提技术术语、英文提示词、模型名称。可以使用 0-1 个 emoji。"
         "直接输出配文内容，不要加引号或标题。"
