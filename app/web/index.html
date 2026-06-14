@@ -1527,6 +1527,13 @@ textarea:focus-visible,
   border-radius: 10px;
   white-space: nowrap;
 }
+.tc-meta .modal-reroll-btn,
+.today-card-info .modal-reroll-btn {
+  width: 28px;
+  height: 28px;
+  font-size: 14px;
+  flex: 0 0 auto;
+}
 .tc-outfit {
   font-size: 14px;
   color: #333;
@@ -3099,6 +3106,16 @@ function displayGenerationTimeMeta(e) {
   return rest ? `⏱ ${minutes}m${rest}s` : `⏱ ${minutes}m`;
 }
 
+function renderRerollButton(entry, options = {}) {
+  const imgId = entry && entry.image_filename;
+  if (!imgId || !entry.prompt) return "";
+  const idAttr = options.id ? ` id="${escapeAttr(options.id)}"` : "";
+  const onClick = options.modal
+    ? "rerollModalImage(event)"
+    : "rerollImage(this.dataset.img, event, this)";
+  return `<button type="button" class="modal-reroll-btn"${idAttr} data-img="${escapeAttr(imgId)}" onclick="${onClick}" title="抽卡新图" aria-label="抽卡新图">↻</button>`;
+}
+
 function matchesOutfitStyleFilter(e, filterLower) {
   const rawStyle = String((e && e.outfit_style) || "").trim();
   const displayStyle = displayOutfitStyle(e);
@@ -3394,6 +3411,7 @@ function renderToday() {
     }
 
     const captionHtml = renderThoughtBlock(today.caption, "modal-caption tc-thought");
+    const metaHtml = `${today.model_name ? `<span class="meta-tag">🤖 ${today.model_name}</span>` : ""}${displayReferenceMeta(today) ? `<span class="meta-tag">${displayReferenceMeta(today)}</span>` : ""}${displayImageSizeMeta(today) ? `<span class="meta-tag">${displayImageSizeMeta(today)}</span>` : ""}${displayFileSizeMeta(today) ? `<span class="meta-tag">${displayFileSizeMeta(today)}</span>` : ""}${displayGenerationTimeMeta(today) ? `<span class="meta-tag">${displayGenerationTimeMeta(today)}</span>` : ""}${renderRerollButton(today)}`;
 
     html += `
       <div class="today-compact" style="cursor:default;">
@@ -3406,7 +3424,7 @@ function renderToday() {
             ${displayOutfitStyle(today) ? `<span class="modal-style" onclick="event.stopPropagation();filterByTag('${displayOutfitStyle(today)}');">${displayOutfitStyle(today)}</span>` : ""}
           </div>
           <div>
-            <span class="modal-meta" style="margin:0;padding:0;background:none;">${today.model_name ? `<span class="meta-tag">🤖 ${today.model_name}</span>` : ""}${displayReferenceMeta(today) ? `<span class="meta-tag">${displayReferenceMeta(today)}</span>` : ""}${displayImageSizeMeta(today) ? `<span class="meta-tag">${displayImageSizeMeta(today)}</span>` : ""}${displayFileSizeMeta(today) ? `<span class="meta-tag">${displayFileSizeMeta(today)}</span>` : ""}${displayGenerationTimeMeta(today) ? `<span class="meta-tag">${displayGenerationTimeMeta(today)}</span>` : ""}</span>
+            <span class="modal-meta" style="margin:0;padding:0;background:none;">${metaHtml}</span>
           </div>
           <div class="modal-outfit">${outfitText ? `<span class="outfit-label">穿搭</span><span class="outfit-divider">|</span><span class="outfit-text">${outfitText}</span>` : '--'}</div>
           ${schedHtml ? `<div class="modal-schedule">${schedHtml}</div>` : ""}
@@ -3557,6 +3575,7 @@ function renderGallery() {
           if (fileSizeLabel) metaHtml += `<span class="tc-meta-tag">${fileSizeLabel}</span>`;
           const generationTimeLabel = displayGenerationTimeMeta(e);
           if (generationTimeLabel) metaHtml += `<span class="tc-meta-tag">${generationTimeLabel}</span>`;
+          metaHtml += renderRerollButton(e);
           // Period row: show matching schedule period or fallback to time
           let periodHtml = '';
           if (showTodayOnly) {
@@ -3958,7 +3977,7 @@ function openModal(e) {
   if (fileSizeLabel) metaHtml += `<span class="meta-tag">${fileSizeLabel}</span>`;
   const generationTimeLabel = displayGenerationTimeMeta(e);
   if (generationTimeLabel) metaHtml += `<span class="meta-tag">${generationTimeLabel}</span>`;
-  if (e.prompt) metaHtml += `<button class="modal-reroll-btn" id="modalRerollBtn" onclick="rerollModalImage(event)" title="抽卡新图" aria-label="抽卡新图">↻</button>`;
+  metaHtml += renderRerollButton(e, {id: "modalRerollBtn", modal: true});
   document.getElementById("modalMeta").innerHTML = metaHtml;
   document.getElementById("modalMeta").style.display = metaHtml ? "flex" : "none";
   document.getElementById("modalOutfit").innerHTML = e.outfit
@@ -4076,19 +4095,22 @@ function confirmDeleteImage() {
   return new Promise(resolve => { deleteConfirmResolve = resolve; });
 }
 
-async function rerollModalImage(event) {
+function setRerollButtonLoading(btn, loading) {
+  if (!btn) return;
+  btn.disabled = loading;
+  btn.classList.toggle("spinning", loading);
+  btn.textContent = loading ? "⟳" : "↻";
+}
+
+async function rerollImage(imgId, event, btn, options = {}) {
   if (event) event.stopPropagation();
-  if (!currentModalImg) return;
-  const btn = document.getElementById("modalRerollBtn");
+  if (!imgId) return;
   if (btn && btn.disabled) return;
-  if (btn) {
-    btn.disabled = true;
-    btn.classList.add("spinning");
-    btn.textContent = "⟳";
-  }
+  const shouldOpenModal = Boolean(options.openFreshModal || (modalOverlay.classList.contains("open") && currentModalImg === imgId));
+  setRerollButtonLoading(btn, true);
   showToast("🎲 正在抽一张新图...");
   try {
-    const res = await fetch(`${API}/api/images/${encodeURIComponent(currentModalImg)}/reroll`, {
+    const res = await fetch(`${API}/api/images/${encodeURIComponent(imgId)}/reroll`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({})
@@ -4101,17 +4123,17 @@ async function rerollModalImage(event) {
     await loadGallery();
     const fresh = allEntries.find(x => x.image_filename === data.image_filename) || data;
     showToast("✨ 新图抽好啦");
-    openModal(fresh);
+    if (shouldOpenModal) openModal(fresh);
   } catch(e) {
     showToast("❌ " + e.message);
   } finally {
-    const activeBtn = document.getElementById("modalRerollBtn");
-    if (activeBtn) {
-      activeBtn.disabled = false;
-      activeBtn.classList.remove("spinning");
-      activeBtn.textContent = "↻";
-    }
+    const activeBtn = shouldOpenModal ? document.getElementById("modalRerollBtn") : btn;
+    setRerollButtonLoading(activeBtn && activeBtn.isConnected ? activeBtn : null, false);
   }
+}
+
+async function rerollModalImage(event) {
+  return rerollImage(currentModalImg, event, document.getElementById("modalRerollBtn"), {openFreshModal: true});
 }
 
 // ===== Delete & Share =====
