@@ -70,10 +70,16 @@ DEFAULT_CUSTOM_IMAGE_RESOLUTION = "1k"
 DEFAULT_CUSTOM_IMAGE_SIZE = "1024x1024"
 DEFAULT_CUSTOM_SHOT_TYPE = "selfie"
 
+CUSTOM_IMAGE_FRAMING_RULE = (
+    "strict framing rule: keep the whole intended subject fully inside the image frame, "
+    "leave visible margin around the head and body, never crop off the top of the head, hair, face, shoulders, hands, waist, legs, or feet; "
+    "on landscape or wide canvas, move the camera farther back instead of cropping the person"
+)
+
 CUSTOM_SHOT_TYPE_PROMPTS = {
-    "selfie": "camera view: casual close-up smartphone selfie, she is visibly holding a phone in one hand with her arm slightly extended toward the camera, actively taking a selfie, looking at the phone camera or screen, face and upper outfit visible, intimate natural angle",
-    "half_body": "camera view: half-body portrait from head to waist, outfit details clearly visible, natural portrait framing",
-    "full_body": "camera view: full-body outfit photo from head to shoes, complete outfit visible, balanced standing or seated composition",
+    "selfie": "camera view: arm's-length smartphone selfie, phone held far enough away to show the complete head, hair, shoulders, chest and upper outfit, not an extreme close-up, looking at the phone camera or screen, intimate natural angle",
+    "half_body": "camera view: half-body portrait from head to waist, complete head and shoulders visible, outfit details clearly visible, natural portrait framing",
+    "full_body": "camera view: full-body outfit photo from head to shoes, entire figure visible with clear space above hair and below shoes, complete outfit visible, balanced standing or seated composition",
 }
 
 CUSTOM_SHOT_TYPE_LABELS = {
@@ -227,7 +233,8 @@ def normalize_custom_shot_type(value: Any) -> str:
 
 def custom_shot_prompt(value: Any) -> str:
     shot_type = normalize_custom_shot_type(value)
-    return CUSTOM_SHOT_TYPE_PROMPTS.get(shot_type, CUSTOM_SHOT_TYPE_PROMPTS[DEFAULT_CUSTOM_SHOT_TYPE])
+    shot_prompt = CUSTOM_SHOT_TYPE_PROMPTS.get(shot_type, CUSTOM_SHOT_TYPE_PROMPTS[DEFAULT_CUSTOM_SHOT_TYPE])
+    return f"{shot_prompt}, {CUSTOM_IMAGE_FRAMING_RULE}"
 
 
 def custom_shot_label(value: Any) -> str:
