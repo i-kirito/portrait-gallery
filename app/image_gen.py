@@ -56,6 +56,7 @@ class ImageGenerator:
         size: str = "",
         source: str = "custom",
         prompt_final: bool = False,
+        no_auto_style: bool = False,
         theme: str = "custom",
         schedule_time: str = "",
         caption: bool = False,
@@ -91,6 +92,8 @@ class ImageGenerator:
             cmd.extend(["--schedule-time", schedule_time])
         if prompt_final:
             cmd.append("--prompt-final")
+        if no_auto_style:
+            cmd.append("--no-auto-style")
         if prompt:
             cmd.extend(["--prompt", prompt])
 

@@ -2544,11 +2544,16 @@ class GalleryServer:
                 body.get("resolution", ""),
             )
             shot_type = normalize_custom_shot_type(body.get("shot_type", ""))
+            pure_raw = body.get("pure", False)
+            if isinstance(pure_raw, str):
+                pure = pure_raw.strip().lower() in {"1", "true", "yes", "on"}
+            else:
+                pure = bool(pure_raw)
             raw_ref_image = body.get("ref_image", "")
             ref_image = self._resolve_reference_image(raw_ref_image, allow_any_path=True)
             if raw_ref_image and not ref_image:
                 return web.json_response({"error": "invalid_ref_image"}, status=400)
-            entry = await self.on_generate_custom(user_prompt, size, ref_image, shot_type)
+            entry = await self.on_generate_custom(user_prompt, size, ref_image, shot_type, pure)
             if entry and entry.status == "ok":
                 return web.json_response(entry.to_dict())
             return web.json_response({"error": "generate_failed"}, status=500)

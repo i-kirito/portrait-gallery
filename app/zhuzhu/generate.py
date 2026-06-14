@@ -507,6 +507,7 @@ def generate(
     size: Optional[str] = None,
     schedule_time: str = "",
     prompt_final: bool = False,
+    no_auto_style: bool = False,
 ):
     # If user didn't specify a hairstyle, let LLM pick one
     if prompt_override and not prompt_final and engine == "gptimage" and theme != "sexy":
@@ -560,7 +561,7 @@ def generate(
 
     # Auto-pick a style for GPT Image via LLM to keep face consistent
     # Note: LLM classification works even without reference images (for style label)
-    if engine == "gptimage" and not explicit_style and not requested_ref_image and theme != "sexy":
+    if engine == "gptimage" and not no_auto_style and not explicit_style and not requested_ref_image and theme != "sexy":
         # 先检查当天是否已有风格，保持一天一致
         today_str = date.today().isoformat()
         today_style = ""
@@ -727,6 +728,7 @@ if __name__ == "__main__":
     parser.add_argument("--size", type=str, default=None, help="图片尺寸")
     parser.add_argument("--schedule-time", type=str, default="", help="定时任务对应的日程时间和活动，如 '20:30 晚间直播'")
     parser.add_argument("--prompt-final", action="store_true", help="prompt 已是完整生图提示词，不再注入画质/人设/发型")
+    parser.add_argument("--no-auto-style", action="store_true", help="不自动选择底模参考图，用于纯文/纯图生图")
     args = parser.parse_args()
 
     effective_theme = args.theme or ("custom" if args.prompt else "morning")
@@ -744,6 +746,7 @@ if __name__ == "__main__":
         size=args.size,
         schedule_time=args.schedule_time,
         prompt_final=args.prompt_final,
+        no_auto_style=args.no_auto_style,
     )
     if not path:
         print("ERROR: generation failed", file=sys.stderr)

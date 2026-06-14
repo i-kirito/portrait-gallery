@@ -230,6 +230,7 @@ class PortraitGalleryApp:
         size: str = "1024x1024",
         ref_image: str = "",
         shot_type: str = "selfie",
+        pure: bool = False,
     ) -> DailyEntry:
         """自定义 prompt 生图"""
         today_str = datetime.now().strftime("%Y-%m-%d")
@@ -245,11 +246,11 @@ class PortraitGalleryApp:
             # Check if it's a built-in style reference
             ref_basename = os.path.basename(ref_image)
             ref_style = reference_filename_to_style(ref_basename)
-            if ref_style:
+            if ref_style and not pure:
                 style = ref_style
                 ref_path = ref_image
             else:
-                # Custom uploaded reference - use as --ref-image
+                # Custom uploaded reference, or pure mode with any reference, uses img2img only.
                 ref_path = ref_image
 
         kwargs = {}
@@ -262,6 +263,10 @@ class PortraitGalleryApp:
             generation_prompt,
             style=style,
             timeout=image_process_timeout(self.config, with_reference_fallback=bool(style or ref_path)),
+            source="custom",
+            theme="custom",
+            prompt_final=bool(pure),
+            no_auto_style=bool(pure),
             **kwargs
         )
         if not filename:
@@ -287,7 +292,7 @@ class PortraitGalleryApp:
         entry = DailyEntry(
             date=today_str,
             outfit_style="自定义",
-            outfit=f"风格：自定义 视角：{shot_label} 穿搭：{user_prompt[:80]}",
+            outfit=f"风格：自定义{' 模式：纯' if pure else ''} 视角：{shot_label} 穿搭：{user_prompt[:80]}",
             schedule="",
             prompt=generation_prompt,
             caption=caption,
@@ -296,6 +301,8 @@ class PortraitGalleryApp:
             status="ok",
             source="custom",
             shot_type=shot_type,
+            prompt_mode="pure" if pure else "injected",
+            pure_prompt=bool(pure),
         )
         save_schedule_entry(self.data_dir, entry)
         logger.info(f"自定义生图成功: {filename}")
@@ -382,15 +389,22 @@ class PortraitGalleryApp:
         if not prompt and not is_scheduled_reroll:
             return {"status": "failed", "error": "prompt_missing"}
 
+        pure_raw = original.get("pure_prompt", False)
+        if isinstance(pure_raw, str):
+            pure_flag = pure_raw.strip().lower() in {"1", "true", "yes", "on"}
+        else:
+            pure_flag = bool(pure_raw)
+        original_is_pure = pure_flag or str(original.get("prompt_mode", "")).lower() == "pure"
         engine = self._engine_from_model_name(original.get("model_name", "") or meta.get("model", ""))
         engine = engine or self.image_gen.default_engine or "gptimage"
         base_style = (original.get("base_style") or "").strip().lower()
-        style = base_style if engine == "gptimage" and base_style in {"cool", "girly", "sweet"} else None
+        style = None if original_is_pure else (base_style if engine == "gptimage" and base_style in {"cool", "girly", "sweet"} else None)
         size = (meta.get("size") or "").strip()
         reroll_theme = "custom"
         reroll_source = "custom"
         reroll_prompt = prompt
         reroll_prompt_final = True
+        reroll_no_auto_style = original_is_pure
         reroll_caption = False
         if is_scheduled_reroll:
             match = re.match(r'\s*(\d{1,2}):(\d{2})', schedule_time)
@@ -399,6 +413,7 @@ class PortraitGalleryApp:
             reroll_source = "cron"
             reroll_prompt = ""
             reroll_prompt_final = False
+            reroll_no_auto_style = False
             reroll_caption = True
 
         filename = await self.image_gen.generate(
@@ -409,6 +424,7 @@ class PortraitGalleryApp:
             size=size,
             source=reroll_source,
             prompt_final=reroll_prompt_final,
+            no_auto_style=reroll_no_auto_style,
             theme=reroll_theme,
             schedule_time=schedule_time if is_scheduled_reroll else "",
             caption=reroll_caption,
@@ -442,9 +458,9 @@ class PortraitGalleryApp:
                 "favorite": bool(original.get("favorite", False)),
                 "rerolled_from": image_filename,
             })
-            for field in ("outfit_style", "outfit", "schedule", "schedule_prompt", "schedule_time"):
+            for field in ("outfit_style", "outfit", "schedule", "schedule_prompt", "schedule_time", "shot_type", "prompt_mode", "pure_prompt"):
                 value = original.get(field)
-                if value:
+                if value or field == "pure_prompt":
                     generated[field] = value
             if not generated.get("caption") and original.get("caption"):
                 generated["caption"] = original["caption"]

@@ -1885,12 +1885,44 @@ textarea:focus-visible,
   margin-bottom: 20px;
 }
 .cg-field { margin-bottom: 20px; }
+.cg-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
 .cg-field label {
   display: block;
   font-size: 16px;
   font-weight: 600;
   color: #555;
   margin-bottom: 8px;
+}
+.cg-label-row label { margin-bottom: 0; }
+.cg-mode-btn {
+  flex: 0 0 auto;
+  min-width: 40px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 15px;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  color: #888;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.cg-mode-btn:hover {
+  border-color: #e91e63;
+  color: #e91e63;
+}
+.cg-mode-btn.active {
+  border-color: #e91e63;
+  background: #fce4ec;
+  color: #e91e63;
 }
 .cg-field textarea {
   width: 100%;
@@ -2192,6 +2224,9 @@ textarea:focus-visible,
   .cg-modal h2 { font-size: 22px; margin-bottom: 14px; }
   .cg-field { margin-bottom: 13px; }
   .cg-field label { font-size: 14px; margin-bottom: 7px; }
+  .cg-label-row { margin-bottom: 7px; }
+  .cg-label-row label { margin-bottom: 0; }
+  .cg-mode-btn { height: 28px; min-width: 38px; padding: 0 10px; font-size: 13px; }
   .cg-field textarea { min-height: 82px; padding: 12px 14px; font-size: 14px; border-radius: 12px; }
   .cg-field .hint { font-size: 12px; line-height: 1.45; }
   .cg-size-group { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
@@ -2918,7 +2953,10 @@ textarea:focus-visible,
   <div class="cg-modal" onclick="event.stopPropagation()">
     <h2>🎀 穿搭生成</h2>
     <div class="cg-field">
-      <label for="cgPrompt">穿搭描述</label>
+      <div class="cg-label-row">
+        <label for="cgPrompt">穿搭描述</label>
+        <button class="cg-mode-btn" type="button" id="cgPureBtn" aria-pressed="false" aria-label="纯模式" title="不注入外貌提示词" onclick="toggleCustomPureMode()">纯</button>
+      </div>
       <textarea id="cgPrompt" placeholder="描述你想看到的穿搭，比如：穿着粉色JK制服在樱花树下吃团子~" rows="3"></textarea>
       <div class="hint">支持中英文，越详细效果越好哦～</div>
     </div>
@@ -3426,6 +3464,14 @@ function modalSourceLabel(e) {
   return "";
 }
 
+function isPureCustomPrompt(e) {
+  if (!e) return false;
+  const mode = String(e.prompt_mode || e.custom_prompt_mode || "").toLowerCase();
+  const rawPure = e.pure_prompt;
+  const pure = rawPure === true || String(rawPure || "").toLowerCase() === "true" || rawPure === 1 || rawPure === "1";
+  return pure || mode === "pure";
+}
+
 function customShotLabelFromType(value) {
   const shot = String(value || "").toLowerCase();
   if (shot === "selfie") return "自拍";
@@ -3444,7 +3490,8 @@ function customShotAngleLabel(e) {
 }
 
 function modalOutfitLabel(e) {
-  return String((e && e.source) || "").toLowerCase() === "custom" ? "注入" : "穿搭";
+  if (String((e && e.source) || "").toLowerCase() !== "custom") return "穿搭";
+  return isPureCustomPrompt(e) ? "描述" : "注入";
 }
 
 function modalSourceContext(e) {
@@ -3454,6 +3501,7 @@ function modalSourceContext(e) {
   const style = displayOutfitStyle(e);
   if (style && style !== "自定义" && !context.includes(style)) context += ` · ${style}`;
   if (String((e && e.source) || "").toLowerCase() === "custom") {
+    if (isPureCustomPrompt(e)) context += " · 纯";
     const shotLabel = customShotAngleLabel(e);
     if (shotLabel && !context.includes(shotLabel)) context += ` · 视角 ${shotLabel}`;
   }
@@ -4397,6 +4445,23 @@ function getCustomShotType() {
   return selectedCustomGenValue("cgShotGroup", "shot", "selfie");
 }
 
+function getCustomPureMode() {
+  const btn = document.getElementById("cgPureBtn");
+  return !!(btn && btn.classList.contains("active"));
+}
+
+function setCustomPureMode(enabled) {
+  const btn = document.getElementById("cgPureBtn");
+  if (!btn) return;
+  btn.classList.toggle("active", !!enabled);
+  btn.setAttribute("aria-pressed", enabled ? "true" : "false");
+}
+
+function toggleCustomPureMode() {
+  setCustomPureMode(!getCustomPureMode());
+  saveCustomGenState();
+}
+
 function setCustomGenActiveValue(groupId, key, value) {
   const group = document.getElementById(groupId);
   if (!group || !value) return;
@@ -4422,6 +4487,7 @@ function saveCustomGenState() {
     aspect: getCustomGenSize().aspect,
     resolution: getCustomGenSize().resolution,
     shot: getCustomShotType(),
+    pure: getCustomPureMode(),
     ref: (document.querySelector("#cgRefGrid .cg-ref-item.active") || {}).dataset?.ref || ""
   };
   window.galleryStorageSet("custom_gen_state", JSON.stringify(state));
@@ -4434,6 +4500,7 @@ function restoreCustomGenState() {
   setCustomGenActiveValue("cgAspectGroup", "aspect", state.aspect);
   setCustomGenActiveValue("cgResolutionGroup", "resolution", state.resolution);
   setCustomGenActiveValue("cgShotGroup", "shot", state.shot);
+  setCustomPureMode(state.pure === true || state.pure === 1 || String(state.pure || "").toLowerCase() === "true" || state.pure === "1");
   updateCustomSizeHint();
 }
 
@@ -4600,6 +4667,7 @@ async function submitCustomGen() {
   if (!prompt) { showToast("✍️ 先输入穿搭描述呀～"); return; }
   const customSize = getCustomGenSize();
   const shotType = getCustomShotType();
+  const pure = getCustomPureMode();
   const refItem = document.querySelector("#cgRefGrid .cg-ref-item.active");
   const refImage = refItem ? refItem.dataset.ref : "";
   
@@ -4613,7 +4681,8 @@ async function submitCustomGen() {
       aspect: customSize.aspect,
       resolution: customSize.resolution,
       size: customSize.size,
-      shot_type: shotType
+      shot_type: shotType,
+      pure
     };
     if (refImage) body.ref_image = refImage;
     const res = await fetch(`${API}/api/generate-custom`, {

@@ -19,6 +19,8 @@ class DailyEntry:
     status: str = "ok"  # ok / failed / generating
     source: str = ""  # cron / web / custom
     shot_type: str = ""  # selfie / half_body / full_body for custom generation
+    prompt_mode: str = ""  # injected / pure for custom generation
+    pure_prompt: bool = False  # true when custom generation skips persona/appearance injection
     outfit_keywords: str = ""  # LLM 提取的穿搭关键词（英文，逗号分隔）
     scene_keywords: str = ""   # LLM 提取的场景关键词（英文，逗号分隔）
 
@@ -27,6 +29,11 @@ class DailyEntry:
 
     @classmethod
     def from_dict(cls, data: dict) -> "DailyEntry":
+        pure_prompt_raw = data.get("pure_prompt", False)
+        if isinstance(pure_prompt_raw, str):
+            pure_prompt = pure_prompt_raw.strip().lower() in {"1", "true", "yes", "on"}
+        else:
+            pure_prompt = bool(pure_prompt_raw)
         return cls(
             date=data.get("date", ""),
             outfit_style=data.get("outfit_style", ""),
@@ -41,6 +48,8 @@ class DailyEntry:
             status=data.get("status", "ok"),
             source=data.get("source", ""),
             shot_type=data.get("shot_type", ""),
+            prompt_mode=data.get("prompt_mode", ""),
+            pure_prompt=pure_prompt,
             outfit_keywords=data.get("outfit_keywords", ""),
             scene_keywords=data.get("scene_keywords", ""),
         )
