@@ -73,11 +73,12 @@ DEFAULT_CUSTOM_SHOT_TYPE = "selfie"
 CUSTOM_IMAGE_FRAMING_RULE = (
     "strict framing rule: keep the whole intended subject fully inside the image frame, "
     "leave visible margin around the head and body, never crop off the top of the head, hair, face, shoulders, hands, waist, legs, or feet; "
+    "avoid tight face crops, headshots, passport-photo framing, or oversized heads; "
     "on landscape or wide canvas, move the camera farther back instead of cropping the person"
 )
 
 CUSTOM_SHOT_TYPE_PROMPTS = {
-    "selfie": "camera view: arm's-length smartphone selfie, phone held far enough away to show the complete head, hair, shoulders, chest and upper outfit, not an extreme close-up, looking at the phone camera or screen, intimate natural angle",
+    "selfie": "camera view: medium upper-body smartphone selfie, phone held at arm's length or slightly farther, camera pulled back enough to show the complete head, hair, shoulders, chest and waist, visible background around her, head should take no more than about one quarter of the image height, not a close-up, not a headshot, looking at the phone camera or screen, intimate natural angle",
     "half_body": "camera view: half-body portrait from head to waist, complete head and shoulders visible, outfit details clearly visible, natural portrait framing",
     "full_body": "camera view: full-body outfit photo from head to shoes, entire figure visible with clear space above hair and below shoes, complete outfit visible, balanced standing or seated composition",
 }
