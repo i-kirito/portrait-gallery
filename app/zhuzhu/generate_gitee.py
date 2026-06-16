@@ -64,14 +64,25 @@ def generate_image_bytes(prompt: str):
 def generate(theme: str, send: bool = False, caption: bool = False,
              prompt_override: Optional[str] = None, prompt_is_final: bool = False,
              source: str = "chat", sync_gallery: bool = True, schedule_time: str = ""):
-    prompt = prompt_override if prompt_is_final and prompt_override else build_prompt(theme, prompt_override)
+    prompt = (
+        prompt_override
+        if prompt_is_final and prompt_override
+        else build_prompt(
+            theme,
+            prompt_override,
+            allow_random_pool=(theme == "custom" and not prompt_override),
+        )
+    )
+    if not prompt:
+        print(f"ERROR: prompt is empty for theme={theme}; generation aborted", file=sys.stderr)
+        return None
     result = generate_image_bytes(prompt)
     if not result:
         return None
 
     img_data, gen_time = result
     path, filename, ts = save_image(img_data, theme, MODEL_NAME)
-    update_metadata(filename, theme, prompt, MODEL_NAME, ts, gen_time)
+    update_metadata(filename, theme, prompt, MODEL_NAME, ts, gen_time, {"source": source})
 
     caption_text = None
     if caption:
@@ -104,7 +115,7 @@ if __name__ == "__main__":
     parser.add_argument("--send", action="store_true")
     parser.add_argument("--caption", action="store_true")
     parser.add_argument("--prompt", type=str, default=None, help="自定义完整 prompt（自动注入前缀+外貌）")
-    parser.add_argument("--source", choices=["cron", "web", "chat", "custom"], default="chat", help="来源标识")
+    parser.add_argument("--source", choices=["cron", "web", "chat", "custom", "hermes_api"], default="chat", help="来源标识")
     parser.add_argument("--schedule-time", type=str, default="", help="对应的日程时间和活动，如 '11:00 做奶茶'")
     args = parser.parse_args()
     path = generate(args.theme, args.send, args.caption, args.prompt,

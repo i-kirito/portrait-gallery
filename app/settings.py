@@ -71,16 +71,22 @@ DEFAULT_CUSTOM_IMAGE_SIZE = "1024x1024"
 DEFAULT_CUSTOM_SHOT_TYPE = "selfie"
 
 CUSTOM_IMAGE_FRAMING_RULE = (
-    "strict framing rule: keep the whole intended subject fully inside the image frame, "
-    "leave visible margin around the head and body, never crop off the top of the head, hair, face, shoulders, hands, waist, legs, or feet; "
-    "avoid tight face crops, headshots, passport-photo framing, or oversized heads; "
-    "on landscape or wide canvas, move the camera farther back instead of cropping the person"
+    "strict framing rule: preserve the requested camera view and shot type, "
+    "keep the full head, hairline, face, visible shoulders, hands, held objects, and requested props inside the frame with a little breathing room, "
+    "never crop off any visible or requested body part or important prop, avoid extreme face crops, passport-photo framing, oversized heads, or changing the shot into another view; "
+    "on landscape or wide canvas, recompose with more surrounding background instead of cutting off the subject"
 )
 
 CUSTOM_SHOT_TYPE_PROMPTS = {
-    "selfie": "camera view: medium upper-body smartphone selfie, phone held at arm's length or slightly farther, camera pulled back enough to show the complete head, hair, shoulders, chest and waist, visible background around her, head should take no more than about one quarter of the image height, not a close-up, not a headshot, looking at the phone camera or screen, intimate natural angle",
-    "half_body": "camera view: half-body portrait from head to waist, complete head and shoulders visible, outfit details clearly visible, natural portrait framing",
-    "full_body": "camera view: full-body outfit photo from head to shoes, entire figure visible with clear space above hair and below shoes, complete outfit visible, balanced standing or seated composition",
+    "selfie": "camera view: authentic smartphone selfie mode, (mirror selfie style:1.2) or front-facing selfie, unmistakable self-shot evidence, visible phone, mirror reflection, or extended selfie arm perspective, looking at the phone screen, camera lens, or mirror, realistic phone-screen light reflection on the face, cute natural pose, arm-length selfie with the phone held slightly farther away, slightly pulled-back selfie POV, head, shoulders, upper torso, at least one hand, and room for a small gesture visible, a little surrounding background around her for posing space, complete head and hairline visible with a little margin, not an extreme face crop, not a big-head selfie, not a tight head-and-shoulders crop, not a normal half-body portrait, not a studio portrait, not a distant shot",
+    "half_body": "camera view: default upper body medium shot, waist-up candid portrait photographed by someone else, third-person documentary photo, camera pulled back enough to show head, hair, shoulders, torso, both hands, and any handheld prop, from head to waist or upper hips, natural daily-life framing, outfit upper details clear, (dynamic random pose:1.2), (playful gestures:1.1), if using a phone then the phone is only an activity prop in her hand or lap and both hands must be visible, gaze can be toward the prop or slightly off-camera, not a close-up, not a headshot, not a face-dominant crop, not a selfie, not a mirror selfie, not a front-camera arm-angle shot, not a full-body shot",
+    "full_body": "camera view: full body shot, full-body OOTD, head to toe visible, wide angle, far shot, camera pulled back, complete outfit visible with clear space above hair and below shoes, (dynamic natural pose:1.3), (random candid action:1.2), twirling around, adjusting clothes, reaching for something on shelf, stepping into shoes, checking outfit in mirror, stretching arms up, leaning against a doorframe, playful spinning, tying hair up, bending to pick something up, walking towards camera",
+}
+
+CUSTOM_SHOT_LANDSCAPE_PROMPTS = {
+    "selfie": "landscape-specific framing: keep the horizontal image clearly recognizable as a selfie by showing the phone, extended arm perspective, or mirror reflection in the composition; use the extra width for background and gesture space, but do not let it become an ordinary third-person seated portrait",
+    "half_body": "landscape-specific framing: make the horizontal image clearly different from selfie mode, as if another person photographed her from outside the action at a comfortable medium distance; no visible selfie-taking arm, no mirror-selfie composition, no phone held up as the camera, no direct front-camera perspective; use the extra width for environment, hands, and props",
+    "full_body": "landscape-specific framing: use the extra width for environment and natural movement while keeping the entire body head-to-toe visible",
 }
 
 CUSTOM_SHOT_TYPE_LABELS = {
@@ -92,13 +98,21 @@ CUSTOM_SHOT_TYPE_LABELS = {
 CUSTOM_SHOT_TYPE_ALIASES = {
     "selfie": "selfie",
     "自拍": "selfie",
+    "对镜": "selfie",
+    "mirror": "selfie",
+    "mirror_selfie": "selfie",
     "closeup": "selfie",
     "close_up": "selfie",
+    "default": "half_body",
+    "默认": "half_body",
+    "upper_body": "half_body",
     "half": "half_body",
     "half_body": "half_body",
     "halfbody": "half_body",
     "半身": "half_body",
     "半身照": "half_body",
+    "远景": "full_body",
+    "ootd": "full_body",
     "full": "full_body",
     "full_body": "full_body",
     "fullbody": "full_body",
@@ -232,9 +246,27 @@ def normalize_custom_shot_type(value: Any) -> str:
     return CUSTOM_SHOT_TYPE_ALIASES.get(text, CUSTOM_SHOT_TYPE_ALIASES.get(_non_empty(value), DEFAULT_CUSTOM_SHOT_TYPE))
 
 
-def custom_shot_prompt(value: Any) -> str:
+def _custom_size_orientation(size: Any) -> str:
+    text = _non_empty(size).lower().replace("×", "x")
+    match = re.match(r"^\s*(\d+)\s*x\s*(\d+)\s*$", text)
+    if not match:
+        return ""
+    width = int(match.group(1))
+    height = int(match.group(2))
+    if width > height:
+        return "landscape"
+    if height > width:
+        return "portrait"
+    return "square"
+
+
+def custom_shot_prompt(value: Any, size: Any = "") -> str:
     shot_type = normalize_custom_shot_type(value)
     shot_prompt = CUSTOM_SHOT_TYPE_PROMPTS.get(shot_type, CUSTOM_SHOT_TYPE_PROMPTS[DEFAULT_CUSTOM_SHOT_TYPE])
+    if _custom_size_orientation(size) == "landscape":
+        landscape_prompt = CUSTOM_SHOT_LANDSCAPE_PROMPTS.get(shot_type, "")
+        if landscape_prompt:
+            shot_prompt = f"{shot_prompt}, {landscape_prompt}"
     return f"{shot_prompt}, {CUSTOM_IMAGE_FRAMING_RULE}"
 
 
@@ -338,10 +370,6 @@ def config_int(config: dict, path: str, default: int, min_value: int | None = No
 
 def image_process_timeout(config: dict, with_reference_fallback: bool = True) -> int:
     """Return a safe outer timeout for the image-generation child process."""
-    explicit = config_int(config, "image_gen.process_timeout", 0, 0)
-    if explicit:
-        return explicit
-
     max_retries = config_int(config, "image_gen.max_retries", 3, 1)
     retry_delay = config_int(config, "image_gen.retry_delay_seconds", 3, 0)
     text_timeout = config_int(config, "image_gen.text2img_timeout", 180, 1)
@@ -354,7 +382,36 @@ def image_process_timeout(config: dict, with_reference_fallback: bool = True) ->
     if with_reference_fallback:
         image_window += img_timeout * max_retries + retry_delay_window
     total = image_window + enhance_timeout + caption_timeout + 120
-    return max(900, ((total + 59) // 60) * 60)
+    computed = max(900, ((total + 59) // 60) * 60)
+
+    explicit = config_int(config, "image_gen.process_timeout", 0, 0)
+    if not explicit:
+        explicit = config_int(config, "image_gen.timeout", 0, 0)
+    return max(explicit, computed)
+
+
+def image_request_timeout(config: dict, mode: str) -> int:
+    """Return the effective per-request timeout for text2img/img2img calls."""
+    normalized_mode = _non_empty(mode).lower()
+    if normalized_mode in {"img2img", "image", "reference"}:
+        key = "image_gen.img2img_timeout"
+        default = 300
+        safe_minimum = 900
+    else:
+        key = "image_gen.text2img_timeout"
+        default = 180
+        safe_minimum = 600
+
+    configured = config_int(config, key, default, 1)
+    legacy_global = config_int(config, "image_gen.timeout", 0, 0)
+    return max(configured, legacy_global, safe_minimum)
+
+
+def get_image_request_timeout(config_or_mode, mode: str = "") -> int:
+    """Compatibility wrapper for zhuzhu modules imported from the web server."""
+    if isinstance(config_or_mode, dict):
+        return image_request_timeout(config_or_mode, mode)
+    return image_request_timeout({}, str(config_or_mode or mode))
 
 
 def config_float(config: dict, path: str, default: float, min_value: float | None = None, max_value: float | None = None) -> float:
@@ -844,6 +901,10 @@ def normalize_chat_url(base_url: str) -> str:
         return ""
     if base.endswith("/chat/completions"):
         return base
+    for suffix in ("/images/generations", "/images/edits"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
     return f"{base}/chat/completions"
 
 

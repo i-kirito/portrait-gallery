@@ -61,6 +61,7 @@ WECHAT_RETRYABLE_MARKERS = (
     "server disconnected",
     "temporarily unavailable",
 )
+REFERENCE_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -85,6 +86,9 @@ def save_schedule_entry(data_dir: str, entry: DailyEntry):
         entry_dict = entry.to_dict()
         img_filename = entry.image_filename or ""
         if img_filename:
+            for field in ("schedule", "schedule_prompt", "schedule_details"):
+                entry_dict.pop(field, None)
+        if img_filename:
             new_key = img_filename
         else:
             new_key = entry.date
@@ -101,17 +105,15 @@ def save_schedule_entry(data_dir: str, entry: DailyEntry):
                         keys_to_remove.append(existing_key)
                 for k in keys_to_remove:
                     logger.info(f"移除重复条目 (key={k}, image={img_filename})")
-                    old = all_data[k]
-                    if old.get("schedule") and not entry_dict.get("schedule"):
-                        entry_dict["schedule"] = old["schedule"]
-                    if old.get("schedule_prompt") and not entry_dict.get("schedule_prompt"):
-                        entry_dict["schedule_prompt"] = old["schedule_prompt"]
                     del all_data[k]
 
             # If there's already an entry under new_key, merge rather than overwrite
             if new_key in all_data:
                 existing = all_data[new_key]
-                for field in ("favorite", "source", "time", "model_name", "base_style", "schedule_prompt"):
+                preserve_fields = ("favorite", "source", "time", "model_name", "base_style")
+                if not img_filename:
+                    preserve_fields = preserve_fields + ("schedule_prompt", "schedule_details")
+                for field in preserve_fields:
                     if field == "favorite" and field in existing:
                         entry_dict[field] = existing[field]
                     elif field in existing and (field not in entry_dict or not entry_dict.get(field)):
@@ -210,6 +212,9 @@ class PortraitGalleryApp:
 
         logger.info(f"日程生成成功: {entry.outfit_style} | base_style={entry.base_style}")
 
+        # 先保存 date-key 日程；后续图片条目会去掉全天计划字段，避免卡片重复承载大块日程。
+        save_schedule_entry(self.data_dir, entry)
+
         # 2. 生成图片
         if entry.prompt and entry.status == "ok":
             filename = await self.image_gen.generate_for_outfit(entry.prompt, entry.outfit_style, entry.base_style)
@@ -220,8 +225,9 @@ class PortraitGalleryApp:
             else:
                 logger.warning("图片生成失败")
 
-        # 3. 保存
-        save_schedule_entry(self.data_dir, entry)
+        # 3. 保存图片条目
+        if entry.image_filename:
+            save_schedule_entry(self.data_dir, entry)
         return entry
 
     async def generate_custom(
@@ -231,14 +237,19 @@ class PortraitGalleryApp:
         ref_image: str = "",
         shot_type: str = "selfie",
         pure: bool = False,
+        api_source: str = "",
+        api_caption: str = "",
+        image_model: str = "",
     ) -> DailyEntry:
         """自定义 prompt 生图"""
         today_str = datetime.now().strftime("%Y-%m-%d")
         ts = int(datetime.now().timestamp())
         shot_type = normalize_custom_shot_type(shot_type)
         shot_label = custom_shot_label(shot_type)
-        shot_prompt = custom_shot_prompt(shot_type)
+        shot_prompt = custom_shot_prompt(shot_type, size)
         generation_prompt = f"{user_prompt}. {shot_prompt}"
+        normalized_api_source = re.sub(r"[\s_-]+", "", str(api_source or "").strip().lower())
+        entry_source = "hermes_api" if normalized_api_source in {"hermes", "hermesapi"} else "custom"
 
         style = None
         ref_path = ref_image if ref_image else ""
@@ -258,36 +269,41 @@ class PortraitGalleryApp:
             kwargs["ref_image"] = ref_path
         if size:
             kwargs["size"] = size
+        has_reference = bool(ref_path)
+        no_auto_style = bool(pure)
+        custom_ref_mode = "pure" if pure else ("reference" if has_reference else "text2img")
 
         filename = await self.image_gen.generate(
             generation_prompt,
             style=style,
             timeout=image_process_timeout(self.config, with_reference_fallback=bool(style or ref_path)),
-            source="custom",
+            source=entry_source,
             theme="custom",
             prompt_final=bool(pure),
-            no_auto_style=bool(pure),
+            no_auto_style=no_auto_style,
+            image_model=image_model,
             **kwargs
         )
         if not filename:
             logger.error("自定义生图失败")
             return DailyEntry(date=today_str, outfit="生成失败", status="failed")
 
-        persona = load_runtime_persona(self.config, self.data_dir)
-        character_name = persona.get("name") or "角色"
-        user_name = persona.get("user_name") or "你"
-        prompt_hint = re.sub(r"\s+", " ", user_prompt or "").strip(" ，,。.!！?")
-        if len(prompt_hint) > 24:
-            prompt_hint = prompt_hint[:24].rstrip(" ，,。.!！?") + "..."
-        caption_templates = [
-            f"这张{shot_label}把「{prompt_hint or '定制灵感'}」的感觉留住了，{character_name}自己也有点喜欢。",
-            f"{user_name}，这次按你的想法拍了{shot_label}，画面里的小细节比想象中更贴合。",
-            f"{shot_label}这一张刚好有点特别，{character_name}把今天的定制灵感收进画廊里。",
-            f"不是日常排程里的瞬间，是专门为{user_name}留的一张{shot_label}定制小记录。",
-        ]
-        caption = caption_templates[
-            sum(ord(ch) for ch in f"{filename}|{user_prompt}|{shot_label}") % len(caption_templates)
-        ]
+        caption = str(api_caption or "").strip() if entry_source == "hermes_api" else ""
+        if entry_source != "hermes_api" and not caption:
+            persona = load_runtime_persona(self.config, self.data_dir)
+            character_name = persona.get("name") or "角色"
+            prompt_hint = re.sub(r"\s+", " ", user_prompt or "").strip(" ，,。.!！?")
+            if len(prompt_hint) > 24:
+                prompt_hint = prompt_hint[:24].rstrip(" ，,。.!！?") + "..."
+            caption_templates = [
+                f"顺着「{prompt_hint or '这个念头'}」站进场景里时，{character_name}心里忽然安静了一点。",
+                f"镜头的距离刚好留出一点呼吸，{character_name}也跟着慢慢放松下来。",
+                f"这一刻像从描述里慢慢走出来，{character_name}只想把脚步放轻一点。",
+                f"没有太多刻意安排，{character_name}只是顺着当下的感觉停了一小会儿。",
+            ]
+            caption = caption_templates[
+                sum(ord(ch) for ch in f"{filename}|{user_prompt}|{shot_label}") % len(caption_templates)
+            ]
 
         entry = DailyEntry(
             date=today_str,
@@ -299,12 +315,16 @@ class PortraitGalleryApp:
             image_filename=filename,
             image_path=f"/images/{filename}",
             status="ok",
-            source="custom",
+            source=entry_source,
+            base_style=style or "",
             shot_type=shot_type,
             prompt_mode="pure" if pure else "injected",
             pure_prompt=bool(pure),
+            custom_prompt=user_prompt,
+            custom_ref_mode=custom_ref_mode,
         )
         save_schedule_entry(self.data_dir, entry)
+        self._update_image_metadata_caption(filename, caption)
         logger.info(f"自定义生图成功: {filename}")
         return entry
 
@@ -318,13 +338,38 @@ class PortraitGalleryApp:
         return "", {}
 
     @staticmethod
+    def _extract_custom_user_prompt(entry: dict) -> str:
+        """Recover the raw custom prompt so reroll can apply current shot rules."""
+        if not isinstance(entry, dict):
+            return ""
+        for field in ("custom_prompt", "user_prompt"):
+            value = str(entry.get(field) or "").strip()
+            if value:
+                return value
+
+        outfit = str(entry.get("outfit") or "").strip()
+        match = re.search(r"穿搭[:：]\s*(.+)$", outfit)
+        if match:
+            value = match.group(1).strip()
+            if value:
+                return value
+
+        prompt = str(entry.get("prompt") or "").strip()
+        match = re.match(r"(.+?)\s*[.。]\s*camera view\s*:", prompt, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            value = match.group(1).strip(" \t\r\n.。 ，,")
+            if value:
+                return value
+        return ""
+
+    @staticmethod
     def _engine_from_model_name(model_name: str) -> str:
         name = (model_name or "").strip().lower()
         if "gitee" in name or "z-image" in name:
             return "gitee"
         if "gemini" in name:
             return "gemini"
-        if "gpt" in name:
+        if "gpt" in name or name.startswith("agnes-image-") or "grok-imagine" in name:
             return "gptimage"
         return ""
 
@@ -359,6 +404,30 @@ class PortraitGalleryApp:
                 except OSError:
                     pass
 
+    def _update_image_metadata_caption(self, filename: str, caption: str):
+        if not filename:
+            return
+        path = os.path.join(self.data_dir, "image_metadata.json")
+        metadata = load_json_file(path)
+        if not isinstance(metadata, dict):
+            return
+        entry = metadata.get(filename)
+        if not isinstance(entry, dict):
+            return
+        entry["caption"] = str(caption or "").strip()
+        tmp_path = f"{path}.tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)
+        except Exception as e:
+            logger.error("更新图片元数据小心思失败: %s, %s", filename, e)
+            if os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
     def _delete_replaced_image(self, filename: str):
         if not filename:
             return
@@ -371,6 +440,40 @@ class PortraitGalleryApp:
             logger.warning("删除被替换图片时有错误: %s, errors=%s", filename, errors)
         elif deleted:
             logger.info("已删除被替换图片文件: %s", filename)
+
+    def _resolve_reroll_reference_image(self, original: dict, meta: dict) -> str:
+        """Find the original img2img reference path for a custom reroll."""
+        candidates = [
+            original.get("requested_ref_image_path"),
+            meta.get("requested_ref_image_path"),
+            original.get("ref_image_path"),
+            meta.get("ref_image_path"),
+            original.get("requested_ref_image"),
+            meta.get("requested_ref_image"),
+            original.get("ref_image"),
+            meta.get("ref_image"),
+        ]
+        resolver = getattr(self.web_server, "_resolve_reference_image", None)
+        search_dirs = [
+            getattr(self.web_server, "uploaded_reference_dir", ""),
+            getattr(self.web_server, "reference_dir", ""),
+            getattr(self.web_server, "app_reference_dir", ""),
+        ]
+        for raw in candidates:
+            value = str(raw or "").strip()
+            if not value:
+                continue
+            if callable(resolver):
+                resolved = resolver(value, allow_any_path=True)
+                if resolved:
+                    return resolved
+            basename = os.path.basename(value)
+            if basename:
+                for directory in search_dirs:
+                    candidate = os.path.join(directory, basename) if directory else ""
+                    if candidate and os.path.isfile(candidate) and candidate.lower().endswith(REFERENCE_IMAGE_EXTENSIONS):
+                        return candidate
+        return ""
 
     async def reroll_image(self, image_filename: str) -> dict:
         """Generate a new card from an existing card's final prompt."""
@@ -389,54 +492,103 @@ class PortraitGalleryApp:
         if not prompt and not is_scheduled_reroll:
             return {"status": "failed", "error": "prompt_missing"}
 
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        original_date = original.get("date") or today_str
+        reroll_uses_today_schedule = is_scheduled_reroll and original_date == today_str
+        if is_scheduled_reroll and not reroll_uses_today_schedule and not prompt:
+            return {"status": "failed", "error": "prompt_missing"}
         pure_raw = original.get("pure_prompt", False)
         if isinstance(pure_raw, str):
             pure_flag = pure_raw.strip().lower() in {"1", "true", "yes", "on"}
         else:
             pure_flag = bool(pure_raw)
         original_is_pure = pure_flag or str(original.get("prompt_mode", "")).lower() == "pure"
-        engine = self._engine_from_model_name(original.get("model_name", "") or meta.get("model", ""))
+        raw_model_name = (
+            meta.get("model", "")
+            or original.get("image_model", "")
+            or original.get("model_name", "")
+        )
+        engine = self._engine_from_model_name(raw_model_name)
         engine = engine or self.image_gen.default_engine or "gptimage"
         base_style = (original.get("base_style") or "").strip().lower()
-        style = None if original_is_pure else (base_style if engine == "gptimage" and base_style in {"cool", "girly", "sweet"} else None)
+        is_custom_source = original_source in {"custom", "hermes_api"}
+        custom_ref_mode = str(original.get("custom_ref_mode") or "").strip().lower()
+        has_custom_reference = custom_ref_mode == "reference" or bool(
+            original.get("requested_ref_image")
+            or original.get("requested_ref_image_path")
+            or meta.get("requested_ref_image")
+            or meta.get("requested_ref_image_path")
+        )
+        custom_ref_image = ""
+        if is_custom_source and has_custom_reference and engine == "gptimage":
+            custom_ref_image = self._resolve_reroll_reference_image(original, meta)
+            if not custom_ref_image:
+                logger.warning("自定义参考图重抽未找到原参考图，将退回文生图: %s", image_filename)
+        style = None
+        if not original_is_pure and engine == "gptimage" and base_style in {"cool", "girly", "sweet"}:
+            if not is_custom_source or has_custom_reference:
+                style = base_style
         size = (meta.get("size") or "").strip()
+        custom_user_prompt = self._extract_custom_user_prompt(original)
+        custom_shot_type = normalize_custom_shot_type(original.get("shot_type", ""))
+        is_custom_injected_reroll = is_custom_source and not original_is_pure and bool(custom_user_prompt)
         reroll_theme = "custom"
         reroll_source = "custom"
         reroll_prompt = prompt
         reroll_prompt_final = True
         reroll_no_auto_style = original_is_pure
         reroll_caption = False
+        if is_custom_injected_reroll:
+            reroll_prompt = f"{custom_user_prompt}. {custom_shot_prompt(custom_shot_type, size)}"
+            reroll_prompt_final = False
+            reroll_no_auto_style = not has_custom_reference
         if is_scheduled_reroll:
             match = re.match(r'\s*(\d{1,2}):(\d{2})', schedule_time)
             if match:
                 reroll_theme = self._theme_for_hour(int(match.group(1)))
-            reroll_source = "cron"
-            reroll_prompt = ""
-            reroll_prompt_final = False
-            reroll_no_auto_style = False
-            reroll_caption = True
+            if reroll_uses_today_schedule:
+                reroll_source = "cron"
+                reroll_prompt = ""
+                reroll_prompt_final = False
+                reroll_no_auto_style = False
+                reroll_caption = True
+                current_base_style = self._today_schedule_base_style()
+                if current_base_style:
+                    style = current_base_style
+            else:
+                reroll_source = "custom"
+                reroll_prompt = prompt
+                reroll_prompt_final = True
+                reroll_no_auto_style = False
+                reroll_caption = False
+                style = base_style if engine == "gptimage" and base_style in {"cool", "girly", "sweet"} else None
+
+        ref_image = custom_ref_image if is_custom_source and custom_ref_image else ""
 
         filename = await self.image_gen.generate(
             reroll_prompt,
             style=style,
             engine=engine,
-            timeout=image_process_timeout(self.config, with_reference_fallback=bool(style)),
+            timeout=image_process_timeout(self.config, with_reference_fallback=bool(style or ref_image)),
+            ref_image=ref_image,
             size=size,
             source=reroll_source,
             prompt_final=reroll_prompt_final,
             no_auto_style=reroll_no_auto_style,
             theme=reroll_theme,
-            schedule_time=schedule_time if is_scheduled_reroll else "",
+            schedule_time=schedule_time if reroll_uses_today_schedule else "",
             caption=reroll_caption,
+            image_model=raw_model_name if engine == "gptimage" else "",
         )
         if not filename:
             logger.error("图片重抽失败: %s", image_filename)
             return {"status": "failed", "error": "generate_failed"}
 
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        original_date = original.get("date") or today_str
         original_time = original.get("time") or self._image_time_from_filename(image_filename)
         now_time = self._image_time_from_filename(filename) or datetime.now().strftime("%H:%M")
+        schedule_context_entry = {}
+        if is_scheduled_reroll:
+            schedule_context_entry = self._today_schedule_entry() if reroll_uses_today_schedule else original
         result = {}
 
         def _merge_reroll(all_data: dict):
@@ -457,28 +609,55 @@ class PortraitGalleryApp:
                 "source": original_source or reroll_source,
                 "favorite": bool(original.get("favorite", False)),
                 "rerolled_from": image_filename,
+                "replaced_image_filename": image_filename,
+                "replacement_key": replacement_key,
             })
-            for field in ("outfit_style", "outfit", "schedule", "schedule_prompt", "schedule_time", "shot_type", "prompt_mode", "pure_prompt"):
-                value = original.get(field)
-                if value or field == "pure_prompt":
-                    generated[field] = value
-            if not generated.get("caption") and original.get("caption"):
+            if is_scheduled_reroll:
+                for field in ("outfit_style", "outfit", "base_style"):
+                    value = schedule_context_entry.get(field) if isinstance(schedule_context_entry, dict) else None
+                    if value and not generated.get(field):
+                        generated[field] = value
+                if schedule_time:
+                    generated["schedule_time"] = schedule_time
+            else:
+                for field in ("outfit_style", "outfit", "schedule_time", "shot_type", "prompt_mode", "pure_prompt", "custom_prompt", "custom_ref_mode"):
+                    value = original.get(field)
+                    if value or field == "pure_prompt":
+                        generated[field] = value
+                for field in ("generation_mode", "requested_generation_mode", "ref_image", "ref_image_path", "requested_ref_image", "requested_ref_image_path"):
+                    value = original.get(field)
+                    if value and not generated.get(field):
+                        generated[field] = value
+            if (
+                (not is_scheduled_reroll or not reroll_uses_today_schedule)
+                and not generated.get("caption")
+                and original.get("caption")
+            ):
                 generated["caption"] = original["caption"]
-            if original.get("base_style"):
+            if is_scheduled_reroll:
+                if not generated.get("base_style") and isinstance(schedule_context_entry, dict):
+                    generated["base_style"] = schedule_context_entry.get("base_style", "")
+            elif is_custom_source and not has_custom_reference:
+                generated.pop("base_style", None)
+            elif original.get("base_style"):
                 generated["base_style"] = original["base_style"]
             if not generated.get("outfit_style"):
-                generated["outfit_style"] = "自定义"
+                generated["outfit_style"] = (
+                    schedule_context_entry.get("outfit_style", "")
+                    if is_scheduled_reroll and isinstance(schedule_context_entry, dict)
+                    else "自定义"
+                )
             if not generated.get("outfit"):
-                generated["outfit"] = original.get("outfit") or "风格：自定义 穿搭：重抽生成"
+                generated["outfit"] = (
+                    schedule_context_entry.get("outfit", "")
+                    if is_scheduled_reroll and isinstance(schedule_context_entry, dict)
+                    else original.get("outfit") or "风格：自定义 穿搭：重抽生成"
+                )
             for key, entry in list(all_data.items()):
-                if key == replacement_key:
-                    continue
                 if re.match(r'^\d{4}-\d{2}-\d{2}$', str(key)):
                     continue
-                if key == generated_key:
-                    del all_data[key]
-                    continue
-                if isinstance(entry, dict) and entry.get("image_filename") in {image_filename, filename}:
+                entry_filename = entry.get("image_filename") if isinstance(entry, dict) else ""
+                if key in {replacement_key, generated_key, image_filename, filename} or entry_filename in {image_filename, filename}:
                     del all_data[key]
             all_data[replacement_key] = generated
             result.update(generated)
@@ -1019,7 +1198,8 @@ class PortraitGalleryApp:
             schedule_time_str = f"{h:02d}:{m:02d}"
             schedule_text_for_job = f"{schedule_time_str} {activity.strip()}".strip()
 
-            # 已过期的时间点：如已有图片则跳过；未拍则立即补拍，不占用 APScheduler。
+            # 已过期的时间点只跳过。自动补拍会在服务重启时把早上的漏拍
+            # 晚上补出来，造成“后面没有计划却生成新图”的错觉；补拍改为只走手动重试。
             if run_time <= now:
                 if self._check_photo_exists_for_slot(today_str, schedule_time_str):
                     logger.info(f"跳过已过期的时间（已有图片）: {schedule_time_str}")
@@ -1027,42 +1207,15 @@ class PortraitGalleryApp:
                 if schedule_time_str in planned_times:
                     logger.info(f"跳过已过期的时间（已有计划记录）: {schedule_time_str}")
                     continue
-                if len(planned_times) >= max_daily:
-                    logger.info(
-                        f"跳过已过期的时间（今日生图计划已达上限）: {schedule_time_str} "
-                        f"(planned={len(planned_times)}, max_daily={max_daily})"
-                    )
-                    continue
 
                 slot_key = f"{today_str} {schedule_time_str}"
                 if slot_key in self._failed_photo_jobs:
                     logger.info(f"跳过已失败的过期时间（等待手动重试）: {schedule_time_str}")
                     continue
-
-                async with self._inflight_lock:
-                    if slot_key in self._photo_jobs_inflight:
-                        logger.info(f"跳过已过期的时间（补拍任务进行中）: {schedule_time_str}")
-                        continue
-                    snapshot = self._photo_quota_snapshot(today_str)
-                    max_daily, _completed, _failed, _inflight, _scheduled, planned_total, remaining = snapshot
-                    if remaining <= 0:
-                        logger.info(
-                            f"跳过已过期的时间（今日生图计划已达上限）: {schedule_time_str} "
-                            f"(planned={planned_total}, max_daily={max_daily})"
-                        )
-                        planned_times = self._today_photo_plan_times(today_str, include_scheduled=False)
-                        continue
-                    self._photo_jobs_inflight.add(slot_key)
-                    planned_times.add(schedule_time_str)
-
-                period_label = self._schedule_period_label(h, m)
-                if period_label:
-                    planned_periods.add(period_label)
                 logger.info(
-                    f"补拍已过期的时间点: {schedule_time_str} "
-                    f"theme={theme} period={period_label or '-'} activity={activity.strip()[:30]}"
+                    f"跳过已过期的时间（不自动补拍）: {schedule_time_str} "
+                    f"activity={activity.strip()[:30]}"
                 )
-                asyncio.create_task(self._backfill_photo_job(theme, schedule_text_for_job, slot_key))
                 continue
 
             candidates.append({
@@ -1381,6 +1534,7 @@ class PortraitGalleryApp:
 
                 # 按设置的推送渠道发送到 TG / 微信。
                 if image_path:
+                    caption_text = self._gallery_caption_for_image(image_path, caption_text)
                     send_ok = await self._send_generated_photo(image_path, caption_text)
                     if not send_ok:
                         logger.warning(f"推送未完全成功: image={image_path}")
@@ -1484,6 +1638,25 @@ class PortraitGalleryApp:
             logger.warning(f"OpenClaw 推送失败，尝试 Hermes fallback: channel={channel}")
 
         return await self._send_to_hermes_channel(channel, image_path, caption, delivery)
+
+    def _gallery_caption_for_image(self, image_path: str, fallback: str = "") -> str:
+        """Use the gallery card caption as the single source for outbound copy."""
+        filename = os.path.basename(str(image_path or ""))
+        if not filename:
+            return fallback or ""
+        try:
+            data = ScheduleStore(self.data_dir).load()
+            entry = data.get(filename)
+            if not isinstance(entry, dict):
+                for value in data.values():
+                    if isinstance(value, dict) and value.get("image_filename") == filename:
+                        entry = value
+                        break
+            caption = str((entry or {}).get("caption") or "").strip()
+            return caption or fallback or ""
+        except Exception as e:
+            logger.warning("读取画廊小心思失败，使用生成输出文案: %s", e)
+            return fallback or ""
 
     async def _send_to_wechat(self, image_path: str, caption: str) -> bool:
         """Send image and caption to WeChat via hermes CLI."""

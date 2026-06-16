@@ -94,7 +94,7 @@ def _get_today_outfit_style_name() -> str:
 
 def _gallery_outfit_style_for_source(source: str, actual_style: Optional[str]) -> str:
     """Return the gallery style label without leaking the daily schedule style into chat/custom images."""
-    if (source or "").strip() in {"chat", "custom"}:
+    if (source or "").strip() in {"chat", "custom", "hermes_api"}:
         style = (actual_style or "").strip()
         if style in {"cool", "girly", "sweet"}:
             return "自定义"
@@ -228,9 +228,19 @@ def _decide_hairstyle(prompt_text: str) -> Optional[str]:
     return None
 
 
-def resolve_prompt(theme: str, prompt_override: Optional[str] = None, enhance: bool = False, schedule_activity: str = "") -> str:
+def resolve_prompt(
+    theme: str,
+    prompt_override: Optional[str] = None,
+    enhance: bool = False,
+    schedule_activity: str = "",
+    allow_random_pool: bool = False,
+) -> str:
     if not prompt_override:
-        return build_prompt(theme, schedule_activity=schedule_activity)
+        return build_prompt(
+            theme,
+            schedule_activity=schedule_activity,
+            allow_random_pool=allow_random_pool,
+        )
     
     if enhance:
         enhanced_parts = enhance_prompt(prompt_override, theme=theme)
@@ -245,7 +255,7 @@ def _generate_with_gemini_cpa(theme: str, prompt: str):
     import re
     import time
     import requests
-    from core import get_cpa_base_url, get_cpa_key, save_image, update_metadata, sync_to_gallery
+    from core import get_cpa_chat_url, get_cpa_key, save_image, update_metadata, sync_to_gallery
 
     api_key = get_cpa_key()
     headers = {"Content-Type": "application/json"}
@@ -256,8 +266,7 @@ def _generate_with_gemini_cpa(theme: str, prompt: str):
         "stream": False,
         "messages": [{"role": "user", "content": prompt}],
     }
-    base_url = get_cpa_base_url()
-    chat_url = base_url if base_url.endswith("/chat/completions") else f"{base_url}/chat/completions"
+    chat_url = get_cpa_chat_url()
     start = time.time()
     try:
         resp = requests.post(chat_url, headers=headers, json=payload, timeout=180)
@@ -331,26 +340,248 @@ def _normalize_schedule_slot(value: str) -> tuple:
 
 def _find_schedule_activity(schedule: str, time_slot: str, max_distance: int = 60) -> str:
     """Find the activity near HH:mm in a schedule block."""
+    _time_text, activity = _find_schedule_slot(schedule, time_slot, max_distance=max_distance)
+    return activity
+
+
+def _find_schedule_slot(schedule: str, time_slot: str, max_distance: int = 60) -> tuple[str, str]:
+    """Find the nearest schedule slot near HH:mm, returning (HH:mm, activity)."""
     m = re.match(r'\s*(\d{1,2}):(\d{2})', time_slot or "")
     if not m or not schedule:
-        return ""
+        return "", ""
     target_min = int(m.group(1)) * 60 + int(m.group(2))
     times = re.findall(r'(\d{1,2}):(\d{2})', schedule)
     parts = re.split(r'\d{1,2}:\d{2}\s*', schedule)
-    best, best_dist = "", 9999
+    best_time, best, best_dist = "", "", 9999
     for (hs, ms), activity in zip(times, parts[1:]):
         slot_min = int(hs) * 60 + int(ms)
         dist = abs(slot_min - target_min)
         if dist < best_dist:
             best_dist = dist
+            best_time = f"{int(hs):02d}:{int(ms):02d}"
             best = activity.strip().rstrip('～').strip()
-    return best if best and best_dist <= max_distance else ""
+    if best and best_dist <= max_distance:
+        return best_time, best
+    return "", ""
 
 
-def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple:
-    """Read daily schedule and return (context_string, raw_time_slot, outfit_keywords, scene_keywords)."""
+def _normalize_schedule_detail_time(value: str) -> str:
+    m = re.match(r'\s*(\d{1,2}):(\d{2})(?:\s+.*)?$', str(value or ""))
+    if not m:
+        return ""
+    hour = int(m.group(1))
+    minute = int(m.group(2))
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return ""
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _schedule_time_constraint(value: str) -> str:
+    time_text = _normalize_schedule_detail_time(value)
+    if not time_text:
+        return ""
+    hour, minute = [int(part) for part in time_text.split(":")]
+    clock = f"{hour:02d}:{minute:02d}"
+    if 5 <= hour < 8:
+        label = "early morning"
+        lighting = "soft early-morning natural daylight"
+        forbid = "night, evening, sunset, neon nightlife, or street-lamp-dominated lighting"
+    elif 8 <= hour < 12:
+        label = "late morning" if hour >= 10 else "morning"
+        lighting = "clear morning natural daylight with a bright daytime street or indoor ambience"
+        forbid = "night, evening, sunset, neon signs as the main light source, or street-lamp-dominated lighting"
+    elif 12 <= hour < 14:
+        label = "midday"
+        lighting = "bright midday natural daylight"
+        forbid = "night, evening, sunset, neon nightlife, or street-lamp-dominated lighting"
+    elif 14 <= hour < 17:
+        label = "afternoon"
+        lighting = "afternoon natural daylight"
+        forbid = "night, evening, neon nightlife, or street-lamp-dominated lighting"
+    elif 17 <= hour < 19:
+        label = "early evening"
+        lighting = "early-evening dusk or golden-hour light only if it fits the exact clock time"
+        forbid = "deep night or neon nightlife unless explicitly described"
+    elif 19 <= hour < 22:
+        label = "evening"
+        lighting = "realistic evening ambient light matching the exact clock time"
+        forbid = "midday sunlight or unrelated time-of-day changes"
+    else:
+        label = "late night"
+        lighting = "realistic late-night low light matching the exact clock time"
+        forbid = "daylight or unrelated time-of-day changes"
+    return (
+        f"The scheduled clock time is {clock}, {label}. "
+        f"Use {lighting}. "
+        f"Forbidden time mismatch: {forbid}."
+    )
+
+
+def _detail_time_is_daylight(value: str) -> bool:
+    time_text = _normalize_schedule_detail_time(value)
+    if not time_text:
+        return False
+    hour = int(time_text.split(":", 1)[0])
+    return 5 <= hour < 17
+
+
+def _strip_daylight_conflicts(value: str) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text:
+        return ""
+    replacements = (
+        r"\bat night\b",
+        r"\bat nighttime\b",
+        r"\bin the evening\b",
+        r"\bduring the evening\b",
+        r"\bafter dark\b",
+        r"\bat dusk\b",
+        r"\bat sunset\b",
+        r"\bnighttime\b",
+        r"\bneon-lit\b",
+        r"\bstreet-lamp-lit\b",
+        r"\bstreet lamps?\b",
+        r"\bstreetlights?\b",
+        r"\bnightlife\b",
+    )
+    for pattern in replacements:
+        text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bglowing shop signs?\b", "daytime storefront signboards", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bglowing signs?\b", "daytime signboards", text, flags=re.IGNORECASE)
+    text = re.sub(r"\blit signs?\b", "daytime signboards", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s+([,.;:])", r"\1", text)
+    text = re.sub(r"(?:,\s*){2,}", ", ", text)
+    return text.strip(" ,.;:")
+
+
+def _schedule_detail_for_time(detail: dict, raw_time: str) -> dict:
+    if not isinstance(detail, dict) or not _detail_time_is_daylight(raw_time):
+        return detail if isinstance(detail, dict) else {}
+    cleaned = dict(detail)
+    conflict_words = re.compile(
+        r"\b(night|nighttime|evening|sunset|dusk|neon-lit|street-lamp|street lamp|streetlight|nightlife)\b",
+        re.IGNORECASE,
+    )
+    for field in ("activity_en", "action_en", "scene_en", "props_en"):
+        if cleaned.get(field):
+            cleaned[field] = _strip_daylight_conflicts(cleaned[field])
+    if conflict_words.search(str(cleaned.get("lighting_en", ""))):
+        cleaned["lighting_en"] = "clear daytime natural light matching the scheduled clock time"
+    return cleaned
+
+
+def _schedule_detail_map(details) -> dict:
+    if not isinstance(details, list):
+        return {}
+    mapped = {}
+    for item in details:
+        if not isinstance(item, dict):
+            continue
+        time_text = _normalize_schedule_detail_time(item.get("time", ""))
+        if time_text:
+            mapped[time_text] = item
+    return mapped
+
+
+def _nearest_schedule_detail(details, time_slot: str, max_distance: int = 60) -> tuple[str, dict]:
+    if not isinstance(details, list):
+        return "", {}
+    target = _normalize_schedule_detail_time(time_slot)
+    if not target:
+        return "", {}
+    target_hour, target_minute = [int(part) for part in target.split(":")]
+    target_minutes = target_hour * 60 + target_minute
+    best_time, best_detail, best_dist = "", {}, 9999
+    for item in details:
+        if not isinstance(item, dict):
+            continue
+        item_time = _normalize_schedule_detail_time(item.get("time", ""))
+        if not item_time:
+            continue
+        hour, minute = [int(part) for part in item_time.split(":")]
+        dist = abs(hour * 60 + minute - target_minutes)
+        if dist < best_dist:
+            best_time, best_detail, best_dist = item_time, item, dist
+    if best_detail and best_dist <= max_distance:
+        return best_time, best_detail
+    return "", {}
+
+
+def _schedule_detail_text(detail: dict) -> str:
+    if not isinstance(detail, dict):
+        return ""
+    parts = []
+    labels = (
+        ("activity_en", "Activity"),
+        ("action_en", "Action"),
+        ("scene_en", "Scene"),
+        ("outfit_en", "Outfit"),
+        ("hair_en", "Hair"),
+        ("props_en", "Props"),
+        ("lighting_en", "Lighting"),
+    )
+    for field, label in labels:
+        value = re.sub(r"\s+", " ", str(detail.get(field, ""))).strip(" .")
+        if value:
+            parts.append(f"{label}: {value}")
+    return ". ".join(parts)
+
+
+def _schedule_detail_keywords(detail: dict, fallback_outfit: str = "") -> tuple[str, str, str]:
+    if not isinstance(detail, dict):
+        return fallback_outfit, "", ""
+    outfit = re.sub(r"\s+", " ", str(detail.get("outfit_en", "") or fallback_outfit)).strip()
+    hair = re.sub(r"\s+", " ", str(detail.get("hair_en", ""))).strip()
+    scene_parts = []
+    for field in ("scene_en", "props_en", "lighting_en"):
+        value = re.sub(r"\s+", " ", str(detail.get(field, ""))).strip(" .")
+        if value:
+            scene_parts.append(value)
+    return outfit, ". ".join(scene_parts), hair
+
+
+def _append_time_constraint(scene_kw: str, time_constraint: str) -> str:
+    scene = re.sub(r"\s+", " ", str(scene_kw or "")).strip(" .")
+    constraint = re.sub(r"\s+", " ", str(time_constraint or "")).strip(" .")
+    if not constraint:
+        return scene
+    if not scene:
+        return constraint
+    return f"{scene}. {constraint}"
+
+
+def _clean_schedule_detail_override(raw_value: str) -> dict:
+    if not raw_value:
+        return {}
+    try:
+        data = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    cleaned = {}
+    for field in (
+        "time",
+        "activity_zh",
+        "activity_en",
+        "action_en",
+        "scene_en",
+        "outfit_en",
+        "hair_en",
+        "props_en",
+        "lighting_en",
+    ):
+        value = re.sub(r"\s+", " ", str(data.get(field, ""))).strip()
+        if value:
+            cleaned[field] = value
+    return cleaned
+
+
+def _get_schedule_context(theme: str, schedule_time_override: str = "", schedule_detail_override: Optional[dict] = None) -> tuple:
+    """Read daily schedule and return context, display slot, outfit, scene, and hair details."""
     if theme not in _THEME_PERIODS or not _THEME_PERIODS[theme]:
-        return "", "", "", ""
+        return "", "", "", "", ""
     today_str = date.today().isoformat()
     data = {}
     if os.path.exists(_SCHEDULE_PATH):
@@ -366,6 +597,7 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple
     outfit_info = ""
     outfit_kw = ""
     scene_kw = ""
+    schedule_details = []
     daily = data.get(today_str)
     if daily and daily.get("schedule") and daily["schedule"] not in ("生成失败", ""):
         schedule = daily["schedule"]
@@ -373,42 +605,74 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple
         outfit_info = daily.get("outfit", "")
         outfit_kw = daily.get("outfit_keywords", "")
         scene_kw = daily.get("scene_keywords", "")
+        schedule_details = daily.get("schedule_details", []) if isinstance(daily.get("schedule_details"), list) else []
     
     # If date-keyed entry has no schedule, scan ALL entries for today
     if not schedule:
         for key, entry in data.items():
-            if entry.get("date") == today_str and entry.get("schedule") and entry["schedule"] not in ("生成失败", ""):
+            if not isinstance(entry, dict):
+                continue
+            if (
+                not entry.get("image_filename")
+                and entry.get("date") == today_str
+                and entry.get("schedule")
+                and entry["schedule"] not in ("生成失败", "")
+            ):
                 schedule = entry["schedule"]
                 schedule_prompt = entry.get("schedule_prompt", "") or entry["schedule"]
                 outfit_info = entry.get("outfit", "")
                 outfit_kw = entry.get("outfit_keywords", "")
                 scene_kw = entry.get("scene_keywords", "")
+                schedule_details = entry.get("schedule_details", []) if isinstance(entry.get("schedule_details"), list) else []
                 break
+
+    detail_by_time = _schedule_detail_map(schedule_details)
 
     if schedule_time_override:
         raw_slot, activity = _normalize_schedule_slot(schedule_time_override)
         if activity:
-            prompt_activity = _find_schedule_activity(schedule_prompt, raw_slot) or activity
+            raw_time = _normalize_schedule_detail_time(raw_slot)
+            time_constraint = _schedule_time_constraint(raw_time)
+            detail = schedule_detail_override if isinstance(schedule_detail_override, dict) else {}
+            if not detail:
+                detail = detail_by_time.get(raw_time, {})
+            detail = _schedule_detail_for_time(detail, raw_time)
+            prompt_time, prompt_match = _find_schedule_slot(schedule_prompt, raw_slot, max_distance=0)
+            display_time, display_match = _find_schedule_slot(schedule, raw_slot, max_distance=0)
+            prompt_activity = _schedule_detail_text(detail) or prompt_match or activity
+            detail_outfit_kw, detail_scene_kw, detail_hair_kw = _schedule_detail_keywords(detail, outfit_kw)
+            detail_scene_kw = _append_time_constraint(detail_scene_kw, time_constraint)
             style_hint = _extract_style_hint(outfit_info)
             ctx = f"Today's plan: {prompt_activity}"
+            if time_constraint:
+                ctx += f". Time: {time_constraint}"
             if style_hint:
                 ctx += f". Style: {style_hint}"
             print(f"📋 Schedule override: {ctx}", file=sys.stderr)
-            return ctx, raw_slot, outfit_kw, scene_kw
+            raw_time = raw_time or display_time or prompt_time
+            raw_activity = activity or display_match or prompt_match
+            return ctx, f"{raw_time} {raw_activity}".strip(), detail_outfit_kw, detail_scene_kw, detail_hair_kw
         # 只传了 HH:MM 没有活动文字 → 在日程中精确匹配该时间
         if (schedule_prompt or schedule) and raw_slot:
             h_match = re.match(r'(\d{1,2}):(\d{2})', raw_slot)
             if h_match:
-                best = _find_schedule_activity(schedule_prompt or schedule, raw_slot)
+                raw_time = _normalize_schedule_detail_time(raw_slot)
+                time_constraint = _schedule_time_constraint(raw_time)
+                detail = _schedule_detail_for_time(detail_by_time.get(raw_time), raw_time)
+                best = _schedule_detail_text(detail) or _find_schedule_activity(schedule_prompt or schedule, raw_slot)
                 display_best = _find_schedule_activity(schedule, raw_slot) or best
                 if best:
+                    detail_outfit_kw, detail_scene_kw, detail_hair_kw = _schedule_detail_keywords(detail, outfit_kw)
+                    detail_scene_kw = _append_time_constraint(detail_scene_kw, time_constraint)
                     ctx = f"Today's plan: {best}"
+                    if time_constraint:
+                        ctx += f". Time: {time_constraint}"
                     print(f"📋 Schedule time-match ({raw_slot}): {ctx}", file=sys.stderr)
-                    return ctx, f"{raw_slot} {display_best}".strip(), outfit_kw, scene_kw
+                    return ctx, f"{raw_slot} {display_best}".strip(), detail_outfit_kw, detail_scene_kw, detail_hair_kw
     
     if not schedule:
         print("📋 No daily LLM schedule found; skipping schedule action injection", file=sys.stderr)
-        return "", "", "", ""
+        return "", "", "", "", ""
     
     # Time-based schedule format: "HH:MM activity" or "period：activity"
     # Try period-based matching first (上午/中午/下午/晚上/深夜)
@@ -431,7 +695,7 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple
                     if style_hint:
                         ctx += f". Style: {style_hint}"
                     print(f"📋 Schedule context: {ctx}", file=sys.stderr)
-                    return ctx, activity, outfit_kw, scene_kw
+                    return ctx, activity, outfit_kw, "", ""
     
     # Time-based matching: "HH:MM activity" format
     # Theme → hour ranges
@@ -478,20 +742,28 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "") -> tuple
 
     if candidates:
         _, _, h_str, m_str, activity = min(candidates, key=lambda item: (item[0], item[1]))
+        raw_time = f"{int(h_str):02d}:{int(m_str):02d}"
+        time_constraint = _schedule_time_constraint(raw_time)
+        detail = _schedule_detail_for_time(detail_by_time.get(raw_time), raw_time)
+        prompt_activity = _schedule_detail_text(detail) or activity
+        detail_outfit_kw, detail_scene_kw, detail_hair_kw = _schedule_detail_keywords(detail, outfit_kw)
+        detail_scene_kw = _append_time_constraint(detail_scene_kw, time_constraint)
         style_hint = _extract_style_hint(outfit_info)
         display_activity = activity
         for (dh, dm), d_activity in zip(display_times, display_parts[1:]):
             if int(dh) == int(h_str) and int(dm) == int(m_str):
                 display_activity = d_activity.strip().rstrip('～').strip() or activity
                 break
-        ctx = f"Today's plan: {activity}"
+        ctx = f"Today's plan: {prompt_activity}"
+        if time_constraint:
+            ctx += f". Time: {time_constraint}"
         if style_hint:
             ctx += f". Style: {style_hint}"
         print(f"📋 Schedule context: {ctx}", file=sys.stderr)
         # Return both context (for prompt) and raw time slot (for display)
-        return ctx, f"{h_str}:{m_str} {display_activity}", outfit_kw, scene_kw
+        return ctx, f"{raw_time} {display_activity}", detail_outfit_kw, detail_scene_kw, detail_hair_kw
     # If we get here, no time slot matched - return empty
-    return "", "", "", ""
+    return "", "", "", "", ""
 
 
 def generate(
@@ -506,6 +778,7 @@ def generate(
     ref_image: Optional[str] = None,
     size: Optional[str] = None,
     schedule_time: str = "",
+    schedule_detail_json: str = "",
     prompt_final: bool = False,
     no_auto_style: bool = False,
 ):
@@ -519,18 +792,31 @@ def generate(
                 prompt_override = f"{llm_hair}, {prompt_override}"
                 print(f"💇 LLM chose hairstyle: {llm_hair}", file=sys.stderr)
 
+    allow_random_pool = theme == "custom" and not prompt_override and not prompt_final
+
     if prompt_final and prompt_override:
         resolved_prompt = prompt_override
     else:
-        resolved_prompt = resolve_prompt(theme, prompt_override, enhance)
+        resolved_prompt = resolve_prompt(
+            theme,
+            prompt_override,
+            enhance,
+            allow_random_pool=allow_random_pool,
+        )
 
     # Inject daily schedule context for timed photos (not custom/sexy)
-    schedule_ctx, schedule_raw, outfit_kw, scene_kw = _get_schedule_context(theme, schedule_time)
+    schedule_detail_override = _clean_schedule_detail_override(schedule_detail_json)
+    schedule_time_constraint = _schedule_time_constraint(schedule_time)
+    schedule_ctx, schedule_raw, outfit_kw, scene_kw, hair_kw = _get_schedule_context(
+        theme,
+        schedule_time,
+        schedule_detail_override,
+    )
     schedule_activity = ""
     if schedule_ctx and theme in DAILY_THEMES and not prompt_final:
         # Extract activity text for schedule-aware prompt building
         import re
-        m = re.search(r"Today's plan:\s*(.+?)(?:\.\s*Style:|$)", schedule_ctx)
+        m = re.search(r"Today's plan:\s*(.+?)(?:\.\s*(?:Time|Style):|$)", schedule_ctx)
         if m:
             schedule_activity = m.group(1).strip()
         resolved_prompt = f"{resolved_prompt}. {schedule_ctx}"
@@ -538,14 +824,27 @@ def generate(
     
     # Re-build prompt with schedule-aware element selection if we have activity
     if schedule_activity and theme in DAILY_THEMES and not prompt_final:
-        # `scene_kw` comes from the day's overall prompt, not the matched time slot.
-        # Keep outfit keywords, but let the matched LLM schedule line drive action/scene.
         if scene_kw:
-            print(f"🏠 Keeping day-level scene keywords out of timed slot: {scene_kw[:60]}", file=sys.stderr)
+            print(f"🏠 Using LLM slot scene details: {scene_kw[:60]}", file=sys.stderr)
+        if hair_kw:
+            print(f"💇 Using LLM slot hairstyle: {hair_kw[:60]}", file=sys.stderr)
         resolved_prompt = build_prompt(theme, schedule_activity=schedule_activity,
-                                       outfit_keywords=outfit_kw, scene_keywords="")
+                                       outfit_keywords=outfit_kw,
+                                       scene_keywords=scene_kw,
+                                       hair_keywords=hair_kw,
+                                       time_constraint=schedule_time_constraint)
         resolved_prompt = f"{resolved_prompt}. {schedule_ctx}"
         print(f"🎨 Rebuilt prompt from LLM schedule line (outfit_kw={outfit_kw[:40]})", file=sys.stderr)
+    elif theme in DAILY_THEMES and not prompt_final and not prompt_override:
+        print(
+            f"ERROR: missing LLM schedule context for daily theme={theme}; refusing random prompt pool",
+            file=sys.stderr,
+        )
+        return None
+
+    if not resolved_prompt:
+        print(f"ERROR: prompt is empty for theme={theme}; generation aborted", file=sys.stderr)
+        return None
 
     # Resolve style to ref_image path (only supported by gptimage engine)
     requested_ref_image = ref_image
@@ -559,13 +858,15 @@ def generate(
         if not ref_image:
             print(f"⚠️ style '{style}' 参考图不存在，将使用纯文生图", file=sys.stderr)
 
-    # Auto-pick a style for GPT Image via LLM to keep face consistent
-    # Note: LLM classification works even without reference images (for style label)
+    # Auto-pick a style for GPT Image via LLM to keep face consistent.
+    # Custom/Hermes text2img keeps pure text generation: classify for labels,
+    # but do not attach the built-in reference image unless one was requested.
+    custom_like_source = source in {"custom", "hermes_api"}
     if engine == "gptimage" and not no_auto_style and not explicit_style and not requested_ref_image and theme != "sexy":
         # 先检查当天是否已有风格，保持一天一致
         today_str = date.today().isoformat()
         today_style = ""
-        if source not in {"chat", "custom"} and os.path.exists(_SCHEDULE_PATH):
+        if source not in {"chat", "custom", "hermes_api"} and os.path.exists(_SCHEDULE_PATH):
             try:
                 with open(_SCHEDULE_PATH, encoding="utf-8") as f:
                     sched_data = json.load(f)
@@ -585,9 +886,10 @@ def generate(
             # Use the user's prompt (before appearance injection) for classification
             classify_input = prompt_override or resolved_prompt
             auto_style = _classify_style(classify_input)
-            ref_image = STYLE_REF_MAP.get(auto_style)  # None if no ref images
+            ref_image = None if custom_like_source else STYLE_REF_MAP.get(auto_style)
             if auto_style:
-                print(f"🧠 LLM selected style: {auto_style} (ref_image={'✓' if ref_image else '✗'})", file=sys.stderr)
+                label_only = " label-only" if custom_like_source else ""
+                print(f"🧠 LLM selected style{label_only}: {auto_style} (ref_image={'✓' if ref_image else '✗'})", file=sys.stderr)
     elif requested_ref_image:
         ref_image = requested_ref_image
 
@@ -723,10 +1025,11 @@ if __name__ == "__main__":
     parser.add_argument("--prompt", type=str, default=None, help="自定义描述（自动注入前缀+外貌）")
     parser.add_argument("--enhance", action="store_true", help="用 LLM 扩写描述后再自动注入")
     parser.add_argument("--style", choices=["cool", "girly", "sweet"], default=None, help="风格底模: cool(冷御风)/girly(少女风)/sweet(甜妹风), 仅 gptimage 引擎支持")
-    parser.add_argument("--source", choices=["cron", "web", "chat", "custom"], default="chat", help="来源标识: cron(定时)/web(现在在干嘛)/chat(聊天生图)/custom(自定义)")
+    parser.add_argument("--source", choices=["cron", "web", "chat", "custom", "hermes_api"], default="chat", help="来源标识: cron(定时)/web(现在在干嘛)/chat(聊天生图)/custom(自定义)/hermes_api(Hermes API)")
     parser.add_argument("--ref-image", type=str, default=None, help="参考图本地路径（图生图/img2img 模式）")
     parser.add_argument("--size", type=str, default=None, help="图片尺寸")
     parser.add_argument("--schedule-time", type=str, default="", help="定时任务对应的日程时间和活动，如 '20:30 晚间直播'")
+    parser.add_argument("--schedule-detail-json", type=str, default="", help="当前日程推断明细 JSON，用于即时生图")
     parser.add_argument("--prompt-final", action="store_true", help="prompt 已是完整生图提示词，不再注入画质/人设/发型")
     parser.add_argument("--no-auto-style", action="store_true", help="不自动选择底模参考图，用于纯文/纯图生图")
     args = parser.parse_args()
@@ -745,6 +1048,7 @@ if __name__ == "__main__":
         ref_image=args.ref_image,
         size=args.size,
         schedule_time=args.schedule_time,
+        schedule_detail_json=args.schedule_detail_json,
         prompt_final=args.prompt_final,
         no_auto_style=args.no_auto_style,
     )

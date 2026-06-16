@@ -21,6 +21,7 @@ from core import (
     build_caption_for_image,
     build_prompt,
     get_image_int,
+    get_image_request_timeout,
     get_image_model,
     sync_to_gallery,
     save_image,
@@ -30,12 +31,40 @@ from core import (
 )
 
 GPTIMAGE_DIRECT_URL = get_image_model("gpt_base_url")
-GPTIMAGE_DIRECT_MODEL = get_image_model("gpt_model")
 
-TEXT2IMG_TIMEOUT = get_image_int("text2img_timeout", 180, 1)
-IMG2IMG_TIMEOUT = get_image_int("img2img_timeout", 300, 1)
+
+def _get_gpt_model() -> str:
+    """Read GPT Image model from env/api_keys_config.json/config.yaml."""
+    env_model = os.getenv("GPT_IMAGE_MODEL", "")
+    if env_model:
+        return env_model.strip()
+
+    config_path = _API_KEYS_CONFIG_PATH
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            if config.get("gpt_model"):
+                return str(config["gpt_model"]).strip()
+        except Exception:
+            pass
+    return get_image_model("gpt_model")
+
+
+GPTIMAGE_DIRECT_MODEL = _get_gpt_model()
+
+TEXT2IMG_TIMEOUT = get_image_request_timeout("text2img")
+IMG2IMG_TIMEOUT = get_image_request_timeout("img2img")
 IMG2IMG_MAX_SIZE = get_image_int("img2img_max_size", 512, 64)
 IMG2IMG_QUALITY = get_image_int("img2img_quality", 75, 1, 100)
+
+
+def _configured_image_base_url(url: str) -> str:
+    base = str(url or "").strip().rstrip("/")
+    for suffix in ("/chat/completions", "/images/generations", "/images/edits"):
+        if base.endswith(suffix):
+            return base[: -len(suffix)]
+    return base
 
 
 def _get_gpt_key() -> str:
@@ -43,13 +72,16 @@ def _get_gpt_key() -> str:
     env_key = os.getenv("GPT_IMAGE_API_KEY", "")
     if env_key:
         return env_key
+    cpa_env_key = os.getenv("CPA_API_KEY", "")
+    if cpa_env_key:
+        return cpa_env_key
 
     config_path = _API_KEYS_CONFIG_PATH
     if os.path.exists(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 config = json.load(f)
-            return config.get("gpt_key", "")
+            return config.get("gpt_key", "") or config.get("cpa_key", "")
         except Exception as e:
             print(f"Failed to read api_keys_config.json: {e}", file=sys.stderr)
     return ""
@@ -67,10 +99,14 @@ def _get_gpt_raw_base_url() -> str:
             with open(config_path, "r", encoding="utf-8") as f:
                 config = json.load(f)
             if config.get("gpt_base_url"):
-                return str(config["gpt_base_url"]).strip().rstrip("/")
+                local_url = str(config["gpt_base_url"]).strip().rstrip("/")
+                configured_url = str(GPTIMAGE_DIRECT_URL or "").strip().rstrip("/")
+                if local_url == configured_url:
+                    return _configured_image_base_url(local_url)
+                return local_url
         except Exception:
             pass
-    return str(GPTIMAGE_DIRECT_URL or "").strip().rstrip("/")
+    return _configured_image_base_url(GPTIMAGE_DIRECT_URL)
 
 
 def _get_gpt_base_url() -> str:
@@ -85,6 +121,10 @@ def _normalize_gpt_chat_url(url: str) -> str:
         return ""
     if base.endswith("/chat/completions"):
         return base
+    for suffix in ("/images/generations", "/images/edits"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
     return f"{base}/chat/completions"
 
 
@@ -99,9 +139,22 @@ def _normalize_gpt_images_base_url(url: str) -> str:
     return base
 
 
-def _prefer_images_api(url: str) -> bool:
-    base = (url or "").strip().rstrip("/")
-    return base.endswith(("/images/generations", "/images/edits"))
+def _is_explicit_chat_url(url: str) -> bool:
+    return (url or "").strip().rstrip("/").endswith("/chat/completions")
+
+
+def _is_agnes_model(model: str) -> bool:
+    return (model or "").strip().lower().startswith("agnes-image-")
+
+
+def _gpt_headers(content_type: bool = False) -> dict:
+    headers = {}
+    if content_type:
+        headers["Content-Type"] = "application/json"
+    api_key = _get_gpt_key()
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
 
 
 def _image_response_bytes(data: dict) -> Optional[bytes]:
@@ -168,15 +221,15 @@ def _gpt_endpoint_label(url: str = "") -> str:
 
 def _generate_via_images_api(prompt: str, ref_image: Optional[str], size: Optional[str], raw_base_url: str) -> Optional[tuple]:
     """Call OpenAI-compatible /v1/images/generations or /v1/images/edits."""
-    api_key = _get_gpt_key()
     images_base = _normalize_gpt_images_base_url(raw_base_url)
     if not images_base:
         print("ERROR: image_gen.gpt_base_url is required", file=sys.stderr)
         return None
 
-    endpoint = f"{images_base}/images/edits" if ref_image else f"{images_base}/images/generations"
+    agnes_img2img = bool(ref_image and _is_agnes_model(GPTIMAGE_DIRECT_MODEL))
+    endpoint = f"{images_base}/images/generations" if (not ref_image or agnes_img2img) else f"{images_base}/images/edits"
     endpoint_label = _gpt_endpoint_label(endpoint)
-    headers = {"Authorization": f"Bearer {api_key}"}
+    headers = _gpt_headers()
     timeout = IMG2IMG_TIMEOUT if ref_image else TEXT2IMG_TIMEOUT
     start = time.time()
 
@@ -184,13 +237,31 @@ def _generate_via_images_api(prompt: str, ref_image: Optional[str], size: Option
     if ref_image:
         edit_prompt += (
             "\n[IMPORTANT] Use the reference image ONLY as a facial/style reference. "
-            "Do NOT copy the hairstyle, clothing, pose, background, lighting, or expression "
+            "Do NOT copy the hairstyle, clothing, pose, body posture, hand gestures, gaze direction, camera angle, framing, background, lighting, or expression "
             "unless the text description explicitly asks for them."
         )
 
     for attempt in range(MAX_RETRIES):
         try:
-            if ref_image:
+            if ref_image and agnes_img2img:
+                payload = {
+                    "model": GPTIMAGE_DIRECT_MODEL,
+                    "prompt": edit_prompt,
+                    "n": 1,
+                    "extra_body": {
+                        "image": [_compress_image_for_img2img(ref_image)],
+                        "response_format": "url",
+                    },
+                }
+                if size:
+                    payload["size"] = size
+                resp = REQUEST_SESSION.post(
+                    endpoint,
+                    headers={**headers, "Content-Type": "application/json"},
+                    json=payload,
+                    timeout=timeout,
+                )
+            elif ref_image:
                 image_bytes = _image_bytes_for_edit(ref_image)
                 data = {
                     "model": GPTIMAGE_DIRECT_MODEL,
@@ -260,23 +331,16 @@ def _generate_via_chat_gpt(prompt: str, ref_image: Optional[str] = None, size: O
         print("ERROR: image_gen.gpt_base_url is required", file=sys.stderr)
         return None
 
-    api_key = _get_gpt_key()
-    if not api_key:
-        print("ERROR: GPT_IMAGE_API_KEY or gpt_key is required", file=sys.stderr)
-        return None
     if not GPTIMAGE_DIRECT_MODEL:
         print("ERROR: image_gen.gpt_model is required", file=sys.stderr)
         return None
 
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
-    }
+    headers = _gpt_headers(content_type=True)
 
     if ref_image:
         try:
             compressed_img = _compress_image_for_img2img(ref_image)
-            face_instruction = "\n[IMPORTANT] Use the reference image ONLY as a facial reference. Focus on matching the face shape, facial structure, and overall facial features to achieve high similarity with the person in the reference image. Do NOT copy or reference the hairstyle, hair color, hair accessories, clothing, outfit, pose, body posture, hand gestures, background, lighting, or any other non-facial elements from the reference image. All of these must strictly follow the text description above. Do NOT copy the facial expression, mouth shape, tongue, or grin from the reference image — the expression must also strictly follow the text description."
+            face_instruction = "\n[IMPORTANT] Use the reference image ONLY as a facial reference. Focus on matching the face shape, facial structure, and overall facial features to achieve high similarity with the person in the reference image. Do NOT copy or reference the hairstyle, hair color, hair accessories, clothing, outfit, pose, body posture, hand gestures, gaze direction, camera angle, framing, background, lighting, or any other non-facial elements from the reference image. All of these must strictly follow the text description above. Do NOT copy the facial expression, mouth shape, tongue, or grin from the reference image — the expression must also strictly follow the text description."
             content = [
                 {"type": "image_url", "image_url": {"url": compressed_img}},
                 {"type": "text", "text": prompt + face_instruction},
@@ -374,10 +438,6 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size:
     Returns:
         (img_data, elapsed_time) tuple or None on failure
     """
-    api_key = _get_gpt_key()
-    if not api_key:
-        print("ERROR: GPT_IMAGE_API_KEY or gpt_key is required", file=sys.stderr)
-        return None
     raw_base_url = _get_gpt_raw_base_url()
     if not raw_base_url:
         print("ERROR: image_gen.gpt_base_url is required", file=sys.stderr)
@@ -386,8 +446,11 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size:
         print("ERROR: image_gen.gpt_model is required", file=sys.stderr)
         return None
 
-    if _prefer_images_api(raw_base_url):
-        return _generate_via_images_api(prompt, ref_image, size, raw_base_url)
+    if not _is_explicit_chat_url(raw_base_url):
+        result = _generate_via_images_api(prompt, ref_image, size, raw_base_url)
+        if result or raw_base_url.rstrip("/").endswith(("/images/generations", "/images/edits")):
+            return result
+        print("Images API failed; retrying chat-compatible GPT Image endpoint", file=sys.stderr)
     return _generate_via_chat_gpt(prompt, ref_image, size)
 
 
@@ -410,7 +473,18 @@ def generate(theme: str, send: bool = False, caption: bool = False,
         source: 来源标识，直连后端默认视为聊天通道生成
         sync_gallery: 是否直接写入画廊索引；统一入口会自行同步一次
     """
-    prompt = prompt_override if prompt_is_final and prompt_override else build_prompt(theme, prompt_override)
+    prompt = (
+        prompt_override
+        if prompt_is_final and prompt_override
+        else build_prompt(
+            theme,
+            prompt_override,
+            allow_random_pool=(theme == "custom" and not prompt_override),
+        )
+    )
+    if not prompt:
+        print(f"ERROR: prompt is empty for theme={theme}; generation aborted", file=sys.stderr)
+        return None
     requested_mode = "img2img" if ref_image else "text2img"
     final_mode = requested_mode
     requested_ref_image = ref_image or ""
@@ -441,6 +515,8 @@ def generate(theme: str, send: bool = False, caption: bool = False,
         ts,
         gen_time,
         {
+            "source": source,
+            "base_style": style or "",
             "requested_generation_mode": requested_mode,
             "generation_mode": final_mode,
             "ref_image": os.path.basename(used_ref_image) if used_ref_image else "",
@@ -492,7 +568,7 @@ if __name__ == "__main__":
     parser.add_argument("--prompt", type=str, default=None, help="自定义 prompt")
     parser.add_argument("--ref-image", type=str, default=None, help="参考图本地路径（图生图/img2img 模式）")
     parser.add_argument("--size", type=str, default=None, help="图片尺寸")
-    parser.add_argument("--source", choices=["cron", "web", "chat", "custom"], default="chat", help="来源标识")
+    parser.add_argument("--source", choices=["cron", "web", "chat", "custom", "hermes_api"], default="chat", help="来源标识")
     parser.add_argument("--schedule-time", type=str, default="", help="对应的日程时间和活动，如 '11:00 做奶茶'")
     args = parser.parse_args()
     path = generate(args.theme, args.send, args.caption, args.prompt, args.ref_image,

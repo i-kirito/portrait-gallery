@@ -60,12 +60,14 @@ class ImageGenerator:
         theme: str = "custom",
         schedule_time: str = "",
         caption: bool = False,
+        image_model: str = "",
     ) -> Optional[str]:
         """生成图片，返回图片文件名（相对路径）（异步，不阻塞事件循环）"""
         engine = engine or self.default_engine
         if not timeout:
             timeout = image_process_timeout(self.config, with_reference_fallback=bool(style or ref_image))
-        logger.info(f"开始生图: theme={theme}, engine={engine}, style={style}, size={size or '-'}, prompt={prompt[:80]}...")
+        model_label = image_model or "-"
+        logger.info(f"开始生图: theme={theme}, engine={engine}, model={model_label}, style={style}, size={size or '-'}, prompt={prompt[:80]}...")
 
         generate_script = self.generate_script
         if not os.path.isfile(generate_script):
@@ -98,6 +100,9 @@ class ImageGenerator:
             cmd.extend(["--prompt", prompt])
 
         try:
+            child_env_extra = {"ZHUZHU_MEDIA_DIR": self.output_dir}
+            if image_model and engine == "gptimage":
+                child_env_extra["GPT_IMAGE_MODEL"] = image_model
             # 用 run_in_executor 避免阻塞事件循环
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
@@ -105,7 +110,7 @@ class ImageGenerator:
                 lambda: subprocess.run(
                     cmd, capture_output=True, text=True, timeout=timeout,
                     cwd=self.script_dir,
-                    env=self.build_env({"ZHUZHU_MEDIA_DIR": self.output_dir}),
+                    env=self.build_env(child_env_extra),
                 )
             )
             # 检查输出路径

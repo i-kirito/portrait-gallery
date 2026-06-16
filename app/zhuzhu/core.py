@@ -29,6 +29,7 @@ from settings import (
     config_float,
     config_int,
     get_nested,
+    image_request_timeout,
     llm_request_config,
     load_config,
     load_json_file,
@@ -188,6 +189,10 @@ def get_image_model(key: str, default: str = "") -> str:
 
 def get_image_int(key: str, default: int, min_value: Optional[int] = None, max_value: Optional[int] = None) -> int:
     return config_int(_GALLERY_CONFIG, f"image_gen.{key}", default, min_value, max_value)
+
+
+def get_image_request_timeout(mode: str) -> int:
+    return image_request_timeout(_GALLERY_CONFIG, mode)
 
 
 CPA_BASE_URL = get_cpa_base_url()
@@ -613,8 +618,18 @@ def _shorten_caption(caption: str, limit: int = 90) -> str:
     return cut + "。"
 
 
+def _scheduled_scene_gaze_instruction(schedule_activity: str) -> str:
+    return (
+        "Let the model infer the most natural eye line from the scheduled activity, props, setting, and social context. "
+        "Choose whether she looks at the camera, the object she is handling, another person, a screen, or elsewhere based on what would feel believable in that exact moment. "
+        "Avoid default portrait eye contact when it is not motivated by the activity; avoid forcing an off-camera gaze when camera awareness is naturally part of the scene. "
+        "The result should feel like a coherent candid moment rather than a generic posed portrait"
+    )
+
+
 def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activity: str = "",
-                 outfit_keywords: str = "", scene_keywords: str = "") -> str:
+                 outfit_keywords: str = "", scene_keywords: str = "", hair_keywords: str = "",
+                 time_constraint: str = "", allow_random_pool: bool = False) -> str:
     is_sexy = theme == "sexy"
     quality = SEXY_QUALITY_PREFIX if is_sexy else QUALITY_PREFIX
 
@@ -629,36 +644,57 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
     if extra_prompt:
         return f"{quality} {appearance} {extra_prompt}".strip()
 
+    if not schedule_activity and not allow_random_pool:
+        print(
+            f"ERROR: missing LLM scene context for theme={theme}; refusing random theme pool",
+            file=sys.stderr,
+        )
+        return ""
+
     theme_cfg = THEMES.get(theme, THEMES["morning"])
     
     # ★ LLM 关键词优先：如果有 outfit_keywords，直接用，不从池子选
     if outfit_keywords:
         clothing = outfit_keywords
         print(f"👔 Using LLM outfit keywords: {clothing[:60]}", file=sys.stderr)
+    elif schedule_activity and not is_sexy:
+        clothing = "the outfit described in the current scheduled scene"
     elif is_sexy:
         clothing = random.choice(theme_cfg["clothing"])
     else:
         clothing = random.choice(theme_cfg["clothing"])
 
-    if is_sexy:
+    if hair_keywords:
+        hair = hair_keywords
+        print(f"💇 Using LLM hair details: {hair[:60]}", file=sys.stderr)
+    elif schedule_activity and not is_sexy:
+        hair = "the hairstyle described in the current scheduled scene"
+    elif is_sexy:
         hair = random.choice(theme_cfg["hair"])
+    else:
+        hair = random.choice(theme_cfg["hair"])
+
+    if is_sexy:
         pose = random.choice(theme_cfg["pose"])
         environment = random.choice(theme_cfg["environment"])
         lighting = random.choice(theme_cfg["lighting"])
     else:
-        hair = random.choice(theme_cfg["hair"])
         if schedule_activity:
+            gaze_instruction = _scheduled_scene_gaze_instruction(schedule_activity)
             pose = (
                 "naturally engaged in the current scheduled scene, "
-                "with pose, hands, props, and expression chosen to fit that exact activity"
+                "with pose, hands, props, expression, head direction, and eye line chosen to fit that exact activity; "
+                f"{gaze_instruction}"
             )
             environment = scene_keywords or (
                 "the setting implied by the current scheduled scene, including only props "
                 "and surroundings that fit that activity"
             )
-            lighting = "lighting that fits the scheduled time and scene, realistic smartphone photo ambience"
+            lighting = time_constraint or "lighting that fits the scheduled time and scene, realistic smartphone photo ambience"
             if scene_keywords:
                 print(f"🏠 Using LLM scene keywords: {environment[:60]}", file=sys.stderr)
+            if time_constraint:
+                print(f"🕒 Using schedule time constraint: {time_constraint[:80]}", file=sys.stderr)
             print(f"🎬 Using LLM schedule scene directly: {schedule_activity[:60]}", file=sys.stderr)
         else:
             pose = random.choice(theme_cfg["pose"])
@@ -674,9 +710,15 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
     if schedule_activity:
         activity_focus = (
             f"Current scheduled scene from today's LLM plan: {schedule_activity}. "
-            "Use this schedule text as the source of truth for the action, props, setting, mood, and time of day. "
+            "Use this schedule text as the source of truth for the action, props, setting, mood, time of day, outfit, and hairstyle. "
             "Do not replace it with a generic routine or another activity. "
         )
+        if time_constraint:
+            activity_focus += (
+                f"Strict time constraint: {time_constraint}. "
+                "The visual time of day, sky, light direction, ambient brightness, and background must match this constraint. "
+                "Do not change the scene into night, evening, sunset, neon nightlife, or warm street-lamp lighting unless the scheduled time explicitly says so. "
+            )
 
     return (
         f"{quality} {appearance}. "
@@ -949,8 +991,11 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
     today = time.strftime("%Y-%m-%d")
     style_name = (outfit_style or "").strip()
     base_style = style or ""  # cool/girly/sweet or empty
-    source_uses_base_style = source in {"chat", "custom"}
-    if not style_name and base_style:
+    source_uses_base_style = source in {"chat", "custom", "hermes_api"}
+    custom_text2img = source in {"custom", "hermes_api"} and not base_style and not ref_image and not requested_ref_image
+    if custom_text2img:
+        style_name = "自定义"
+    elif not style_name and base_style:
         style_name = "自定义" if source_uses_base_style and base_style in {"cool", "girly", "sweet"} else base_style_label(base_style)
     elif not style_name:
         base_style, style_name = theme_style_default(theme)

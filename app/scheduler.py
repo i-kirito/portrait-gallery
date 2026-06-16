@@ -29,6 +29,15 @@ SCHEDULE_TYPES = [
 ]
 
 BASE_STYLE_OPTIONS = {"cool", "girly", "sweet"}
+SCHEDULE_DETAIL_REQUIRED_FIELDS = (
+    "time",
+    "activity_zh",
+    "activity_en",
+    "action_en",
+    "scene_en",
+    "outfit_en",
+    "hair_en",
+)
 
 DEFAULT_REQUIRED_PERIODS = [
     {"name": "morning", "label": "早", "start": "06:00", "end": "11:59"},
@@ -97,7 +106,7 @@ class DailyScheduler:
             payload = {
                 "model": model,
                 "messages": messages,
-                "max_tokens": 2048,
+                "max_tokens": 4096,
                 "temperature": 0.3,
             }
             try:
@@ -196,11 +205,23 @@ class DailyScheduler:
    schedule 给用户看中文；schedule_prompt 只给生图 prompt 使用英文。
    schedule_prompt 的每条英文活动必须明确 action + scene + props/time mood，不能只写 vague daily routine。
 
+⚠️ schedule_details 是生图链路的严格结构化明细，必须是数组，条数、顺序、time 必须与 schedule 和 schedule_prompt 完全一致：
+   - 每个时间段都必须输出一个对象，不能遗漏任何一条 schedule。
+   - 每个对象必须包含 time、activity_zh、activity_en、action_en、scene_en、outfit_en、hair_en，可选 props_en、lighting_en。
+   - activity_zh 必须是中文，并和 schedule 当前行表达同一个活动。
+   - activity_en、action_en、scene_en、outfit_en、hair_en、props_en、lighting_en 必须是纯英文。
+   - action_en 必须写清人物当时正在做什么、手部/身体动作和互动对象。
+   - scene_en 必须写清具体地点、周围环境、关键道具和时间氛围。
+   - time 是强约束：06:00-11:59 必须是 morning/daylight 氛围；12:00-17:59 必须是 midday/afternoon daylight 氛围；不能因为“街区/打卡/散步”等活动就写成 night/evening/sunset/neon/street lamps。
+   - outfit_en 必须写清上装、下装/裙装、鞋子、配饰、颜色、材质/版型；如果当天整套穿搭不变，也要在每个时间段重复写清。
+   - hair_en 必须写清具体发型和发饰/整理状态；不要只写 "nice hair"、"beautiful hairstyle" 等空话。
+   - 后续生图会严格采用对应 time 的 schedule_details，不再用代码随机补动作、场景、服饰或发型。
+
 ⚠️ schedule 必须覆盖早/中/晚三个时间段，每个时间段至少 1 条：
    - 早：06:00-11:59
    - 中：12:00-17:59
    - 晚：18:00-23:59
-   如果只有 5 条，也必须至少包含 1 条早、1 条中、1 条晚；不要把所有安排都集中在上午和下午。
+   即使只输出 6 条，也必须至少包含 1 条早、1 条中、1 条晚；不要把所有安排都集中在上午和下午。
    schedule_prompt 的时间必须和 schedule 一一对应，也要覆盖同样的早/中/晚时间段。
 
 ⚠️ caption 是 WebUI「今日穿搭方案」里的“小心思”，不是单张照片配文。
@@ -223,6 +244,19 @@ JSON 格式（字段名固定，value 替换为实际内容）：
     "outfit": "风格：xxx \\n发型：xxx \\n穿搭：xxx \\n动作：xxx \\n场景：xxx",
     "schedule": "HH:mm 中文活动描述\\nHH:mm 中文活动描述\\n...",
     "schedule_prompt": "HH:mm English activity\\nHH:mm English activity\\n...",
+    "schedule_details": [
+        {{
+            "time": "HH:mm",
+            "activity_zh": "中文活动描述",
+            "activity_en": "English activity",
+            "action_en": "specific body and hand action in English",
+            "scene_en": "specific location, surroundings, props, and time mood in English",
+            "outfit_en": "specific outfit, shoes, accessories, colors, materials, silhouette in English",
+            "hair_en": "specific hairstyle and hair accessory/status in English",
+            "props_en": "optional relevant props in English",
+            "lighting_en": "optional lighting and ambience in English"
+        }}
+    ],
     "prompt": "English prompt with hairstyle, outfit details, pose, scene, lighting...",
     "caption": "{character_name}自然想着今天想怎么过的小心思。",
     "outfit_keywords": "JK uniform, pleated skirt, white blouse, red ribbon, loafers",
@@ -279,6 +313,17 @@ JSON 格式（字段名固定，value 替换为实际内容）：
             return False
         required = ("风格", "发型", "穿搭", "动作", "场景")
         return all(re.search(fr'{name}[：:]\s*[\u4e00-\u9fff]', outfit or "") for name in required)
+
+    @staticmethod
+    def _normalize_hhmm(value: str) -> str:
+        match = re.match(r'\s*(\d{1,2}):(\d{2})\s*$', str(value or ""))
+        if not match:
+            return ""
+        hour = int(match.group(1))
+        minute = int(match.group(2))
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            return ""
+        return f"{hour:02d}:{minute:02d}"
 
     @staticmethod
     def _time_to_minutes(value: str) -> Optional[int]:
@@ -348,6 +393,117 @@ JSON 格式（字段名固定，value 替换为实际内容）：
             if 0 <= hour <= 23 and 0 <= minute <= 59:
                 items.append((f"{hour:02d}:{minute:02d}", match.group(3).strip()))
         return items
+
+    def _validate_schedule_alignment(self, schedule: str, schedule_prompt: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]], str]:
+        display_items = self._schedule_plan_items(schedule)
+        prompt_items = self._schedule_plan_items(schedule_prompt)
+        if not (6 <= len(display_items) <= 8):
+            return display_items, prompt_items, f"schedule 条数必须 6-8 条，实际 {len(display_items)}"
+        if len(display_items) != len(prompt_items):
+            return display_items, prompt_items, (
+                f"schedule_prompt 条数必须和 schedule 一致: "
+                f"display={len(display_items)}, prompt={len(prompt_items)}"
+            )
+        display_times = [item[0] for item in display_items]
+        prompt_times = [item[0] for item in prompt_items]
+        if display_times != prompt_times:
+            return display_items, prompt_items, f"schedule 和 schedule_prompt 时间不一致: {display_times} != {prompt_times}"
+        if self._contains_cjk(schedule_prompt):
+            return display_items, prompt_items, "schedule_prompt 必须是纯英文，不能包含中文"
+        for idx, (_time_text, activity) in enumerate(display_items, start=1):
+            if not self._contains_cjk(activity):
+                return display_items, prompt_items, f"schedule 第 {idx} 条活动必须是中文"
+        for idx, (_time_text, activity) in enumerate(prompt_items, start=1):
+            if not activity or self._contains_cjk(activity):
+                return display_items, prompt_items, f"schedule_prompt 第 {idx} 条活动必须是纯英文"
+        return display_items, prompt_items, ""
+
+    def _normalize_schedule_details(
+        self,
+        raw_details,
+        display_items: list[tuple[str, str]],
+        prompt_items: list[tuple[str, str]],
+    ) -> tuple[list[dict], str]:
+        if not isinstance(raw_details, list):
+            return [], "schedule_details 必须是数组"
+        if len(raw_details) != len(display_items):
+            return [], f"schedule_details 条数必须和 schedule 一致: details={len(raw_details)}, schedule={len(display_items)}"
+
+        prompt_activity_by_time = {time_text: activity for time_text, activity in prompt_items}
+        normalized = []
+        for idx, (expected_time, _display_activity) in enumerate(display_items):
+            item = raw_details[idx]
+            if not isinstance(item, dict):
+                return [], f"schedule_details 第 {idx + 1} 条必须是对象"
+
+            actual_time = self._normalize_hhmm(item.get("time", ""))
+            if actual_time != expected_time:
+                return [], f"schedule_details 第 {idx + 1} 条时间必须是 {expected_time}，实际 {item.get('time', '')}"
+
+            detail = {"time": expected_time}
+            for field in SCHEDULE_DETAIL_REQUIRED_FIELDS:
+                if field == "time":
+                    continue
+                value = re.sub(r"\s+", " ", str(item.get(field, ""))).strip()
+                if not value:
+                    return [], f"schedule_details 第 {idx + 1} 条缺少 {field}"
+                detail[field] = value
+
+            if not self._contains_cjk(detail["activity_zh"]):
+                return [], f"schedule_details 第 {idx + 1} 条 activity_zh 必须是中文"
+
+            english_fields = ("activity_en", "action_en", "scene_en", "outfit_en", "hair_en")
+            for field in english_fields:
+                if self._contains_cjk(detail[field]):
+                    return [], f"schedule_details 第 {idx + 1} 条 {field} 必须是纯英文"
+
+            for optional_field in ("props_en", "lighting_en"):
+                value = re.sub(r"\s+", " ", str(item.get(optional_field, ""))).strip()
+                if value:
+                    if self._contains_cjk(value):
+                        return [], f"schedule_details 第 {idx + 1} 条 {optional_field} 必须是纯英文"
+                    detail[optional_field] = value
+
+            time_conflict = self._schedule_detail_time_conflict(expected_time, detail)
+            if time_conflict:
+                return [], f"schedule_details 第 {idx + 1} 条时间氛围冲突: {time_conflict}"
+
+            if prompt_activity_by_time.get(expected_time) and not detail.get("activity_en"):
+                return [], f"schedule_details 第 {idx + 1} 条 activity_en 不能为空"
+
+            normalized.append(detail)
+
+        return normalized, ""
+
+    @staticmethod
+    def _schedule_detail_time_conflict(time_text: str, detail: dict) -> str:
+        try:
+            hour = int(str(time_text).split(":", 1)[0])
+        except (TypeError, ValueError):
+            return ""
+        text = " ".join(str(detail.get(field, "")) for field in ("activity_en", "action_en", "scene_en", "props_en", "lighting_en")).lower()
+        if not text:
+            return ""
+        if 6 <= hour < 17:
+            conflict_terms = (
+                " at night",
+                "nighttime",
+                "night life",
+                "nightlife",
+                " in the evening",
+                "during the evening",
+                "after dark",
+                " at dusk",
+                " at sunset",
+                "neon-lit",
+                "neon light",
+                "street lamp",
+                "streetlight",
+            )
+            for term in conflict_terms:
+                if term in text:
+                    return f"{time_text} 是白天时段，但明细包含 {term.strip()}"
+        return ""
 
     @staticmethod
     def _caption_activity_label(activity: str, limit: int = 18) -> str:
@@ -533,6 +689,13 @@ JSON 格式（字段名固定，value 替换为实际内容）：
             if not schedule_display or not schedule_prompt or not self._contains_cjk(schedule_display):
                 logger.warning(f"日程字段不完整或展示日程非中文 (attempt {attempt+1})")
                 continue
+            display_items, prompt_items, alignment_error = self._validate_schedule_alignment(
+                schedule_display,
+                schedule_prompt,
+            )
+            if alignment_error:
+                logger.warning(f"日程/生图日程结构不合格 (attempt {attempt+1}): {alignment_error}")
+                continue
             if base_style not in BASE_STYLE_OPTIONS:
                 logger.warning(f"base_style 无效 (attempt {attempt+1}): {base_style}")
                 continue
@@ -546,6 +709,14 @@ JSON 格式（字段名固定，value 替换为实际内容）：
                 continue
             if not self._valid_display_outfit(outfit_display):
                 logger.warning(f"outfit 展示字段不完整或非中文 (attempt {attempt+1})")
+                continue
+            schedule_details, detail_error = self._normalize_schedule_details(
+                data.get("schedule_details"),
+                display_items,
+                prompt_items,
+            )
+            if detail_error:
+                logger.warning(f"schedule_details 不合格 (attempt {attempt+1}): {detail_error}")
                 continue
 
             persona = self._runtime_persona()
@@ -561,6 +732,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
                 outfit=outfit_display,
                 schedule=schedule_display,
                 schedule_prompt=schedule_prompt,
+                schedule_details=schedule_details,
                 prompt=llm_prompt,
                 caption=caption,
                 status="ok",

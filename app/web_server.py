@@ -2,6 +2,7 @@
 import asyncio
 import fcntl
 import hashlib
+import ipaddress
 import json
 import logging
 import os
@@ -16,9 +17,11 @@ from typing import Optional
 from urllib.parse import unquote
 import uuid
 
+import aiohttp
 from aiohttp import web
 from PIL import Image
 
+from picxazz_sync import PicxazzSyncClient
 from store import ScheduleStore
 from settings import (
     DEFAULT_OUTFIT_STYLES,
@@ -67,6 +70,19 @@ REFERENCE_MIME_EXTENSIONS = {
     "image/gif": ".gif",
 }
 BUILTIN_REFERENCE_MAP = builtin_reference_map()
+UPDATE_PROTECTED_EXACT = (
+    ".env",
+    "config/config.yaml",
+    "config/local.yaml",
+    "docker-compose.override.yml",
+)
+UPDATE_PROTECTED_PREFIXES = (
+    "data/",
+    "app/data/",
+    "logs/",
+    "app/references/uploads/",
+)
+LOCALHOST_NAMES = {"localhost", "127.0.0.1", "::1", "[::1]"}
 
 
 class GalleryServer:
@@ -86,6 +102,7 @@ class GalleryServer:
         self.reference_dir = resolve_reference_dir(config, data_dir, config_path)
         self.uploaded_reference_dir = os.path.join(self.reference_dir, "uploads")
         self.legacy_uploaded_reference_dir = os.path.join(self.app_reference_dir, "uploads")
+        self.picxazz_sync = PicxazzSyncClient(config, data_dir)
         self._image_info_cache = {}
         os.makedirs(self.default_image_dir, exist_ok=True)
         os.makedirs(self.image_dir, exist_ok=True)
@@ -107,16 +124,48 @@ class GalleryServer:
         self._setup_routes()
 
     @staticmethod
+    def _is_local_request(request: web.Request) -> bool:
+        remote = request.remote or ""
+        if not remote and request.transport:
+            peer = request.transport.get_extra_info("peername")
+            if isinstance(peer, tuple) and peer:
+                remote = str(peer[0])
+        remote = str(remote or "").strip().strip("[]")
+        if remote in LOCALHOST_NAMES:
+            return True
+        try:
+            return ipaddress.ip_address(remote).is_loopback
+        except ValueError:
+            host = str(request.host or "").split(":", 1)[0].strip("[]").lower()
+            return host in LOCALHOST_NAMES
+
+    @staticmethod
+    def _requires_local_or_key(request: web.Request) -> bool:
+        if not request.path.startswith("/api/"):
+            return False
+        if request.method.upper() in {"GET", "HEAD", "OPTIONS"}:
+            return False
+        return True
+
+    @staticmethod
     @web.middleware
     async def api_key_middleware(request: web.Request, handler):
-        """X-API-Key authentication for /api/ routes (skip if GALLERY_API_KEY unset)."""
+        """Protect API routes with X-API-Key; local writes may run without a key."""
         path = request.path
         if path.startswith("/api/"):
             api_key = os.environ.get("GALLERY_API_KEY", "")
-            if api_key:  # Only enforce if key is set and non-empty
-                provided = request.headers.get("X-API-Key", "") or request.query.get("key", "")
+            provided = request.headers.get("X-API-Key", "") or request.query.get("key", "")
+            if api_key:
                 if provided != api_key:
                     return web.json_response({"error": "unauthorized"}, status=401)
+            elif GalleryServer._requires_local_or_key(request) and not GalleryServer._is_local_request(request):
+                return web.json_response(
+                    {
+                        "error": "local_or_api_key_required",
+                        "message": "远程写操作需要配置 GALLERY_API_KEY 并通过 X-API-Key 调用。",
+                    },
+                    status=403,
+                )
         return await handler(request)
 
     def _setup_routes(self):
@@ -147,14 +196,20 @@ class GalleryServer:
         self.app.router.add_post("/api/images/cleanup", self.handle_cleanup_images)
         self.app.router.add_post("/api/images/{img_id}/reroll", self.handle_reroll_image)
         self.app.router.add_post("/api/images/{img_id}/favorite", self.handle_toggle_favorite)
+        self.app.router.add_post("/api/integrations/picxazz/sync-favorites", self.handle_sync_picxazz_favorites)
         self.app.router.add_delete("/api/images/{img_id}", self.handle_delete_image)
         self.app.router.add_get("/api/health", self.handle_health)
         self.app.router.add_get("/api/config/keys", self.handle_get_keys)
         self.app.router.add_post("/api/config/keys", self.handle_save_keys)
         self.app.router.add_get("/api/models", self.handle_models)
+        self.app.router.add_get("/api/image-models", self.handle_image_models)
         # Hermes 纯净生图 API（不注入 persona）
         self.app.router.add_post("/api/hermes/text-to-image", self.handle_hermes_text_to_image)
         self.app.router.add_post("/api/hermes/image-to-image", self.handle_hermes_image_to_image)
+        self.app.router.add_get("/api/hermes/check-update", self.handle_hermes_check_update)
+        self.app.router.add_post("/api/hermes/check-update", self.handle_hermes_check_update)
+        self.app.router.add_get("/api/hermes/update", self.handle_hermes_check_update)
+        self.app.router.add_post("/api/hermes/update", self.handle_hermes_update)
         # 版本管理
         self.app.router.add_get("/api/version", self.handle_version)
         self.app.router.add_post("/api/check-update", self.handle_check_update)
@@ -396,6 +451,108 @@ class GalleryServer:
             logger.error(f"Load API keys config error: {e}")
             return {}
 
+    @staticmethod
+    def _store_local_url_override(keys_config: dict, key: str, raw_value, default_value: str):
+        value = str(raw_value or "").strip()
+        default_value = str(default_value or "").strip()
+        had_local = bool(str(keys_config.get(key, "") or "").strip())
+        if value:
+            if value != default_value or had_local:
+                keys_config[key] = value
+        else:
+            keys_config.pop(key, None)
+
+    @staticmethod
+    def _drop_redundant_local_url_override(keys_config: dict, key: str, default_value: str):
+        value = str(keys_config.get(key, "") or "").strip()
+        default_value = str(default_value or "").strip()
+        if value and default_value and value == default_value:
+            keys_config.pop(key, None)
+
+    @staticmethod
+    def _configured_image_base_url(url: str) -> str:
+        base = str(url or "").strip().rstrip("/")
+        for suffix in ("/chat/completions", "/images/generations", "/images/edits"):
+            if base.endswith(suffix):
+                return base[: -len(suffix)]
+        return base
+
+    @classmethod
+    def _configured_image_generations_url(cls, url: str) -> str:
+        base = cls._configured_image_base_url(url)
+        return f"{base}/images/generations" if base else ""
+
+    @classmethod
+    def _gpt_image_endpoint_identity(cls, url: str) -> tuple[str, str]:
+        raw = str(url or "").strip().rstrip("/")
+        if not raw:
+            return ("", "")
+        if raw.endswith("/chat/completions"):
+            return ("chat", cls._configured_image_base_url(raw))
+        return ("images", cls._configured_image_base_url(raw))
+
+    @classmethod
+    def _drop_redundant_gpt_url_override(cls, keys_config: dict, default_value: str):
+        value = str(keys_config.get("gpt_base_url", "") or "").strip()
+        if value and cls._gpt_image_endpoint_identity(value) == cls._gpt_image_endpoint_identity(default_value):
+            keys_config.pop("gpt_base_url", None)
+
+    @classmethod
+    def _store_gpt_url_override(cls, keys_config: dict, raw_value, default_value: str):
+        value = str(raw_value or "").strip()
+        if not value:
+            keys_config.pop("gpt_base_url", None)
+            return
+        if cls._gpt_image_endpoint_identity(value) == cls._gpt_image_endpoint_identity(default_value):
+            keys_config.pop("gpt_base_url", None)
+            return
+        keys_config["gpt_base_url"] = value
+
+    @staticmethod
+    def _normalize_image_model_id(value) -> str:
+        model = str(value or "").strip()
+        if model.lower() in {"default", "auto", "current"}:
+            return ""
+        if not model:
+            return ""
+        if len(model) > 120 or not re.match(r"^[A-Za-z0-9._:/+-]+$", model):
+            return ""
+        return model
+
+    @staticmethod
+    def _is_image_model_id(model: str) -> bool:
+        lower = str(model or "").strip().lower()
+        if not lower or "video" in lower:
+            return False
+        return "image" in lower or "imagine" in lower
+
+    def _effective_gpt_image_model(self, keys_config: Optional[dict] = None) -> tuple[str, str]:
+        keys_config = keys_config if isinstance(keys_config, dict) else self._load_api_keys_config()
+        image_config = self.config.get("image_gen", {}) if isinstance(self.config.get("image_gen"), dict) else {}
+        default_model = str(image_config.get("gpt_model", "") or "").strip()
+        local_model = self._normalize_image_model_id(keys_config.get("gpt_model", ""))
+        return local_model or default_model, default_model
+
+    def _effective_gpt_image_base_url(self, keys_config: Optional[dict] = None) -> str:
+        keys_config = keys_config if isinstance(keys_config, dict) else self._load_api_keys_config()
+        image_config = self.config.get("image_gen", {}) if isinstance(self.config.get("image_gen"), dict) else {}
+        raw_default = str(image_config.get("gpt_base_url", "") or "").strip()
+        configured = self._configured_image_generations_url(raw_default)
+        local = str(keys_config.get("gpt_base_url", "") or "").strip()
+        if (
+            local == raw_default
+            or self._gpt_image_endpoint_identity(local) == self._gpt_image_endpoint_identity(configured)
+        ):
+            local = ""
+        return local or os.environ.get("GPT_IMAGE_BASE_URL", "") or configured
+
+    @classmethod
+    def _models_base_url(cls, url: str) -> str:
+        base = cls._configured_image_base_url(url)
+        if base and not base.endswith("/v1"):
+            base = f"{base}/v1"
+        return base
+
     def _resolve_image_dir(self) -> str:
         image_dir = resolve_image_dir(self.config, self.data_dir)
         if os.path.exists(image_dir) and not os.path.isdir(image_dir):
@@ -554,7 +711,14 @@ class GalleryServer:
 
     def _has_image_generation_key(self) -> bool:
         keys = self._load_api_keys_config()
-        if keys.get("gpt_key") or os.getenv("GPT_IMAGE_API_KEY"):
+        image_config = self.config.get("image_gen", {}) if isinstance(self.config.get("image_gen"), dict) else {}
+        if (
+            keys.get("gpt_base_url")
+            or os.getenv("GPT_IMAGE_BASE_URL")
+            or image_config.get("gpt_base_url")
+            or keys.get("gpt_key")
+            or os.getenv("GPT_IMAGE_API_KEY")
+        ):
             return True
         plugin_config = self._load_plugin_config()
         gitee_keys = plugin_config.get("gitee_config", {}).get("api_keys", [])
@@ -578,21 +742,24 @@ class GalleryServer:
         clean = str(path or "").strip().replace("\\", "/").lstrip("./")
         if not clean or clean.startswith("../") or "/../" in clean:
             return True
-        protected_exact = {
-            ".env",
-            "config/config.yaml",
-            "config/local.yaml",
-            "docker-compose.override.yml",
-        }
-        protected_prefixes = (
-            "data/",
-            "app/data/",
-            "logs/",
-            "app/references/uploads/",
-        )
-        if clean in protected_exact:
+        if clean in UPDATE_PROTECTED_EXACT:
             return True
-        return any(clean.startswith(prefix) for prefix in protected_prefixes)
+        return any(clean.startswith(prefix) for prefix in UPDATE_PROTECTED_PREFIXES)
+
+    @staticmethod
+    def _update_protection_summary() -> dict:
+        return {
+            "protected_exact": list(UPDATE_PROTECTED_EXACT),
+            "protected_prefixes": list(UPDATE_PROTECTED_PREFIXES),
+            "preserves": [
+                "API Key / Base URL / appearance / persona_source",
+                "config/config.yaml",
+                "data/ runtime files",
+                "gallery images",
+                "uploaded reference images",
+                "logs",
+            ],
+        }
 
     @staticmethod
     def _git_run(args: list[str], cwd: Path, env: dict[str, str], timeout: int = 60) -> subprocess.CompletedProcess:
@@ -617,6 +784,22 @@ class GalleryServer:
             raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "无法读取远端改动列表")
         files = [line.strip() for line in result.stdout.splitlines() if line.strip()]
         return [path for path in files if not self._is_protected_update_path(path)]
+
+    @staticmethod
+    def _body_bool(body: dict, key: str, default: bool = False) -> bool:
+        if not isinstance(body, dict) or key not in body:
+            return default
+        value = body.get(key)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        text = str(value or "").strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off", ""}:
+            return False
+        return default
 
     @staticmethod
     def _clamp_photo_job_limit(value) -> int:
@@ -853,10 +1036,18 @@ class GalleryServer:
 
         image_config = self.config.get("image_gen", {})
         llm_config = self.config.get("llm", {})
+        raw_default_gpt_base_url = str(image_config.get("gpt_base_url", "") or "").strip()
+        default_gpt_base_url = self._configured_image_generations_url(raw_default_gpt_base_url)
         local_gpt_base_url = str(keys_config.get("gpt_base_url", "") or "").strip()
-        default_gpt_base_url = str(image_config.get("gpt_base_url", "") or "").strip()
-        local_cpa_url = str(keys_config.get("cpa_url", "") or "").strip()
+        if (
+            local_gpt_base_url == raw_default_gpt_base_url
+            or self._gpt_image_endpoint_identity(local_gpt_base_url) == self._gpt_image_endpoint_identity(default_gpt_base_url)
+        ):
+            local_gpt_base_url = ""
         default_cpa_url = str(llm_config.get("base_url", "") or "").strip()
+        local_cpa_url = str(keys_config.get("cpa_url", "") or "").strip()
+        if local_cpa_url == default_cpa_url:
+            local_cpa_url = ""
         persona = load_runtime_persona(self.config, self.data_dir)
         persona_source = normalize_persona_source(keys_config.get("persona_source"))
         local_image_dir = normalize_image_dir(keys_config.get("image_dir"), self.data_dir)
@@ -934,6 +1125,78 @@ class GalleryServer:
             if match:
                 parts[match.group(1)] = match.group(2).strip()
         return parts
+
+    @staticmethod
+    def _compact_outfit_text(text: str, max_items: int = 4) -> str:
+        """Return a short gallery-facing outfit summary."""
+        text = re.sub(r"\s+", "", str(text or "")).strip(" ，,。；;")
+        if not text:
+            return ""
+        if len(text) <= 42 and not any(marker in text for marker in ("上装", "下装", "脚穿", "整体", "细节")):
+            return text
+
+        item_markers = (
+            "针织衫", "开衫", "衬衫", "吊带", "背心", "T恤", "毛衣", "卫衣", "外套",
+            "连衣裙", "百褶长裙", "百褶裙", "半身裙", "长裙", "短裙", "裙",
+            "慢跑裤", "工装裤", "牛仔裤", "长裤", "短裤", "裤",
+            "平底鞋", "运动鞋", "乐福鞋", "玛丽珍鞋", "高跟鞋", "靴", "鞋",
+            "锁骨链", "项链", "耳环", "耳饰", "手链", "发带", "发夹", "包",
+        )
+        skip_markers = ("整体", "细节", "随着", "摇曳", "设计")
+        cleanup_patterns = (
+            r"^(?:上装|上身|内搭|外搭|下装|裙装|脚上|脚|脖子上|颈间|耳朵上|手腕上|腰间|头上|领口处)",
+            r"^(?:是|有|搭配|配|脚穿|穿着|身穿|佩戴|戴着|选择)",
+            r"^(?:一件|一条|一双|一款|一枚|一个)",
+            r"(?:修身剪裁的|精致的|极细的|充满高级感|慵懒的精致)",
+        )
+
+        items = []
+        for raw_part in re.split(r"[，,。；;]", text):
+            part = raw_part.strip()
+            if not part:
+                continue
+            if any(marker in part for marker in skip_markers) and not any(marker in part for marker in ("鞋", "裙", "衫", "裤", "链", "包")):
+                continue
+            if not any(marker in part for marker in item_markers):
+                continue
+            for pattern in cleanup_patterns:
+                part = re.sub(pattern, "", part)
+            part = part.strip(" ，,。；;的")
+            part = re.sub(r"^(?:搭配|配|是|有|穿|戴|佩戴)", "", part).strip("的")
+            if not part or len(part) > 18:
+                for marker in item_markers:
+                    idx = part.find(marker)
+                    if idx > 0:
+                        start = max(0, idx - 8)
+                        part = part[start:idx + len(marker)]
+                        break
+            if part and not any(part in existing or existing in part for existing in items):
+                items.append(part)
+            if len(items) >= max_items:
+                break
+        if items:
+            return "、".join(items)
+        return text[:42].rstrip("，,。；;、") + ("…" if len(text) > 42 else "")
+
+    def _compact_outfit_for_display(self, outfit_raw: str) -> str:
+        parts = self._parse_outfit_parts(outfit_raw)
+        clothing = parts.get("穿搭", "")
+        if not clothing:
+            return outfit_raw
+        compact = self._compact_outfit_text(clothing)
+        if not compact or compact == clothing:
+            return outfit_raw
+        prefix_parts = []
+        for key in ("风格", "发型"):
+            value = parts.get(key)
+            if value:
+                prefix_parts.append(f"{key}：{value}")
+        prefix_parts.append(f"穿搭：{compact}")
+        for key in ("动作", "场景"):
+            value = parts.get(key)
+            if value:
+                prefix_parts.append(f"{key}：{value}")
+        return " \n".join(prefix_parts)
 
     def _enrich_outfit_parts_from_entry(self, parts: dict, entry: dict) -> dict:
         """Fill missing outfit details from a generated image prompt."""
@@ -1148,7 +1411,7 @@ class GalleryServer:
         base_style = (normalized.get("base_style") or "").strip()
         raw_outfit_style = (normalized.get("outfit_style") or "").strip()
 
-        if raw_outfit_style in {"cool", "girly", "sweet"} or (source in {"chat", "custom"} and base_style in {"cool", "girly", "sweet"}):
+        if raw_outfit_style in {"cool", "girly", "sweet"} or (source in {"chat", "custom", "hermes_api"} and base_style in {"cool", "girly", "sweet"}):
             normalized["outfit_style"] = "自定义"
             outfit = normalized.get("outfit") or ""
             if outfit:
@@ -1156,6 +1419,23 @@ class GalleryServer:
 
         if metadata and img_file:
             meta_entry = metadata.get(img_file, {}) or {}
+            if meta_entry.get("source") == "hermes_api" or img_file.startswith("hermes_"):
+                normalized["source"] = "hermes_api"
+                source = "hermes_api"
+            for field in (
+                "prompt_mode",
+                "pure_prompt",
+                "custom_ref_mode",
+                "requested_generation_mode",
+                "generation_mode",
+                "ref_image",
+                "requested_ref_image",
+                "base_style",
+                "model_name",
+                "caption",
+            ):
+                if field in meta_entry and (field not in normalized or normalized.get(field) in ("", None)):
+                    normalized[field] = meta_entry.get(field)
             meta_prompt = meta_entry.get("prompt", "")
             current_prompt = normalized.get("prompt", "") or ""
             if meta_prompt and len(meta_prompt) > len(current_prompt):
@@ -1182,6 +1462,11 @@ class GalleryServer:
             if repaired:
                 style_name = normalized.get("outfit_style") or "自定义"
                 normalized["outfit"] = f"风格：{style_name} 穿搭：{repaired}"
+
+        outfit_for_display = self._compact_outfit_for_display(normalized.get("outfit", ""))
+        if outfit_for_display and outfit_for_display != normalized.get("outfit", ""):
+            normalized.setdefault("outfit_full", normalized.get("outfit", ""))
+            normalized["outfit"] = outfit_for_display
 
         return normalized
 
@@ -1266,6 +1551,20 @@ class GalleryServer:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, path)
+
+    def _update_image_metadata_entry(self, filename: str, meta_entry: dict):
+        """Atomically merge one metadata entry without clobbering concurrent writes."""
+        if not filename:
+            raise ValueError("filename_required")
+        lock_path = os.path.join(self.data_dir, ".image_metadata.lock")
+        with open(lock_path, "w") as lf:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+            try:
+                metadata = self._load_image_metadata()
+                metadata[filename] = meta_entry
+                self._save_image_metadata(metadata)
+            finally:
+                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
     def _iter_gallery_image_files(self) -> dict[str, str]:
         files = {}
@@ -1433,22 +1732,34 @@ class GalleryServer:
 
         prompt = meta.get("prompt", "")
         model_name = meta.get("model") or meta.get("model_name", "")
-        outfit_label = "聊天图生图" if "img2img" in prompt.lower() or "参考这张图" in prompt else "聊天生图"
+        source = "hermes_api" if meta.get("source") == "hermes_api" or filename.startswith("hermes_") else "chat"
+        mode = str(meta.get("generation_mode") or meta.get("requested_generation_mode") or "").lower()
+        is_img2img = mode == "img2img" or "img2img" in prompt.lower() or "参考这张图" in prompt
+        outfit_label = "Hermes 图生图" if source == "hermes_api" and is_img2img else (
+            "Hermes 文生图" if source == "hermes_api" else (
+                "聊天图生图" if is_img2img else "聊天生图"
+            )
+        )
         return {
             "id": filename,
             "date": date_text,
             "time": time_text,
             "model_name": self._display_model_name(model_name),
-            "base_style": "",
+            "base_style": str(meta.get("base_style") or "").strip(),
             "outfit_style": "自定义",
             "outfit": f"风格：自定义 穿搭：{outfit_label}",
             "image_path": f"/images/{filename}",
             "image_filename": filename,
             "prompt": prompt,
-            "caption": "",
+            "caption": str(meta.get("caption") or "").strip(),
             "favorite": False,
             "status": "ok",
-            "source": "chat",
+            "source": source,
+            "prompt_mode": meta.get("prompt_mode", "pure" if source == "hermes_api" else ""),
+            "pure_prompt": meta.get("pure_prompt", True if source == "hermes_api" else False),
+            "custom_ref_mode": meta.get("custom_ref_mode", "reference" if is_img2img else "text2img"),
+            "generation_mode": mode,
+            "requested_generation_mode": meta.get("requested_generation_mode", ""),
             "metadata_only": True,
         }
 
@@ -1509,21 +1820,38 @@ class GalleryServer:
                         with open(api_keys_path, 'r') as f:
                             keys_config = json.load(f)
 
+                    image_config = self.config.get("image_gen", {}) if isinstance(self.config.get("image_gen"), dict) else {}
+                    llm_config = self.config.get("llm", {}) if isinstance(self.config.get("llm"), dict) else {}
+                    raw_default_gpt_base_url = str(image_config.get("gpt_base_url", "") or "").strip()
+                    default_gpt_base_url = self._configured_image_generations_url(raw_default_gpt_base_url)
+                    self._drop_redundant_local_url_override(
+                        keys_config,
+                        "gpt_base_url",
+                        raw_default_gpt_base_url,
+                    )
+                    self._drop_redundant_gpt_url_override(keys_config, default_gpt_base_url)
+                    self._drop_redundant_local_url_override(
+                        keys_config,
+                        "cpa_url",
+                        llm_config.get("base_url", ""),
+                    )
+
                     # 更新配置（只更新提供的字段）
                     if "gpt_key" in body and body["gpt_key"]:
                         keys_config["gpt_key"] = body["gpt_key"]
                     if "gpt_base_url" in body:
-                        gpt_base_url = str(body.get("gpt_base_url") or "").strip()
-                        if gpt_base_url:
-                            keys_config["gpt_base_url"] = gpt_base_url
-                        else:
-                            keys_config.pop("gpt_base_url", None)
+                        self._store_gpt_url_override(
+                            keys_config,
+                            body.get("gpt_base_url"),
+                            default_gpt_base_url,
+                        )
                     if "cpa_url" in body:
-                        cpa_url = str(body.get("cpa_url") or "").strip()
-                        if cpa_url:
-                            keys_config["cpa_url"] = cpa_url
-                        else:
-                            keys_config.pop("cpa_url", None)
+                        self._store_local_url_override(
+                            keys_config,
+                            "cpa_url",
+                            body.get("cpa_url"),
+                            llm_config.get("base_url", ""),
+                        )
                     if "cpa_key" in body and body["cpa_key"]:
                         keys_config["cpa_key"] = body["cpa_key"]
                     # appearance: always update (empty string = remove local appearance)
@@ -1620,35 +1948,103 @@ class GalleryServer:
             logger.error(f"Save keys error: {e}")
             return web.json_response({"error": str(e)}, status=500)
 
+    async def _fetch_model_ids(self, base_url: str, api_key: str = "", timeout_seconds: int = 6) -> tuple[list[str], str]:
+        endpoint = f"{base_url.rstrip('/')}/models"
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+        async with aiohttp.ClientSession(trust_env=True, timeout=timeout) as session:
+            async with session.get(endpoint, headers=headers) as resp:
+                if resp.status != 200:
+                    return [], f"returned {resp.status}"
+                data = await resp.json()
+        models = []
+        for item in data.get("data", []):
+            model = item.get("id", "") if isinstance(item, dict) else item
+            model = self._normalize_image_model_id(model)
+            if model:
+                models.append(model)
+        return sorted(models), ""
+
     async def handle_models(self, request: web.Request):
         """获取 CPA 可用模型列表"""
         try:
-            import requests
             request_config = llm_request_config(self.config, self.data_dir)
-            base_url = request_config["base_url"].rstrip("/")
+            base_url = self._models_base_url(request_config["base_url"])
             cpa_key = request_config["api_key"]
             if not base_url:
                 return web.json_response({"models": [], "error": "CPA URL 未配置"})
 
-            if base_url.endswith("/chat/completions"):
-                base_url = base_url[: -len("/chat/completions")]
-            if not base_url.endswith("/v1"):
-                base_url = f"{base_url}/v1"
-
-            headers = {}
-            if cpa_key:
-                headers["Authorization"] = f"Bearer {cpa_key}"
-
-            resp = requests.get(f"{base_url}/models", headers=headers, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json()
-                models = sorted([m["id"] for m in data.get("data", [])])
-                return web.json_response({"models": models})
-            else:
-                return web.json_response({"models": [], "error": f"CPA returned {resp.status_code}"})
+            models, error = await self._fetch_model_ids(base_url, cpa_key, timeout_seconds=5)
+            if error:
+                return web.json_response({"models": [], "error": f"CPA {error}"})
+            return web.json_response({"models": models})
         except Exception as e:
             logger.error(f"Get models error: {e}")
             return web.json_response({"models": [], "error": str(e)})
+
+    async def handle_image_models(self, request: web.Request):
+        """获取 GPT Image/CPA/AxonHub 可用生图模型列表"""
+        keys_config = self._load_api_keys_config()
+        current_model, default_model = self._effective_gpt_image_model(keys_config)
+        fallback_models = [
+            model for model in (
+                current_model,
+                default_model,
+                "gpt-image-2",
+            )
+            if model
+        ]
+        models = []
+        source_errors = []
+        source_status = []
+        try:
+            gpt_key = (
+                keys_config.get("gpt_key", "")
+                or os.getenv("GPT_IMAGE_API_KEY", "")
+                or keys_config.get("cpa_key", "")
+                or os.getenv("CPA_API_KEY", "")
+            )
+            cpa_config = llm_request_config(self.config, self.data_dir)
+            sources = [
+                ("GPT Image", self._effective_gpt_image_base_url(keys_config), gpt_key),
+                ("CPA/AxonHub", cpa_config.get("base_url", ""), cpa_config.get("api_key", "")),
+            ]
+            seen_endpoints = set()
+            for label, raw_url, key in sources:
+                base_url = self._models_base_url(raw_url)
+                if not base_url:
+                    continue
+                endpoint = f"{base_url}/models"
+                if endpoint in seen_endpoints:
+                    continue
+                seen_endpoints.add(endpoint)
+                fetched_models, error = await self._fetch_model_ids(base_url, key, timeout_seconds=6)
+                if error:
+                    source_errors.append(f"{label} {error}")
+                    continue
+                source_count = 0
+                for model in fetched_models:
+                    if self._is_image_model_id(model):
+                        models.append(model)
+                        source_count += 1
+                source_status.append({"source": label, "url": base_url, "count": source_count})
+        except Exception as e:
+            logger.warning(f"Get image models error: {e}")
+            source_errors.append(str(e))
+
+        ordered = []
+        for model in [*fallback_models, *models]:
+            if model and model not in ordered:
+                ordered.append(model)
+        return web.json_response({
+            "models": ordered,
+            "current_model": current_model,
+            "default_model": default_model,
+            "sources": source_status,
+            "error": "；".join(source_errors),
+        })
 
     async def handle_today(self, request: web.Request):
         """获取今日数据 - 返回今日所有照片 + 日程信息"""
@@ -1659,7 +2055,7 @@ class GalleryServer:
             if not all_data:
                 return web.json_response({"status": "no_data", "date": today_str})
 
-            # 1. 获取日程信息（从日期 key 或图片条目）
+            # 1. 获取日程信息（只从日期日程条目读取，图片条目不承载全天计划）
             schedule_info = {}
             for key, e in all_data.items():
                 if key == today_str and self._has_usable_schedule(e):
@@ -1667,7 +2063,12 @@ class GalleryServer:
                     break
             if not schedule_info:
                 for key, e in all_data.items():
-                    if e.get("date") == today_str and self._has_usable_schedule(e):
+                    if (
+                        isinstance(e, dict)
+                        and not e.get("image_filename")
+                        and e.get("date") == today_str
+                        and self._has_usable_schedule(e)
+                    ):
                         schedule_info = e
                         break
 
@@ -1702,9 +2103,6 @@ class GalleryServer:
                         slot = -1
                     return (slot, _ts_key(p))
                 photos.sort(key=_photo_sort_key, reverse=True)
-                for p in photos:
-                    if not p.get("schedule") and schedule_info.get("schedule"):
-                        p["schedule"] = schedule_info["schedule"]
                 return web.json_response({
                     "date": today_str,
                     "photos": photos,
@@ -1737,19 +2135,19 @@ class GalleryServer:
             import re
             from datetime import datetime
 
-            # 查找今日日程（日期 key 或图片条目）
+            # 查找今日日程（只从日期日程条目读取，图片条目不承载全天计划）
             schedule_entry = None
             # 优先找日期 key（有 schedule 内容的）
             if today_str in all_data and self._has_usable_schedule(all_data[today_str]):
                 schedule_entry = all_data[today_str]
-            # 再找有 schedule 的图片条目
+            # 再找没有图片文件的日程条目
             if not schedule_entry:
                 for key, e in all_data.items():
                     if (
                         isinstance(e, dict)
+                        and not e.get("image_filename")
                         and e.get("date") == today_str
                         and self._has_usable_schedule(e)
-                        and self._is_today_photo_source(e.get("source", ""))
                     ):
                         schedule_entry = e
                         break
@@ -1885,6 +2283,23 @@ class GalleryServer:
             return ""
         return str(candidate) if candidate.is_file() else ""
 
+    def _safe_image_path_in_roots(self, raw_path: str, roots: tuple[str, ...]) -> str:
+        try:
+            candidate = Path(raw_path).resolve()
+            if not candidate.is_file() or not self._is_reference_image_file(str(candidate)):
+                return ""
+            for root in roots:
+                if not root:
+                    continue
+                try:
+                    candidate.relative_to(Path(root).resolve())
+                    return str(candidate)
+                except ValueError:
+                    continue
+        except Exception:
+            return ""
+        return ""
+
     def _migrate_legacy_uploaded_refs(self):
         if not os.path.isdir(self.legacy_uploaded_reference_dir):
             return
@@ -1951,13 +2366,26 @@ class GalleryServer:
                     return local_path
             return ""
 
+        if allow_any_path and ref_path.startswith("/images/"):
+            rel_path = ref_path.removeprefix("/images/")
+            local_path = self._safe_reference_path(self.image_dir, rel_path)
+            if local_path and self._is_reference_image_file(local_path):
+                return local_path
+            return ""
+
         if os.path.isabs(ref_path):
-            # 宽松模式：允许任意绝对路径（用于 generate-custom）
             if allow_any_path:
-                candidate = Path(ref_path).resolve()
-                if candidate.is_file() and self._is_reference_image_file(str(candidate)):
-                    return str(candidate)
-                return ""
+                return self._safe_image_path_in_roots(
+                    ref_path,
+                    (
+                        self.image_dir,
+                        self.default_image_dir,
+                        self.reference_dir,
+                        self.uploaded_reference_dir,
+                        self.app_reference_dir,
+                        self.legacy_uploaded_reference_dir,
+                    ),
+                )
 
             # 严格模式：必须在 references/ 目录下（用于 hermes/image-to-image）
             for base_dir in (self.reference_dir, self.app_reference_dir):
@@ -2060,6 +2488,34 @@ class GalleryServer:
     def _entry_sort_key(self, entry):
         """Sort key: date desc, then time desc."""
         return (entry.get("date", ""), entry.get("time", ""))
+
+    @staticmethod
+    def _normalize_api_source(*values) -> str:
+        """Normalize external API caller labels stored for gallery display."""
+        for value in values:
+            text = str(value or "").strip().lower()
+            if not text:
+                continue
+            compact = re.sub(r"[\s_-]+", "", text)
+            if compact in {"hermes", "hermesapi"} or "hermes" in text:
+                return "hermes"
+            if compact in {"custom", "customui", "galleryui", "browserui", "ui", "webui"}:
+                return "custom_ui"
+        return ""
+
+    @staticmethod
+    def _request_caption(body: dict) -> str:
+        """Read caller-provided copy that should be shown as gallery 小心思."""
+        if not isinstance(body, dict):
+            return ""
+        for key in ("caption", "thought", "small_thought", "copy", "copywriting", "message"):
+            value = body.get(key)
+            if value is None:
+                continue
+            text = re.sub(r"\r\n?", "\n", str(value)).strip()
+            if text:
+                return text
+        return ""
 
     async def handle_gallery(self, request: web.Request):
         """获取所有画廊条目"""
@@ -2328,135 +2784,369 @@ class GalleryServer:
             outfit = "elegant satin slip dress, sheer lace cardigan, delicate necklace, low heels"
         return activity, prompt, outfit
 
+    def _today_schedule_entry(self, today_str: str = "") -> dict:
+        today_str = today_str or date.today().isoformat()
+        try:
+            all_data = ScheduleStore(self.data_dir).load()
+        except Exception as e:
+            logger.error("Load today schedule for generate-now failed: %s", e)
+            return {}
+
+        daily = all_data.get(today_str)
+        if self._has_usable_schedule(daily):
+            return daily
+        for entry in all_data.values():
+            if (
+                isinstance(entry, dict)
+                and not entry.get("image_filename")
+                and entry.get("date") == today_str
+                and self._has_usable_schedule(entry)
+            ):
+                return entry
+        return {}
+
+    def _nearest_schedule_item(self, schedule_text: str, now: datetime) -> dict:
+        """Pick the schedule item closest to current clock time."""
+        target_minutes = now.hour * 60 + now.minute
+        candidates = []
+        for line in str(schedule_text or "").splitlines():
+            time_text, activity = self._parse_time_activity(line)
+            if not time_text or not activity:
+                continue
+            hour, minute = [int(part) for part in time_text.split(":", 1)]
+            slot_minutes = hour * 60 + minute
+            candidates.append({
+                "time": time_text,
+                "activity": activity,
+                "distance": abs(slot_minutes - target_minutes),
+                "minutes": slot_minutes,
+            })
+        if not candidates:
+            return {}
+        return min(candidates, key=lambda item: (item["distance"], item["minutes"]))
+
+    def _schedule_items_for_inference(self, schedule_text: str) -> list[dict]:
+        items = []
+        for line in str(schedule_text or "").splitlines():
+            time_text, activity = self._parse_time_activity(line)
+            if not time_text or not activity:
+                continue
+            hour, minute = [int(part) for part in time_text.split(":", 1)]
+            items.append({
+                "time": time_text,
+                "activity": activity,
+                "minutes": hour * 60 + minute,
+            })
+        items.sort(key=lambda item: item["minutes"])
+        return items
+
+    @staticmethod
+    def _compact_schedule_phrase(value: str, limit: int = 24) -> str:
+        text = re.sub(r"\s+", "", str(value or ""))
+        text = re.sub(r"[。！？!?，,；;：:、]+$", "", text)
+        return text[:limit] if len(text) > limit else text
+
+    def _fallback_generate_now_detail(self, now: datetime, daily: dict) -> dict:
+        """Build a schedule-derived current moment if the LLM is unavailable."""
+        now_str = now.strftime("%H:%M")
+        target = now.hour * 60 + now.minute
+        items = self._schedule_items_for_inference(daily.get("schedule", "") if daily else "")
+        prev_item = None
+        next_item = None
+        for item in items:
+            if item["minutes"] <= target:
+                prev_item = item
+            elif item["minutes"] > target and next_item is None:
+                next_item = item
+
+        if prev_item and next_item:
+            prev_text = self._compact_schedule_phrase(prev_item["activity"])
+            next_text = self._compact_schedule_phrase(next_item["activity"])
+            prev_delta = target - prev_item["minutes"]
+            next_delta = next_item["minutes"] - target
+            if next_delta <= 90:
+                if next_text.startswith(("准备", "开始", "处理", "整理", "完成", "戴上", "冲泡")):
+                    activity = f"收起手头的事，开始{next_text}"
+                else:
+                    activity = f"收起手头的事，为接下来的{next_text}做准备"
+            elif prev_delta <= 45:
+                activity = f"继续{prev_text}"
+            else:
+                activity = f"把{prev_text}收尾，准备接下来的{next_text}"
+            activity_en = "transitioning naturally between the previous schedule item and the upcoming schedule item"
+        elif next_item:
+            next_text = self._compact_schedule_phrase(next_item["activity"])
+            activity = f"提前为{next_text}做准备"
+            activity_en = "preparing for the upcoming schedule item"
+        elif prev_item:
+            prev_text = self._compact_schedule_phrase(prev_item["activity"])
+            activity = f"完成{prev_text}后放慢节奏整理收尾"
+            activity_en = "winding down after the final schedule item"
+        else:
+            activity = "根据今日日程整理当下要做的事"
+            activity_en = "organizing the current moment according to today's schedule"
+
+        return {
+            "time": now_str,
+            "activity_zh": activity,
+            "activity_en": activity_en,
+            "action_en": "a natural candid action derived from the current point in today's schedule",
+            "scene_en": "the realistic setting implied by the surrounding schedule items at the current time",
+            "props_en": "only props that fit the inferred current activity and today's schedule",
+            "outfit_en": "the outfit from today's schedule plan",
+            "hair_en": "the hairstyle from today's schedule plan",
+            "lighting_en": "realistic lighting matching the current time of day",
+        }
+
+    @staticmethod
+    def _clean_generate_now_en(value: str, limit: int = 220) -> str:
+        text = re.sub(r"\s+", " ", str(value or "")).strip().strip('"').strip("'")
+        if not text or GalleryServer._has_cjk(text):
+            return ""
+        if len(text) > limit:
+            text = text[:limit].rstrip(" ,.;:")
+        return text
+
+    def _parse_generate_now_detail(self, text: str, now_str: str) -> dict:
+        raw = (text or "").strip().replace("```json", "").replace("```", "").strip()
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return {}
+        try:
+            data = json.loads(raw[start:end + 1])
+        except json.JSONDecodeError:
+            logger.warning("Generate-now LLM returned invalid JSON: %s", raw[:240])
+            return {}
+        if not isinstance(data, dict):
+            return {}
+
+        parsed_time, _ = self._parse_time_activity(str(data.get("time") or ""))
+        activity = self._clean_activity_text(str(data.get("activity_zh") or data.get("activity") or ""), max_len=72)
+        if not activity:
+            return {}
+
+        detail = {
+            "time": parsed_time or now_str,
+            "activity_zh": activity,
+        }
+        for field in ("activity_en", "action_en", "scene_en", "props_en", "outfit_en", "hair_en", "lighting_en"):
+            cleaned = self._clean_generate_now_en(data.get(field, ""))
+            if cleaned:
+                detail[field] = cleaned
+        return detail
+
+    def _build_generate_now_inference_prompt(self, now_str: str, daily: dict) -> str:
+        schedule = str(daily.get("schedule") or "").strip()
+        schedule_prompt = str(daily.get("schedule_prompt") or "").strip()
+        outfit = str(daily.get("outfit") or "").strip()
+        outfit_style = str(daily.get("outfit_style") or "").strip()
+        base_style = str(daily.get("base_style") or "").strip()
+        details = daily.get("schedule_details") if isinstance(daily.get("schedule_details"), list) else []
+        details_json = json.dumps(details, ensure_ascii=False, indent=2)
+        return f"""你是“现在在干嘛”即时生图链路里的日程推断层。
+请根据【当前时间】和【今日日程】推断这一刻最自然、最具体、适合生图的动作场景。
+
+【当前时间】
+{now_str}
+
+【今日日程（中文展示）】
+{schedule}
+
+【生图用日程/英文明细，可为空】
+{schedule_prompt or "（无）"}
+
+【结构化日程明细，可为空】
+{details_json}
+
+【今日穿搭】
+风格：{outfit_style or base_style or "（未写明）"}
+{outfit or "（未写明）"}
+
+输出规则：
+1. 只输出一个 JSON 对象，不要 Markdown，不要解释。
+2. time 必须等于当前时间 "{now_str}"。
+3. activity_zh 要自然，像这个时间她心里真的正在做的事；可以参考前后日程推断过渡动作。
+4. 不要机械照抄最近一条日程，除非当前时间确实还在做那件事。
+5. 不要发散到全天日程外的新活动；所有动作、场景、道具都必须能从今日计划合理推出来。
+6. 英文字段必须是纯英文，用于生图；不要写中文。
+7. action_en / scene_en / props_en 要让画面明确，但不要强制看镜头；是否看镜头由动作自然决定。
+8. outfit_en / hair_en 参考今日穿搭和结构化明细，保持同一天一致。
+
+JSON 格式：
+{{
+  "time": "{now_str}",
+  "activity_zh": "此刻具体在做什么",
+  "activity_en": "English summary of the inferred current activity",
+  "action_en": "specific visible body/hand action",
+  "scene_en": "specific realistic location and surroundings",
+  "props_en": "specific props related to the inferred action",
+  "outfit_en": "today's outfit in concise English",
+  "hair_en": "today's hairstyle in concise English",
+  "lighting_en": "realistic lighting for this time"
+}}"""
+
+    async def _infer_generate_now_detail(self, now: datetime, daily: dict) -> dict:
+        now_str = now.strftime("%H:%M")
+        fallback = self._fallback_generate_now_detail(now, daily)
+        request_config = llm_request_config(self.config, self.data_dir)
+        chat_url = request_config.get("chat_url", "")
+        models = request_config.get("models") or []
+        if not chat_url or not models:
+            logger.warning("Generate-now LLM inference skipped: missing chat_url/models")
+            return fallback
+
+        headers = {"Content-Type": "application/json"}
+        api_key = request_config.get("api_key", "")
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        prompt = self._build_generate_now_inference_prompt(now_str, daily)
+
+        def _post_llm(model: str):
+            import requests
+            payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 900,
+                "temperature": 0.25,
+            }
+            return requests.post(chat_url, headers=headers, json=payload, timeout=45)
+
+        loop = asyncio.get_running_loop()
+        for model in models:
+            try:
+                resp = await loop.run_in_executor(None, lambda m=model: _post_llm(m))
+                if not resp or resp.status_code != 200:
+                    status = resp.status_code if resp else "no response"
+                    logger.warning("Generate-now LLM inference failed: model=%s status=%s", model, status)
+                    continue
+                data = resp.json()
+                msg = data["choices"][0]["message"]
+                content = (msg.get("content") or msg.get("reasoning_content") or "").strip()
+                parsed = self._parse_generate_now_detail(content, now_str)
+                if parsed:
+                    merged = dict(fallback)
+                    merged.update(parsed)
+                    merged["time"] = now_str
+                    return merged
+            except Exception as e:
+                logger.warning("Generate-now LLM inference error: model=%s err=%s", model, e)
+        return fallback
+
+    @staticmethod
+    def _theme_for_schedule_time(time_text: str) -> str:
+        match = re.match(r"^\s*(\d{1,2}):(\d{2})", str(time_text or ""))
+        if not match:
+            return "morning"
+        hour = int(match.group(1))
+        if 0 <= hour < 6:
+            return "bedtime"
+        if hour < 12:
+            return "morning"
+        if hour < 18:
+            return "noon"
+        if hour <= 20:
+            return "evening"
+        return "bedtime"
+
     async def handle_generate_now(self, request: web.Request):
-        """根据当前精确时间动态生图 (💭 现在在干嘛)"""
+        """根据今日日程的当前时间点生图 (💭 现在在干嘛)"""
         proc = None
         try:
-            from datetime import datetime
-            import asyncio
-            import json as _json
-
             now = datetime.now()
             now_str = now.strftime("%H:%M")
-            logger.info(f"Generate now: time={now_str}, using LLM dynamic prompt")
+            today_str = now.strftime("%Y-%m-%d")
+            logger.info("Generate now: time=%s, using today's schedule chain", now_str)
 
-            # 1) 读取今日日程作为参考
-            schedule_text = ""
-            try:
-                store = ScheduleStore(self.data_dir)
-                all_data = store.load()
-                today_str = now.strftime("%Y-%m-%d")
-                daily = all_data.get(today_str, {})
-                if self._has_usable_schedule(daily):
-                    schedule_text = daily.get("schedule", "")
-            except Exception:
-                pass
+            # 1) 读取今日日程，并让 LLM 基于全天计划推断当前具体活动。
+            daily = self._today_schedule_entry(today_str)
+            schedule_text = daily.get("schedule", "") if daily else ""
+            if not schedule_text:
+                return web.json_response({
+                    "error": "schedule_missing",
+                    "message": "请先刷新今日日程，再使用“现在在干嘛”。",
+                }, status=400)
+            if not self._schedule_items_for_inference(schedule_text):
+                return web.json_response({
+                    "error": "schedule_time_not_found",
+                    "message": "今日日程里没有可用于生图的时间点。",
+                }, status=400)
+
+            now_detail = await self._infer_generate_now_detail(now, daily)
+            now_activity = self._clean_activity_text(now_detail.get("activity_zh", ""), max_len=72)
+            if not now_activity:
+                return web.json_response({
+                    "error": "generate_now_inference_failed",
+                    "message": "当前活动推断失败，请先刷新今日日程后再试。",
+                }, status=500)
+
+            now_detail["time"] = now_str
+            now_detail["activity_zh"] = now_activity
+            schedule_time = f"{now_str} {now_activity}".strip()
+            schedule_detail_json = json.dumps(now_detail, ensure_ascii=False, separators=(",", ":"))
+            theme = self._theme_for_schedule_time(now_str)
+            base_style = str(daily.get("base_style") or "").strip().lower()
+            if base_style not in {"cool", "girly", "sweet"}:
+                base_style = ""
 
             keys_config = self._load_api_keys_config()
             plugin_config = self._load_plugin_config()
             gpt_key = keys_config.get("gpt_key", "") or os.environ.get("GPT_IMAGE_API_KEY", "")
-            gpt_base_url = keys_config.get("gpt_base_url", "") or os.environ.get("GPT_IMAGE_BASE_URL", "")
+            raw_configured_gpt_base_url = str(self.config.get("image_gen", {}).get("gpt_base_url", "") or "").strip()
+            configured_gpt_base_url = self._configured_image_generations_url(
+                raw_configured_gpt_base_url
+            )
+            local_gpt_base_url = str(keys_config.get("gpt_base_url", "") or "").strip()
+            if (
+                local_gpt_base_url == raw_configured_gpt_base_url
+                or self._gpt_image_endpoint_identity(local_gpt_base_url) == self._gpt_image_endpoint_identity(configured_gpt_base_url)
+            ):
+                local_gpt_base_url = ""
+            gpt_base_url = (
+                local_gpt_base_url
+                or os.environ.get("GPT_IMAGE_BASE_URL", "")
+                or configured_gpt_base_url
+            )
             gitee_keys = plugin_config.get("gitee_config", {}).get("api_keys", [])
             gitee_key = gitee_keys[0] if gitee_keys else ""
-            if not gpt_key and not gitee_key:
+            gpt_available = bool(str(gpt_base_url or "").strip() or str(gpt_key or "").strip())
+            if not gpt_available and not gitee_key:
                 return web.json_response({
                     "error": "missing_image_key",
-                    "message": "请先在设置里配置 GPT Image Key 或 Gitee Key，再使用“现在在干嘛”。",
+                    "message": "请先在设置里配置 GPT Image Base URL 或 Gitee Key，再使用“现在在干嘛”。",
                 }, status=400)
 
-            # 2) 用 LLM 根据精确时间生成活动描述
-            import urllib.request
+            # 2) 调用统一日程生图链路。generate.py 会根据 schedule_time 读取
+            # schedule_prompt / schedule_details，并使用当天 base_style 和 outfit。
             request_config = llm_request_config(self.config, self.data_dir)
             cpa_base_url = request_config["base_url"]
             cpa_key = request_config["api_key"]
-            cpa_url = request_config["chat_url"]
-
-            schedule_hint = f"\n今日日程参考：\n{schedule_text}" if schedule_text else ""
-            favorite_context = self._favorite_outfit_generation_context()
-            favorite_hint = (
-                "\n收藏穿搭偏好（只用于 outfit_en 的服饰审美参考，不能用于动作、场景或日程）：\n"
-                f"{favorite_context}"
-                if favorite_context else ""
-            )
-            llm_prompt = (
-                f"现在是 {now_str}。{schedule_hint}{favorite_hint}\n\n"
-                "请根据当前时间和日程生成三个字段，只输出 JSON：\n"
-                "{\n"
-                '  "activity_zh": "给 WebUI 展示的中文活动，15-30 个汉字，不要带时间",\n'
-                '  "image_prompt_en": "给 AI 生图用的英文场景描述，25-55 words, no Chinese, include pose/action/scene/props/lighting, do not include character appearance, quality prefix, or clothing",\n'
-                '  "outfit_en": "英文服装描述，8-20 words, must name visible clothing, shoes/accessories if visible, no Chinese"\n'
-                "}\n"
-                "activity_zh 必须中文；image_prompt_en 和 outfit_en 必须纯英文。\n"
-                "activity_zh 和 image_prompt_en 必须描述同一地点、同一动作、同一时刻；如果活动在家吃饭/准备直播，场景也必须在家，不能写成户外散步或街拍。\n"
-                "如果有收藏穿搭偏好，outfit_en 只提取其发型/服装气质、配色、版型、材质和搭配层次做软参考，生成相近但新的组合；不要照抄旧单品或旧描述。\n"
-                "收藏偏好绝不能影响 activity_zh 或 image_prompt_en 的动作、场景、道具、日程安排。不要解释。"
-            )
-
-            activity = ""
-            image_prompt = ""
-            outfit_prompt = ""
-            llm_models = request_config["models"] if cpa_url else []
-
-            for model_name in llm_models:
-                try:
-                    body = _json.dumps({
-                        "model": model_name,
-                        "messages": [{"role": "user", "content": llm_prompt}],
-                        "max_tokens": 220,
-                    }).encode()
-                    req = urllib.request.Request(
-                        cpa_url, data=body,
-                        headers={
-                            "Content-Type": "application/json",
-                            **({"Authorization": f"Bearer {cpa_key}"} if cpa_key else {}),
-                        },
-                        method="POST",
-                    )
-                    with urllib.request.urlopen(req, timeout=15) as resp:
-                        resp_data = _json.loads(resp.read())
-                        msg = resp_data["choices"][0]["message"]
-                        raw_content = (msg.get("content") or msg.get("reasoning_content") or "").strip()
-                        activity, image_prompt, outfit_prompt = self._parse_generate_now_llm(raw_content)
-                    if activity and image_prompt and outfit_prompt:
-                        break
-                except Exception as e:
-                    logger.warning(f"LLM activity generation failed with {model_name}: {e}")
-
-            if activity and image_prompt and self._generate_now_prompt_conflicts(activity, image_prompt):
-                logger.warning("LLM image prompt conflicts with activity, using activity-aligned fallback: %s", activity)
-                image_prompt = ""
-
-            if activity and (not image_prompt or not outfit_prompt):
-                activity_prompt, activity_outfit = self._fallback_visual_for_activity(activity, now.hour)
-                image_prompt = image_prompt or activity_prompt
-                outfit_prompt = outfit_prompt or activity_outfit
-
-            if not activity or not image_prompt or not outfit_prompt:
-                fallback_activity, fallback_prompt, fallback_outfit = self._fallback_generate_now_context(now_str, schedule_text)
-                activity = activity or fallback_activity
-                image_prompt = image_prompt or fallback_prompt
-                outfit_prompt = outfit_prompt or fallback_outfit
-            schedule_time = f"{now_str} {activity}".strip()
-            image_prompt = f"{image_prompt}. She is wearing {outfit_prompt}."
-
-            logger.info(f"LLM generated activity: {activity}; image_prompt_en={image_prompt[:80]}")
-
-            # 3) 调用 generate.py --theme custom --prompt <activity>，用 GPT Image 直连出图
             generate_script = self._generate_script()
-            engine = self.config.get("image_gen", {}).get("default_engine", "gptimage") if gpt_key else "gitee"
+            engine = self.config.get("image_gen", {}).get("default_engine", "gptimage") if gpt_available else "gitee"
             child_env_extra = {}
-            if gpt_key:
-                child_env_extra["GPT_IMAGE_API_KEY"] = gpt_key
             if gpt_base_url:
                 child_env_extra["GPT_IMAGE_BASE_URL"] = gpt_base_url
             if cpa_key:
                 child_env_extra["CPA_API_KEY"] = cpa_key
+            if gpt_key or cpa_key:
+                child_env_extra["GPT_IMAGE_API_KEY"] = gpt_key or cpa_key
             if cpa_base_url:
                 child_env_extra["CPA_BASE_URL"] = cpa_base_url
             child_env = self._child_env(child_env_extra)
+            cmd = [
+                self._python_executable(),
+                generate_script,
+                "--theme", theme,
+                "--caption",
+                "--source", "web",
+                "--engine", engine,
+                "--schedule-time", schedule_time,
+                "--schedule-detail-json", schedule_detail_json,
+            ]
+            if base_style and engine == "gptimage":
+                cmd.extend(["--style", base_style])
             proc = await asyncio.create_subprocess_exec(
-                self._python_executable(), generate_script, "--theme", "custom", "--caption", "--source", "web",
-                "--prompt", image_prompt, "--engine", engine, "--schedule-time", schedule_time,
+                *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=os.path.dirname(generate_script),
@@ -2471,7 +3161,7 @@ class GalleryServer:
                 if "GPT_IMAGE_API_KEY or gpt_key is required" in detail:
                     return web.json_response({
                         "error": "missing_image_key",
-                        "message": "请先在设置里配置 GPT Image Key 或 Gitee Key，再使用“现在在干嘛”。",
+                        "message": "请先在设置里配置 GPT Image Base URL 或 Gitee Key，再使用“现在在干嘛”。",
                     }, status=400)
                 return web.json_response({
                     "error": "generate_failed",
@@ -2500,7 +3190,12 @@ class GalleryServer:
                 if filename in all_data:
                     all_data[filename]["source"] = "web"
                     all_data[filename]["schedule_time"] = schedule_time
+                    all_data[filename]["schedule_now_detail"] = now_detail
                     all_data[filename]["time"] = all_data[filename].get("time") or now_str
+                    for field in ("outfit_style", "base_style"):
+                        value = daily.get(field)
+                        if value:
+                            all_data[filename][field] = value
                     if caption_text:
                         all_data[filename]["caption"] = caption_text
                 return all_data
@@ -2511,12 +3206,15 @@ class GalleryServer:
 
             return web.json_response({
                 "status": "ok",
-                "theme": "custom",
+                "theme": theme,
                 "filename": filename,
                 "image_path": f"/images/{filename}",
                 "caption": caption_text,
                 "source": "web",
                 "schedule_time": schedule_time,
+                "schedule_now_detail": now_detail,
+                "outfit_style": daily.get("outfit_style", ""),
+                "base_style": base_style,
             })
         except asyncio.TimeoutError:
             process_timeout = image_process_timeout(self.config, with_reference_fallback=True)
@@ -2553,7 +3251,29 @@ class GalleryServer:
             ref_image = self._resolve_reference_image(raw_ref_image, allow_any_path=True)
             if raw_ref_image and not ref_image:
                 return web.json_response({"error": "invalid_ref_image"}, status=400)
-            entry = await self.on_generate_custom(user_prompt, size, ref_image, shot_type, pure)
+            api_source = self._normalize_api_source(
+                body.get("api_source"),
+                body.get("source"),
+                body.get("caller"),
+                body.get("client"),
+                request.headers.get("X-API-Source"),
+                request.headers.get("X-Hermes-Source"),
+                request.headers.get("X-Caller"),
+                request.headers.get("User-Agent"),
+            )
+            if not api_source:
+                referer = str(request.headers.get("Referer", "") or "").lower()
+                sec_fetch_site = str(request.headers.get("Sec-Fetch-Site", "") or "").lower()
+                if referer.startswith(("http://localhost", "http://127.0.0.1")) or sec_fetch_site in {"same-origin", "same-site"}:
+                    api_source = "custom_ui"
+                else:
+                    api_source = "hermes"
+            api_caption = self._request_caption(body)
+            image_model = self._normalize_image_model_id(body.get("model") or body.get("image_model") or body.get("gpt_model"))
+            raw_image_model = str(body.get("model") or body.get("image_model") or body.get("gpt_model") or "").strip()
+            if raw_image_model and not image_model and raw_image_model.lower() not in {"default", "auto", "current"}:
+                return web.json_response({"error": "invalid_image_model"}, status=400)
+            entry = await self.on_generate_custom(user_prompt, size, ref_image, shot_type, pure, api_source, api_caption, image_model)
             if entry and entry.status == "ok":
                 return web.json_response(entry.to_dict())
             return web.json_response({"error": "generate_failed"}, status=500)
@@ -2656,6 +3376,11 @@ class GalleryServer:
                 return all_data
             store.update(_delete_entry)
 
+            metadata = self._load_image_metadata()
+            if img_id in metadata:
+                del metadata[img_id]
+                self._save_image_metadata(metadata)
+
             return web.json_response({"success": True})
         except Exception as e:
             logger.error(f"Delete image error: {e}")
@@ -2682,9 +3407,87 @@ class GalleryServer:
             logger.error(f"Reroll image error: {e}")
             return web.json_response({"error": str(e)}, status=500)
 
+    @staticmethod
+    def _coerce_bool(value, default: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "y", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "n", "off"}:
+                return False
+        return default
+
+    @staticmethod
+    def _find_image_entry(all_data: dict, img_id: str) -> tuple[Optional[str], Optional[dict]]:
+        entry = all_data.get(img_id)
+        if isinstance(entry, dict):
+            return img_id, entry
+        for key, item in all_data.items():
+            if isinstance(item, dict) and item.get("image_filename") == img_id:
+                return key, item
+        return None, None
+
+    @staticmethod
+    def _sync_timestamp() -> str:
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    def _pending_picxazz_sync_state(self) -> dict:
+        cfg = self.picxazz_sync.load_config()
+        return {
+            "status": "pending",
+            "base_url": cfg.base_url,
+            "updated_at": self._sync_timestamp(),
+        }
+
+    def _save_picxazz_sync_result(self, img_id: str, result: dict):
+        store = ScheduleStore(self.data_dir)
+
+        def _update(all_data):
+            key, entry = self._find_image_entry(all_data, img_id)
+            if not key or not entry:
+                return all_data
+            entry["picxazz_sync"] = result
+            if result.get("status") == "synced":
+                entry["picxazz_url"] = result.get("url", "")
+                entry["picxazz_key"] = result.get("key", "")
+                entry.pop("picxazz_error", None)
+            elif result.get("error"):
+                entry["picxazz_error"] = result.get("error")
+            all_data[key] = entry
+            return all_data
+
+        store.update(_update)
+
+    async def _sync_image_to_picxazz(self, img_id: str, entry: dict, force: bool = False) -> dict:
+        image_path = self._image_file_path(img_id)
+        result = await self.picxazz_sync.upload(image_path, entry, force=force)
+        if not result.get("skipped"):
+            try:
+                self._save_picxazz_sync_result(img_id, result)
+            except Exception as exc:
+                logger.error(f"Save picxazz sync result failed for {img_id}: {exc}")
+        return result
+
+    def _start_picxazz_sync_task(self, img_id: str, entry: dict):
+        task = asyncio.create_task(self._sync_image_to_picxazz(img_id, dict(entry)))
+
+        def _log_task_error(done_task: asyncio.Task):
+            try:
+                done_task.result()
+            except Exception as exc:
+                logger.error(f"Picxazz background sync failed for {img_id}: {exc}")
+
+        task.add_done_callback(_log_task_error)
+
     async def handle_toggle_favorite(self, request: web.Request):
-        """切换收藏状态"""
+        """切换收藏状态，并在收藏后自动同步到 picxazz。"""
         img_id = request.match_info.get("img_id")
+        if not img_id or not re.match(r'^[a-zA-Z0-9_.-]+$', img_id) or '..' in img_id:
+            return web.json_response({"error": "invalid_filename"}, status=400)
         try:
             try:
                 payload = await request.json()
@@ -2692,29 +3495,81 @@ class GalleryServer:
                 payload = {}
             requested_fav = payload.get("favorite") if isinstance(payload, dict) else None
             store = ScheduleStore(self.data_dir)
-            result = {"new_fav": None}
+            result = {"new_fav": None, "entry": None, "picxazz_sync": None}
+
             def _toggle(all_data):
-                key = img_id if img_id in all_data else ""
-                if not key:
-                    for item_key, candidate in all_data.items():
-                        if isinstance(candidate, dict) and candidate.get("image_filename") == img_id:
-                            key = item_key
-                            break
-                if not key:
+                key, entry = self._find_image_entry(all_data, img_id)
+                if not key or not entry:
                     return all_data
-                entry = all_data[key]
                 current_fav = entry.get("favorite", False)
-                new_fav = bool(requested_fav) if isinstance(requested_fav, bool) else not current_fav
+                new_fav = self._coerce_bool(requested_fav, not current_fav) if requested_fav is not None else not current_fav
                 entry["favorite"] = new_fav
+                if new_fav and not self.picxazz_sync.should_skip(entry):
+                    entry["picxazz_sync"] = self._pending_picxazz_sync_state()
                 all_data[key] = entry
                 result["new_fav"] = new_fav
+                result["entry"] = dict(entry)
+                result["picxazz_sync"] = dict(entry.get("picxazz_sync") or {})
                 return all_data
+
             store.update(_toggle)
             if result["new_fav"] is None:
                 return web.json_response({"error": "not_found"}, status=404)
-            return web.json_response({"success": result["new_fav"]})
+            if result["new_fav"] and result["entry"] and result["picxazz_sync"].get("status") == "pending":
+                self._start_picxazz_sync_task(img_id, result["entry"])
+            return web.json_response({
+                "success": result["new_fav"],
+                "favorite": result["new_fav"],
+                "picxazz_sync": result["picxazz_sync"],
+            })
         except Exception as e:
             logger.error(f"Toggle favorite error: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_sync_picxazz_favorites(self, request: web.Request):
+        """Upload all current favorite images to picxazz."""
+        try:
+            force = False
+            limit = 0
+            if request.can_read_body:
+                try:
+                    body = await request.json()
+                    if isinstance(body, dict):
+                        force = self._coerce_bool(body.get("force"), False)
+                        if body.get("limit") is not None:
+                            limit = max(0, int(body.get("limit")))
+                except Exception:
+                    pass
+
+            entries = [
+                entry for entry in self._load_all_entries()
+                if entry.get("favorite") and entry.get("image_filename")
+            ]
+            if limit:
+                entries = entries[:limit]
+
+            results = []
+            for entry in entries:
+                img_id = entry.get("image_filename", "")
+                sync_result = await self._sync_image_to_picxazz(img_id, entry, force=force)
+                results.append({
+                    "image_filename": img_id,
+                    "status": sync_result.get("status"),
+                    "skipped": bool(sync_result.get("skipped")),
+                    "url": sync_result.get("url", ""),
+                    "error": sync_result.get("error", ""),
+                })
+
+            summary = {
+                "total": len(results),
+                "synced": sum(1 for item in results if item.get("status") == "synced" and not item.get("skipped")),
+                "skipped": sum(1 for item in results if item.get("skipped")),
+                "failed": sum(1 for item in results if item.get("status") == "failed"),
+                "disabled": sum(1 for item in results if item.get("status") == "disabled"),
+            }
+            return web.json_response({"success": True, "summary": summary, "results": results})
+        except Exception as e:
+            logger.error(f"Sync picxazz favorites error: {e}")
             return web.json_response({"error": str(e)}, status=500)
 
     def _load_all_entries(self) -> list:
@@ -2788,19 +3643,21 @@ class GalleryServer:
         version = self._load_version()
         return web.json_response({"version": version})
 
-    async def handle_check_update(self, request: web.Request):
-        """检查更新（从 GitHub API 获取最新版本）"""
+    async def _check_update_payload(self) -> tuple[dict, int]:
         import aiohttp
-        import json
 
         github_api = self.config.get("update", {}).get("github_api", "")
         current_version = self._load_version()
+        protection = self._update_protection_summary()
         if not github_api:
-            return web.json_response({
+            return {
                 "status": "unavailable",
                 "message": "未配置更新检查地址",
                 "current": current_version,
-            })
+                "update_available": False,
+                "safe_update": True,
+                "protection": protection,
+            }, 200
 
         github_proxy = self._github_proxy()
         headers = {
@@ -2818,96 +3675,155 @@ class GalleryServer:
                         error_message = f"GitHub API 请求失败: {resp.status}"
                         if resp.status == 403 and not github_proxy:
                             error_message += "（可在设置中填写 GitHub 代理后重试）"
-                        return web.json_response(
-                            {"error": error_message},
-                            status=500
-                        )
+                        return {"error": error_message}, 500
 
                     data = await resp.json()
                     latest_version = data.get("tag_name", "").lstrip("v")
                     if not latest_version:
-                        return web.json_response(
-                            {"error": "无法获取最新版本号"},
-                            status=500
-                        )
+                        return {"error": "无法获取最新版本号"}, 500
 
                     if self._version_key(latest_version) <= self._version_key(current_version):
-                        return web.json_response({"message": "已是最新版本"})
+                        return {
+                            "status": "ok",
+                            "message": "已是最新版本",
+                            "current": current_version,
+                            "latest": latest_version,
+                            "update_available": False,
+                            "safe_update": True,
+                            "protection": protection,
+                        }, 200
 
-                    # 返回更新信息
-                    return web.json_response({
+                    return {
+                        "status": "ok",
                         "current": current_version,
                         "latest": latest_version,
                         "update_available": True,
                         "changelog": data.get("body", ""),
                         "html_url": data.get("html_url", ""),
-                    })
+                        "safe_update": True,
+                        "protection": protection,
+                    }, 200
         except Exception as e:
             logger.error(f"Check update error: {e}")
-            return web.json_response(
-                {"error": f"检查更新失败: {e}"},
-                status=500
+            return {"error": f"检查更新失败: {e}"}, 500
+
+    def _safe_update_plan(self, project_root: Path, remote_ref: str, env: dict[str, str]) -> dict:
+        all_changed = self._git_run(["diff", "--name-status", "HEAD.." + remote_ref, "--"], project_root, env)
+        if all_changed.returncode != 0:
+            raise RuntimeError(all_changed.stderr.strip() or all_changed.stdout.strip() or "无法读取远端改动列表")
+        all_files = []
+        checkout_files = []
+        deleted_files = []
+        skipped_files = []
+        for line in all_changed.stdout.splitlines():
+            parts = line.strip().split("\t")
+            if len(parts) < 2:
+                continue
+            status = parts[0]
+            path = parts[-1].strip()
+            if not path:
+                continue
+            all_files.append(path)
+            if self._is_protected_update_path(path):
+                skipped_files.append(path)
+                continue
+            if status.startswith("D"):
+                deleted_files.append(path)
+            else:
+                checkout_files.append(path)
+        changed_files = checkout_files + deleted_files
+        return {
+            "all_changed_files": all_files,
+            "updated_files": changed_files,
+            "checkout_files": checkout_files,
+            "deleted_files": deleted_files,
+            "skipped_files": skipped_files,
+            "safe_update": True,
+            "protection": self._update_protection_summary(),
+        }
+
+    async def _perform_safe_update(self, dry_run: bool = False, restart: bool = True) -> tuple[dict, int]:
+        project_root = resolve_project_root(self.config_path, self.config)
+        if not (project_root / ".git").exists():
+            return {
+                "status": "unavailable",
+                "message": "当前项目目录不是 Git 仓库，无法自动更新。请从发布包或仓库同步后重启服务。",
+                "safe_update": True,
+                "protection": self._update_protection_summary(),
+            }, 200
+
+        env = self._child_env(self._github_proxy_env())
+        update_config = self.config.get("update", {})
+        remote = update_config.get("remote", "origin")
+        branch = update_config.get("branch", "main")
+        remote_ref = self._safe_update_ref(remote, branch)
+
+        fetch = self._git_run(["fetch", "--prune", remote, branch], project_root, env, timeout=90)
+        if fetch.returncode != 0:
+            return {"error": f"git fetch 失败: {fetch.stderr.strip() or fetch.stdout.strip()}"}, 500
+
+        plan = self._safe_update_plan(project_root, remote_ref, env)
+        changed_files = plan["updated_files"]
+        response = {
+            **plan,
+            "status": "ok",
+            "remote": remote,
+            "branch": branch,
+            "remote_ref": remote_ref,
+            "dry_run": bool(dry_run),
+            "will_restart": bool(restart and changed_files and not dry_run),
+        }
+
+        if dry_run:
+            response["message"] = (
+                f"可安全更新 {len(changed_files)} 个代码文件；"
+                f"会跳过 {len(plan['skipped_files'])} 个本地设置/数据文件"
             )
+            return response, 200
+
+        if not changed_files:
+            response["message"] = "没有可更新的代码文件；本地数据与配置已保持不变"
+            return response, 200
+
+        checkout_files = plan.get("checkout_files") or []
+        deleted_files = plan.get("deleted_files") or []
+        if checkout_files:
+            result = self._git_run(["checkout", remote_ref, "--", *checkout_files], project_root, env, timeout=90)
+            if result.returncode != 0:
+                return {"error": f"安全更新失败: {result.stderr.strip() or result.stdout.strip()}"}, 500
+        if deleted_files:
+            result = self._git_run(["rm", "-r", "--ignore-unmatch", "--", *deleted_files], project_root, env, timeout=90)
+            if result.returncode != 0:
+                return {"error": f"安全更新删除旧文件失败: {result.stderr.strip() or result.stdout.strip()}"}, 500
+
+        response["message"] = "更新成功，服务即将重启；本地 API Key、Base URL、appearance、图片和参考图已保留"
+        if restart:
+            loop = asyncio.get_running_loop()
+            loop.call_later(1.0, lambda: os.execv(sys.executable, [sys.executable] + sys.argv))
+        else:
+            response["message"] = "更新成功；本地 API Key、Base URL、appearance、图片和参考图已保留"
+        return response, 200
+
+    async def handle_check_update(self, request: web.Request):
+        """检查更新（从 GitHub API 获取最新版本）"""
+        payload, status = await self._check_update_payload()
+        return web.json_response(payload, status=status)
+
+    async def handle_hermes_check_update(self, request: web.Request):
+        """Hermes-friendly update check API with explicit safe-update metadata."""
+        payload, status = await self._check_update_payload()
+        payload = {
+            "api": "hermes_check_update",
+            "can_apply_endpoint": "/api/hermes/update",
+            **payload,
+        }
+        return web.json_response(payload, status=status)
 
     async def handle_update(self, request: web.Request):
         """执行安全更新：只拉取仓库代码，保留本地数据、密钥和图片。"""
-        import asyncio
-
         try:
-            project_root = resolve_project_root(self.config_path, self.config)
-            if not (project_root / ".git").exists():
-                return web.json_response({
-                    "status": "unavailable",
-                    "message": "当前项目目录不是 Git 仓库，无法自动更新。请从发布包或仓库同步后重启服务。",
-                })
-            env = self._child_env(self._github_proxy_env())
-            update_config = self.config.get("update", {})
-            remote = update_config.get("remote", "origin")
-            branch = update_config.get("branch", "main")
-            remote_ref = self._safe_update_ref(remote, branch)
-
-            fetch = self._git_run(["fetch", "--prune", remote, branch], project_root, env, timeout=90)
-            if fetch.returncode != 0:
-                return web.json_response(
-                    {"error": f"git fetch 失败: {fetch.stderr.strip() or fetch.stdout.strip()}"},
-                    status=500
-                )
-
-            changed_files = self._safe_update_changed_files(project_root, remote_ref, env)
-            skipped_files = []
-            all_changed = self._git_run(["diff", "--name-only", "HEAD.." + remote_ref, "--"], project_root, env)
-            if all_changed.returncode == 0:
-                skipped_files = [
-                    path.strip()
-                    for path in all_changed.stdout.splitlines()
-                    if path.strip() and self._is_protected_update_path(path.strip())
-                ]
-
-            if not changed_files:
-                message = "没有可更新的代码文件；本地数据与配置已保持不变"
-                return web.json_response({
-                    "message": message,
-                    "updated_files": [],
-                    "skipped_files": skipped_files,
-                })
-
-            result = self._git_run(["checkout", remote_ref, "--", *changed_files], project_root, env, timeout=90)
-
-            if result.returncode != 0:
-                return web.json_response(
-                    {"error": f"安全更新失败: {result.stderr.strip() or result.stdout.strip()}"},
-                    status=500
-                )
-
-            # 先返回响应，再稍后重启，避免前端把成功更新误判为网络失败。
-            loop = asyncio.get_running_loop()
-            loop.call_later(1.0, lambda: os.execv(sys.executable, [sys.executable] + sys.argv))
-
-            return web.json_response({
-                "message": "更新成功，服务即将重启；本地 API Key、appearance、图片和参考图已保留",
-                "updated_files": changed_files,
-                "skipped_files": skipped_files,
-            })
+            payload, status = await self._perform_safe_update(dry_run=False, restart=True)
+            return web.json_response(payload, status=status)
         except subprocess.TimeoutExpired:
             logger.error("Update timeout")
             return web.json_response(
@@ -2921,17 +3837,57 @@ class GalleryServer:
                 status=500
             )
 
-    def _run_hermes_image_generation(self, engine: str, prompt: str, size: str = "", ref_image: str = "") -> Optional[dict]:
+    async def handle_hermes_update(self, request: web.Request):
+        """Hermes-friendly safe update API.
+
+        POST body:
+        - {"dry_run": true}: fetch and return update plan only.
+        - {"restart": false}: apply code files but do not restart automatically.
+        """
+        try:
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            query_dry_run = str(request.query.get("dry_run", "")).strip().lower() in {"1", "true", "yes", "on"}
+            dry_run = query_dry_run or self._body_bool(body, "dry_run", False)
+            restart = self._body_bool(body, "restart", True)
+            payload, status = await self._perform_safe_update(dry_run=dry_run, restart=restart)
+            payload = {
+                "api": "hermes_update",
+                **payload,
+            }
+            return web.json_response(payload, status=status)
+        except subprocess.TimeoutExpired:
+            logger.error("Hermes update timeout")
+            return web.json_response({"error": "更新超时"}, status=500)
+        except Exception as e:
+            logger.error(f"Hermes update error: {e}")
+            return web.json_response({"error": f"更新失败: {e}"}, status=500)
+
+    def _run_hermes_image_generation(
+        self,
+        engine: str,
+        prompt: str,
+        size: str = "",
+        ref_image: str = "",
+        caption: str = "",
+    ) -> Optional[dict]:
         """Run a pure image-generation request outside the aiohttp event loop."""
         zhuzhu_dir = os.path.join(os.path.dirname(__file__), "zhuzhu")
         if zhuzhu_dir not in sys.path:
             sys.path.insert(0, zhuzhu_dir)
 
+        model_name = ""
         if engine == "gptimage":
             from generate_gptimage import _generate_via_direct_gpt
+            from generate_gptimage import GPTIMAGE_DIRECT_MODEL
+            model_name = GPTIMAGE_DIRECT_MODEL
             result = _generate_via_direct_gpt(prompt, ref_image=ref_image or None, size=size)
         elif engine == "gitee":
             from generate_gitee import generate_image_bytes
+            from generate_gitee import MODEL_NAME
+            model_name = MODEL_NAME
             result = generate_image_bytes(prompt)
         else:
             return None
@@ -2940,10 +3896,68 @@ class GalleryServer:
             return None
 
         img_data, elapsed = result
-        filename = f"hermes_{int(time.time())}_{uuid.uuid4().hex[:8]}.png"
+        created_at = int(time.time())
+        generation_mode = "img2img" if ref_image else "text2img"
+        base_style = ""
+        try:
+            from generate import _classify_style
+            base_style = _classify_style(prompt)
+        except Exception as e:
+            logger.warning("Hermes image style classification failed: %s", e)
+        filename = f"hermes_{created_at}_{uuid.uuid4().hex[:8]}.png"
         img_path = os.path.join(self.image_dir, filename)
         with open(img_path, "wb") as f:
             f.write(img_data)
+
+        try:
+            with Image.open(img_path) as img:
+                width, height = img.size
+                img.verify()
+        except Exception as e:
+            logger.error("Hermes image validation failed: %s", e)
+            try:
+                os.unlink(img_path)
+            except OSError:
+                pass
+            return None
+
+        caption = str(caption or "").strip()
+
+        meta_entry = {
+            "category": "portrait",
+            "prompt": prompt,
+            "model": model_name,
+            "model_name": self._display_model_name(model_name),
+            "base_style": base_style,
+            "caption": caption,
+            "size": size or "",
+            "created_at": created_at,
+            "generation_time": elapsed,
+            "source": "hermes_api",
+            "prompt_mode": "pure",
+            "pure_prompt": True,
+            "custom_ref_mode": "reference" if ref_image else "text2img",
+            "requested_generation_mode": generation_mode,
+            "generation_mode": generation_mode,
+            "ref_image": os.path.basename(ref_image) if ref_image else "",
+            "ref_image_path": ref_image,
+            "requested_ref_image": os.path.basename(ref_image) if ref_image else "",
+            "requested_ref_image_path": ref_image,
+            "fallback_used": False,
+            "fallback_from": "",
+            "fallback_to": "",
+        }
+        try:
+            meta_entry["width"], meta_entry["height"] = width, height
+            meta_entry["file_size_bytes"] = os.path.getsize(img_path)
+            self._update_image_metadata_entry(filename, meta_entry)
+        except Exception as e:
+            logger.error("Save Hermes image metadata error: %s", e)
+            try:
+                os.unlink(img_path)
+            except OSError:
+                pass
+            return None
 
         return {
             "success": True,
@@ -2951,6 +3965,14 @@ class GalleryServer:
             "url": f"/images/{filename}",
             "elapsed": elapsed,
             "engine": engine,
+            "source": "hermes_api",
+            "base_style": base_style,
+            "model_name": self._display_model_name(model_name),
+            "caption": caption,
+            "prompt_mode": "pure",
+            "pure_prompt": True,
+            "custom_ref_mode": "reference" if ref_image else "text2img",
+            "generation_mode": generation_mode,
         }
 
     async def handle_hermes_text_to_image(self, request: web.Request):
@@ -2963,6 +3985,7 @@ class GalleryServer:
 
             engine = str(body.get("engine", "gptimage") or "gptimage").strip().lower()
             size = str(body.get("size", "") or "").strip()
+            caption = self._request_caption(body)
 
             if engine not in {"gptimage", "gitee"}:
                 return web.json_response({"error": "invalid_engine"}, status=400)
@@ -2970,7 +3993,7 @@ class GalleryServer:
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
-                lambda: self._run_hermes_image_generation(engine, prompt, size=size),
+                lambda: self._run_hermes_image_generation(engine, prompt, size=size, caption=caption),
             )
 
             if not result:
@@ -2994,6 +4017,7 @@ class GalleryServer:
 
             engine = str(body.get("engine", "gptimage") or "gptimage").strip().lower()
             size = str(body.get("size", "") or "").strip()
+            caption = self._request_caption(body)
 
             if engine != "gptimage":
                 return web.json_response({"error": "engine_not_support_img2img"}, status=400)
@@ -3005,7 +4029,7 @@ class GalleryServer:
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
-                lambda: self._run_hermes_image_generation(engine, prompt, size=size, ref_image=resolved_ref),
+                lambda: self._run_hermes_image_generation(engine, prompt, size=size, ref_image=resolved_ref, caption=caption),
             )
 
             if not result:

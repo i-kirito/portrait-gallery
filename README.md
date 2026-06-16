@@ -215,6 +215,27 @@ curl -X POST http://localhost:18889/api/generate-custom \
 
 **theme 可选值**：`morning` / `noon` / `evening` / `bedtime` / `sexy` / `custom`
 
+### Hermes 安全升级 API
+
+Hermes 可以直接调用下面的接口完成检查和一键升级；升级只更新仓库代码，会跳过本地密钥、配置、画廊图片、参考图和运行时数据。
+
+```bash
+# 检查最新版本
+curl http://localhost:18889/api/hermes/check-update
+
+# 预览本次会更新/跳过哪些文件，不重启
+curl -X POST http://localhost:18889/api/hermes/update \
+  -H "Content-Type: application/json" \
+  -d '{"dry_run": true}'
+
+# 执行安全升级，成功后服务自动重启
+curl -X POST http://localhost:18889/api/hermes/update \
+  -H "Content-Type: application/json" \
+  -d '{"dry_run": false, "restart": true}'
+```
+
+受保护路径包括：`.env`、`config/config.yaml`、`config/local.yaml`、`docker-compose.override.yml`、`data/`、`app/data/`、`logs/`、`app/references/uploads/`。
+
 ### 图片管理
 
 ```bash
@@ -254,6 +275,10 @@ curl -H "X-API-Key: $GALLERY_API_KEY" http://localhost:18889/api/gallery
 # 或
 curl "http://localhost:18889/api/gallery?key=$GALLERY_API_KEY"
 ```
+
+### Hermes 生图文案
+
+Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/hermes/image-to-image` 时，可在请求体传入 `caption`、`thought`、`small_thought`、`copy`、`copywriting` 或 `message`。画廊不会为 Hermes 图片另行生成小心思，会直接把该字段写入卡片 `caption` 并在画廊里展示。
 
 ## 📱 微信推送
 

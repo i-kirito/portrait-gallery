@@ -1980,6 +1980,22 @@ textarea:focus-visible,
 .cg-shot-group {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
+.cg-select {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  background: #fff;
+  color: #444;
+  font-size: 14px;
+  font-family: inherit;
+  padding: 0 12px;
+  outline: none;
+}
+.cg-select:focus {
+  border-color: #e91e63;
+  box-shadow: 0 0 0 3px rgba(233,30,99,0.08);
+}
 .cg-size-hint {
   display: flex;
   align-items: center;
@@ -2182,7 +2198,7 @@ textarea:focus-visible,
   .tab { flex: 1; padding: 9px 12px; }
   .header-gen-btn { min-height: 42px; padding: 0 16px; }
   .gallery-list { gap: 12px; }
-  .gallery-grid { grid-template-columns: repeat(auto-fit, minmax(164px, 1fr)); gap: 10px; }
+  .gallery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .big-card { flex-direction: column; }
   .big-card-image { flex: unset; width: 100%; min-height: 260px; aspect-ratio: 3/4; }
   .big-card-info { padding: 16px 18px; }
@@ -2195,7 +2211,7 @@ textarea:focus-visible,
 }
 @media (max-width: 560px) {
   .gallery-list { gap: 10px; }
-  .gallery-grid { grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 8px; }
+  .gallery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .big-card-image { min-height: 200px; }
   .big-card-info { padding: 12px 14px; gap: 5px; }
   .big-card-info .bc-date { font-size: 11px; }
@@ -2232,6 +2248,7 @@ textarea:focus-visible,
   .cg-size-group { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
   .cg-size-btn { min-height: 50px; padding: 7px 6px; font-size: 13px; border-radius: 12px; }
   .cg-size-btn small { font-size: 10px; margin-top: 1px; }
+  .cg-select { min-height: 40px; font-size: 13px; }
   .cg-size-hint { margin-top: 7px; padding: 7px 10px; font-size: 12px; }
   .cg-ref-grid { gap: 7px; }
   .cg-ref-item { width: calc((100% - 21px) / 4); border-width: 2px; border-radius: 9px; }
@@ -2250,6 +2267,9 @@ textarea:focus-visible,
   .gallery-list .today-compact .tc-date { font-size: 12px; }
   .gallery-list .today-compact .tc-meta-row .tc-meta-tag { font-size: 10px; }
   .gallery-list .today-compact .tc-style { font-size: 10px; padding: 2px 10px; }
+}
+@media (max-width: 340px) {
+  .gallery-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ===== Today badge on gallery cards ===== */
@@ -2388,6 +2408,44 @@ textarea:focus-visible,
 .gallery-grid.cols-6 .gallery-card .card-body .card-actions .ca-btn .ca-icon { font-size: 11px; }
 
 /* 5 columns (default) — no override needed, uses base CSS */
+
+/* 3 columns: tablet / large phone */
+.gallery-grid.cols-3 .gallery-card .card-body { padding: 10px 9px 12px; }
+.gallery-grid.cols-3 .gallery-card .card-body .card-row1 .date,
+.gallery-grid.cols-3 .gallery-card .card-body .card-row1 .time { font-size: 12px; }
+.gallery-grid.cols-3 .gallery-card .card-body .card-meta .meta-tag { font-size: 10.5px; padding: 2px 6px; border-radius: 10px; }
+.gallery-grid.cols-3 .gallery-card .card-body .card-actions { gap: 5px; padding-top: 7px; }
+.gallery-grid.cols-3 .gallery-card .card-body .card-actions .ca-btn { min-height: 33px; font-size: 12px; padding: 0 6px; }
+.gallery-grid.cols-3 .gallery-card .card-date-tag,
+.gallery-grid.cols-3 .gallery-card .card-style-tag { font-size: 12px; padding: 3px 9px; }
+
+/* 2 columns: phones */
+.gallery-grid.cols-2 .gallery-card { border-radius: 18px; }
+.gallery-grid.cols-2 .gallery-card .card-body { padding: 11px 10px 13px; gap: 6px; }
+.gallery-grid.cols-2 .gallery-card .card-body .card-row1 .date,
+.gallery-grid.cols-2 .gallery-card .card-body .card-row1 .time { font-size: 13px; }
+.gallery-grid.cols-2 .gallery-card .card-body .card-meta { gap: 4px 5px; }
+.gallery-grid.cols-2 .gallery-card .card-body .card-meta .meta-tag { font-size: 11px; padding: 2px 7px; border-radius: 11px; }
+.gallery-grid.cols-2 .gallery-card .card-body .card-actions { gap: 7px; margin-top: 8px; padding-top: 8px; }
+.gallery-grid.cols-2 .gallery-card .card-body .card-actions .ca-btn { min-height: 36px; font-size: 13px; padding: 0 7px; }
+.gallery-grid.cols-2 .gallery-card .card-body .card-actions .ca-btn .ca-icon { font-size: 14px; }
+.gallery-grid.cols-2 .gallery-card .card-date-tag,
+.gallery-grid.cols-2 .gallery-card .card-style-tag { top: 9px; font-size: 12px; padding: 3px 9px; border-radius: 8px; }
+
+/* 1 column: very narrow phones / user preference */
+.gallery-grid.cols-1 {
+  max-width: 420px;
+  margin-inline: auto;
+}
+.gallery-grid.cols-1 .gallery-card { border-radius: 20px; }
+.gallery-grid.cols-1 .gallery-card .card-body { padding: 13px 14px 15px; gap: 8px; }
+.gallery-grid.cols-1 .gallery-card .card-body .card-row1 .date,
+.gallery-grid.cols-1 .gallery-card .card-body .card-row1 .time { font-size: 14px; }
+.gallery-grid.cols-1 .gallery-card .card-body .card-meta .meta-tag { font-size: 12px; padding: 3px 9px; border-radius: 12px; }
+.gallery-grid.cols-1 .gallery-card .card-body .card-actions { gap: 9px; margin-top: 9px; padding-top: 9px; }
+.gallery-grid.cols-1 .gallery-card .card-body .card-actions .ca-btn { min-height: 40px; font-size: 14px; }
+.gallery-grid.cols-1 .gallery-card .card-date-tag,
+.gallery-grid.cols-1 .gallery-card .card-style-tag { top: 10px; font-size: 13px; padding: 4px 10px; border-radius: 9px; }
 
 /* 4 columns: largest */
 .gallery-grid.cols-4 .gallery-card .card-body { padding: 10px 8px 12px; }
@@ -2867,13 +2925,13 @@ textarea:focus-visible,
     </div>
     <div class="sk-field">
       <label for="skGptBaseUrl">GPT Image Base URL</label>
-      <div class="sk-desc">GPT 生图端点；只有需要走 CPA 的 GPT 生图时才替换</div>
-      <input type="text" id="skGptBaseUrl" placeholder="留空则使用配置默认值">
+      <div class="sk-desc">OpenAI 兼容生图端点，默认使用 /v1/images/generations</div>
+      <input type="text" id="skGptBaseUrl" placeholder="例如 http://127.0.0.1:8090/v1/images/generations">
       <div class="sk-status" id="skGptBaseUrlStatus">加载中...</div>
     </div>
     <div class="sk-field">
       <label for="skGptKey">GPT Image Key</label>
-      <div class="sk-desc">GPT Image 生图密钥</div>
+      <div class="sk-desc">端点需要鉴权时填写；本地或免密中转可留空</div>
       <input type="password" id="skGptKey" placeholder="输入新密钥（留空则不修改）">
       <div class="sk-status" id="skGptStatus">加载中...</div>
     </div>
@@ -2985,10 +3043,19 @@ textarea:focus-visible,
     <div class="cg-field">
       <label>拍摄视角</label>
       <div class="cg-size-group cg-shot-group" id="cgShotGroup">
-        <button class="cg-size-btn active" data-shot="selfie">自拍 <small>手持手机</small></button>
-        <button class="cg-size-btn" data-shot="half_body">半身照 <small>穿搭</small></button>
-        <button class="cg-size-btn" data-shot="full_body">全身照 <small>全套</small></button>
+        <button class="cg-size-btn active" data-shot="selfie">自拍 <small>手机/对镜</small></button>
+        <button class="cg-size-btn" data-shot="half_body">半身照 <small>默认</small></button>
+        <button class="cg-size-btn" data-shot="full_body">全身照 <small>OOTD</small></button>
       </div>
+    </div>
+    <div class="cg-field">
+      <label for="cgModelSelect">生图模型</label>
+      <select class="cg-select" id="cgModelSelect">
+        <option value="">默认模型</option>
+        <option value="gpt-image-2">gpt-image-2</option>
+        <option value="agnes-image-2.1-flash">agnes-image-2.1-flash</option>
+      </select>
+      <div class="hint" id="cgModelHint">默认模型</div>
     </div>
     <div class="cg-field">
       <label>参考图（可选，用于图生图）</label>
@@ -3290,6 +3357,32 @@ function removeLocalImage(imgId) {
   }
 }
 
+function replaceEntryInList(list, oldImgId, freshEntry) {
+  if (!Array.isArray(list) || !freshEntry || !freshEntry.image_filename) return false;
+  const newImgId = freshEntry.image_filename;
+  const originalIndex = list.findIndex(e => e && (e.image_filename === oldImgId || e.image_filename === newImgId));
+  if (originalIndex < 0) return false;
+  const previous = list[originalIndex] || {};
+  list[originalIndex] = Object.assign({}, previous, freshEntry);
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (i === originalIndex) continue;
+    const img = list[i] && list[i].image_filename;
+    if (img === oldImgId || img === newImgId) list.splice(i, 1);
+  }
+  return true;
+}
+
+function replaceLocalImage(oldImgId, freshEntry) {
+  const fresh = Object.assign({}, freshEntry || {});
+  if (!fresh.image_filename) return false;
+  const replacedAll = replaceEntryInList(allEntries, oldImgId, fresh);
+  let replacedToday = false;
+  if (todayData && Array.isArray(todayData.photos)) {
+    replacedToday = replaceEntryInList(todayData.photos, oldImgId, fresh);
+  }
+  return replacedAll || replacedToday;
+}
+
 function findGalleryCardByImg(imgId) {
   if (!imgId) return null;
   return Array.from(document.querySelectorAll("[data-gallery-img]"))
@@ -3453,8 +3546,29 @@ function renderThoughtBlock(caption, className = "tc-thought") {
   return `<div class="${className}"><span class="tc-thought-label" title="思考" aria-label="思考">💭</span><span class="tc-thought-text">${captionHtml}</span></div>`;
 }
 
+function isHermesApiEntry(e) {
+  if (!e) return false;
+  const source = String(e.source || "").toLowerCase();
+  const apiSource = String(e.api_source || e.caller || e.client || "").toLowerCase();
+  const filename = String(e.image_filename || e.id || "");
+  return source === "hermes_api"
+    || source === "hermes-api"
+    || source === "hermes"
+    || apiSource.includes("hermes")
+    || filename.startsWith("hermes_");
+}
+
+function customGenerationModeLabel(e) {
+  if (!e) return "";
+  const mode = String(e.generation_mode || e.requested_generation_mode || e.custom_ref_mode || "").toLowerCase();
+  if (mode === "reference" || mode === "img2img" || mode === "image-to-image") return "图生图";
+  if (mode === "text2img" || mode === "text-to-image" || mode === "pure") return "文生图";
+  return "";
+}
+
 function modalSourceLabel(e) {
   const source = String((e && e.source) || "").toLowerCase();
+  if (isHermesApiEntry(e)) return "Hermes API";
   if (e && e.metadata_only) return "聊天生图";
   if (source === "chat") return "聊天生图";
   if (source === "custom") return "自定义生图";
@@ -3490,6 +3604,7 @@ function customShotAngleLabel(e) {
 }
 
 function modalOutfitLabel(e) {
+  if (isHermesApiEntry(e)) return "描述";
   if (String((e && e.source) || "").toLowerCase() !== "custom") return "穿搭";
   return isPureCustomPrompt(e) ? "描述" : "注入";
 }
@@ -3500,6 +3615,13 @@ function modalSourceContext(e) {
   let context = label;
   const style = displayOutfitStyle(e);
   if (style && style !== "自定义" && !context.includes(style)) context += ` · ${style}`;
+  if (isHermesApiEntry(e)) {
+    const modeLabel = customGenerationModeLabel(e);
+    if (modeLabel && !context.includes(modeLabel)) context += ` · ${modeLabel}`;
+    const shotLabel = customShotAngleLabel(e);
+    if (shotLabel && !context.includes(shotLabel)) context += ` · 视角 ${shotLabel}`;
+    return context;
+  }
   if (String((e && e.source) || "").toLowerCase() === "custom") {
     if (isPureCustomPrompt(e)) context += " · 纯";
     const shotLabel = customShotAngleLabel(e);
@@ -3549,34 +3671,14 @@ function renderToday() {
     // Outfit text (extract from "风格：xxx 穿搭：yyy")
     const outfitText = extractOutfitText(today.outfit || "");
 
-    // Schedule items — prefer schedule_time field, fallback to parsing full schedule
+    // Schedule items: a photo card only shows its own matched schedule slot.
     let schedHtml = "";
-    const schedSource = today.schedule_time || today.schedule || "";
+    const schedSource = today.schedule_time || "";
     if (schedSource && schedSource !== "生成失败") {
       let slots = [];
       if (today.schedule_time) {
         // New format: schedule_time is the matched activity text
         slots = today.schedule_time.split(/[；;。\n]+/).map(s => s.trim()).filter(Boolean);
-      } else {
-        // Legacy: parse full schedule by time patterns
-        let normalized = schedSource
-          .replace(/(?:早上|清晨|上午)\s*(\d{1,2})点/g, '$1:00')
-          .replace(/(?:中午)\s*(\d{1,2})点/g, '$1:00')
-          .replace(/(?:下午|午后)\s*(\d{1,2})点/g, (_, h) => `${parseInt(h)+12}:00`)
-          .replace(/(?:晚上|傍晚|晚间)\s*(\d{1,2})点/g, (_, h) => `${parseInt(h)+12}:00`)
-          .replace(/(\d{1,2})点/g, '$1:00');
-        const allSlots = normalized.match(/\d{1,2}:\d{2}.*?(?=\d{1,2}:\d{2}|$)/g) || [];
-        const photoHour = today.time ? parseInt(today.time.split(":")[0], 10) : -1;
-        const photoPeriod = photoHour < 12 ? 'morning' : photoHour < 18 ? 'afternoon' : 'evening';
-        const relevant = allSlots.filter(slot => {
-          const m = slot.match(/^(\d{1,2}):\d{2}/);
-          if (!m) return true;
-          const h = parseInt(m[1], 10);
-          if (photoPeriod === 'morning') return h < 12;
-          if (photoPeriod === 'afternoon') return h >= 12 && h < 18;
-          return h >= 18;
-        });
-        slots = (relevant.length ? relevant : allSlots).map(s => s.trim());
       }
       if (slots.length) {
         schedHtml = slots.map(slot => {
@@ -3930,6 +4032,25 @@ ms.textContent = `
 .modal-outfit .outfit-label { background:#fff;color:#e91e63;padding:3px 14px;border-radius:14px;font-size:13px;font-weight:600;letter-spacing:0.5px;white-space:nowrap;border:1.5px solid #e91e63;box-shadow:0 2px 6px rgba(233,30,99,0.12); }
 .modal-outfit .outfit-divider { color:#ccc;font-size:14px; }
 .modal-outfit .outfit-text { color:#555;flex:1;min-width:200px; }
+.outfit-magic-btn {
+  width: 30px;
+  height: 30px;
+  border: 1.5px solid rgba(233,30,99,0.18);
+  border-radius: 999px;
+  background: #fff;
+  color: #e91e63;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: all 0.18s ease;
+  box-shadow: 0 2px 8px rgba(233,30,99,0.08);
+}
+.outfit-magic-btn:hover { border-color:#e91e63;background:#fce4ec;transform:translateY(-1px);box-shadow:0 6px 16px rgba(233,30,99,0.14); }
+.outfit-magic-btn:disabled { opacity:0.58;cursor:default;transform:none; }
+.outfit-magic-btn.loading i { animation: modalMagicSpin 0.85s linear infinite; }
+@keyframes modalMagicSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .today-compact .modal-outfit .outfit-text,
 .modal-content .today-card-info .modal-outfit .outfit-text { white-space:normal;overflow:visible;text-overflow:clip;max-width:none;-webkit-line-clamp:unset;display:block; }
 .today-compact .modal-outfit,
@@ -4163,8 +4284,11 @@ function openModal(e) {
   metaHtml += renderRerollButton(e, {id: "modalRerollBtn", modal: true});
   document.getElementById("modalMeta").innerHTML = metaHtml;
   document.getElementById("modalMeta").style.display = metaHtml ? "flex" : "none";
+  const outfitMagicBtn = e.image_filename
+    ? `<button type="button" class="outfit-magic-btn" onclick="quickCustomImg2ImgFromModal(event,this)" title="用自定义输入框提示词图生图" aria-label="用自定义输入框提示词图生图"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i></button>`
+    : "";
   document.getElementById("modalOutfit").innerHTML = e.outfit
-    ? `<span class="outfit-label">${modalOutfitLabel(e)}</span><span class="outfit-divider">|</span><span class="outfit-text">${extractOutfitText(e.outfit)}</span>`
+    ? `<span class="outfit-label">${modalOutfitLabel(e)}</span><span class="outfit-divider">|</span><span class="outfit-text">${extractOutfitText(e.outfit)}</span>${outfitMagicBtn}`
     : '--';
   // Schedule
   const schedEl = document.getElementById("modalSchedule");
@@ -4290,6 +4414,7 @@ async function rerollImage(imgId, event, btn, options = {}) {
   if (!imgId) return;
   if (btn && btn.disabled) return;
   const shouldOpenModal = Boolean(options.openFreshModal || (modalOverlay.classList.contains("open") && currentModalImg === imgId));
+  const viewportAnchor = captureGalleryViewportAnchor(imgId, event);
   setRerollButtonLoading(btn, true);
   showToast("🎲 正在抽一张新图...");
   try {
@@ -4303,9 +4428,14 @@ async function rerollImage(imgId, event, btn, options = {}) {
       showToast("❌ 抽卡失败" + (data.error ? ": " + data.error : ""));
       return;
     }
-    await loadGallery();
-    const fresh = allEntries.find(x => x.image_filename === data.image_filename) || data;
-    showToast("✨ 新图抽好啦");
+    const fresh = data;
+    const oldImgId = data.replaced_image_filename || imgId;
+    replaceLocalImage(oldImgId, fresh);
+    renderActivePhotoView();
+    updateBadges();
+    window.applyGalleryColumns?.();
+    restoreGalleryViewportAnchor(viewportAnchor);
+    showToast("✨ 已替换成新图");
     if (shouldOpenModal) openModal(fresh);
   } catch(e) {
     showToast("❌ " + e.message);
@@ -4428,6 +4558,9 @@ const BUILTIN_REF_FALLBACKS = [
   { filename: "ref_style_girly.jpg", url: "/local-refs/ref_style_girly.jpg", style: "girly", label: "少女风", builtin: true },
   { filename: "ref_style_sweet.jpg", url: "/local-refs/ref_style_sweet.jpg", style: "sweet", label: "甜妹风", builtin: true }
 ];
+const CUSTOM_IMAGE_MODEL_FALLBACKS = ["gpt-image-2"];
+let customImageModelsLoaded = false;
+let customImageDefaultModel = "";
 
 function selectedCustomGenValue(groupId, key, fallback) {
   const btn = document.querySelector(`#${groupId} .cg-size-btn.active`);
@@ -4443,6 +4576,17 @@ function getCustomGenSize() {
 
 function getCustomShotType() {
   return selectedCustomGenValue("cgShotGroup", "shot", "selfie");
+}
+
+function normalizeCustomImageModel(value) {
+  const model = String(value || "").trim();
+  if (!model || ["default", "auto", "current"].includes(model.toLowerCase())) return "";
+  return model;
+}
+
+function getCustomImageModel() {
+  const select = document.getElementById("cgModelSelect");
+  return normalizeCustomImageModel(select ? select.value : "");
 }
 
 function getCustomPureMode() {
@@ -4472,6 +4616,68 @@ function setCustomGenActiveValue(groupId, key, value) {
   btn.classList.add("active");
 }
 
+function setCustomImageModel(value) {
+  const select = document.getElementById("cgModelSelect");
+  if (!select) return;
+  const model = normalizeCustomImageModel(value);
+  if (model && !Array.from(select.options).some(opt => opt.value === model)) {
+    const opt = document.createElement("option");
+    opt.value = model;
+    opt.textContent = model;
+    select.appendChild(opt);
+  }
+  select.value = model;
+  updateCustomModelHint();
+}
+
+function updateCustomModelHint() {
+  const hint = document.getElementById("cgModelHint");
+  if (!hint) return;
+  const selected = getCustomImageModel();
+  hint.textContent = selected || (customImageDefaultModel ? `默认：${customImageDefaultModel}` : "默认模型");
+}
+
+function renderCustomImageModels(models, currentModel, defaultModel) {
+  const select = document.getElementById("cgModelSelect");
+  if (!select) return;
+  const savedModel = normalizeCustomImageModel(readCustomGenState().model || select.value);
+  customImageDefaultModel = normalizeCustomImageModel(defaultModel || currentModel || customImageDefaultModel);
+  const ordered = [];
+  [currentModel, defaultModel, ...CUSTOM_IMAGE_MODEL_FALLBACKS, ...(Array.isArray(models) ? models : [])].forEach(model => {
+    model = normalizeCustomImageModel(model);
+    if (model && !ordered.includes(model)) ordered.push(model);
+  });
+  select.innerHTML = "";
+  const defaultOpt = document.createElement("option");
+  defaultOpt.value = "";
+  defaultOpt.textContent = customImageDefaultModel ? `默认模型（${customImageDefaultModel}）` : "默认模型";
+  select.appendChild(defaultOpt);
+  ordered.forEach(model => {
+    const opt = document.createElement("option");
+    opt.value = model;
+    opt.textContent = model;
+    select.appendChild(opt);
+  });
+  setCustomImageModel(savedModel);
+}
+
+async function loadCustomImageModels() {
+  const select = document.getElementById("cgModelSelect");
+  if (!select) return;
+  if (!customImageModelsLoaded) {
+    renderCustomImageModels(CUSTOM_IMAGE_MODEL_FALLBACKS, "", "");
+  }
+  try {
+    const res = await fetch(`${API}/api/image-models`);
+    const data = await res.json();
+    renderCustomImageModels(data.models || [], data.current_model || "", data.default_model || "");
+    customImageModelsLoaded = true;
+  } catch(e) {
+    console.error("load image models:", e);
+    renderCustomImageModels(CUSTOM_IMAGE_MODEL_FALLBACKS, customImageDefaultModel, customImageDefaultModel);
+  }
+}
+
 function readCustomGenState() {
   try {
     return JSON.parse(window.galleryStorageGet("custom_gen_state", "{}")) || {};
@@ -4487,6 +4693,7 @@ function saveCustomGenState() {
     aspect: getCustomGenSize().aspect,
     resolution: getCustomGenSize().resolution,
     shot: getCustomShotType(),
+    model: getCustomImageModel(),
     pure: getCustomPureMode(),
     ref: (document.querySelector("#cgRefGrid .cg-ref-item.active") || {}).dataset?.ref || ""
   };
@@ -4500,6 +4707,7 @@ function restoreCustomGenState() {
   setCustomGenActiveValue("cgAspectGroup", "aspect", state.aspect);
   setCustomGenActiveValue("cgResolutionGroup", "resolution", state.resolution);
   setCustomGenActiveValue("cgShotGroup", "shot", state.shot);
+  setCustomImageModel(state.model);
   setCustomPureMode(state.pure === true || state.pure === 1 || String(state.pure || "").toLowerCase() === "true" || state.pure === "1");
   updateCustomSizeHint();
 }
@@ -4533,11 +4741,34 @@ function restoreCustomRefSelection(grid, refValue) {
   target.classList.add("active");
 }
 
+function currentCustomGenPayload(refImageOverride = "") {
+  const promptEl = document.getElementById("cgPrompt");
+  const prompt = promptEl ? promptEl.value.trim() : "";
+  if (!prompt) return { error: "prompt_required" };
+  const customSize = getCustomGenSize();
+  const refItem = document.querySelector("#cgRefGrid .cg-ref-item.active");
+  const refImage = refImageOverride || (refItem ? refItem.dataset.ref : "");
+  const body = {
+    prompt,
+    aspect: customSize.aspect,
+    resolution: customSize.resolution,
+    size: customSize.size,
+    shot_type: getCustomShotType(),
+    pure: getCustomPureMode(),
+    source: "custom_ui"
+  };
+  const imageModel = getCustomImageModel();
+  if (imageModel) body.model = imageModel;
+  if (refImage) body.ref_image = refImage;
+  return { body };
+}
+
 function openCustomGen() {
   restoreCustomGenState();
   document.getElementById("cgOverlay").classList.add("open");
   document.body.style.overflow = "hidden";
   updateCustomSizeHint();
+  loadCustomImageModels();
   // Load gallery images as reference options
   loadRefImages();
 }
@@ -4550,6 +4781,11 @@ document.addEventListener("DOMContentLoaded", () => {
   bindCustomGenOptionGroup("cgAspectGroup");
   bindCustomGenOptionGroup("cgResolutionGroup");
   bindCustomGenOptionGroup("cgShotGroup");
+  const modelEl = document.getElementById("cgModelSelect");
+  if (modelEl) modelEl.addEventListener("change", () => {
+    updateCustomModelHint();
+    saveCustomGenState();
+  });
   const promptEl = document.getElementById("cgPrompt");
   if (promptEl) promptEl.addEventListener("input", saveCustomGenState);
   restoreCustomGenState();
@@ -4663,32 +4899,18 @@ function deleteUploadedRef(idx) {
     });
 }
 async function submitCustomGen() {
-  const prompt = document.getElementById("cgPrompt").value.trim();
-  if (!prompt) { showToast("✍️ 先输入穿搭描述呀～"); return; }
-  const customSize = getCustomGenSize();
-  const shotType = getCustomShotType();
-  const pure = getCustomPureMode();
-  const refItem = document.querySelector("#cgRefGrid .cg-ref-item.active");
-  const refImage = refItem ? refItem.dataset.ref : "";
+  const payload = currentCustomGenPayload();
+  if (payload.error === "prompt_required") { showToast("✍️ 先输入穿搭描述呀～"); return; }
   
   const btn = document.getElementById("cgSubmitBtn");
   btn.disabled = true; btn.textContent = "⏳ 正在打扮...";
   showToast("🌸 按你的描述开始生成～");
   
   try {
-    const body = {
-      prompt,
-      aspect: customSize.aspect,
-      resolution: customSize.resolution,
-      size: customSize.size,
-      shot_type: shotType,
-      pure
-    };
-    if (refImage) body.ref_image = refImage;
     const res = await fetch(`${API}/api/generate-custom`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify(body)
+      body: JSON.stringify(payload.body)
     });
     const data = await res.json();
     if (data.error) showToast("❌ " + data.error);
@@ -4699,6 +4921,47 @@ async function submitCustomGen() {
     }
   } catch(e) { showToast("❌ " + e.message); }
   finally { btn.disabled = false; btn.textContent = "✨ 开始生成"; }
+}
+
+async function quickCustomImg2ImgFromModal(event, btn) {
+  if (event) event.stopPropagation();
+  if (!currentModalImg) {
+    showToast("❌ 找不到当前图片");
+    return;
+  }
+  const payload = currentCustomGenPayload(`/images/${currentModalImg}`);
+  if (payload.error === "prompt_required") {
+    showToast("✍️ 先在穿搭生成里填好提示词");
+    return;
+  }
+  if (btn && btn.disabled) return;
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add("loading");
+  }
+  showToast("🪄 正在用当前图做参考生成～");
+  try {
+    const res = await fetch(`${API}/api/generate-custom`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload.body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) {
+      showToast("❌ " + (data.error || `HTTP ${res.status}`));
+      return;
+    }
+    showToast("✨ 魔法棒图生图完成");
+    closeModal();
+    await loadGallery();
+  } catch(e) {
+    showToast("❌ " + e.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove("loading");
+    }
+  }
 }
 
 // ===== Load =====
@@ -5018,11 +5281,15 @@ async function loadSettingsStatus() {
 
     // Update status indicators
     updateStatus("skGiteeStatus", data.gitee_key);
-    updateStatus("skGptStatus", data.gpt_key);
     updateStatus("skCpaKeyStatus", data.cpa_key);
     const gptBaseUrlEl = document.getElementById("skGptBaseUrl");
     const gptBaseUrlStatus = document.getElementById("skGptBaseUrlStatus");
-    gptBaseUrlEl.value = data.gpt_base_url_local || data.gpt_base_url || "";
+    gptBaseUrlEl.value = data.gpt_base_url_local || "";
+    gptBaseUrlEl.dataset.localValue = data.gpt_base_url_local || "";
+    gptBaseUrlEl.dataset.defaultValue = data.gpt_base_url_default || "";
+    gptBaseUrlEl.placeholder = data.gpt_base_url_default
+      ? `默认：${data.gpt_base_url_default}`
+      : "例如 http://127.0.0.1:8090/v1/images/generations";
     if (data.gpt_base_url_local) {
       gptBaseUrlStatus.textContent = "✓ 本机已设置";
       gptBaseUrlStatus.className = "sk-status set";
@@ -5033,9 +5300,23 @@ async function loadSettingsStatus() {
       gptBaseUrlStatus.textContent = "○ 未设置";
       gptBaseUrlStatus.className = "sk-status unset";
     }
+    const gptStatus = document.getElementById("skGptStatus");
+    if (data.gpt_key) {
+      updateStatus("skGptStatus", data.gpt_key);
+    } else if (data.gpt_base_url) {
+      gptStatus.textContent = "○ 未设置（免密端点可留空）";
+      gptStatus.className = "sk-status unset";
+    } else {
+      updateStatus("skGptStatus", data.gpt_key);
+    }
     const cpaUrlEl = document.getElementById("skCpaUrl");
     const cpaUrlStatus = document.getElementById("skCpaUrlStatus");
-    cpaUrlEl.value = data.cpa_url_local || data.cpa_url || "";
+    cpaUrlEl.value = data.cpa_url_local || "";
+    cpaUrlEl.dataset.localValue = data.cpa_url_local || "";
+    cpaUrlEl.dataset.defaultValue = data.cpa_url_default || "";
+    cpaUrlEl.placeholder = data.cpa_url_default
+      ? `默认：${data.cpa_url_default}`
+      : "例如 http://127.0.0.1:8090/v1";
     if (data.cpa_url_local) {
       cpaUrlStatus.textContent = "✓ 本机已设置";
       cpaUrlStatus.className = "sk-status set";
@@ -5243,8 +5524,10 @@ window.runImageCleanup = runImageCleanup;
 async function saveSettings() {
   const giteeKey = document.getElementById("skGiteeKey").value.trim();
   const gptKey = document.getElementById("skGptKey").value.trim();
-  const gptBaseUrl = document.getElementById("skGptBaseUrl").value.trim();
-  const cpaUrl = document.getElementById("skCpaUrl").value.trim();
+  const gptBaseUrlEl = document.getElementById("skGptBaseUrl");
+  const cpaUrlEl = document.getElementById("skCpaUrl");
+  const gptBaseUrl = gptBaseUrlEl.value.trim();
+  const cpaUrl = cpaUrlEl.value.trim();
   const cpaKey = document.getElementById("skCpaKey").value.trim();
   const githubProxy = document.getElementById("skGithubProxy").value.trim();
   const imageDir = document.getElementById("skImageDir").value.trim();
@@ -5263,8 +5546,8 @@ async function saveSettings() {
     const body = {};
     if (giteeKey) body.gitee_key = giteeKey;
     if (gptKey) body.gpt_key = gptKey;
-    body.gpt_base_url = gptBaseUrl;
-    body.cpa_url = cpaUrl;
+    if (gptBaseUrl || gptBaseUrlEl.dataset.localValue) body.gpt_base_url = gptBaseUrl;
+    if (cpaUrl || cpaUrlEl.dataset.localValue) body.cpa_url = cpaUrl;
     if (cpaKey) body.cpa_key = cpaKey;
     body.github_proxy = githubProxy;
     body.image_dir = imageDir;
@@ -5338,7 +5621,7 @@ async function checkUpdate() {
         <div class="sk-update-card">
           <div style="font-weight:600;color:#2e7d32;margin-bottom:8px;">🎉 发现新版本 v${data.latest}</div>
           <div style="font-size:13px;color:#555;margin-bottom:10px;">${data.changelog || '更新内容详见 GitHub'}</div>
-          <div class="sk-update-safe-note">只更新仓库代码；本地 API Key、Base URL、appearance、画廊图片和参考图会保留。</div>
+          <div class="sk-update-safe-note">只更新仓库代码；本地 API Key、Base URL、appearance、画廊图片和参考图会保留。Hermes 可调用 /api/hermes/update 自动安全升级。</div>
           ${data.html_url ? `<a href="${data.html_url}" target="_blank" style="font-size:12px;color:#1976d2;">查看完整更新日志</a><br>` : ''}
           <button class="sk-update-action" id="applyUpdateBtn" onclick="applyUpdate()">⬆️ 一键安全升级到 v${data.latest}</button>
         </div>`;
@@ -5412,7 +5695,7 @@ document.addEventListener("keydown", e => {
 </div>
 <div id="colSliderWrap" class="hidden">
   <span class="col-icon">🖼️</span>
-  <input type="range" id="colSlider" min="4" max="8" step="1" value="5">
+  <input type="range" id="colSlider" min="1" max="8" step="1" value="5">
   <span class="col-val" id="colVal">5</span>
 </div>
 
@@ -5425,7 +5708,8 @@ document.addEventListener("keydown", e => {
   const scrollNav = document.getElementById('galleryScrollNav');
   const saved = window.galleryStorageGet('gallery_cols', '');
 
-  const COL_MIN = 4;
+  const COL_MIN = 1;
+  const DESKTOP_COL_MIN = 4;
   const COL_MAX = 8;
   const MIN_CARD_WIDTH = 164;
   let preferredCols = Math.max(COL_MIN, Math.min(COL_MAX, parseInt(saved || slider.value, 10) || 5));
@@ -5447,6 +5731,12 @@ document.addEventListener("keydown", e => {
     return Math.max(COL_MIN, Math.min(COL_MAX, Math.floor((width + gap) / (MIN_CARD_WIDTH + gap))));
   }
 
+  function minColumnCount(maxAvailable) {
+    return window.matchMedia("(max-width: 700px)").matches
+      ? COL_MIN
+      : Math.min(DESKTOP_COL_MIN, maxAvailable);
+  }
+
   function currentMaxColumns() {
     const grids = Array.from(document.querySelectorAll('.gallery-grid'));
     if (!grids.length) return COL_MAX;
@@ -5454,15 +5744,16 @@ document.addEventListener("keydown", e => {
   }
 
   function syncSlider(actual, maxAvailable) {
-    slider.min = String(COL_MIN);
+    const minAvailable = minColumnCount(maxAvailable);
+    slider.min = String(minAvailable);
     slider.max = String(maxAvailable);
     slider.value = String(actual);
-    slider.disabled = maxAvailable <= COL_MIN;
-    wrap.classList.toggle('single-value', maxAvailable <= COL_MIN);
+    slider.disabled = maxAvailable <= minAvailable;
+    wrap.classList.toggle('single-value', maxAvailable <= minAvailable);
     valEl.textContent = String(actual);
     const title = maxAvailable < COL_MAX
       ? `当前宽度最多 ${maxAvailable} 列，放宽窗口可调到 ${COL_MAX} 列`
-      : `可调 ${COL_MIN}-${COL_MAX} 列`;
+      : `可调 ${minAvailable}-${COL_MAX} 列`;
     slider.title = title;
     valEl.title = title;
     wrap.title = title;
@@ -5471,7 +5762,8 @@ document.addEventListener("keydown", e => {
   function applyCols(n, persist = true) {
     preferredCols = Math.max(COL_MIN, Math.min(COL_MAX, parseInt(n, 10) || preferredCols || 5));
     const maxAvailable = currentMaxColumns();
-    const actual = Math.min(preferredCols, maxAvailable);
+    const minAvailable = minColumnCount(maxAvailable);
+    const actual = Math.max(minAvailable, Math.min(preferredCols, maxAvailable));
     document.querySelectorAll('.gallery-grid').forEach(g => {
       g.style.gridTemplateColumns = `repeat(${actual}, minmax(0, 1fr))`;
       // Remove old cols-N classes and add new one
@@ -5672,10 +5964,11 @@ function loadScheduleEggData(options) {
       }
     }
 
-    // 过滤：显示真实生图计划相关时间；若计划还有余量，再显示下一条未来日程。
+    // 过滤：今日日程只预览已完成/当前项 + 未来一条；完整队列在“今日生图计划”里展示。
     var visibleSchedule = [];
     var activeScheduleIdx = -1;
     var nextFutureCandidate = null;
+    var shownFutureSchedule = false;
     for (var i = 0; i < schedule.length; i++) {
       var normalizedTime = extractJobTime(schedule[i].time);
       if (!normalizedTime) continue;
@@ -5689,10 +5982,14 @@ function loadScheduleEggData(options) {
       var itemPast = isPastOrNow(normalizedTime);
       normalizedItem.isPast = itemPast || normalizedItem.hasPhoto;
       normalizedItem.isNext = !normalizedItem.isPast;
+      if (normalizedItem.isNext) {
+        if (shownFutureSchedule) continue;
+        shownFutureSchedule = true;
+      }
       visibleSchedule.push(normalizedItem);
       if (activeScheduleIdx < 0 && normalizedItem.isNext) activeScheduleIdx = visibleSchedule.length - 1;
     }
-    if (remainingToday > 0 && activeToday === 0) {
+    if (!shownFutureSchedule && remainingToday > 0 && activeToday === 0) {
       for (var nf = 0; nf < schedule.length; nf++) {
         var futureTime = extractJobTime(schedule[nf].time);
         if (!futureTime || isPastOrNow(futureTime) || photoTimeMap[futureTime] || jobTimeMap[futureTime]) continue;
@@ -5710,6 +6007,7 @@ function loadScheduleEggData(options) {
         visibleSchedule.push(nextFutureCandidate);
         visibleSchedule.sort(function(a, b) { return timeSortValue(a.time) - timeSortValue(b.time); });
         activeScheduleIdx = visibleSchedule.indexOf(nextFutureCandidate);
+        shownFutureSchedule = true;
       }
     }
 
