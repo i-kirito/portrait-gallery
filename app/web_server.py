@@ -222,6 +222,8 @@ class GalleryServer:
         self.app.router.add_post("/api/photo-job-limit", self.handle_photo_job_limit)
         self.app.router.add_get("/api/favorite-outfits", self.handle_favorite_outfits)
         self.app.router.add_post("/api/favorite-outfits", self.handle_favorite_outfits)
+        self.app.router.add_get("/api/disliked-outfits", self.handle_disliked_outfits)
+        self.app.router.add_post("/api/disliked-outfits", self.handle_disliked_outfits)
 
         # 图片服务
         self.app.router.add_get("/images/{filename:.*}", self.handle_image_file)
@@ -248,6 +250,12 @@ class GalleryServer:
 
     def _favorite_outfits_lock_path(self) -> str:
         return os.path.join(self.data_dir, "favorite_outfits.lock")
+
+    def _disliked_outfits_path(self) -> str:
+        return os.path.join(self.data_dir, "disliked_outfits.json")
+
+    def _disliked_outfits_lock_path(self) -> str:
+        return os.path.join(self.data_dir, "disliked_outfits.lock")
 
     @staticmethod
     def _favorite_outfit_payload(outfit: dict) -> dict:
@@ -361,6 +369,51 @@ class GalleryServer:
             finally:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
+    def _load_disliked_outfits(self) -> list[dict]:
+        path = self._disliked_outfits_path()
+        if not os.path.exists(path):
+            return []
+        try:
+            with open(self._disliked_outfits_lock_path(), "w") as lock_file:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_SH)
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                finally:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            if isinstance(data, dict):
+                data = data.get("items", [])
+            return [item for item in data if isinstance(item, dict)]
+        except Exception as e:
+            logger.error("Load disliked outfits error: %s", e)
+            return []
+
+    def _update_disliked_outfits(self, callback) -> list[dict]:
+        path = self._disliked_outfits_path()
+        os.makedirs(self.data_dir, exist_ok=True)
+        with open(self._disliked_outfits_lock_path(), "w") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                items = []
+                if os.path.exists(path):
+                    try:
+                        with open(path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        if isinstance(data, dict):
+                            data = data.get("items", [])
+                        if isinstance(data, list):
+                            items = [item for item in data if isinstance(item, dict)]
+                    except Exception:
+                        items = []
+                items = callback(items) or []
+                tmp_path = f"{path}.tmp"
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump({"items": items}, f, ensure_ascii=False, indent=2)
+                os.replace(tmp_path, path)
+                return items
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
     async def handle_favorite_outfits(self, request: web.Request):
         """收藏今日穿搭方案，供后续日程 LLM 参考。"""
         if request.method == "GET":
@@ -427,11 +480,118 @@ class GalleryServer:
             logger.error("Favorite outfit update error: %s", e)
             return web.json_response({"error": "save_failed", "detail": str(e)}, status=500)
 
+        disliked_removed = False
+        if should_favorite:
+            def _remove_disliked(items: list[dict]) -> list[dict]:
+                nonlocal disliked_removed
+                next_items = [
+                    x for x in items
+                    if x.get("id") != outfit_id and self._favorite_outfit_item_id(x) != outfit_id
+                ]
+                disliked_removed = len(next_items) != len(items)
+                return next_items
+
+            try:
+                self._update_disliked_outfits(_remove_disliked)
+            except Exception as e:
+                logger.error("Remove disliked outfit after favorite error: %s", e)
+
         return web.json_response({
             "success": True,
             "favorite": should_favorite,
             "id": outfit_id,
             "count": len(items),
+            "disliked_removed": disliked_removed,
+        })
+
+    async def handle_disliked_outfits(self, request: web.Request):
+        """记录用户不喜欢的今日穿搭方案，供后续日程 LLM 减少相似风格。"""
+        if request.method == "GET":
+            items = sorted(
+                [self._favorite_outfit_response_item(item) for item in self._load_disliked_outfits()],
+                key=lambda item: item.get("created_at", 0),
+                reverse=True,
+            )
+            return web.json_response({
+                "items": items,
+                "count": len(items),
+                "generation_reference": bool(items),
+                "reference_scope": "negative_hair_outfit_style_only",
+            })
+
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid_json"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "invalid_json"}, status=400)
+
+        outfit = self._favorite_outfit_payload(body.get("outfit"))
+        if not isinstance(outfit, dict) or not outfit:
+            return web.json_response({"error": "outfit_required"}, status=400)
+
+        date_text = str(body.get("date") or date.today().isoformat()).strip()
+        outfit_style = str(body.get("outfit_style") or outfit.get("风格") or "").strip()
+        outfit_id = self._favorite_outfit_id(date_text, outfit_style, outfit)
+
+        existing_items = self._load_disliked_outfits()
+        existing_ids = {
+            disliked_id
+            for item in existing_items
+            for disliked_id in (item.get("id"), self._favorite_outfit_item_id(item))
+            if disliked_id
+        }
+        desired_state = body.get("disliked")
+        should_dislike = (not (outfit_id in existing_ids)) if not isinstance(desired_state, bool) else desired_state
+
+        item = {
+            "id": outfit_id,
+            "date": date_text,
+            "outfit_style": outfit_style,
+            "base_style": str(body.get("base_style") or "").strip(),
+            "outfit": outfit,
+            "outfit_keywords": str(body.get("outfit_keywords") or "").strip(),
+            "created_at": int(time.time()),
+        }
+
+        def _apply(items: list[dict]) -> list[dict]:
+            next_items = [
+                x for x in items
+                if x.get("id") != outfit_id and self._favorite_outfit_item_id(x) != outfit_id
+            ]
+            if should_dislike:
+                next_items.insert(0, item)
+            next_items.sort(key=lambda x: x.get("created_at", 0), reverse=True)
+            return next_items[:50]
+
+        try:
+            items = self._update_disliked_outfits(_apply)
+        except Exception as e:
+            logger.error("Disliked outfit update error: %s", e)
+            return web.json_response({"error": "save_failed", "detail": str(e)}, status=500)
+
+        favorite_removed = False
+        if should_dislike:
+            def _remove_favorite(items: list[dict]) -> list[dict]:
+                nonlocal favorite_removed
+                next_items = [
+                    x for x in items
+                    if x.get("id") != outfit_id and self._favorite_outfit_item_id(x) != outfit_id
+                ]
+                favorite_removed = len(next_items) != len(items)
+                return next_items
+
+            try:
+                self._update_favorite_outfits(_remove_favorite)
+            except Exception as e:
+                logger.error("Remove favorite outfit after dislike error: %s", e)
+
+        return web.json_response({
+            "success": True,
+            "disliked": should_dislike,
+            "id": outfit_id,
+            "count": len(items),
+            "favorite_removed": favorite_removed,
         })
 
     def _plugin_config_path(self) -> str:
@@ -2240,6 +2400,12 @@ class GalleryServer:
                 for favorite_id in (item.get("id"), self._favorite_outfit_item_id(item))
                 if favorite_id
             }
+            disliked_ids = {
+                disliked_id
+                for item in self._load_disliked_outfits()
+                for disliked_id in (item.get("id"), self._favorite_outfit_item_id(item))
+                if disliked_id
+            }
 
             return web.json_response({
                 "status": "ok",
@@ -2254,6 +2420,8 @@ class GalleryServer:
                 "scene_keywords": scene_keywords,
                 "outfit_favorite_id": outfit_id,
                 "outfit_favorite": bool(outfit_id and outfit_id in favorite_ids),
+                "outfit_disliked_id": outfit_id,
+                "outfit_disliked": bool(outfit_id and outfit_id in disliked_ids),
             })
         except Exception as e:
             logger.error(f"Schedule detail error: {e}")

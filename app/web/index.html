@@ -2518,7 +2518,8 @@ textarea:focus-visible,
 }
 .egg-section-title-main { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .egg-title-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
-.egg-outfit-fav-btn {
+.egg-outfit-fav-btn,
+.egg-outfit-dislike-btn {
   min-height: 36px;
   min-width: 94px;
   max-width: 136px;
@@ -2539,10 +2540,21 @@ textarea:focus-visible,
   box-shadow: 0 6px 14px rgba(233,30,99,0.08);
   transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
-.egg-outfit-fav-btn span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.egg-outfit-dislike-btn {
+  min-width: 82px;
+  max-width: 118px;
+  border-color: rgba(100,116,139,0.22);
+  color: #64748b;
+  box-shadow: 0 6px 14px rgba(100,116,139,0.08);
+}
+.egg-outfit-fav-btn span,
+.egg-outfit-dislike-btn span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .egg-outfit-fav-btn:hover { background: #fff7fb; border-color: rgba(233,30,99,0.36); }
 .egg-outfit-fav-btn.active { background: linear-gradient(135deg, #ff2d8d, #c026d3); border-color: transparent; color: #fff; box-shadow: 0 8px 18px rgba(233,30,99,0.22); }
-.egg-outfit-fav-btn:disabled { cursor: default; opacity: 0.58; box-shadow: none; }
+.egg-outfit-dislike-btn:hover { background: #f8fafc; border-color: rgba(100,116,139,0.38); }
+.egg-outfit-dislike-btn.active { background: linear-gradient(135deg, #64748b, #334155); border-color: transparent; color: #fff; box-shadow: 0 8px 18px rgba(51,65,85,0.18); }
+.egg-outfit-fav-btn:disabled,
+.egg-outfit-dislike-btn:disabled { cursor: default; opacity: 0.58; box-shadow: none; }
 .egg-outfit-view-btn {
   min-height: 30px;
   min-width: 52px;
@@ -2669,6 +2681,7 @@ textarea:focus-visible,
   .egg-section-title.with-action { grid-template-columns: 1fr; align-items: start; }
   .egg-title-actions { justify-self: end; flex-wrap: wrap; max-width: 100%; }
   .egg-outfit-fav-btn { min-width: 94px; }
+  .egg-outfit-dislike-btn { min-width: 82px; }
   .egg-outfit-view-btn { min-width: 52px; }
   .egg-photo-item { grid-template-columns: auto 48px auto minmax(0, 1fr) auto; }
   .egg-photo-style { grid-column: 5; grid-row: 1; justify-self: end; }
@@ -6127,21 +6140,27 @@ function loadScheduleEggData(options) {
     var hasOutfit = outfitKeys.some(function(k){ return outfit[k]; });
     if (hasOutfit) {
       var outfitFavorite = detail.outfit_favorite === true;
+      var outfitDisliked = detail.outfit_disliked === true;
       var favoriteOutfit = {};
       ['风格', '发型', '穿搭'].forEach(function(k) {
         if (outfit[k]) favoriteOutfit[k] = outfit[k];
       });
-      var outfitPayload = {
-        id: detail.outfit_favorite_id || '',
+      var outfitBasePayload = {
+        id: detail.outfit_favorite_id || detail.outfit_disliked_id || '',
         date: detail.date || '',
         outfit_style: detail.outfit_style || outfit['风格'] || '',
         base_style: detail.base_style || '',
         outfit: favoriteOutfit,
-        outfit_keywords: detail.outfit_keywords || '',
-        favorite: !outfitFavorite
+        outfit_keywords: detail.outfit_keywords || ''
       };
-      var outfitPayloadAttr = escapeAttr(encodeURIComponent(JSON.stringify(outfitPayload)));
-      html += '<div class="egg-section egg-outfit-section"><div class="egg-section-title with-action"><span class="egg-section-title-main"><span class="icon">👗</span>今日穿搭方案</span><span class="egg-title-actions"><button class="egg-outfit-fav-btn ' + (outfitFavorite ? 'active' : '') + '" type="button" data-payload="' + outfitPayloadAttr + '" onclick="toggleFavoriteOutfitPlan(this)" aria-label="' + (outfitFavorite ? '取消收藏这套穿搭方案' : '收藏这套穿搭方案') + '" title="' + (outfitFavorite ? '取消收藏这套穿搭方案' : '收藏这套穿搭方案') + '"><i class="' + (outfitFavorite ? 'fa-solid' : 'fa-regular') + ' fa-bookmark" aria-hidden="true"></i><span>' + (outfitFavorite ? '已收藏' : '收藏方案') + '</span></button><button class="egg-outfit-view-btn" type="button" onclick="toggleFavoriteOutfitPanel(this)" aria-expanded="false" aria-controls="eggFavoriteOutfitsOverlay" aria-label="查看收藏方案" title="查看收藏方案"><i class="fa-regular fa-folder-open" aria-hidden="true"></i><span>查看</span></button></span></div>';
+      var favoritePayload = Object.assign({}, outfitBasePayload, { favorite: !outfitFavorite });
+      var dislikedPayload = Object.assign({}, outfitBasePayload, { disliked: !outfitDisliked });
+      var outfitPayloadAttr = escapeAttr(encodeURIComponent(JSON.stringify(favoritePayload)));
+      var dislikedPayloadAttr = escapeAttr(encodeURIComponent(JSON.stringify(dislikedPayload)));
+      html += '<div class="egg-section egg-outfit-section"><div class="egg-section-title with-action"><span class="egg-section-title-main"><span class="icon">👗</span>今日穿搭方案</span><span class="egg-title-actions">';
+      html += '<button class="egg-outfit-fav-btn ' + (outfitFavorite ? 'active' : '') + '" type="button" data-payload="' + outfitPayloadAttr + '" onclick="toggleFavoriteOutfitPlan(this)" aria-label="' + (outfitFavorite ? '取消收藏这套穿搭方案' : '收藏这套穿搭方案') + '" title="' + (outfitFavorite ? '取消收藏这套穿搭方案' : '收藏这套穿搭方案') + '"><i class="' + (outfitFavorite ? 'fa-solid' : 'fa-regular') + ' fa-bookmark" aria-hidden="true"></i><span>' + (outfitFavorite ? '已收藏' : '收藏方案') + '</span></button>';
+      html += '<button class="egg-outfit-dislike-btn ' + (outfitDisliked ? 'active' : '') + '" type="button" data-payload="' + dislikedPayloadAttr + '" onclick="toggleDislikedOutfitPlan(this)" aria-label="' + (outfitDisliked ? '取消减少这类穿搭' : '减少这类穿搭') + '" title="' + (outfitDisliked ? '取消减少这类穿搭' : '减少这类穿搭') + '"><i class="' + (outfitDisliked ? 'fa-solid' : 'fa-regular') + ' fa-thumbs-down" aria-hidden="true"></i><span>' + (outfitDisliked ? '已减少' : '不喜欢') + '</span></button>';
+      html += '<button class="egg-outfit-view-btn" type="button" onclick="toggleFavoriteOutfitPanel(this)" aria-expanded="false" aria-controls="eggFavoriteOutfitsOverlay" aria-label="查看收藏方案" title="查看收藏方案"><i class="fa-regular fa-folder-open" aria-hidden="true"></i><span>查看</span></button></span></div>';
       html += '<div class="egg-outfit-grid">';
       for (var m = 0; m < outfitKeys.length; m++) {
         if (outfit[outfitKeys[m]]) {
@@ -6201,6 +6220,9 @@ function toggleFavoriteOutfitPlan(btn) {
   }).then(function(data) {
     showToast(data.favorite ? '已收藏这套穿搭方案' : '已取消收藏穿搭方案');
     setFavoriteOutfitButtonState(btn, data.favorite, data.id);
+    if (data.disliked_removed) {
+      setDislikedOutfitButtonState(document.querySelector('.egg-outfit-dislike-btn'), false, data.id);
+    }
     scheduleEggCache = { html: '', dateText: '', updatedAt: 0 };
     var overlay = document.getElementById('eggFavoriteOutfitsOverlay');
     var body = document.getElementById('eggFavoriteOutfitsBody');
@@ -6209,6 +6231,47 @@ function toggleFavoriteOutfitPlan(btn) {
     }
   }).catch(function(e) {
     showToast('收藏方案失败：' + (e && e.message ? e.message : '未知错误'));
+  }).finally(function() {
+    btn.disabled = false;
+  });
+}
+
+function toggleDislikedOutfitPlan(btn) {
+  if (!btn || btn.disabled) return;
+  var payload = readFavoriteOutfitPayload(btn);
+  if (!payload) {
+    showToast('标记不喜欢失败：数据不完整');
+    return;
+  }
+  if (!payload || !payload.outfit) {
+    showToast('标记不喜欢失败：缺少穿搭数据');
+    return;
+  }
+
+  btn.disabled = true;
+  fetch('/api/disliked-outfits' + apiKeyQuery(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }).then(function(r) {
+    return r.json().then(function(data) {
+      if (!r.ok || data.error) throw new Error(data.error || 'dislike_failed');
+      return data;
+    });
+  }).then(function(data) {
+    showToast(data.disliked ? '以后会减少这类穿搭' : '已取消减少这类穿搭');
+    setDislikedOutfitButtonState(btn, data.disliked, data.id);
+    if (data.favorite_removed) {
+      setFavoriteOutfitButtonState(document.querySelector('.egg-outfit-fav-btn'), false, data.id);
+      var overlay = document.getElementById('eggFavoriteOutfitsOverlay');
+      var body = document.getElementById('eggFavoriteOutfitsBody');
+      if (overlay && overlay.classList.contains('show') && body) {
+        loadFavoriteOutfitPanel(body);
+      }
+    }
+    scheduleEggCache = { html: '', dateText: '', updatedAt: 0 };
+  }).catch(function(e) {
+    showToast('标记不喜欢失败：' + (e && e.message ? e.message : '未知错误'));
   }).finally(function() {
     btn.disabled = false;
   });
@@ -6265,6 +6328,24 @@ function setFavoriteOutfitButtonState(btn, isFavorite, favoriteId) {
   }
   var label = btn.querySelector('span');
   if (label) label.textContent = isFavorite ? '已收藏' : '收藏方案';
+}
+
+function setDislikedOutfitButtonState(btn, isDisliked, dislikedId) {
+  if (!btn) return;
+  var payload = readFavoriteOutfitPayload(btn) || {};
+  payload.disliked = !isDisliked;
+  if (dislikedId) payload.id = dislikedId;
+  btn.dataset.payload = encodeFavoriteOutfitPayload(payload);
+  btn.classList.toggle('active', !!isDisliked);
+  btn.setAttribute('aria-label', isDisliked ? '取消减少这类穿搭' : '减少这类穿搭');
+  btn.setAttribute('title', isDisliked ? '取消减少这类穿搭' : '减少这类穿搭');
+  var icon = btn.querySelector('i');
+  if (icon) {
+    icon.classList.toggle('fa-solid', !!isDisliked);
+    icon.classList.toggle('fa-regular', !isDisliked);
+  }
+  var label = btn.querySelector('span');
+  if (label) label.textContent = isDisliked ? '已减少' : '不喜欢';
 }
 
 function syncCurrentFavoriteButtonAfterRemoval(favoriteId) {
