@@ -829,6 +829,48 @@ def _extract_time_from_filename(filename: str) -> str:
     return ""
 
 
+def _normalize_schedule_slot_time(value: str) -> str:
+    match = re.match(r"\s*(\d{1,2}):(\d{2})", str(value or ""))
+    if not match:
+        return ""
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return ""
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _load_daily_schedule_context(date_text: str, schedule_time: str = "") -> dict:
+    store = ScheduleStore(os.path.dirname(SECRETARY_SCHEDULE_PATH))
+    data = store.load()
+    daily = data.get(date_text, {}) if isinstance(data, dict) else {}
+    if not isinstance(daily, dict):
+        return {}
+    result = {
+        "schedule": str(daily.get("schedule") or "").strip(),
+        "schedule_prompt": str(daily.get("schedule_prompt") or "").strip(),
+        "schedule_details": daily.get("schedule_details") if isinstance(daily.get("schedule_details"), list) else [],
+        "caption": str(daily.get("caption") or "").strip(),
+        "base_style": str(daily.get("base_style") or "").strip(),
+        "outfit_style": str(daily.get("outfit_style") or "").strip(),
+        "outfit": str(daily.get("outfit") or "").strip(),
+        "outfit_keywords": str(daily.get("outfit_keywords") or "").strip(),
+        "scene_keywords": str(daily.get("scene_keywords") or "").strip(),
+    }
+    slot_time = _normalize_schedule_slot_time(schedule_time)
+    if slot_time and result["schedule_details"]:
+        for item in result["schedule_details"]:
+            if not isinstance(item, dict):
+                continue
+            if _normalize_schedule_slot_time(item.get("time", "")) != slot_time:
+                continue
+            activity_zh = str(item.get("activity_zh") or "").strip()
+            if activity_zh:
+                result["schedule_slot_activity"] = activity_zh
+            break
+    return result
+
+
 def _translate_outfit(prompt: str, style_name: str) -> str:
     """Use LLM to extract Chinese outfit keywords from English image prompt."""
     # First try to extract the clothing line directly from the prompt
@@ -1030,6 +1072,15 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
         else:
             outfit_desc = f"精心搭配的{style_name}造型"
 
+    daily_context = _load_daily_schedule_context(today, schedule_time)
+    schedule_time_slot = _normalize_schedule_slot_time(schedule_time)
+    if daily_context.get("base_style") and not base_style:
+        base_style = str(daily_context.get("base_style") or "").strip()
+    if daily_context.get("outfit_style"):
+        style_name = str(daily_context.get("outfit_style") or style_name).strip() or style_name
+    full_outfit = str(daily_context.get("outfit") or "").strip()
+    outfit_value = full_outfit or f"风格：{style_name} 穿搭：{outfit_desc}"
+
     entry = {
         "id": filename,
         "date": today,
@@ -1037,16 +1088,20 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
         "model_name": model_label,
         "base_style": base_style,
         "outfit_style": style_name,
-        "outfit": f"风格：{style_name} 穿搭：{outfit_desc}",
+        "outfit": outfit_value,
         "image_path": f"/images/{filename}",
         "image_filename": filename,
         "prompt": prompt,
-        "caption": caption,
+        "caption": caption or str(daily_context.get("caption") or "").strip(),
         "favorite": False,
         "status": "ok",
         "source": source,
         "schedule_time": schedule_time,
+        "outfit_keywords": str(daily_context.get("outfit_keywords") or "").strip(),
+        "scene_keywords": str(daily_context.get("scene_keywords") or "").strip(),
     }
+    if schedule_time_slot:
+        entry["time"] = schedule_time_slot
     if generation_mode:
         entry["generation_mode"] = generation_mode
     if requested_generation_mode:

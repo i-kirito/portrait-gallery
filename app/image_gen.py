@@ -148,8 +148,13 @@ class ImageGenerator:
         outfit_prompt: str,
         outfit_style: str,
         base_style: str = "",
+        ref_image: str = "",
+        no_auto_style: bool = False,
     ) -> Optional[str]:
-        """根据穿搭描述生成图片，使用 LLM 选出的当天底模。"""
-        style_value = (base_style or "").strip().lower()
-        style = style_value if style_value in {"cool", "girly", "sweet"} else None
-        return await self.generate(outfit_prompt, style=style)
+        """根据穿搭描述生成图片，参考图由上层选择器决定。"""
+        return await self.generate(
+            outfit_prompt,
+            ref_image=ref_image,
+            no_auto_style=no_auto_style,
+            source="cron",
+        )

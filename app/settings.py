@@ -35,6 +35,24 @@ DEFAULT_STYLE_REFERENCE_FILES = {
     "sweet": "ref_style_sweet.jpg",
 }
 
+DEFAULT_STYLE_REFERENCE_PROMPTS = {
+    "cool": (
+        "Cool elegant portrait reference: mature, confident, sharp and polished look, "
+        "sleek fashion styling, cool-toned or dark outfit mood, refined facial structure, "
+        "calm aloof expression, high-fashion city vibe, suitable for 酷飒风、冷御风、优雅风、复古风 and other chic or edgy schedules."
+    ),
+    "girly": (
+        "Bright girly portrait reference: youthful, lively, cheerful and playful look, "
+        "energetic styling, cute expressive face, fresh casual or sporty mood, "
+        "sunny upbeat atmosphere, suitable for 元气风、少女风、休闲风 and active daily scenes."
+    ),
+    "sweet": (
+        "Soft sweet portrait reference: gentle, warm, delicate and romantic look, "
+        "soft styling, tender facial mood, cozy pastel or fresh outfit atmosphere, "
+        "dreamy approachable vibe, suitable for 甜美风、温柔风、清新风 and relaxed cozy schedules."
+    ),
+}
+
 DEFAULT_BASE_STYLE_LABELS = {
     "cool": "冷御风",
     "girly": "少女风",
@@ -319,7 +337,11 @@ def reference_filename_to_style(filename: str) -> str:
 
 def builtin_reference_map() -> dict[str, dict[str, str]]:
     return {
-        filename: {"style": style, "label": base_style_label(style)}
+        filename: {
+            "style": style,
+            "label": base_style_label(style),
+            "prompt": DEFAULT_STYLE_REFERENCE_PROMPTS.get(style, ""),
+        }
         for style, filename in DEFAULT_STYLE_REFERENCE_FILES.items()
     }
 

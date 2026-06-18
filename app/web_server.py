@@ -22,6 +22,15 @@ from aiohttp import web
 from PIL import Image
 
 from picxazz_sync import PicxazzSyncClient
+from reference_profiles import (
+    analyze_reference_image,
+    load_reference_profiles,
+    reference_response as reference_profile_response,
+    remove_reference_profile,
+    resolve_reference_profile_path,
+    select_reference_profile,
+    upsert_reference_profile,
+)
 from store import ScheduleStore
 from settings import (
     DEFAULT_OUTFIT_STYLES,
@@ -51,6 +60,73 @@ logger = logging.getLogger(__name__)
 
 # 日期 key 正则：匹配 YYYY-MM-DD 格式
 DATE_KEY_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+LOG_ENTRY_RE = re.compile(
+    r'^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:,\d+)? '
+    r'\[(?P<level>[A-Z]+)\] (?P<logger>[^:]+): (?P<message>.*)$'
+)
+LOG_ACCESS_RE = re.compile(r'"(?P<method>[A-Z]+)\s+(?P<path>[^"]+?)\s+HTTP/[^"]+"\s+(?P<status>\d{3})')
+LOG_LEVEL_LABELS = {
+    "DEBUG": "调试",
+    "INFO": "信息",
+    "WARNING": "警告",
+    "ERROR": "错误",
+    "CRITICAL": "严重错误",
+}
+LOG_USEFUL_KEYWORDS = (
+    "生图",
+    "日程",
+    "任务",
+    "补拍",
+    "重试",
+    "失败",
+    "异常",
+    "错误",
+    "超时",
+    "推送",
+    "发送",
+    "参考",
+    "衣柜",
+    "底模",
+    "模型",
+    "配置",
+    "画廊启动",
+    "Hermes",
+    "Gitee",
+    "GPT",
+    "Gemini",
+    "LLM",
+    "Picxazz",
+    "Generate now",
+    "generate.py failed",
+    "Custom generate",
+    "image-to-image",
+    "text-to-image",
+    "fallback",
+    "SUCCESS:",
+    "CAPTION:",
+    "Caption:",
+)
+LOG_ERROR_DETAIL_KEYWORDS = (
+    "error",
+    "failed",
+    "failure",
+    "exception",
+    "traceback",
+    "timeout",
+    "timed out",
+    "connection",
+    "httpconnectionpool",
+    "max retries",
+    "host is down",
+    "lookup",
+    "fallback",
+    "unauthorized",
+    "forbidden",
+    "错误",
+    "失败",
+    "异常",
+    "超时",
+)
 DEFAULT_PHOTO_JOB_LIMIT = 6
 MIN_PHOTO_JOB_LIMIT = 3
 MAX_PHOTO_JOB_LIMIT = 6
@@ -101,13 +177,22 @@ class GalleryServer:
         self.app_reference_dir = resolve_builtin_reference_dir(config, config_path)
         self.reference_dir = resolve_reference_dir(config, data_dir, config_path)
         self.uploaded_reference_dir = os.path.join(self.reference_dir, "uploads")
+        self.wardrobe_reference_dir = os.path.join(self.reference_dir, "wardrobe")
         self.legacy_uploaded_reference_dir = os.path.join(self.app_reference_dir, "uploads")
         self.picxazz_sync = PicxazzSyncClient(config, data_dir)
         self._image_info_cache = {}
+        self._wardrobe_image_locks: dict[str, asyncio.Lock] = {}
         os.makedirs(self.default_image_dir, exist_ok=True)
         os.makedirs(self.image_dir, exist_ok=True)
         os.makedirs(self.reference_dir, exist_ok=True)
         os.makedirs(self.uploaded_reference_dir, exist_ok=True)
+        os.makedirs(self.wardrobe_reference_dir, exist_ok=True)
+        load_reference_profiles(
+            self.data_dir,
+            self.reference_dir,
+            self.app_reference_dir,
+            self.uploaded_reference_dir,
+        )
         self._migrate_legacy_uploaded_refs()
 
         # 回调：外部注入
@@ -199,6 +284,7 @@ class GalleryServer:
         self.app.router.add_post("/api/integrations/picxazz/sync-favorites", self.handle_sync_picxazz_favorites)
         self.app.router.add_delete("/api/images/{img_id}", self.handle_delete_image)
         self.app.router.add_get("/api/health", self.handle_health)
+        self.app.router.add_get("/api/logs", self.handle_logs)
         self.app.router.add_get("/api/config/keys", self.handle_get_keys)
         self.app.router.add_post("/api/config/keys", self.handle_save_keys)
         self.app.router.add_get("/api/models", self.handle_models)
@@ -222,6 +308,9 @@ class GalleryServer:
         self.app.router.add_post("/api/photo-job-limit", self.handle_photo_job_limit)
         self.app.router.add_get("/api/favorite-outfits", self.handle_favorite_outfits)
         self.app.router.add_post("/api/favorite-outfits", self.handle_favorite_outfits)
+        self.app.router.add_patch("/api/favorite-outfits/{outfit_id}", self.handle_edit_favorite_outfit)
+        self.app.router.add_post("/api/favorite-outfits/{outfit_id}/edit", self.handle_edit_favorite_outfit)
+        self.app.router.add_post("/api/favorite-outfits/{outfit_id}/wardrobe-image", self.handle_favorite_outfit_wardrobe_image)
         self.app.router.add_get("/api/disliked-outfits", self.handle_disliked_outfits)
         self.app.router.add_post("/api/disliked-outfits", self.handle_disliked_outfits)
 
@@ -244,6 +333,483 @@ class GalleryServer:
 
     async def handle_health(self, request: web.Request):
         return web.json_response({"status": "ok"})
+
+    def _log_file_candidates(self) -> list[str]:
+        candidates = []
+        for logger_name in ("", "portrait_gallery", "aiohttp.access"):
+            try:
+                for handler in logging.getLogger(logger_name).handlers:
+                    base_filename = getattr(handler, "baseFilename", "")
+                    if base_filename:
+                        candidates.append(base_filename)
+            except Exception:
+                continue
+        candidates.extend([
+            os.environ.get("HERMES_GALLERY_LOG", ""),
+            os.path.expanduser("~/Library/Logs/hermes-portrait-gallery/gallery.log"),
+            os.path.join(resolve_project_root(self.config_path), "logs", "gallery.log"),
+            os.path.join(self.data_dir, "logs", "gallery.log"),
+        ])
+        result = []
+        seen = set()
+        for item in candidates:
+            path = os.path.abspath(os.path.expanduser(str(item or "").strip()))
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            if os.path.isfile(path):
+                result.append(path)
+        return result
+
+    @staticmethod
+    def _tail_log_file(path: str, lines: int, max_bytes: int = 512 * 1024) -> str:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            if size > max_bytes:
+                f.seek(max(0, size - max_bytes))
+                chunk = f.read(max_bytes)
+                first_newline = chunk.find(b"\n")
+                if first_newline >= 0:
+                    chunk = chunk[first_newline + 1:]
+            else:
+                chunk = f.read()
+        text = chunk.decode("utf-8", errors="replace")
+        if lines > 0:
+            text = "\n".join(text.splitlines()[-lines:])
+        return text
+
+    @staticmethod
+    def _redact_log_text(text: str) -> str:
+        text = re.sub(r'(?i)(authorization:\s*bearer\s+)[^\s"\']+', r'\1***', text or "")
+        text = re.sub(r'(?i)((?:api[_-]?key|gpt[_-]?key|cpa[_-]?key|key)=)[^&\s"\']+', r'\1***', text)
+        return text
+
+    @staticmethod
+    def _format_log_time(ts: str) -> str:
+        return (ts or "")[5:]
+
+    @staticmethod
+    def _is_error_detail_line(line: str) -> bool:
+        low = (line or "").lower()
+        return any(k in low for k in LOG_ERROR_DETAIL_KEYWORDS)
+
+    @staticmethod
+    def _diagnose_error_text(text: str) -> str:
+        low = (text or "").lower()
+        if "fallback is disabled" in low:
+            return "Gitee 回退没有开启，GPT Image 失败后不会自动改走 Gitee。"
+        if "lookup" in low and (
+            "server misbehaving" in low
+            or "name or service not known" in low
+            or "no such host" in low
+        ):
+            return "上游域名解析失败，请检查中转接口域名或 DNS。"
+        if (
+            "host is down" in low
+            or "failed to establish a new connection" in low
+            or "connection refused" in low
+            or "cannot connect" in low
+        ):
+            return "生图服务连接不上，请检查接口地址、端口和服务是否在线。"
+        if "timed out" in low or "timeout" in low:
+            return "请求超时，请检查生图服务响应速度或网络。"
+        if "unauthorized" in low or "401" in low:
+            return "鉴权失败，请检查 API Key。"
+        if "forbidden" in low or "403" in low:
+            return "接口拒绝访问，请检查权限、额度或服务配置。"
+        if "429" in low or "rate limit" in low:
+            return "请求过于频繁或额度受限，请稍后重试或检查额度。"
+        if "500" in low or "internal_server_error" in low:
+            return "上游接口返回 500，请检查中转服务或上游生图服务状态。"
+        if "invalid json" in low or "json parse" in low or "no json found" in low:
+            return "文本模型返回内容格式不对，无法解析成需要的 JSON。"
+        if "missing chat_url" in low or "chat_url/models" in low:
+            return "文本模型配置缺失，请检查聊天接口地址和模型。"
+        return "详见下方原始错误。"
+
+    @staticmethod
+    def _extract_log_field(message: str, key: str) -> str:
+        if key == "activity":
+            m = re.search(r'\bactivity=(.+)$', message or "")
+        else:
+            m = re.search(rf'\b{re.escape(key)}=([^,\s]+)', message or "")
+        return m.group(1).strip() if m else ""
+
+    @classmethod
+    def _translate_access_log(cls, message: str) -> Optional[str]:
+        m = LOG_ACCESS_RE.search(message or "")
+        if not m:
+            return None
+        status = int(m.group("status"))
+        if status < 500:
+            return None
+        method = m.group("method")
+        path = m.group("path").split("?", 1)[0]
+        return f"接口请求失败：{method} {path} 返回 {status}。"
+
+    @classmethod
+    def _translate_log_message(cls, message: str, level: str = "INFO", logger_name: str = "") -> str:
+        text = (message or "").strip()
+
+        m = re.search(r'开始定时生图:\s*theme=([^,\s]+),\s*schedule_time=([^\s,]+)\s*(.*)', text)
+        if m:
+            activity = (m.group(3) or "").strip()
+            return f"开始定时生图：{m.group(2)}，动作：{activity or '未记录'}。"
+
+        m = re.search(r'定时任务已设置:\s*日程\(([^)]+)\)\s*\+\s*动态生图\(根据日程时间\)', text)
+        if m:
+            return f"定时任务已设置：日程 {m.group(1)}，动态生图跟随日程时间。"
+
+        m = re.search(r'画廊启动:\s*(.+)', text)
+        if m:
+            return f"画廊服务已启动：{m.group(1).strip()}。"
+
+        m = re.search(r'手动重试生图任务:\s*([^\s]+).*?activity=(.*)', text)
+        if m:
+            return f"手动重试生图任务：{m.group(1)}，动作：{m.group(2).strip() or '未记录'}。"
+
+        m = re.search(r'添加动态生图任务:\s*([^\s]+).*?period=([^\s]+).*?activity=(.*)', text)
+        if m:
+            return f"已添加动态生图任务：{m.group(1)}，时段：{m.group(2)}，动作：{m.group(3).strip() or '未记录'}。"
+
+        m = re.search(r'动态生图任务已创建:\s*(\d+)\s*个.*existing_plans=(\d+).*max_daily=(\d+)', text)
+        if m:
+            return f"动态生图任务已创建：{m.group(1)} 个，已有计划：{m.group(2)}，今日上限：{m.group(3)}。"
+
+        m = re.search(r'跳过已过期的时间(?:（([^）]+)）)?:\s*([^\s]+)(?:\s+activity=(.*))?', text)
+        if m:
+            reason = m.group(1) or "已过期"
+            activity = (m.group(3) or "").strip()
+            suffix = f"，动作：{activity}" if activity else ""
+            return f"跳过已过期时段：{m.group(2)}，原因：{reason}{suffix}。"
+
+        m = re.search(r'跳过生图任务（([^）]+)）:\s*(.+)', text)
+        if m:
+            return f"跳过生图任务：{m.group(2).strip()}，原因：{m.group(1)}。"
+
+        m = re.search(r'复用已占用的生图额度:\s*([^\s]+)', text)
+        if m:
+            return f"复用已占用的生图额度：{m.group(1)}。"
+
+        m = re.search(r'定时生图使用当天 LLM 选择的底模:\s*(.+)', text)
+        if m:
+            return f"定时生图使用当天模型选择的底模：{m.group(1).strip()}。"
+
+        m = re.search(r'定时生图成功:\s*(.+)', text)
+        if m:
+            return f"定时生图成功：{m.group(1).strip()}。"
+
+        m = re.search(r'定时生图完成:\s*theme=([^\s,]+)', text)
+        if m:
+            return "定时生图流程完成。"
+
+        m = re.search(r'定时生图失败:\s*(.*)', text)
+        if m:
+            return f"定时生图失败：{cls._diagnose_error_text(m.group(1))}"
+
+        m = re.search(r'定时生图超时:\s*theme=([^\s,]+)\s*\((\d+)s\)', text)
+        if m:
+            return f"定时生图超时：等待 {m.group(2)} 秒后仍未完成。"
+
+        m = re.search(r'补拍任务失败:\s*(.+)', text)
+        if m:
+            return f"补拍任务失败：{m.group(1).strip()}。"
+
+        m = re.search(r'补拍任务完成:\s*(.+)', text)
+        if m:
+            return f"补拍任务完成：{m.group(1).strip()}。"
+
+        m = re.search(r'LLM model updated to:\s*(.+)', text)
+        if m:
+            return f"文本模型已更新为：{m.group(1).strip()}。"
+
+        m = re.search(r'正在生成\s+(.+?)\s+的日程', text)
+        if m:
+            return f"正在生成 {m.group(1)} 的日程。"
+
+        m = re.search(r'日程生成成功:\s*([^|]+)(?:\|\s*reference_query=(.*?))?(?:\|\s*outfit_kw=(.*?))?(?:\|\s*scene_kw=(.*))?$', text)
+        if m:
+            parts = [f"风格：{m.group(1).strip()}"]
+            if m.group(3):
+                parts.append(f"穿搭关键词：{m.group(3).strip()}")
+            if m.group(4):
+                parts.append(f"场景关键词：{m.group(4).strip()}")
+            return "日程生成成功：" + "，".join(parts) + "。"
+
+        if text.startswith("日程生成失败"):
+            return "日程生成失败：重试后仍未拿到合格结果。"
+
+        m = re.search(r'LLM 返回为空 \(attempt (\d+)\)', text)
+        if m:
+            return f"文本模型返回为空：第 {m.group(1)} 次。"
+
+        m = re.search(r'解析失败 \(attempt (\d+)\)', text)
+        if m:
+            return f"日程解析失败：第 {m.group(1)} 次。"
+
+        m = re.search(r'(日程.*?不合格|日程字段不完整.*?|outfit 展示字段不完整.*?|schedule_details 不合格).*?\(attempt (\d+)\)[:：]?\s*(.*)', text)
+        if m:
+            detail = m.group(3).strip()
+            suffix = f"原因：{detail}。" if detail else ""
+            return f"{m.group(1)}：第 {m.group(2)} 次。{suffix}"
+
+        if text.startswith("No JSON found in LLM response"):
+            return "文本模型返回内容里没有可用 JSON。"
+        if text.startswith("JSON parse error"):
+            return "文本模型 JSON 解析失败。"
+        if text.startswith("LLM config missing"):
+            return "文本模型配置缺失：聊天接口地址或模型未填写。"
+        if text.startswith("LLM call error"):
+            return "文本模型调用失败：" + cls._diagnose_error_text(text)
+        if text.startswith("LLM call returned empty content"):
+            return "文本模型返回空内容。"
+
+        m = re.search(r'开始生图:\s*theme=([^,\s]+),\s*engine=([^,\s]+),\s*model=([^,\s]+),\s*style=([^,\s]+),\s*size=([^,\s]+)', text)
+        if m:
+            return f"开始生图：引擎 {m.group(2)}，模型 {m.group(3)}，风格 {m.group(4)}，尺寸 {m.group(5)}。"
+
+        m = re.search(r'生图成功:\s*(.+)', text)
+        if m:
+            return f"生图成功：{m.group(1).strip()}。"
+
+        if text.startswith("生图失败"):
+            return "生图失败：" + cls._diagnose_error_text(text)
+        if text.startswith("生图超时"):
+            return "生图超时，请检查生图服务响应速度。"
+        if text.startswith("生图异常"):
+            return "生图异常：" + cls._diagnose_error_text(text)
+        if text.startswith("图片生成成功"):
+            return text + "。"
+        if text.startswith("图片生成失败"):
+            return "图片生成失败，请查看下方原始错误。"
+        if text.startswith("自定义生图成功"):
+            return text + "。"
+        if text.startswith("自定义生图失败") or text.startswith("Custom generate error"):
+            return "自定义生图失败：" + cls._diagnose_error_text(text)
+        if text.startswith("图片重抽成功"):
+            return text + "。"
+        if text.startswith("图片重抽失败") or text.startswith("Reroll image error"):
+            return "图片重抽失败：" + cls._diagnose_error_text(text)
+
+        m = re.search(r'Generate now:\s*time=([^,\s]+),\s*using today\'s schedule chain', text)
+        if m:
+            return f"现在在干嘛生图：时间 {m.group(1)}，已走今日日程链路。"
+        if text.startswith("Generate-now LLM inference skipped"):
+            return "现在在干嘛没有调用文本模型：聊天接口地址或模型未填写。"
+        if text.startswith("Generate-now LLM inference invalid response"):
+            return "现在在干嘛的文本模型返回无效。"
+        if text.startswith("Generate-now LLM inference error"):
+            return "现在在干嘛的文本模型调用失败：" + cls._diagnose_error_text(text)
+        if text.startswith("generate.py failed"):
+            return "生成脚本执行失败：" + cls._diagnose_error_text(text)
+        if text.startswith("Generate now timeout"):
+            return "现在在干嘛生图超时。"
+        if text.startswith("Generate now error"):
+            return "现在在干嘛生图异常：" + cls._diagnose_error_text(text)
+
+        if text.startswith("Images API failed; retrying chat-compatible GPT Image endpoint"):
+            return "图片接口失败，正在改用聊天兼容 GPT Image 端点重试。"
+        if text.startswith("Images API error") or text.startswith("Images API failed"):
+            m = re.search(r'\[([^\]]+)\].*?\(attempt ([^)]+)\)', text)
+            where = f"：{m.group(1)}" if m else ""
+            attempt = f"，第 {m.group(2)} 次" if m else ""
+            return f"图片生成接口调用失败{where}{attempt}。" + cls._diagnose_error_text(text)
+        if text.startswith("Direct GPT API error") or text.startswith("Direct GPT API failed"):
+            m = re.search(r'\[([^\]]+)\].*?\(attempt ([^)]+)\)', text)
+            where = f"：{m.group(1)}" if m else ""
+            attempt = f"，第 {m.group(2)} 次" if m else ""
+            return f"聊天兼容 GPT Image 端点调用失败{where}{attempt}。" + cls._diagnose_error_text(text)
+        if text.startswith("GPT Image img2img failed"):
+            return "图生图失败，正在改用文生图重试。"
+        if text.startswith("GPT Image failed; Gitee fallback is disabled"):
+            return "GPT Image 失败，Gitee 回退没有开启。"
+        if text.startswith("ERROR: GPT Image endpoint failed"):
+            endpoint = text.split(":", 2)[-1].strip()
+            return f"GPT Image 端点最终失败：{endpoint}。"
+        if text.startswith("ERROR: generation failed"):
+            return "图片生成最终失败。"
+
+        if text.startswith("Caption:") or text.startswith("CAPTION:"):
+            return "生成文案：" + text.split(":", 1)[1].strip()
+        if text.startswith("SUCCESS:"):
+            return "生成成功：" + text.split(":", 1)[1].strip()
+
+        if text.startswith("Favorite outfit wardrobe image error") or text.startswith("Save favorite outfit wardrobe image error"):
+            return "衣柜展示图生成或保存失败：" + cls._diagnose_error_text(text)
+        if text.startswith("Hermes text-to-image error"):
+            return "Hermes 文生图失败：" + cls._diagnose_error_text(text)
+        if text.startswith("Hermes image-to-image error"):
+            return "Hermes 图生图失败：" + cls._diagnose_error_text(text)
+        if text.startswith("Hermes image validation failed"):
+            return "Hermes 图片校验失败：" + cls._diagnose_error_text(text)
+        if text.startswith("Hermes image style classification failed"):
+            return "Hermes 图片风格识别失败：" + cls._diagnose_error_text(text)
+        if text.startswith("Save Hermes image metadata error"):
+            return "保存 Hermes 图片元数据失败：" + cls._diagnose_error_text(text)
+
+        if level in {"ERROR", "CRITICAL"}:
+            return "发生错误：" + cls._diagnose_error_text(text)
+        if level == "WARNING" and not re.search(r'[\u4e00-\u9fff]', text):
+            return "有一条警告，需要查看相关配置或下方原始错误。"
+
+        cleaned = text
+        cleaned = re.sub(r'\(attempt (\d+)\)', r'（第 \1 次）', cleaned)
+        cleaned = cleaned.replace("theme=", "主题=")
+        cleaned = cleaned.replace("engine=", "引擎=")
+        cleaned = cleaned.replace("model=", "模型=")
+        cleaned = cleaned.replace("style=", "风格=")
+        cleaned = cleaned.replace("size=", "尺寸=")
+        cleaned = cleaned.replace("activity=", "动作=")
+        cleaned = cleaned.replace("schedule_time=", "日程时间=")
+        return cleaned
+
+    @classmethod
+    def _is_useful_log_message(cls, level: str, logger_name: str, message: str, raw_line: str) -> bool:
+        if logger_name == "aiohttp.access":
+            return cls._translate_access_log(message) is not None
+        if level in {"WARNING", "ERROR", "CRITICAL"}:
+            return True
+        haystack = f"{logger_name} {message} {raw_line}"
+        return any(keyword in haystack for keyword in LOG_USEFUL_KEYWORDS)
+
+    @classmethod
+    def _format_diagnostic_logs(cls, text: str, max_items: int = 120, max_raw_errors: int = 80) -> dict:
+        diagnostic_items = []
+        raw_errors = []
+        in_error_block = False
+        total_count = 0
+
+        def add_diagnostic(severity: int, key: str, line: str):
+            diagnostic_items.append((total_count, severity, key, line))
+
+        for raw in (text or "").splitlines():
+            line = raw.rstrip()
+            if not line.strip():
+                continue
+            total_count += 1
+            match = LOG_ENTRY_RE.match(line)
+            if match:
+                ts = match.group("ts")
+                level = match.group("level")
+                logger_name = match.group("logger")
+                message = match.group("message")
+                in_error_block = level in {"ERROR", "CRITICAL"}
+                if logger_name == "aiohttp.access":
+                    translated = cls._translate_access_log(message)
+                    if not translated:
+                        in_error_block = False
+                        continue
+                elif cls._is_useful_log_message(level, logger_name, message, line):
+                    translated = cls._translate_log_message(message, level, logger_name)
+                else:
+                    continue
+                level_label = LOG_LEVEL_LABELS.get(level, level)
+                severity = 2 if level in {"ERROR", "CRITICAL"} else 1 if level == "WARNING" else 0
+                add_diagnostic(
+                    severity,
+                    f"{level_label}:{translated}",
+                    f"- {cls._format_log_time(ts)} {level_label}：{translated}",
+                )
+                if level in {"ERROR", "CRITICAL"}:
+                    raw_errors.append(line)
+                continue
+
+            if in_error_block:
+                raw_errors.append(line)
+                if cls._is_error_detail_line(line):
+                    translated = cls._translate_log_message(line, "ERROR", "")
+                    add_diagnostic(2, f"错误:{translated}", f"- 错误：{translated}")
+                continue
+
+            if cls._is_error_detail_line(line):
+                raw_errors.append(line)
+                translated = cls._translate_log_message(line, "ERROR", "")
+                add_diagnostic(2, f"错误:{translated}", f"- 错误：{translated}")
+
+        deduped = {}
+        for item in diagnostic_items:
+            deduped[item[2]] = item
+        diagnostic_items = sorted(deduped.values(), key=lambda item: item[0])
+        priority_items = [item for item in diagnostic_items if item[1] > 0]
+        info_items = [item for item in diagnostic_items if item[1] == 0]
+        selected = priority_items[-max_items:]
+        remaining = max(0, max_items - len(selected))
+        if remaining:
+            selected.extend(info_items[-remaining:])
+        selected.sort(key=lambda item: item[0])
+        diagnostics = [item[3] for item in selected]
+        raw_errors = raw_errors[-max_raw_errors:]
+        output = [
+            "运行诊断",
+            f"已隐藏普通访问日志，只保留最近 {len(diagnostics)} 条有用信息。",
+        ]
+        if diagnostics:
+            output.extend(diagnostics)
+        else:
+            output.append("最近没有生图、日程或错误相关日志。普通接口访问日志已隐藏。")
+        if raw_errors:
+            output.extend(["", "原始错误"])
+            output.extend(raw_errors)
+        return {
+            "text": "\n".join(output),
+            "filtered_count": len(diagnostics),
+            "total_count": total_count,
+            "raw_error_count": len(raw_errors),
+        }
+
+    async def handle_logs(self, request: web.Request):
+        """Return a tail of the live gallery service log for the UI log viewer."""
+        api_key = os.environ.get("GALLERY_API_KEY", "")
+        if not api_key and not self._is_local_request(request):
+            return web.json_response(
+                {
+                    "error": "local_only",
+                    "message": "实时日志只允许本机查看；远程查看请配置 GALLERY_API_KEY。",
+                },
+                status=403,
+            )
+        try:
+            lines = int(request.query.get("lines", "300"))
+        except ValueError:
+            lines = 300
+        lines = max(50, min(1200, lines))
+        candidates = self._log_file_candidates()
+        if not candidates:
+            return web.json_response({
+                "status": "missing",
+                "text": "",
+                "path": "",
+                "lines": lines,
+                "message": "未找到日志文件",
+            })
+        path = candidates[0]
+        try:
+            mode = str(request.query.get("mode") or "").strip().lower()
+            raw_mode = mode == "raw" or request.query.get("raw") == "1"
+            read_lines = lines if raw_mode else min(5000, lines * 4)
+            text = self._redact_log_text(self._tail_log_file(path, read_lines))
+            stat = os.stat(path)
+            payload = {
+                "status": "ok",
+                "path": path,
+                "size": stat.st_size,
+                "mtime": stat.st_mtime,
+                "updated_at": int(time.time()),
+                "lines": lines,
+                "mode": "raw" if raw_mode else "diagnostic",
+            }
+            if raw_mode:
+                payload["text"] = text
+                payload["total_count"] = len(text.splitlines())
+                payload["filtered_count"] = payload["total_count"]
+                payload["raw_error_count"] = 0
+            else:
+                diagnostic = self._format_diagnostic_logs(text, max_items=min(lines, 120))
+                payload.update(diagnostic)
+            return web.json_response(payload)
+        except Exception as e:
+            logger.error("Read live logs error: %s", e)
+            return web.json_response({"error": "read_failed", "detail": str(e)}, status=500)
 
     def _favorite_outfits_path(self) -> str:
         return os.path.join(self.data_dir, "favorite_outfits.json")
@@ -294,6 +860,51 @@ class GalleryServer:
         cleaned.pop("scene_keywords", None)
         return cleaned
 
+    @staticmethod
+    def _favorite_outfit_wardrobe_payload(item: dict) -> dict:
+        if not isinstance(item, dict):
+            return {}
+        payload = item.get("wardrobe_image")
+        return dict(payload) if isinstance(payload, dict) else {}
+
+    @classmethod
+    def _favorite_outfit_wardrobe_response_item(cls, item: dict) -> dict:
+        wardrobe = cls._favorite_outfit_wardrobe_payload(item)
+        if not wardrobe:
+            return {}
+        result = {}
+        for key in (
+            "filename",
+            "url",
+            "prompt",
+            "size",
+            "source",
+            "model_name",
+            "generation_mode",
+            "created_at",
+            "file_size_bytes",
+            "width",
+            "height",
+        ):
+            value = wardrobe.get(key)
+            if value not in ("", None):
+                result[key] = value
+        return result
+
+    @staticmethod
+    def _favorite_outfit_wardrobe_status_response_item(item: dict) -> dict:
+        if not isinstance(item, dict):
+            return {}
+        status = item.get("wardrobe_image_status")
+        if not isinstance(status, dict):
+            return {}
+        result = {}
+        for key in ("status", "message", "error", "started_at", "updated_at"):
+            value = status.get(key)
+            if value not in ("", None):
+                result[key] = value
+        return result
+
     @classmethod
     def _favorite_outfit_prompt_lines(cls, items: list[dict], limit: int = 5) -> list[str]:
         lines = []
@@ -342,6 +953,15 @@ class GalleryServer:
         except Exception as e:
             logger.error("Load favorite outfits error: %s", e)
             return []
+
+    def _favorite_outfit_by_id(self, outfit_id: str) -> Optional[dict]:
+        if not outfit_id:
+            return None
+        for item in self._load_favorite_outfits():
+            for candidate in (item.get("id"), self._favorite_outfit_item_id(item)):
+                if candidate and candidate == outfit_id:
+                    return item
+        return None
 
     def _update_favorite_outfits(self, callback) -> list[dict]:
         path = self._favorite_outfits_path()
@@ -423,7 +1043,14 @@ class GalleryServer:
                 reverse=True,
             )
             return web.json_response({
-                "items": items,
+                "items": [
+                    {
+                        **item,
+                        "wardrobe_image": self._favorite_outfit_wardrobe_response_item(item),
+                        "wardrobe_image_status": self._favorite_outfit_wardrobe_status_response_item(item),
+                    }
+                    for item in items
+                ],
                 "count": len(items),
                 "generation_reference": bool(items),
                 "reference_scope": "hair_outfit_style_only",
@@ -464,6 +1091,15 @@ class GalleryServer:
             "created_at": int(time.time()),
         }
 
+        previous_item = self._favorite_outfit_by_id(outfit_id)
+        if previous_item:
+            wardrobe_image = self._favorite_outfit_wardrobe_payload(previous_item)
+            if wardrobe_image:
+                item["wardrobe_image"] = wardrobe_image
+            wardrobe_status = self._favorite_outfit_wardrobe_status_response_item(previous_item)
+            if wardrobe_status and not wardrobe_image:
+                item["wardrobe_image_status"] = wardrobe_status
+
         def _apply(items: list[dict]) -> list[dict]:
             next_items = [
                 x for x in items
@@ -496,12 +1132,174 @@ class GalleryServer:
             except Exception as e:
                 logger.error("Remove disliked outfit after favorite error: %s", e)
 
+        auto_generation = "skipped"
+        if should_favorite:
+            current_item = next(
+                (
+                    x for x in items
+                    if isinstance(x, dict)
+                    and outfit_id in {x.get("id"), self._favorite_outfit_item_id(x)}
+                ),
+                {},
+            )
+            if self._favorite_outfit_wardrobe_payload(current_item):
+                auto_generation = "exists"
+            elif self._start_favorite_outfit_wardrobe_task(outfit_id):
+                auto_generation = "queued"
+            else:
+                auto_generation = "running"
+
         return web.json_response({
             "success": True,
             "favorite": should_favorite,
             "id": outfit_id,
             "count": len(items),
             "disliked_removed": disliked_removed,
+            "wardrobe_auto_generation": auto_generation,
+        })
+
+    async def handle_edit_favorite_outfit(self, request: web.Request):
+        """编辑衣柜里的收藏穿搭，并重新生成对应衣架图。"""
+        outfit_id = str(request.match_info.get("outfit_id") or "").strip()
+        if not outfit_id:
+            return web.json_response({"error": "favorite_outfit_not_found"}, status=404)
+
+        item = self._favorite_outfit_by_id(outfit_id)
+        if not item:
+            return web.json_response({"error": "favorite_outfit_not_found"}, status=404)
+
+        lock = self._wardrobe_image_locks.get(outfit_id)
+        if lock and lock.locked():
+            return web.json_response(
+                {
+                    "error": "wardrobe_image_generating",
+                    "message": "这套衣架图正在生成中，请稍后再编辑。",
+                },
+                status=409,
+            )
+
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid_json"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "invalid_json"}, status=400)
+
+        raw_outfit = body.get("outfit") if isinstance(body.get("outfit"), dict) else {}
+        current_outfit = self._favorite_outfit_payload(item.get("outfit"))
+
+        def _pick_text(current: str, *sources: tuple[dict, str]) -> str:
+            for source, key in sources:
+                if isinstance(source, dict) and key in source:
+                    return str(source.get(key) or "").strip()
+            return str(current or "").strip()
+
+        current_style = str(item.get("outfit_style") or current_outfit.get("风格") or "").strip()
+        style = _pick_text(
+            current_style,
+            (body, "outfit_style"),
+            (body, "style"),
+            (raw_outfit, "风格"),
+            (raw_outfit, "outfit_style"),
+            (raw_outfit, "style"),
+        )
+        hair = _pick_text(
+            current_outfit.get("发型", ""),
+            (body, "hair"),
+            (body, "hairstyle"),
+            (body, "发型"),
+            (raw_outfit, "发型"),
+            (raw_outfit, "hair"),
+            (raw_outfit, "hairstyle"),
+        )
+        wear = _pick_text(
+            current_outfit.get("穿搭", ""),
+            (body, "wear"),
+            (body, "outfit_text"),
+            (body, "clothing"),
+            (body, "穿搭"),
+            (raw_outfit, "穿搭"),
+            (raw_outfit, "wear"),
+            (raw_outfit, "outfit_text"),
+            (raw_outfit, "clothing"),
+        )
+
+        edited_outfit = {}
+        if style:
+            edited_outfit["风格"] = style
+        if hair:
+            edited_outfit["发型"] = hair
+        if wear:
+            edited_outfit["穿搭"] = wear
+        if not (hair or wear):
+            return web.json_response({"error": "outfit_required", "message": "发型和穿搭不能同时为空"}, status=400)
+
+        now_ts = int(time.time())
+        previous_wardrobe = self._favorite_outfit_wardrobe_payload(item)
+        previous_filename = str(previous_wardrobe.get("filename") or "").strip()
+        previous_path = self._safe_reference_path(self.wardrobe_reference_dir, previous_filename) if previous_filename else ""
+
+        def _apply(items: list[dict]) -> list[dict]:
+            updated = []
+            found = False
+            for existing in items:
+                if not isinstance(existing, dict):
+                    continue
+                candidate_ids = {existing.get("id"), self._favorite_outfit_item_id(existing)}
+                if outfit_id in candidate_ids:
+                    merged = dict(existing)
+                    merged["id"] = str(existing.get("id") or outfit_id).strip() or outfit_id
+                    merged["outfit_style"] = style
+                    merged["outfit"] = edited_outfit
+                    merged["updated_at"] = now_ts
+                    merged.pop("wardrobe_image", None)
+                    merged["wardrobe_image_status"] = {
+                        "status": "queued",
+                        "message": "穿搭已更新，衣架图等待重新生成",
+                        "started_at": now_ts,
+                        "updated_at": now_ts,
+                    }
+                    updated.append(merged)
+                    found = True
+                else:
+                    updated.append(existing)
+            if not found:
+                raise ValueError("favorite_outfit_not_found")
+            return updated
+
+        try:
+            items = self._update_favorite_outfits(_apply)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=404)
+        except Exception as e:
+            logger.error("Edit favorite outfit error: %s", e)
+            return web.json_response({"error": "save_failed", "detail": str(e)}, status=500)
+
+        if previous_path:
+            try:
+                os.unlink(previous_path)
+            except OSError as e:
+                logger.warning("Delete edited wardrobe reference failed: %s", e)
+
+        auto_generation = "queued" if self._start_favorite_outfit_wardrobe_task(outfit_id) else "running"
+        updated_item = next(
+            (
+                x for x in items
+                if isinstance(x, dict)
+                and outfit_id in {x.get("id"), self._favorite_outfit_item_id(x)}
+            ),
+            self._favorite_outfit_by_id(outfit_id) or {},
+        )
+        response_item = self._favorite_outfit_response_item(updated_item) if updated_item else {}
+        return web.json_response({
+            "success": True,
+            "id": outfit_id,
+            "item": {
+                **response_item,
+                "wardrobe_image": self._favorite_outfit_wardrobe_response_item(updated_item),
+                "wardrobe_image_status": self._favorite_outfit_wardrobe_status_response_item(updated_item),
+            },
+            "wardrobe_auto_generation": auto_generation,
         })
 
     async def handle_disliked_outfits(self, request: web.Request):
@@ -592,6 +1390,263 @@ class GalleryServer:
             "id": outfit_id,
             "count": len(items),
             "favorite_removed": favorite_removed,
+        })
+
+    @staticmethod
+    def _favorite_outfit_wardrobe_prompt(item: dict) -> str:
+        outfit = item.get("outfit") if isinstance(item.get("outfit"), dict) else {}
+        style = str(item.get("outfit_style") or outfit.get("风格") or "收藏穿搭").strip()
+        hair = str(outfit.get("发型") or "").strip()
+        wear = str(outfit.get("穿搭") or "").strip()
+        wear = re.sub(r"\s+", " ", wear)
+        hair = re.sub(r"\s+", " ", hair)
+        prompt_parts = [
+            "A clean wardrobe catalog photo of a single complete outfit displayed on a minimalist boutique clothing rack with a matching wig displayed beside it on a simple wig stand or hook, soft neutral studio background.",
+            "Show the clothes, matching wig, accessories, and shoes only; no person, no face, no hands, no body parts, no lifestyle model.",
+            "Use a front-facing full outfit display with the entire look fully visible from top to bottom, styled like a premium GPT-generated wardrobe hanger reference image.",
+            "Keep the garment silhouette, fabric layering, colors, accessories, footwear, and wig hairstyle coherent and neatly arranged for later image-to-image outfit and hair reference.",
+            "Do not turn this into a lifestyle scene, portrait, flat lay, selfie, or model shoot.",
+        ]
+        if style:
+            prompt_parts.append(f"Style vibe: {style}.")
+        if wear:
+            prompt_parts.append(f"Outfit details: {wear}")
+        if hair:
+            prompt_parts.append(f"Matching wig hairstyle to display: {hair}")
+        prompt_parts.append("High detail fashion catalog lighting, realistic textiles and hair fibers, sharp edges, centered composition, generous margins around the outfit and wig.")
+        return " ".join(part.strip() for part in prompt_parts if part).strip()
+
+    def _set_favorite_outfit_wardrobe_status(self, outfit_id: str, status: str, message: str = "", error: str = ""):
+        outfit_id = str(outfit_id or "").strip()
+        status = str(status or "").strip()
+        if not outfit_id or not status:
+            return
+        payload = {
+            "status": status,
+            "message": str(message or "").strip(),
+            "updated_at": int(time.time()),
+        }
+        if status in {"queued", "generating"}:
+            payload["started_at"] = int(time.time())
+        if error:
+            payload["error"] = str(error).strip()[:500]
+
+        def _apply(items: list[dict]) -> list[dict]:
+            updated = []
+            for existing in items:
+                if not isinstance(existing, dict):
+                    continue
+                candidate_ids = {existing.get("id"), self._favorite_outfit_item_id(existing)}
+                if outfit_id in candidate_ids:
+                    merged = dict(existing)
+                    merged["wardrobe_image_status"] = payload
+                    updated.append(merged)
+                else:
+                    updated.append(existing)
+            return updated
+
+        try:
+            self._update_favorite_outfits(_apply)
+        except Exception as e:
+            logger.error("Save wardrobe image status error: %s", e)
+
+    def _start_favorite_outfit_wardrobe_task(self, outfit_id: str) -> bool:
+        outfit_id = str(outfit_id or "").strip()
+        if not outfit_id:
+            return False
+        lock = self._wardrobe_image_locks.get(outfit_id)
+        if lock and lock.locked():
+            return False
+        self._set_favorite_outfit_wardrobe_status(outfit_id, "queued", "衣架图已加入生成队列")
+        task = asyncio.create_task(self._generate_and_store_favorite_outfit_wardrobe_image(outfit_id))
+
+        def _log_task_error(done_task: asyncio.Task):
+            try:
+                done_task.result()
+            except Exception as e:
+                logger.error("Favorite outfit auto wardrobe image task failed: %s", e)
+
+        task.add_done_callback(_log_task_error)
+        return True
+
+    async def _generate_and_store_favorite_outfit_wardrobe_image(
+        self,
+        outfit_id: str,
+        prompt: str = "",
+        size: str = "",
+        replace_existing: bool = True,
+    ) -> dict:
+        outfit_id = str(outfit_id or "").strip()
+        if not outfit_id:
+            raise ValueError("favorite_outfit_not_found")
+        item = self._favorite_outfit_by_id(outfit_id)
+        if not item:
+            raise ValueError("favorite_outfit_not_found")
+        prompt = str(prompt or "").strip() or self._favorite_outfit_wardrobe_prompt(item)
+        size = size or normalize_custom_image_size("", "3:4", "1k")
+
+        lock = self._wardrobe_image_locks.setdefault(outfit_id, asyncio.Lock())
+        if lock.locked():
+            raise RuntimeError("wardrobe_image_generating")
+
+        try:
+            async with lock:
+                item = self._favorite_outfit_by_id(outfit_id)
+                if not item:
+                    raise ValueError("favorite_outfit_not_found")
+                if self._favorite_outfit_wardrobe_payload(item) and not replace_existing:
+                    return self._favorite_outfit_wardrobe_payload(item)
+
+                self._set_favorite_outfit_wardrobe_status(outfit_id, "generating", "衣架图生成中")
+                loop = asyncio.get_running_loop()
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: self._run_hermes_image_generation(
+                        "gptimage",
+                        prompt,
+                        size=size,
+                        output_dir=self.wardrobe_reference_dir,
+                        url_prefix="/local-refs/wardrobe",
+                        source="wardrobe",
+                        category="wardrobe_reference",
+                        persist_metadata=False,
+                        filename_prefix=f"wardrobe_{outfit_id[:8]}",
+                        classify_style=False,
+                    ),
+                )
+
+                if not result or not result.get("filename") or not result.get("path"):
+                    self._set_favorite_outfit_wardrobe_status(outfit_id, "failed", "衣架图生成失败", "generate_failed")
+                    raise RuntimeError("generate_failed")
+
+                wardrobe_payload = {
+                    "filename": result.get("filename", ""),
+                    "url": result.get("url", ""),
+                    "prompt": prompt,
+                    "size": size,
+                    "source": result.get("source") or "wardrobe",
+                    "model_name": result.get("model_name") or "",
+                    "generation_mode": "text2img",
+                    "created_at": int(time.time()),
+                    "file_size_bytes": int(result.get("file_size_bytes") or 0),
+                    "width": int(result.get("width") or 0),
+                    "height": int(result.get("height") or 0),
+                }
+
+                previous_wardrobe = self._favorite_outfit_wardrobe_payload(item)
+                previous_filename = str(previous_wardrobe.get("filename") or "").strip()
+                previous_path = self._safe_reference_path(self.wardrobe_reference_dir, previous_filename) if previous_filename else ""
+                new_path = str(result.get("path") or "").strip()
+                if previous_path and previous_path != new_path:
+                    try:
+                        os.unlink(previous_path)
+                    except OSError as e:
+                        logger.warning("Delete previous wardrobe reference failed: %s", e)
+
+                def _apply(items: list[dict]) -> list[dict]:
+                    updated = []
+                    found = False
+                    for existing in items:
+                        if not isinstance(existing, dict):
+                            continue
+                        candidate_ids = {existing.get("id"), self._favorite_outfit_item_id(existing)}
+                        if outfit_id in candidate_ids:
+                            merged = dict(existing)
+                            merged["wardrobe_image"] = wardrobe_payload
+                            merged.pop("wardrobe_image_status", None)
+                            updated.append(merged)
+                            found = True
+                        else:
+                            updated.append(existing)
+                    if not found:
+                        raise ValueError("favorite_outfit_not_found")
+                    return updated
+
+                try:
+                    self._update_favorite_outfits(_apply)
+                except ValueError:
+                    try:
+                        os.unlink(new_path)
+                    except OSError:
+                        pass
+                    raise
+                except Exception as e:
+                    self._set_favorite_outfit_wardrobe_status(outfit_id, "failed", "衣架图保存失败", str(e))
+                    logger.error("Save favorite outfit wardrobe image error: %s", e)
+                    raise
+
+                return wardrobe_payload
+        finally:
+            try:
+                if not lock.locked():
+                    self._wardrobe_image_locks.pop(outfit_id, None)
+            except Exception:
+                pass
+
+    async def handle_favorite_outfit_wardrobe_image(self, request: web.Request):
+        outfit_id = str(request.match_info.get("outfit_id") or "").strip()
+        item = self._favorite_outfit_by_id(outfit_id)
+        if not item:
+            return web.json_response({"error": "favorite_outfit_not_found"}, status=404)
+
+        body = {}
+        try:
+            if request.can_read_body:
+                body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+
+        prompt = str(body.get("prompt") or "").strip() or self._favorite_outfit_wardrobe_prompt(item)
+        size = normalize_custom_image_size(
+            body.get("size", ""),
+            body.get("aspect", "") or "3:4",
+            body.get("resolution", "") or "1k",
+        )
+        raw_image_model = str(body.get("model") or body.get("image_model") or "").strip()
+        image_model = self._normalize_image_model_id(raw_image_model)
+        if raw_image_model and not image_model and raw_image_model.lower() not in {"default", "auto", "current"}:
+            return web.json_response({"error": "invalid_image_model"}, status=400)
+
+        lock = self._wardrobe_image_locks.get(outfit_id)
+        if lock and lock.locked():
+            return web.json_response(
+                {
+                    "error": "wardrobe_image_generating",
+                    "message": "这套衣架图正在生成中，请稍后刷新。",
+                },
+                status=409,
+            )
+
+        try:
+            wardrobe_payload = await self._generate_and_store_favorite_outfit_wardrobe_image(
+                outfit_id,
+                prompt=prompt,
+                size=size,
+                replace_existing=True,
+            )
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=404)
+        except RuntimeError as e:
+            if str(e) == "wardrobe_image_generating":
+                return web.json_response(
+                    {
+                        "error": "wardrobe_image_generating",
+                        "message": "这套衣架图正在生成中，请稍后刷新。",
+                    },
+                    status=409,
+                )
+            logger.error("Favorite outfit wardrobe image error: %s", e)
+            return web.json_response({"error": str(e)}, status=500)
+        except Exception as e:
+            logger.error("Favorite outfit wardrobe image error: %s", e)
+            return web.json_response({"error": str(e)}, status=500)
+
+        return web.json_response({
+            "success": True,
+            "id": outfit_id,
+            "wardrobe_image": wardrobe_payload,
         })
 
     def _plugin_config_path(self) -> str:
@@ -697,7 +1752,7 @@ class GalleryServer:
         keys_config = keys_config if isinstance(keys_config, dict) else self._load_api_keys_config()
         image_config = self.config.get("image_gen", {}) if isinstance(self.config.get("image_gen"), dict) else {}
         raw_default = str(image_config.get("gpt_base_url", "") or "").strip()
-        configured = self._configured_image_generations_url(raw_default)
+        configured = self._configured_image_base_url(raw_default)
         local = str(keys_config.get("gpt_base_url", "") or "").strip()
         if (
             local == raw_default
@@ -1197,7 +2252,7 @@ class GalleryServer:
         image_config = self.config.get("image_gen", {})
         llm_config = self.config.get("llm", {})
         raw_default_gpt_base_url = str(image_config.get("gpt_base_url", "") or "").strip()
-        default_gpt_base_url = self._configured_image_generations_url(raw_default_gpt_base_url)
+        default_gpt_base_url = self._configured_image_base_url(raw_default_gpt_base_url)
         local_gpt_base_url = str(keys_config.get("gpt_base_url", "") or "").strip()
         if (
             local_gpt_base_url == raw_default_gpt_base_url
@@ -1567,6 +2622,9 @@ class GalleryServer:
             return entry
         normalized = dict(entry)
         img_file = normalized.get("image_filename", "")
+        if img_file:
+            for field in ("schedule", "schedule_prompt", "schedule_details"):
+                normalized.pop(field, None)
         source = (normalized.get("source") or "").strip()
         base_style = (normalized.get("base_style") or "").strip()
         raw_outfit_style = (normalized.get("outfit_style") or "").strip()
@@ -1589,8 +2647,12 @@ class GalleryServer:
                 "requested_generation_mode",
                 "generation_mode",
                 "ref_image",
+                "ref_image_path",
                 "requested_ref_image",
+                "requested_ref_image_path",
                 "base_style",
+                "reference_query",
+                "selected_reference",
                 "model_name",
                 "caption",
             ):
@@ -1920,6 +2982,12 @@ class GalleryServer:
             "custom_ref_mode": meta.get("custom_ref_mode", "reference" if is_img2img else "text2img"),
             "generation_mode": mode,
             "requested_generation_mode": meta.get("requested_generation_mode", ""),
+            "ref_image": meta.get("ref_image", ""),
+            "ref_image_path": meta.get("ref_image_path", ""),
+            "requested_ref_image": meta.get("requested_ref_image", ""),
+            "requested_ref_image_path": meta.get("requested_ref_image_path", ""),
+            "selected_reference": meta.get("selected_reference", {}) if isinstance(meta.get("selected_reference"), dict) else {},
+            "reference_query": str(meta.get("reference_query") or "").strip(),
             "metadata_only": True,
         }
 
@@ -1983,7 +3051,7 @@ class GalleryServer:
                     image_config = self.config.get("image_gen", {}) if isinstance(self.config.get("image_gen"), dict) else {}
                     llm_config = self.config.get("llm", {}) if isinstance(self.config.get("llm"), dict) else {}
                     raw_default_gpt_base_url = str(image_config.get("gpt_base_url", "") or "").strip()
-                    default_gpt_base_url = self._configured_image_generations_url(raw_default_gpt_base_url)
+                    default_gpt_base_url = self._configured_image_base_url(raw_default_gpt_base_url)
                     self._drop_redundant_local_url_override(
                         keys_config,
                         "gpt_base_url",
@@ -2432,14 +3500,40 @@ class GalleryServer:
         return filename.lower().endswith(REFERENCE_IMAGE_EXTENSIONS)
 
     @staticmethod
-    def _reference_response(filename: str, url: str, label: str, style: str = "upload", builtin: bool = False) -> dict:
-        return {
+    def _reference_response(
+        filename: str,
+        url: str,
+        label: str,
+        style: str = "upload",
+        builtin: bool = False,
+        prompt: str = "",
+        ref_id: str = "",
+        source: str = "",
+        tags: list[str] | None = None,
+        active: bool = True,
+        analysis_status: str = "",
+        analysis_error: str = "",
+    ) -> dict:
+        item = {
+            "id": ref_id,
             "filename": filename,
             "url": url,
             "style": style,
             "label": label,
             "builtin": builtin,
+            "source": source or ("default" if builtin else style or "upload"),
+            "active": active,
         }
+        prompt = str(prompt or "").strip()
+        if prompt:
+            item["prompt"] = prompt
+        if tags:
+            item["tags"] = [str(tag) for tag in tags if str(tag).strip()]
+        if analysis_status:
+            item["analysis_status"] = analysis_status
+        if analysis_error:
+            item["analysis_error"] = analysis_error
+        return item
 
     @staticmethod
     def _safe_reference_path(base_dir: str, relative_path: str) -> str:
@@ -2488,9 +3582,46 @@ class GalleryServer:
             return ext
         return REFERENCE_MIME_EXTENSIONS.get((content_type or "").split(";")[0].strip().lower(), "")
 
+    def _reference_profiles(self) -> list[dict]:
+        return load_reference_profiles(
+            self.data_dir,
+            self.reference_dir,
+            self.app_reference_dir,
+            self.uploaded_reference_dir,
+        )
+
+    def _all_reference_profiles_for_selection(self) -> list[dict]:
+        profiles = list(self._reference_profiles())
+        profiles.extend(self._iter_wardrobe_refs())
+        return profiles
+
+    def _select_reference_for_generation_sync(self, context: str) -> dict:
+        selected = select_reference_profile(
+            self.config,
+            self.data_dir,
+            context,
+            self._all_reference_profiles_for_selection(),
+        )
+        if not selected:
+            return {}
+        path = resolve_reference_profile_path(selected, self.reference_dir, self.app_reference_dir)
+        if not path:
+            return {}
+        result = reference_profile_response(selected)
+        result["path"] = path
+        result["selection_mode"] = selected.get("selection_mode", "")
+        result["selection_reason"] = selected.get("selection_reason", "")
+        result["random_fallback"] = bool(selected.get("random_fallback"))
+        return result
+
     def _iter_uploaded_refs(self) -> list[dict]:
         refs = []
         seen = set()
+        profile_map = {
+            item.get("filename"): item
+            for item in self._reference_profiles()
+            if item.get("source") == "upload"
+        }
         sources = (
             (self.uploaded_reference_dir, "/local-refs/uploads"),
             (self.legacy_uploaded_reference_dir, "/refs/uploads"),
@@ -2505,12 +3636,45 @@ class GalleryServer:
                 if not os.path.isfile(fpath):
                     continue
                 seen.add(fname)
+                profile = profile_map.get(fname, {})
                 refs.append(self._reference_response(
                     fname,
-                    f"{url_prefix}/{fname}",
-                    "自定义上传",
+                    profile.get("url") or f"{url_prefix}/{fname}",
+                    profile.get("label") or "自定义上传",
+                    style=profile.get("style") or "upload",
                     builtin=False,
+                    prompt=profile.get("prompt", ""),
+                    ref_id=profile.get("id", ""),
+                    source="upload",
+                    tags=profile.get("tags") if isinstance(profile.get("tags"), list) else None,
+                    active=profile.get("active") is not False,
+                    analysis_status=profile.get("analysis_status", ""),
+                    analysis_error=profile.get("analysis_error", ""),
                 ))
+        return refs
+
+    def _iter_wardrobe_refs(self) -> list[dict]:
+        refs = []
+        for item in self._load_favorite_outfits():
+            wardrobe = self._favorite_outfit_wardrobe_response_item(item)
+            url = str(wardrobe.get("url") or "").strip()
+            filename = str(wardrobe.get("filename") or "").strip()
+            if not url or not filename:
+                continue
+            outfit = item.get("outfit") if isinstance(item.get("outfit"), dict) else {}
+            style = str(item.get("outfit_style") or outfit.get("风格") or "衣柜").strip() or "衣柜"
+            label = f"衣柜 · {style}"
+            refs.append(self._reference_response(
+                filename,
+                url,
+                label,
+                style="wardrobe",
+                builtin=False,
+                prompt=wardrobe.get("prompt", ""),
+                ref_id=f"wardrobe_{hashlib.sha1(filename.encode('utf-8')).hexdigest()[:12]}",
+                source="wardrobe",
+                tags=[style],
+            ))
         return refs
 
     def _resolve_reference_image(self, ref_image: str, allow_any_path: bool = False) -> str:
@@ -2568,32 +3732,23 @@ class GalleryServer:
 
     async def handle_ref_list(self, request: web.Request):
         """返回参考图列表（内置底模 + 用户上传）"""
-        refs = []
-
-        for fname, info in BUILTIN_REFERENCE_MAP.items():
-            candidates = (
-                (self.reference_dir, "/local-refs"),
-                (self.app_reference_dir, "/refs"),
-            )
-            for ref_dir, url_prefix in candidates:
-                fpath = os.path.join(ref_dir, fname)
-                if os.path.isfile(fpath):
-                    refs.append(self._reference_response(
-                        fname,
-                        f"{url_prefix}/{fname}",
-                        info["label"],
-                        style=info["style"],
-                        builtin=True,
-                    ))
-                    break
-
-        refs.extend(self._iter_uploaded_refs())
+        refs = [
+            reference_profile_response(profile)
+            for profile in self._reference_profiles()
+            if profile.get("source") != "wardrobe"
+        ]
+        refs.extend(self._iter_wardrobe_refs())
         return web.json_response(refs)
 
     async def handle_uploaded_refs(self, request: web.Request):
         """列出已上传的自定义参考图"""
         try:
-            return web.json_response(self._iter_uploaded_refs())
+            refs = [
+                reference_profile_response(profile)
+                for profile in self._reference_profiles()
+                if profile.get("source") == "upload"
+            ]
+            return web.json_response(refs)
         except Exception as e:
             logger.error(f"List uploaded refs error: {e}")
             return web.json_response([])
@@ -2624,12 +3779,30 @@ class GalleryServer:
                 os.remove(save_path)
             raise
 
-        return web.json_response(self._reference_response(
-            save_name,
-            f"/local-refs/uploads/{save_name}",
-            "自定义上传",
-            builtin=False,
-        ))
+        loop = asyncio.get_running_loop()
+        analysis = await loop.run_in_executor(
+            None,
+            lambda: analyze_reference_image(
+                self.config,
+                self.data_dir,
+                save_path,
+                fallback_label="自定义上传",
+            ),
+        )
+        profile = upsert_reference_profile(self.data_dir, {
+            "filename": save_name,
+            "url": f"/local-refs/uploads/{save_name}",
+            "label": analysis.get("label") or "自定义上传",
+            "prompt": analysis.get("prompt", ""),
+            "tags": analysis.get("tags", []),
+            "source": "upload",
+            "builtin": False,
+            "active": True,
+            "analysis_status": analysis.get("analysis_status", ""),
+            "analysis_error": analysis.get("analysis_error", ""),
+        })
+
+        return web.json_response(reference_profile_response(profile))
 
     async def handle_delete_uploaded_ref(self, request: web.Request):
         """删除已上传的自定义参考图"""
@@ -2647,6 +3820,7 @@ class GalleryServer:
                     os.remove(filepath)
                     deleted = True
             if deleted:
+                remove_reference_profile(self.data_dir, filename)
                 return web.json_response({"success": True})
             return web.json_response({"error": "not_found"}, status=404)
         except Exception as e:
@@ -3184,12 +4358,32 @@ JSON 格式：
         for model in models:
             try:
                 resp = await loop.run_in_executor(None, lambda m=model: _post_llm(m))
-                if not resp or resp.status_code != 200:
-                    status = resp.status_code if resp else "no response"
-                    logger.warning("Generate-now LLM inference failed: model=%s status=%s", model, status)
+                if resp is None or resp.status_code != 200:
+                    status = resp.status_code if resp is not None else "no response"
+                    detail = ""
+                    if resp is not None:
+                        try:
+                            body = resp.json()
+                            error = body.get("error") if isinstance(body, dict) else None
+                            if isinstance(error, dict):
+                                detail = str(error.get("message") or error.get("code") or "")[:240]
+                            elif isinstance(body, dict):
+                                detail = str(body.get("msg") or body.get("status") or "")[:240]
+                        except Exception:
+                            detail = (resp.text or "")[:240]
+                    logger.warning(
+                        "Generate-now LLM inference failed: model=%s status=%s detail=%s",
+                        model,
+                        status,
+                        detail,
+                    )
                     continue
                 data = resp.json()
-                msg = data["choices"][0]["message"]
+                choices = data.get("choices") if isinstance(data, dict) else None
+                if not choices:
+                    logger.warning("Generate-now LLM inference invalid response: model=%s", model)
+                    continue
+                msg = choices[0]["message"]
                 content = (msg.get("content") or msg.get("reasoning_content") or "").strip()
                 parsed = self._parse_generate_now_detail(content, now_str)
                 if parsed:
@@ -3261,7 +4455,7 @@ JSON 格式：
             plugin_config = self._load_plugin_config()
             gpt_key = keys_config.get("gpt_key", "") or os.environ.get("GPT_IMAGE_API_KEY", "")
             raw_configured_gpt_base_url = str(self.config.get("image_gen", {}).get("gpt_base_url", "") or "").strip()
-            configured_gpt_base_url = self._configured_image_generations_url(
+            configured_gpt_base_url = self._configured_image_base_url(
                 raw_configured_gpt_base_url
             )
             local_gpt_base_url = str(keys_config.get("gpt_base_url", "") or "").strip()
@@ -3285,7 +4479,7 @@ JSON 格式：
                 }, status=400)
 
             # 2) 调用统一日程生图链路。generate.py 会根据 schedule_time 读取
-            # schedule_prompt / schedule_details，并使用当天 base_style 和 outfit。
+            # schedule_prompt / schedule_details，并使用当天 outfit/reference context。
             request_config = llm_request_config(self.config, self.data_dir)
             cpa_base_url = request_config["base_url"]
             cpa_key = request_config["api_key"]
@@ -3301,6 +4495,24 @@ JSON 格式：
             if cpa_base_url:
                 child_env_extra["CPA_BASE_URL"] = cpa_base_url
             child_env = self._child_env(child_env_extra)
+            selected_reference = {}
+            if engine == "gptimage":
+                reference_context = json.dumps({
+                    "source": "generate_now",
+                    "time": now_str,
+                    "activity": now_activity,
+                    "outfit_style": daily.get("outfit_style", ""),
+                    "outfit": daily.get("outfit", ""),
+                    "reference_query": daily.get("reference_query", ""),
+                    "prompt": daily.get("prompt", ""),
+                    "schedule_time": schedule_time,
+                    "schedule_detail": now_detail,
+                }, ensure_ascii=False)
+                loop = asyncio.get_running_loop()
+                selected_reference = await loop.run_in_executor(
+                    None,
+                    lambda: self._select_reference_for_generation_sync(reference_context),
+                )
             cmd = [
                 self._python_executable(),
                 generate_script,
@@ -3311,8 +4523,15 @@ JSON 格式：
                 "--schedule-time", schedule_time,
                 "--schedule-detail-json", schedule_detail_json,
             ]
-            if base_style and engine == "gptimage":
-                cmd.extend(["--style", base_style])
+            if selected_reference.get("path") and engine == "gptimage":
+                cmd.extend(["--ref-image", selected_reference["path"]])
+                logger.info(
+                    "Generate now selected reference: %s mode=%s",
+                    selected_reference.get("label") or selected_reference.get("filename"),
+                    selected_reference.get("selection_mode", ""),
+                )
+            else:
+                cmd.append("--no-auto-style")
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -3360,10 +4579,15 @@ JSON 格式：
                     all_data[filename]["schedule_time"] = schedule_time
                     all_data[filename]["schedule_now_detail"] = now_detail
                     all_data[filename]["time"] = all_data[filename].get("time") or now_str
-                    for field in ("outfit_style", "base_style"):
+                    for field in ("outfit_style", "base_style", "reference_query"):
                         value = daily.get(field)
                         if value:
                             all_data[filename][field] = value
+                    if selected_reference:
+                        all_data[filename]["selected_reference"] = {
+                            key: selected_reference.get(key, "")
+                            for key in ("id", "filename", "url", "label", "prompt", "source", "selection_mode", "selection_reason")
+                        }
                     if caption_text:
                         all_data[filename]["caption"] = caption_text
                 return all_data
@@ -3383,6 +4607,10 @@ JSON 格式：
                 "schedule_now_detail": now_detail,
                 "outfit_style": daily.get("outfit_style", ""),
                 "base_style": base_style,
+                "selected_reference": {
+                    key: selected_reference.get(key, "")
+                    for key in ("id", "filename", "url", "label", "source", "selection_mode", "selection_reason")
+                } if selected_reference else {},
             })
         except asyncio.TimeoutError:
             process_timeout = image_process_timeout(self.config, with_reference_fallback=True)
@@ -4040,6 +5268,13 @@ JSON 格式：
         size: str = "",
         ref_image: str = "",
         caption: str = "",
+        output_dir: str = "",
+        url_prefix: str = "/images",
+        source: str = "hermes_api",
+        category: str = "portrait",
+        persist_metadata: bool = True,
+        filename_prefix: str = "hermes",
+        classify_style: bool = True,
     ) -> Optional[dict]:
         """Run a pure image-generation request outside the aiohttp event loop."""
         zhuzhu_dir = os.path.join(os.path.dirname(__file__), "zhuzhu")
@@ -4067,13 +5302,16 @@ JSON 格式：
         created_at = int(time.time())
         generation_mode = "img2img" if ref_image else "text2img"
         base_style = ""
-        try:
-            from generate import _classify_style
-            base_style = _classify_style(prompt)
-        except Exception as e:
-            logger.warning("Hermes image style classification failed: %s", e)
-        filename = f"hermes_{created_at}_{uuid.uuid4().hex[:8]}.png"
-        img_path = os.path.join(self.image_dir, filename)
+        target_dir = os.path.abspath(os.path.expanduser(output_dir or self.image_dir))
+        os.makedirs(target_dir, exist_ok=True)
+        if classify_style:
+            try:
+                from generate import _classify_style
+                base_style = _classify_style(prompt)
+            except Exception as e:
+                logger.warning("Hermes image style classification failed: %s", e)
+        filename = f"{filename_prefix}_{created_at}_{uuid.uuid4().hex[:8]}.png"
+        img_path = os.path.join(target_dir, filename)
         with open(img_path, "wb") as f:
             f.write(img_data)
 
@@ -4092,7 +5330,7 @@ JSON 格式：
         caption = str(caption or "").strip()
 
         meta_entry = {
-            "category": "portrait",
+            "category": category,
             "prompt": prompt,
             "model": model_name,
             "model_name": self._display_model_name(model_name),
@@ -4101,7 +5339,7 @@ JSON 格式：
             "size": size or "",
             "created_at": created_at,
             "generation_time": elapsed,
-            "source": "hermes_api",
+            "source": source,
             "prompt_mode": "pure",
             "pure_prompt": True,
             "custom_ref_mode": "reference" if ref_image else "text2img",
@@ -4118,7 +5356,8 @@ JSON 格式：
         try:
             meta_entry["width"], meta_entry["height"] = width, height
             meta_entry["file_size_bytes"] = os.path.getsize(img_path)
-            self._update_image_metadata_entry(filename, meta_entry)
+            if persist_metadata:
+                self._update_image_metadata_entry(filename, meta_entry)
         except Exception as e:
             logger.error("Save Hermes image metadata error: %s", e)
             try:
@@ -4130,10 +5369,11 @@ JSON 格式：
         return {
             "success": True,
             "filename": filename,
-            "url": f"/images/{filename}",
+            "path": img_path,
+            "url": f"{url_prefix.rstrip('/')}/{filename}",
             "elapsed": elapsed,
             "engine": engine,
-            "source": "hermes_api",
+            "source": source,
             "base_style": base_style,
             "model_name": self._display_model_name(model_name),
             "caption": caption,
@@ -4141,6 +5381,9 @@ JSON 格式：
             "pure_prompt": True,
             "custom_ref_mode": "reference" if ref_image else "text2img",
             "generation_mode": generation_mode,
+            "width": width,
+            "height": height,
+            "file_size_bytes": meta_entry.get("file_size_bytes", 0),
         }
 
     async def handle_hermes_text_to_image(self, request: web.Request):

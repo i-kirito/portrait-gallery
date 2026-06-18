@@ -92,6 +92,27 @@ body {
   white-space: nowrap;
   flex-shrink: 0;
 }
+.header-log-btn {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid #eadcf4;
+  border-radius: 20px;
+  background: #fff;
+  color: #7c3aed;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.header-log-btn:hover {
+  border-color: #c084fc;
+  background: #faf5ff;
+  transform: translateY(-1px);
+}
 .btn {
   padding: 10px 24px;
   border-radius: 22px;
@@ -1148,6 +1169,179 @@ textarea:focus-visible,
 /* ===== Gallery Section ===== */
 .gallery-section { display: block; }
 .gallery-section.hidden { display: none; }
+
+.wardrobe-section {
+  display: block;
+  max-width: 1040px;
+  margin: 0 auto;
+}
+.wardrobe-section.hidden { display: none; }
+.wardrobe-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.wardrobe-head h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #4a335f;
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+.wardrobe-count {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid rgba(233,30,99,0.12);
+  color: #c2185b;
+  font-size: 12px;
+  font-weight: 800;
+}
+.wardrobe-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+.wardrobe-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 13px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(224,210,238,0.9);
+  background: rgba(255,255,255,0.94);
+  box-shadow: 0 3px 14px rgba(82,45,112,0.07);
+}
+.wardrobe-thumb {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border-radius: 8px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #f7f3fb, #efe8f9);
+  border: 1px solid rgba(231,221,242,0.9);
+}
+.wardrobe-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.wardrobe-thumb-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: #9e8fb8;
+  text-align: center;
+  padding: 14px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.wardrobe-thumb-empty i {
+  font-size: 28px;
+  color: #b79bd6;
+}
+.wardrobe-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #a78bfa;
+  font-size: 11px;
+  font-weight: 800;
+}
+.wardrobe-style {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #7c3aed;
+}
+.wardrobe-date {
+  flex: 0 0 auto;
+  color: #a79ab7;
+  font-weight: 700;
+}
+.wardrobe-line {
+  color: #3f3154;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.wardrobe-line strong {
+  color: #8e24aa;
+}
+.wardrobe-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: auto;
+  padding-top: 3px;
+}
+.wardrobe-action-btn,
+.wardrobe-remove-btn {
+  min-height: 28px;
+  padding: 0 11px;
+  border: 1px solid rgba(233,30,99,0.2);
+  border-radius: 999px;
+  background: #fff7fb;
+  color: #c2185b;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.wardrobe-action-btn {
+  border-color: rgba(139,92,246,0.22);
+  background: #f7f2ff;
+  color: #7c3aed;
+}
+.wardrobe-action-btn:hover { background: #f0e7ff; border-color: rgba(139,92,246,0.34); }
+.wardrobe-action-btn:disabled {
+  cursor: progress;
+  opacity: 0.62;
+  background: #f0e7ff;
+  border-color: rgba(139,92,246,0.28);
+}
+.wardrobe-remove-btn:hover { background: #ffeaf3; border-color: rgba(233,30,99,0.34); }
+.wardrobe-remove-btn:disabled { cursor: default; opacity: 0.58; }
+.wardrobe-status {
+  flex: 1 1 100%;
+  min-height: 18px;
+  color: #7c3aed;
+  font-size: 11px;
+  font-weight: 800;
+  text-align: right;
+}
+.wardrobe-status.error { color: #b91c1c; }
+.wardrobe-edit-modal {
+  max-width: 560px;
+}
+.wardrobe-edit-modal .sk-field input[type="text"] {
+  font-family: inherit;
+}
+.wardrobe-edit-modal .sk-field textarea {
+  min-height: 92px;
+}
+.wardrobe-empty {
+  padding: 56px 20px;
+  border-radius: 8px;
+  border: 1px dashed rgba(167,139,250,0.34);
+  background: rgba(255,255,255,0.72);
+  color: #a78bfa;
+  text-align: center;
+  font-size: 13px;
+}
+.wardrobe-empty .icon { font-size: 38px; line-height: 1; margin-bottom: 8px; }
 
 .gallery-list {
   display: flex;
@@ -2208,6 +2402,7 @@ textarea:focus-visible,
   .today-hero-title h2 { font-size: 22px; }
   .today-hero-title .subtitle { font-size: 13px; }
   .today-hero-title .gen-today-btn { font-size: 14px; padding: 10px 24px; }
+  .wardrobe-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
   .gallery-list { gap: 10px; }
@@ -2230,6 +2425,8 @@ textarea:focus-visible,
   .tab { min-height: 40px; padding: 8px 10px; font-size: 14px; }
   .tab-badge { min-width: 15px; height: 15px; font-size: 9px; line-height: 15px; padding: 0 4px; }
   .container { padding: 16px 14px; }
+  .wardrobe-head h2 { font-size: 20px; }
+  .wardrobe-card { padding: 12px; }
   .cg-overlay { padding: 12px; }
   .cg-modal {
     width: min(100%, 460px);
@@ -2555,28 +2752,6 @@ textarea:focus-visible,
 .egg-outfit-dislike-btn.active { background: linear-gradient(135deg, #64748b, #334155); border-color: transparent; color: #fff; box-shadow: 0 8px 18px rgba(51,65,85,0.18); }
 .egg-outfit-fav-btn:disabled,
 .egg-outfit-dislike-btn:disabled { cursor: default; opacity: 0.58; box-shadow: none; }
-.egg-outfit-view-btn {
-  min-height: 30px;
-  min-width: 52px;
-  padding: 0 10px;
-  border: 1px solid rgba(139,92,246,0.2);
-  border-radius: 999px;
-  background: rgba(255,255,255,0.88);
-  color: #7c3aed;
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  white-space: nowrap;
-  box-shadow: 0 5px 12px rgba(139,92,246,0.08);
-  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
-}
-.egg-outfit-view-btn:hover { background: #f8f5ff; border-color: rgba(139,92,246,0.36); }
-.egg-outfit-view-btn[aria-expanded="true"] { background: #f3ecff; color: #6d28d9; border-color: rgba(139,92,246,0.34); }
-.egg-outfit-view-btn:disabled { cursor: default; opacity: 0.58; box-shadow: none; }
 .egg-outfit-grid { display: flex; flex-direction: column; gap: 10px; }
 .egg-outfit-item { background: rgba(255,255,255,0.88); backdrop-filter: none; -webkit-backdrop-filter: none; border: 1px solid rgba(240,226,255,0.9); border-radius: 14px; padding: 12px 14px; width: 100%; box-sizing: border-box; box-shadow: 0 3px 12px rgba(168,85,247,0.05); transition: background 0.16s ease, border-color 0.16s ease; }
 .egg-outfit-item:hover { background: #fff; border-color: rgba(228,202,255,0.95); }
@@ -2596,33 +2771,6 @@ textarea:focus-visible,
   flex-shrink: 0;
 }
 .egg-style-manage:hover { background: #ffeaf3; }
-.egg-fav-overlay { position: fixed; inset: 0; z-index: 10001; display: flex; align-items: center; justify-content: center; padding: 18px; background: rgba(32,20,42,0.46); opacity: 0; pointer-events: none; transition: opacity 0.18s ease; box-sizing: border-box; }
-.egg-fav-overlay.show { opacity: 1; pointer-events: auto; }
-.egg-fav-modal { width: min(560px, 100%); max-height: min(720px, 88vh); display: flex; flex-direction: column; border: 1px solid rgba(221,214,254,0.92); border-radius: 18px; background: linear-gradient(135deg, rgba(255,255,255,0.98), rgba(249,247,255,0.96)); box-shadow: 0 24px 70px rgba(58,30,82,0.28); overflow: hidden; transform: translateY(10px) scale(0.98); transition: transform 0.18s ease; }
-.egg-fav-overlay.show .egg-fav-modal { transform: translateY(0) scale(1); }
-.egg-fav-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 18px 12px; border-bottom: 1px solid rgba(240,226,255,0.88); }
-.egg-fav-modal-title { display: flex; align-items: center; gap: 8px; color: #7c3aed; font-size: 15px; font-weight: 800; }
-.egg-fav-modal-close { width: 30px; height: 30px; border: 1px solid rgba(139,92,246,0.18); border-radius: 999px; background: #fff; color: #7c3aed; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
-.egg-fav-modal-close:hover { background: #f8f5ff; border-color: rgba(139,92,246,0.34); }
-.egg-fav-body { min-height: 160px; overflow: auto; padding: 12px 14px 14px; }
-.egg-fav-panel-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 7px; color: #7c3aed; font-size: 12px; font-weight: 800; }
-.egg-fav-panel-count { color: #a78bfa; font-size: 11px; font-weight: 700; }
-.egg-fav-panel-note { margin-bottom: 10px; padding: 8px 10px; border-radius: 10px; background: #fff7fb; color: #9d2f69; font-size: 11px; line-height: 1.45; border: 1px solid rgba(244,194,220,0.78); }
-.egg-fav-list { display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
-.egg-fav-item { background: #fff; border: 1px solid rgba(240,226,255,0.94); border-radius: 12px; padding: 10px 12px; }
-.egg-fav-meta { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 10px; margin-bottom: 6px; color: #a78bfa; font-size: 11px; font-weight: 700; }
-.egg-fav-title { min-width: 0; display: inline-flex; align-items: center; gap: 6px; }
-.egg-fav-style { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.egg-fav-ref { flex: 0 0 auto; padding: 2px 6px; border-radius: 999px; background: #f3ecff; color: #7c3aed; font-size: 10px; }
-.egg-fav-date { color: #b0a4c9; font-weight: 600; white-space: nowrap; }
-.egg-fav-line { color: #3f3154; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
-.egg-fav-line + .egg-fav-line { margin-top: 4px; }
-.egg-fav-line strong { color: #7c3aed; }
-.egg-fav-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
-.egg-fav-remove-btn { min-height: 26px; padding: 0 10px; border: 1px solid rgba(233,30,99,0.2); border-radius: 999px; background: #fff7fb; color: #c2185b; font-size: 11px; font-weight: 700; cursor: pointer; }
-.egg-fav-remove-btn:hover { background: #ffeaf3; border-color: rgba(233,30,99,0.34); }
-.egg-fav-remove-btn:disabled { cursor: default; opacity: 0.58; }
-.egg-fav-empty { padding: 12px; color: #a78bfa; font-size: 12px; text-align: center; }
 .egg-schedule-list { position: relative; padding-left: 24px; }
 .egg-schedule-list::before { content: ''; position: absolute; left: 8px; top: 7px; bottom: 7px; width: 2px; background: linear-gradient(to bottom, #ff6b9d, #c084fc, #818cf8); border-radius: 1px; opacity: 0.75; }
 .egg-sched-item { position: relative; padding: 9px 0 9px 2px; }
@@ -2664,8 +2812,10 @@ textarea:focus-visible,
 .egg-photo-style { grid-column: 5; grid-row: 1; justify-self: end; font-size: 11px; color: #888; white-space: nowrap; }
 .egg-photo-error { font-size: 11px; line-height: 1.45; color: #b91c1c; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; padding: 5px 8px; overflow-wrap: anywhere; }
 .egg-photo-error { grid-column: 1 / -1; }
-.egg-photo-retry-btn { grid-column: 6; grid-row: 1; justify-self: end; height: 24px; border: 0; border-radius: 8px; padding: 0 10px; background: #ff5fa2; color: #fff; font-size: 11px; font-weight: 800; cursor: pointer; }
-.egg-photo-retry-btn:disabled { opacity: 0.55; cursor: default; }
+.egg-photo-actions { grid-column: 6; grid-row: 1; justify-self: end; display: inline-flex; align-items: center; gap: 6px; }
+.egg-photo-action-btn { height: 24px; border: 0; border-radius: 8px; padding: 0 10px; color: #fff; font-size: 11px; font-weight: 800; cursor: pointer; white-space: nowrap; }
+.egg-photo-retry-btn { background: #ff5fa2; }
+.egg-photo-action-btn:disabled { opacity: 0.55; cursor: default; }
 .egg-header .egg-date-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; position: relative; z-index: 1; }
 .egg-refresh-btn { background: rgba(255,255,255,0.18); border: 1px solid rgba(255,255,255,0.24); color: #fff; width: 32px; height: 32px; border-radius: 10px; font-size: 15px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background 0.16s ease, border-color 0.16s ease; padding: 0; line-height: 1; flex-shrink: 0; backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; }
 .egg-refresh-btn:hover { background: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.4); }
@@ -2682,10 +2832,9 @@ textarea:focus-visible,
   .egg-title-actions { justify-self: end; flex-wrap: wrap; max-width: 100%; }
   .egg-outfit-fav-btn { min-width: 94px; }
   .egg-outfit-dislike-btn { min-width: 82px; }
-  .egg-outfit-view-btn { min-width: 52px; }
   .egg-photo-item { grid-template-columns: auto 48px auto minmax(0, 1fr) auto; }
   .egg-photo-style { grid-column: 5; grid-row: 1; justify-self: end; }
-  .egg-photo-retry-btn { grid-column: 5; grid-row: auto; }
+  .egg-photo-actions { grid-column: 1 / -1; grid-row: auto; justify-self: start; }
 }
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -2725,6 +2874,11 @@ textarea:focus-visible,
 .prompt-footer { padding: 12px 20px; border-top: 1px solid #f0e4f4; display: flex; justify-content: flex-end; }
 .prompt-copy-btn { background: linear-gradient(135deg, #c084fc, #818cf8); color: #fff; border: none; border-radius: 10px; padding: 8px 20px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 12px rgba(192,132,252,0.3); }
 .prompt-copy-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(192,132,252,0.4); }
+.log-card { width: min(980px, calc(100vw - 32px)); max-height: 84vh; }
+.log-body pre { min-height: 56vh; max-height: 64vh; overflow: auto; white-space: pre-wrap; word-break: break-word; background: #111827; color: #d1fae5; border: 1px solid #263244; }
+.log-status { margin-right: auto; color: #8b5cf6; font-size: 12px; font-weight: 700; }
+.log-toggle { display: inline-flex; align-items: center; gap: 6px; margin-right: 10px; color: #6b7280; font-size: 12px; font-weight: 700; user-select: none; }
+.log-toggle input { accent-color: #8b5cf6; }
 
 </style>
 </head>
@@ -2744,18 +2898,6 @@ textarea:focus-visible,
     </div>
     <div class="egg-body" id="eggBody">
       <div class="egg-loading">加载中...</div>
-    </div>
-  </div>
-</div>
-
-<div class="egg-fav-overlay" id="eggFavoriteOutfitsOverlay" onclick="if(event.target===this)closeFavoriteOutfitModal()">
-  <div class="egg-fav-modal" role="dialog" aria-modal="true" aria-labelledby="eggFavoriteOutfitsTitle" onclick="event.stopPropagation()">
-    <div class="egg-fav-modal-head">
-      <div class="egg-fav-modal-title" id="eggFavoriteOutfitsTitle"><i class="fa-regular fa-folder-open" aria-hidden="true"></i><span>收藏穿搭方案</span></div>
-      <button class="egg-fav-modal-close" type="button" onclick="closeFavoriteOutfitModal()" aria-label="关闭收藏穿搭方案"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
-    </div>
-    <div class="egg-fav-body" id="eggFavoriteOutfitsBody">
-      <div class="egg-fav-empty">正在读取收藏方案...</div>
     </div>
   </div>
 </div>
@@ -2797,15 +2939,23 @@ textarea:focus-visible,
   document.addEventListener('DOMContentLoaded', function() {
     const todaySec = document.getElementById('todaySection');
     const gallerySec = document.getElementById('gallerySection');
-    if (savedTab === 'today') {
+    const wardrobeSec = document.getElementById('wardrobeSection');
+    const normalizedTab = ["gallery", "today", "favorites", "wardrobe"].includes(savedTab) ? savedTab : "today";
+    if (normalizedTab === 'today') {
       todaySec.classList.add('visible');
       gallerySec.classList.add('hidden');
+      if (wardrobeSec) wardrobeSec.classList.add('hidden');
+    } else if (normalizedTab === 'wardrobe') {
+      todaySec.classList.remove('visible');
+      gallerySec.classList.add('hidden');
+      if (wardrobeSec) wardrobeSec.classList.remove('hidden');
     } else {
       todaySec.classList.remove('visible');
       gallerySec.classList.remove('hidden');
+      if (wardrobeSec) wardrobeSec.classList.add('hidden');
     }
     document.querySelectorAll('.tab').forEach(t => {
-      t.classList.toggle('active', t.dataset.tab === savedTab);
+      t.classList.toggle('active', t.dataset.tab === normalizedTab);
     });
   });
 })();
@@ -2813,15 +2963,17 @@ textarea:focus-visible,
 
 <div class="header">
   <div class="header-left">
-      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.1.8</span></h1>
+      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.1.9</span></h1>
   </div>
   <div class="tabs">
     <button class="tab" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="showUnfavoriteGallery(event)"><span class="tab-label">✨ 全部</span><span class="tab-badge" id="badge-all">0</span></button>
     <button class="tab" data-tab="today" onclick="switchTab('today')"><span class="tab-label">🌸 今日</span><span class="tab-badge" id="badge-today">0</span></button>
     <button class="tab" data-tab="favorites" onclick="switchTab('favorites')"><span class="tab-label">❤️ 收藏</span><span class="tab-badge" id="badge-favorites">0</span></button>
+    <button class="tab" data-tab="wardrobe" onclick="switchTab('wardrobe')"><span class="tab-label">👗 衣柜</span><span class="tab-badge" id="badge-wardrobe">0</span></button>
   </div>
   <div class="header-actions">
     <button class="btn btn-primary header-gen-btn" onclick="openCustomGen()">🎀 穿搭生成</button>
+    <button class="header-log-btn" onclick="openLiveLogs()" title="实时运行日志">📜 日志</button>
     <button class="settings-btn" onclick="openSettings()" title="API 密钥设置">⚙️</button>
   </div>
 </div>
@@ -2849,6 +3001,42 @@ textarea:focus-visible,
     </div>
   </div>
 
+  <!-- Wardrobe -->
+  <div class="wardrobe-section hidden" id="wardrobeSection">
+    <div class="wardrobe-head">
+      <h2><i class="fa-solid fa-shirt" aria-hidden="true"></i><span>衣柜</span></h2>
+      <span class="wardrobe-count" id="wardrobeCount">0 套</span>
+    </div>
+    <div id="wardrobeContent">
+      <div class="wardrobe-empty"><div class="icon">👗</div><p>正在打开衣柜...</p></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Wardrobe Edit Modal -->
+<div class="sk-overlay" id="wardrobeEditOverlay" onclick="if(event.target===this)closeWardrobeEdit()">
+  <div class="sk-modal wardrobe-edit-modal" onclick="event.stopPropagation()">
+    <h2>编辑衣柜穿搭</h2>
+    <input type="hidden" id="wardrobeEditId">
+    <div class="sk-field">
+      <label for="wardrobeEditStyle">风格</label>
+      <input type="text" id="wardrobeEditStyle" placeholder="例如：清新风 / 酷飒风 / 温柔风">
+    </div>
+    <div class="sk-field">
+      <label for="wardrobeEditHair">发型</label>
+      <textarea id="wardrobeEditHair" rows="3" placeholder="描述假发或发型，例如：低丸子头、空气刘海、发尾微卷"></textarea>
+    </div>
+    <div class="sk-field">
+      <label for="wardrobeEditWear">穿搭</label>
+      <textarea id="wardrobeEditWear" rows="5" placeholder="描述上装、下装、鞋包和配饰"></textarea>
+      <div class="sk-desc">保存后会清掉旧衣架图，并按新的发型和穿搭自动重新生成。</div>
+    </div>
+    <div class="sk-actions">
+      <button class="btn btn-secondary" type="button" onclick="closeWardrobeEdit()">取消</button>
+      <button class="btn btn-primary" type="button" id="wardrobeEditSaveBtn" onclick="saveWardrobeEdit()">保存并重生成</button>
+    </div>
+  </div>
 </div>
 
 <!-- Settings Modal -->
@@ -2938,8 +3126,8 @@ textarea:focus-visible,
     </div>
     <div class="sk-field">
       <label for="skGptBaseUrl">GPT Image Base URL</label>
-      <div class="sk-desc">OpenAI 兼容生图端点，默认使用 /v1/images/generations</div>
-      <input type="text" id="skGptBaseUrl" placeholder="例如 http://127.0.0.1:8090/v1/images/generations">
+      <div class="sk-desc">OpenAI 兼容生图基础地址；填到 /v1 即可，自动适配 Images API 或 chat 兼容链路</div>
+      <input type="text" id="skGptBaseUrl" placeholder="例如 http://127.0.0.1:8090/v1">
       <div class="sk-status" id="skGptBaseUrlStatus">加载中...</div>
     </div>
     <div class="sk-field">
@@ -3005,7 +3193,7 @@ textarea:focus-visible,
       <div class="sk-footer-main">
         <div class="sk-update-row">
           <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
-          <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.1.8</span></span>
+          <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.1.9</span></span>
         </div>
         <div class="sk-actions">
           <button class="btn btn-secondary" onclick="closeSettings()">关闭</button>
@@ -3108,6 +3296,12 @@ function apiKeyQuery() {
   return window.__API_KEY ? "?key=" + encodeURIComponent(window.__API_KEY) : "";
 }
 
+function appendApiKeyQuery(url) {
+  const suffix = apiKeyQuery();
+  if (!suffix) return url;
+  return url + (url.includes('?') ? '&' : '?') + suffix.slice(1);
+}
+
 initApiKey();
 
 (function installApiKeyFetchWrapper() {
@@ -3140,7 +3334,12 @@ let currentTagFilter = "";
 let showFavoritesOnly = false;
 let showUnfavoritesOnly = false;
 let showTodayOnly = false;
+let wardrobeItems = [];
+let wardrobeLoaded = false;
+let wardrobeRequest = null;
+let wardrobeAutoRefreshTimer = null;
 let photoRetryPollTimer = null;
+let liveLogTimer = null;
 const favoriteRequests = new Set();
 let settingsSnapshot = null;
 let scheduleEggCache = { html: "", dateText: "", updatedAt: 0 };
@@ -3223,11 +3422,13 @@ function showUnfavoriteGallery(event) {
   currentTagFilter = "";
   const todaySec = document.getElementById("todaySection");
   const gallerySec = document.getElementById("gallerySection");
+  const wardrobeSec = document.getElementById("wardrobeSection");
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
   document.querySelector('.tab[data-tab="gallery"]')?.classList.add("active");
   window.galleryStorageSet('active_tab', 'gallery');
   if (todaySec) todaySec.classList.remove("visible");
   if (gallerySec) gallerySec.classList.remove("hidden");
+  if (wardrobeSec) wardrobeSec.classList.add("hidden");
   showFavoritesOnly = false;
   showUnfavoritesOnly = true;
   showTodayOnly = false;
@@ -3246,14 +3447,20 @@ function displayOutfitStyle(e) {
 
 function displayBaseStyle(e) {
   const style = String((e && e.base_style) || "").trim();
-  if (!style) return "";
-  return style;
+  if (!isBaseModelStyle(style)) return "";
+  return style.toLowerCase();
 }
 
 function displayReferenceMeta(e) {
-  const style = displayBaseStyle(e);
-  if (!style) return "";
-  return `🖼 ${style}`;
+  if (!e) return "";
+  const mode = String(e.generation_mode || "").trim().toLowerCase();
+  const refImage = String(e.ref_image || e.ref_image_path || e.requested_ref_image || e.requested_ref_image_path || "").trim();
+  const isActualImg2Img = mode === "img2img" || mode === "image-to-image" || !!refImage;
+  if (!isActualImg2Img) return "";
+  const selected = e.selected_reference && typeof e.selected_reference === "object" ? e.selected_reference : {};
+  const label = String(selected.label || selected.source || "").trim();
+  if (label) return `🖼 ${label}`;
+  return "🖼 参考图";
 }
 
 function displayImageSizeMeta(e) {
@@ -3329,14 +3536,18 @@ function updateBadges() {
   const bAll = document.getElementById("badge-all");
   const bFav = document.getElementById("badge-favorites");
   const bToday = document.getElementById("badge-today");
+  const bWardrobe = document.getElementById("badge-wardrobe");
   if (bAll) bAll.textContent = allCount;
   if (bFav) bFav.textContent = favCount;
   if (bToday) bToday.textContent = todayCount;
+  if (bWardrobe) bWardrobe.textContent = String(wardrobeItems.length || 0);
 }
 
 function renderActivePhotoView() {
   const activeTab = document.querySelector(".tab.active")?.dataset.tab || "";
-  if (activeTab === "today" || showTodayOnly) {
+  if (activeTab === "wardrobe") {
+    renderWardrobe();
+  } else if (activeTab === "today" || showTodayOnly) {
     renderToday();
   } else {
     renderGallery();
@@ -3445,13 +3656,17 @@ function restoreGalleryViewportAnchor(anchor) {
 function switchTab(tab) {
   const todaySec = document.getElementById("todaySection");
   const gallerySec = document.getElementById("gallerySection");
+  const wardrobeSec = document.getElementById("wardrobeSection");
+  const targetTab = document.querySelector(`.tab[data-tab="${tab}"]`);
+  if (!targetTab) tab = "today";
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-  document.querySelector(`.tab[data-tab="${tab}"]`).classList.add("active");
+  document.querySelector(`.tab[data-tab="${tab}"]`)?.classList.add("active");
   window.galleryStorageSet('active_tab', tab);
   
   if (tab === "today") {
     todaySec.classList.add("visible");
     gallerySec.classList.add("hidden");
+    if (wardrobeSec) wardrobeSec.classList.add("hidden");
     showFavoritesOnly = false;
     showUnfavoritesOnly = false;
     showTodayOnly = true;
@@ -3459,13 +3674,24 @@ function switchTab(tab) {
   } else if (tab === "favorites") {
     todaySec.classList.remove("visible");
     gallerySec.classList.remove("hidden");
+    if (wardrobeSec) wardrobeSec.classList.add("hidden");
     showFavoritesOnly = true;
     showUnfavoritesOnly = false;
     showTodayOnly = false;
     renderGallery();
+  } else if (tab === "wardrobe") {
+    todaySec.classList.remove("visible");
+    gallerySec.classList.add("hidden");
+    if (wardrobeSec) wardrobeSec.classList.remove("hidden");
+    showFavoritesOnly = false;
+    showUnfavoritesOnly = false;
+    showTodayOnly = false;
+    currentTagFilter = "";
+    renderWardrobe();
   } else {
     todaySec.classList.remove("visible");
     gallerySec.classList.remove("hidden");
+    if (wardrobeSec) wardrobeSec.classList.add("hidden");
     showFavoritesOnly = false;
     showUnfavoritesOnly = false;
     showTodayOnly = false;
@@ -4567,9 +4793,27 @@ const CG_SIZE_MAP = {
   "9:16": { "1k": "768x1366", "2k": "1152x2048", "4k": "2304x4096" }
 };
 const BUILTIN_REF_FALLBACKS = [
-  { filename: "reference_face.jpg", url: "/local-refs/reference_face.jpg", style: "cool", label: "冷御风", builtin: true },
-  { filename: "ref_style_girly.jpg", url: "/local-refs/ref_style_girly.jpg", style: "girly", label: "少女风", builtin: true },
-  { filename: "ref_style_sweet.jpg", url: "/local-refs/ref_style_sweet.jpg", style: "sweet", label: "甜妹风", builtin: true }
+  {
+    filename: "reference_face.jpg",
+    url: "/local-refs/reference_face.jpg",
+    label: "冷御风",
+    builtin: true,
+    prompt: "Cool elegant portrait reference with mature, confident, polished styling and chic city mood."
+  },
+  {
+    filename: "ref_style_girly.jpg",
+    url: "/local-refs/ref_style_girly.jpg",
+    label: "少女风",
+    builtin: true,
+    prompt: "Bright girly portrait reference with lively, cheerful, playful styling and sunny everyday mood."
+  },
+  {
+    filename: "ref_style_sweet.jpg",
+    url: "/local-refs/ref_style_sweet.jpg",
+    label: "甜妹风",
+    builtin: true,
+    prompt: "Soft sweet portrait reference with gentle, warm, delicate styling and cozy romantic mood."
+  }
 ];
 const CUSTOM_IMAGE_MODEL_FALLBACKS = ["gpt-image-2"];
 let customImageModelsLoaded = false;
@@ -4785,6 +5029,18 @@ function openCustomGen() {
   // Load gallery images as reference options
   loadRefImages();
 }
+
+async function openCustomGenFromWardrobe(btn) {
+  const ref = btn && btn.dataset ? String(btn.dataset.ref || '').trim() : '';
+  openCustomGen();
+  if (!ref) return;
+  await loadRefImages();
+  const grid = document.getElementById("cgRefGrid");
+  restoreCustomRefSelection(grid, ref);
+  saveCustomGenState();
+  showToast("🧥 已把衣架图放进参考图");
+}
+
 function closeCustomGen() {
   saveCustomGenState();
   document.getElementById("cgOverlay").classList.remove("open");
@@ -4806,6 +5062,7 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 // Reference image selector
 let uploadedRefs = [];
+let wardrobeRefs = [];
 function mergeBuiltinRefs(refList) {
   const refs = new Map();
   BUILTIN_REF_FALLBACKS.forEach(ref => refs.set(ref.filename, ref));
@@ -4832,6 +5089,15 @@ function renderRefImages(builtinRefs, uploadRefs) {
     const label = escapeHtml(ref.label || ref.style || "参考图");
     const url = escapeHtml(ref.url || "");
     html += `<div class="cg-ref-item" data-ref="${url}" title="${label}">
+      <img src="${url}" alt="${label}" loading="lazy" decoding="async" style="object-fit:cover;width:100%;height:100%;">
+      <span style="position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:10px;color:#fff;background:rgba(0,0,0,0.5);border-radius:0 0 8px 8px;">${label}</span>
+    </div>`;
+  });
+
+  wardrobeRefs.forEach((ref, idx) => {
+    const label = escapeHtml(ref.label || "衣柜参考");
+    const url = escapeHtml(ref.url || "");
+    html += `<div class="cg-ref-item wardrobe" data-ref="${url}" data-wardrobe-idx="${idx}" title="${label}">
       <img src="${url}" alt="${label}" loading="lazy" decoding="async" style="object-fit:cover;width:100%;height:100%;">
       <span style="position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:10px;color:#fff;background:rgba(0,0,0,0.5);border-radius:0 0 8px 8px;">${label}</span>
     </div>`;
@@ -4864,8 +5130,11 @@ async function loadRefImages() {
     ]);
     const refList = await refListRes.json();
     const uploadedRefsFromServer = await uploadedRes.json();
+    const refItems = Array.isArray(refList) ? refList : [];
+    wardrobeRefs = refItems.filter(ref => String(ref.style || "").trim() === "wardrobe");
+    const builtinRefs = refItems.filter(ref => ref && ref.builtin);
     uploadedRefs = uploadedRefsFromServer;
-    renderRefImages(mergeBuiltinRefs(refList), uploadedRefs);
+    renderRefImages(mergeBuiltinRefs(builtinRefs), uploadedRefs);
   } catch(e) {
     console.error("load refs:", e);
     renderRefImages(BUILTIN_REF_FALLBACKS, uploadedRefs);
@@ -5011,6 +5280,7 @@ async function loadGallery() {
     }
     // Default to saved tab or today
     const savedTab = window.galleryStorageGet('active_tab', 'today');
+    loadWardrobe({ render: savedTab === 'wardrobe', silent: true }).catch(() => null);
     switchTab(savedTab);
     updateBadges();
   } catch(e) {
@@ -5681,11 +5951,7 @@ loadVersion();
 // Close settings on Escape key
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    var favOverlay = document.getElementById("eggFavoriteOutfitsOverlay");
-    if (favOverlay && favOverlay.classList.contains("show")) {
-      closeFavoriteOutfitModal();
-      e.stopImmediatePropagation();
-    } else if (document.getElementById("eggStyleOverlay").classList.contains("open")) {
+    if (document.getElementById("eggStyleOverlay").classList.contains("open")) {
       closeOutfitStyleDialog();
     } else if (document.getElementById("imgFullscreen").classList.contains("open")) {
       document.getElementById("imgFullscreen").classList.remove("open");
@@ -5821,6 +6087,8 @@ document.addEventListener("keydown", e => {
     if (activeTab && (activeTab.dataset.tab === 'gallery' || activeTab.dataset.tab === 'favorites')) {
       setFloatToolsVisible(true);
       applyCols(preferredCols, false);
+    } else {
+      setFloatToolsVisible(false);
     }
   });
 })();
@@ -5837,31 +6105,79 @@ function extractClockTime(value) {
 function summarizePhotoJobError(jobOrText) {
   var raw = '';
   if (jobOrText && typeof jobOrText === 'object') {
-    raw = jobOrText.error_summary || jobOrText.error || '';
+    raw = jobOrText.error || jobOrText.error_summary || '';
   } else {
     raw = String(jobOrText || '');
   }
   var lower = raw.toLowerCase();
   var reasons = [];
+  var endpoint = '';
+  var endpointMatch = raw.match(/\[(https?:\/\/[^/\]]+|[\w.-]+:\d+)\]/);
+  if (endpointMatch) endpoint = endpointMatch[1];
+  if (!endpoint && lower.includes('192.168.31.216:8090')) endpoint = '192.168.31.216:8090';
+  var connectionFailed = [
+    'failed to establish a new connection',
+    'connecttimeouterror',
+    'connection refused',
+    'host is down',
+    'no route to host'
+  ].some(function(token) { return lower.includes(token); });
+  var requestTimedOut = lower.includes('timeout') || lower.includes('timed out');
+  if (endpoint && connectionFailed) {
+    reasons.push('GPT Image 中转 ' + endpoint + ' 当时连接失败');
+  } else if (endpoint && requestTimedOut) {
+    reasons.push('GPT Image 中转 ' + endpoint + ' 当时响应超时');
+  }
+  if (lower.includes('dial tcp: lookup') || lower.includes('no such host')) {
+    reasons.push('上游中转内部 DNS 解析失败');
+  }
   if (lower.includes('ssleoferror') || lower.includes('unexpected_eof_while_reading')) {
     reasons.push('GPT Image 上游 SSL 连接被断开');
-  } else if (lower.includes('max retries exceeded')) {
-    reasons.push('GPT Image 上游连接重试耗尽');
-  } else if (lower.includes('timeout') || lower.includes('timed out')) {
+  }
+  if (lower.includes('max retries exceeded') && !connectionFailed && !requestTimedOut) {
+    reasons.push('连接多次重试仍失败');
+  }
+  if (requestTimedOut && !endpoint) {
     reasons.push('生图请求超时');
-  } else if (lower.includes('unauthorized') || lower.includes('invalid api key') || lower.includes('401')) {
+  }
+  if (lower.includes('unauthorized') || lower.includes('invalid api key') || lower.includes('401')) {
     reasons.push('API Key 校验失败');
   } else if (lower.includes('rate limit') || lower.includes('429')) {
     reasons.push('上游限流');
-  } else if (lower.includes('path not found') || lower.includes('direct gpt api error 404') || lower.includes(' 404')) {
-    reasons.push('GPT Image Base URL 端点错误');
-  } else if (raw.trim()) {
-    reasons.push(raw.trim().split('\n').filter(Boolean).pop().slice(0, 80));
+  } else if (lower.includes('path not found') || lower.includes('images api error 404')) {
+    reasons.push('当前中转不支持 Images API，已尝试 chat 兼容生图');
+  }
+  if (
+    lower.includes('no base64 image in response') &&
+    (
+      lower.includes('cannot create') ||
+      lower.includes("can't help") ||
+      lower.includes('not able to create') ||
+      lower.includes('sexualized') ||
+      lower.includes('minors') ||
+      lower.includes('restricted')
+    )
+  ) {
+    reasons.push('GPT Image 返回安全拒绝，未产生图片');
+  } else if (lower.includes('no base64 image in response')) {
+    reasons.push('GPT Image 返回了文字但没有图片');
+  }
+  if (lower.includes('generation failed') || lower.includes('gpt image endpoint failed')) {
+    reasons.push('GPT Image 最终没有返回图片');
   }
   if (lower.includes('gitee fallback is disabled')) {
-    reasons.push('Gitee 兜底未启用');
+    reasons.push('当时 Gitee 回退未启用，无法自动换线路');
   }
-  return Array.from(new Set(reasons)).join('；') || '未知失败';
+  var summary = Array.from(new Set(reasons)).join('；');
+  if (summary && !summary.includes('Gitee') && (summary.includes('连接失败') || summary.includes('响应超时'))) {
+    summary += '；请检查中转服务状态后重试';
+  } else if (summary && summary.includes('DNS')) {
+    summary += '；请检查中转内部上游域名或 DNS';
+  }
+  if (!summary && raw.trim()) {
+    summary = raw.trim().split('\n').filter(Boolean).pop().slice(0, 80);
+  }
+  return summary || '未知失败';
 }
 
 function inferTheme(timeStr) {
@@ -6106,21 +6422,26 @@ function loadScheduleEggData(options) {
         var planRunning = plan.status === 'running';
         var planFailed = plan.status === 'failed';
         var planSkipped = plan.status === 'skipped' || plan.status === 'missed';
-        var planErrorText = planFailed ? summarizePhotoJobError(plan.job || plan) : '';
+        var planRunningRetryable = planRunning && !!(plan.job && plan.job.retryable);
+        var planErrorText = planFailed ? summarizePhotoJobError(plan.job || plan) : (planRunningRetryable ? '生成状态卡住，可以重试' : '');
 
-        var planRetryable = !planDone && !planScheduled && !planRunning && (planSkipped || planFailed || planPast);
-        var planStatusCls = planDone ? 'done' : (planRunning ? 'running' : (planFailed ? 'failed' : ((planSkipped || (planPast && !planScheduled)) ? 'past' : 'pending')));
-        var planStatusText = planDone ? '✅ 已完成' : (planRunning ? '⏳ 生成中' : (planFailed ? '⚠️ 失败' : (planSkipped ? '⌛ 已过未排' : (planScheduled ? '⏳ 待执行' : (planPast ? '⏳ 已过' : '⏳ 待执行')))));
+        var planRetryable = !planDone && !planScheduled && (!planRunning || planRunningRetryable) && (planSkipped || planFailed || planPast || planRunningRetryable);
+        var planStatusCls = planDone ? 'done' : (planRunningRetryable ? 'failed' : (planRunning ? 'running' : (planFailed ? 'failed' : ((planSkipped || (planPast && !planScheduled)) ? 'past' : 'pending'))));
+        var planStatusText = planDone ? '✅ 已完成' : (planRunningRetryable ? '⚠️ 卡住' : (planRunning ? '⏳ 生成中' : (planFailed ? '⚠️ 失败' : (planSkipped ? '⌛ 已过未排' : (planScheduled ? '⏳ 待执行' : (planPast ? '⏳ 已过' : '⏳ 待执行'))))));
 
         html += '<div class="egg-photo-item">';
         html += '<span class="egg-photo-status-badge ' + planStatusCls + '">' + planStatusText + '</span>';
         html += '<span class="egg-photo-time">' + escapeHtml(plan.time) + '</span>';
         html += '<span class="egg-photo-theme">' + themeLabel(planTheme) + '</span>';
         html += '<span class="egg-photo-activity">' + escapeHtml(plan.activity || '') + '</span>';
-        if (planFailed && planErrorText) html += '<span class="egg-photo-error" title="' + escapeAttr(planErrorText) + '">' + escapeHtml(planErrorText) + '</span>';
+        if ((planFailed || planRunningRetryable) && planErrorText) html += '<span class="egg-photo-error" title="' + escapeAttr(planErrorText) + '">' + escapeHtml(planErrorText) + '</span>';
         var planOutfitStyle = (plan.job && plan.job.outfit_style) || currentOutfitStyle || (planPhoto && planPhoto.outfit_style) || '';
         if (planOutfitStyle) html += '<span class="egg-photo-style">' + escapeHtml(planOutfitStyle) + '</span>';
-        if (planRetryable) html += '<button class="egg-photo-retry-btn" data-time="' + escapeHtml(plan.time) + '" onclick="retryPhotoJob(this.dataset.time, this)">重试</button>';
+        if (planRetryable) {
+          html += '<span class="egg-photo-actions">';
+          html += '<button class="egg-photo-action-btn egg-photo-retry-btn" data-time="' + escapeAttr(plan.time) + '" onclick="retryPhotoJob(this.dataset.time, this)">重试</button>';
+          html += '</span>';
+        }
         else if (plan.scheduleOnly) html += '<span class="egg-photo-style">刷新时已过</span>';
         html += '</div>';
       }
@@ -6160,7 +6481,7 @@ function loadScheduleEggData(options) {
       html += '<div class="egg-section egg-outfit-section"><div class="egg-section-title with-action"><span class="egg-section-title-main"><span class="icon">👗</span>今日穿搭方案</span><span class="egg-title-actions">';
       html += '<button class="egg-outfit-fav-btn ' + (outfitFavorite ? 'active' : '') + '" type="button" data-payload="' + outfitPayloadAttr + '" onclick="toggleFavoriteOutfitPlan(this)" aria-label="' + (outfitFavorite ? '取消收藏这套穿搭方案' : '收藏这套穿搭方案') + '" title="' + (outfitFavorite ? '取消收藏这套穿搭方案' : '收藏这套穿搭方案') + '"><i class="' + (outfitFavorite ? 'fa-solid' : 'fa-regular') + ' fa-bookmark" aria-hidden="true"></i><span>' + (outfitFavorite ? '已收藏' : '收藏方案') + '</span></button>';
       html += '<button class="egg-outfit-dislike-btn ' + (outfitDisliked ? 'active' : '') + '" type="button" data-payload="' + dislikedPayloadAttr + '" onclick="toggleDislikedOutfitPlan(this)" aria-label="' + (outfitDisliked ? '取消减少这类穿搭' : '减少这类穿搭') + '" title="' + (outfitDisliked ? '取消减少这类穿搭' : '减少这类穿搭') + '"><i class="' + (outfitDisliked ? 'fa-solid' : 'fa-regular') + ' fa-thumbs-down" aria-hidden="true"></i><span>' + (outfitDisliked ? '已减少' : '不喜欢') + '</span></button>';
-      html += '<button class="egg-outfit-view-btn" type="button" onclick="toggleFavoriteOutfitPanel(this)" aria-expanded="false" aria-controls="eggFavoriteOutfitsOverlay" aria-label="查看收藏方案" title="查看收藏方案"><i class="fa-regular fa-folder-open" aria-hidden="true"></i><span>查看</span></button></span></div>';
+      html += '</span></div>';
       html += '<div class="egg-outfit-grid">';
       for (var m = 0; m < outfitKeys.length; m++) {
         if (outfit[outfitKeys[m]]) {
@@ -6218,17 +6539,21 @@ function toggleFavoriteOutfitPlan(btn) {
       return data;
     });
   }).then(function(data) {
-    showToast(data.favorite ? '已收藏这套穿搭方案' : '已取消收藏穿搭方案');
+    if (data.favorite && data.wardrobe_auto_generation === 'queued') {
+      showToast('已收藏这套穿搭方案，衣架图自动生成中');
+      scheduleWardrobeAutoRefresh();
+    } else if (data.favorite && data.wardrobe_auto_generation === 'running') {
+      showToast('已收藏这套穿搭方案，衣架图正在生成中');
+      scheduleWardrobeAutoRefresh();
+    } else {
+      showToast(data.favorite ? '已收藏这套穿搭方案' : '已取消收藏穿搭方案');
+    }
     setFavoriteOutfitButtonState(btn, data.favorite, data.id);
     if (data.disliked_removed) {
       setDislikedOutfitButtonState(document.querySelector('.egg-outfit-dislike-btn'), false, data.id);
     }
     scheduleEggCache = { html: '', dateText: '', updatedAt: 0 };
-    var overlay = document.getElementById('eggFavoriteOutfitsOverlay');
-    var body = document.getElementById('eggFavoriteOutfitsBody');
-    if (overlay && overlay.classList.contains('show') && body) {
-      return loadFavoriteOutfitPanel(body);
-    }
+    refreshWardrobeAfterFavoriteChange();
   }).catch(function(e) {
     showToast('收藏方案失败：' + (e && e.message ? e.message : '未知错误'));
   }).finally(function() {
@@ -6263,11 +6588,7 @@ function toggleDislikedOutfitPlan(btn) {
     setDislikedOutfitButtonState(btn, data.disliked, data.id);
     if (data.favorite_removed) {
       setFavoriteOutfitButtonState(document.querySelector('.egg-outfit-fav-btn'), false, data.id);
-      var overlay = document.getElementById('eggFavoriteOutfitsOverlay');
-      var body = document.getElementById('eggFavoriteOutfitsBody');
-      if (overlay && overlay.classList.contains('show') && body) {
-        loadFavoriteOutfitPanel(body);
-      }
+      refreshWardrobeAfterFavoriteChange();
     }
     scheduleEggCache = { html: '', dateText: '', updatedAt: 0 };
   }).catch(function(e) {
@@ -6311,6 +6632,464 @@ function favoriteOutfitPayloadFromItem(item, favorite) {
 function favoriteOutfitPayloadAttrFromItem(item, favorite) {
   return escapeAttr(encodeFavoriteOutfitPayload(favoriteOutfitPayloadFromItem(item, favorite)));
 }
+
+function setWardrobeCount(count) {
+  const total = Math.max(0, Number(count) || 0);
+  const countEl = document.getElementById('wardrobeCount');
+  const badgeEl = document.getElementById('badge-wardrobe');
+  if (countEl) countEl.textContent = total + ' 套';
+  if (badgeEl) badgeEl.textContent = String(total);
+}
+
+function wardrobeImageDisplayUrl(url, version) {
+  url = String(url || '').trim();
+  if (!url) return '';
+  version = String(version || '').trim();
+  if (!version) return url;
+  return url + (url.indexOf('?') === -1 ? '?' : '&') + 'v=' + encodeURIComponent(version);
+}
+
+function wardrobeHash(value) {
+  var text = String(value || '');
+  var hash = 0;
+  for (var i = 0; i < text.length; i++) {
+    hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+  }
+  return String(hash >>> 0);
+}
+
+function wardrobeItemSignature(item) {
+  item = item || {};
+  var outfit = item.outfit || {};
+  var wardrobeImage = item.wardrobe_image || {};
+  var status = item.wardrobe_image_status || {};
+  return wardrobeHash(JSON.stringify([
+    item.id || '',
+    item.date || '',
+    item.outfit_style || '',
+    outfit['风格'] || '',
+    outfit['发型'] || '',
+    outfit['穿搭'] || '',
+    wardrobeImage.url || '',
+    wardrobeImage.filename || '',
+    wardrobeImage.created_at || '',
+    status.status || '',
+    status.message || '',
+    status.error || '',
+    status.updated_at || ''
+  ]));
+}
+
+function renderWardrobeItem(item) {
+  item = item || {};
+  var outfit = item.outfit || {};
+  var style = outfit['风格'] || item.outfit_style || '收藏方案';
+  var hair = outfit['发型'] || '';
+  var wear = outfit['穿搭'] || '';
+  var dateText = item.date || '';
+  var outfitId = item.id || '';
+  var removePayloadAttr = favoriteOutfitPayloadAttrFromItem(item, false);
+  var wardrobeImage = item.wardrobe_image || {};
+  var wardrobeImageUrl = wardrobeImage.url || '';
+  var wardrobeImageSrc = wardrobeImageDisplayUrl(wardrobeImageUrl, wardrobeImage.created_at || wardrobeImage.filename || '');
+  var hasWardrobeImage = !!wardrobeImageUrl;
+  var wardrobeStatus = item.wardrobe_image_status || {};
+  var wardrobeStatusKey = String(wardrobeStatus.status || '').trim();
+  var wardrobeGenerating = !hasWardrobeImage && (wardrobeStatusKey === 'queued' || wardrobeStatusKey === 'generating');
+  var wardrobeFailed = !hasWardrobeImage && wardrobeStatusKey === 'failed';
+  var emptyText = wardrobeGenerating
+    ? '衣架图生成中<br>完成后会自动显示'
+    : (wardrobeFailed ? '衣架图生成失败<br>可以手动重试' : '还没有衣架图<br>生成后可直接做图生图参考');
+  var html = '<article class="wardrobe-card" data-outfit-id="' + escapeAttr(outfitId) + '" data-wardrobe-signature="' + escapeAttr(wardrobeItemSignature(item)) + '">';
+  html += hasWardrobeImage
+    ? '<div class="wardrobe-thumb"><img src="' + escapeAttr(wardrobeImageSrc) + '" alt="' + escapeAttr(style + ' 衣架图') + '" loading="lazy" decoding="async"></div>'
+    : '<div class="wardrobe-thumb"><div class="wardrobe-thumb-empty"><i class="fa-solid fa-shirt" aria-hidden="true"></i><span>' + emptyText + '</span></div></div>';
+  html += '<div class="wardrobe-meta"><span class="wardrobe-style">' + escapeHtml(style) + '</span><span class="wardrobe-date">' + escapeHtml(dateText) + '</span></div>';
+  if (hair) html += '<div class="wardrobe-line"><strong>发型：</strong>' + escapeHtml(hair) + '</div>';
+  if (wear) html += '<div class="wardrobe-line"><strong>穿搭：</strong>' + escapeHtml(wear) + '</div>';
+  if (!hair && !wear) html += '<div class="wardrobe-line">这套方案没有可展示的发型/穿搭内容</div>';
+  html += '<div class="wardrobe-actions">';
+  html += '<button class="wardrobe-action-btn wardrobe-generate-btn" type="button" data-wardrobe-action="generate" data-outfit-id="' + escapeAttr(outfitId) + '"' + (wardrobeGenerating ? ' disabled' : '') + '>' + (wardrobeGenerating ? '生成中' : (hasWardrobeImage ? '重生衣架图' : '生成衣架图')) + '</button>';
+  html += '<button class="wardrobe-action-btn" type="button" data-wardrobe-action="edit" data-outfit-id="' + escapeAttr(outfitId) + '">编辑</button>';
+  if (hasWardrobeImage) {
+    html += '<button class="wardrobe-action-btn" type="button" data-wardrobe-action="use-ref" data-ref="' + escapeAttr(wardrobeImageUrl) + '">用它生图</button>';
+  }
+  html += '<button class="wardrobe-remove-btn" type="button" data-payload="' + removePayloadAttr + '" onclick="removeFavoriteOutfitPlan(this)">取消收藏</button>';
+  if (wardrobeGenerating || wardrobeFailed) {
+    var statusText = wardrobeFailed
+      ? (wardrobeStatus.message || wardrobeStatus.error || '衣架图生成失败')
+      : (wardrobeStatus.message || '衣架图生成中');
+    html += '<div class="wardrobe-status' + (wardrobeFailed ? ' error' : '') + '">' + escapeHtml(statusText) + '</div>';
+  }
+  html += '</div>';
+  html += '</article>';
+  return html;
+}
+
+function renderWardrobeItems(items) {
+  items = Array.isArray(items) ? items : [];
+  if (!items.length) {
+    return '<div class="wardrobe-empty"><div class="icon">👗</div><p>还没有收藏穿搭方案</p></div>';
+  }
+  var html = '<div class="wardrobe-grid">';
+  for (var i = 0; i < items.length; i++) {
+    html += renderWardrobeItem(items[i] || {});
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderWardrobe() {
+  if (!wardrobeLoaded) {
+    loadWardrobe({ render: true });
+    return;
+  }
+  applyWardrobeItems(wardrobeItems, { render: true });
+}
+
+function patchWardrobeItems(nextItems) {
+  var content = document.getElementById('wardrobeContent');
+  var grid = content ? content.querySelector('.wardrobe-grid') : null;
+  if (!grid) return false;
+  nextItems = Array.isArray(nextItems) ? nextItems : [];
+  var cards = Array.from(grid.querySelectorAll('.wardrobe-card'));
+  if (cards.length !== nextItems.length) return false;
+  for (var i = 0; i < nextItems.length; i++) {
+    var nextId = String((nextItems[i] && nextItems[i].id) || '');
+    if (String(cards[i].dataset.outfitId || '') !== nextId) return false;
+  }
+  for (var j = 0; j < nextItems.length; j++) {
+    var item = nextItems[j] || {};
+    var signature = wardrobeItemSignature(item);
+    if (cards[j].dataset.wardrobeSignature !== signature) {
+      cards[j].outerHTML = renderWardrobeItem(item);
+    }
+  }
+  return true;
+}
+
+function applyWardrobeItems(nextItems, options) {
+  options = options || {};
+  nextItems = Array.isArray(nextItems) ? nextItems : [];
+  wardrobeItems = nextItems;
+  wardrobeLoaded = true;
+  setWardrobeCount(wardrobeItems.length);
+  if (options.render === false) return;
+  var content = document.getElementById('wardrobeContent');
+  if (!content) return;
+  if (options.softRender && patchWardrobeItems(wardrobeItems)) return;
+  content.innerHTML = renderWardrobeItems(wardrobeItems);
+}
+
+function loadWardrobe(options) {
+  options = options || {};
+  var shouldRender = options.render !== false;
+  var softRender = options.softRender === true;
+  var content = document.getElementById('wardrobeContent');
+  if (wardrobeRequest) {
+    if (shouldRender && !softRender && !wardrobeLoaded && content) {
+      content.innerHTML = '<div class="wardrobe-empty"><div class="icon">👗</div><p>正在打开衣柜...</p></div>';
+    }
+    if (shouldRender) {
+      return wardrobeRequest.then(function(items) {
+        if (document.querySelector('.tab.active')?.dataset.tab === 'wardrobe') {
+          applyWardrobeItems(wardrobeItems, { render: true, softRender: softRender || wardrobeLoaded });
+        }
+        return items;
+      });
+    }
+    return wardrobeRequest;
+  }
+  if (shouldRender && !softRender && !wardrobeLoaded && content) {
+    content.innerHTML = '<div class="wardrobe-empty"><div class="icon">👗</div><p>正在打开衣柜...</p></div>';
+  }
+  wardrobeRequest = fetch('/api/favorite-outfits' + apiKeyQuery())
+    .then(function(r) {
+      return r.json().then(function(data) {
+        if (!r.ok || data.error) throw new Error(data.error || 'favorite_list_failed');
+        return data;
+      });
+    })
+    .then(function(data) {
+      var nextItems = Array.isArray(data.items) ? data.items : [];
+      applyWardrobeItems(nextItems, { render: shouldRender, softRender: softRender });
+      setWardrobeCount(typeof data.count === 'number' ? data.count : wardrobeItems.length);
+      if (hasPendingWardrobeImages(wardrobeItems)) scheduleWardrobeAutoRefresh();
+      return wardrobeItems;
+    })
+    .catch(function(e) {
+      if (shouldRender && !softRender && !wardrobeLoaded && content) {
+        content.innerHTML = '<div class="wardrobe-empty"><div class="icon">👗</div><p>衣柜加载失败</p></div>';
+      }
+      if (!options.silent) showToast('衣柜加载失败：' + (e && e.message ? e.message : '未知错误'));
+      throw e;
+    })
+    .finally(function() {
+      wardrobeRequest = null;
+    });
+  return wardrobeRequest;
+}
+
+function hasPendingWardrobeImages(items) {
+  return Array.isArray(items) && items.some(function(item) {
+    if (!item || (item.wardrobe_image && item.wardrobe_image.url)) return false;
+    var status = item.wardrobe_image_status || {};
+    return status.status === 'queued' || status.status === 'generating';
+  });
+}
+
+function scheduleWardrobeAutoRefresh(maxMs) {
+  if (wardrobeAutoRefreshTimer) return;
+  const startedAt = Date.now();
+  const limit = Math.max(60000, Number(maxMs) || 5 * 60 * 1000);
+  const poll = function() {
+    wardrobeAutoRefreshTimer = null;
+    const activeTab = document.querySelector('.tab.active')?.dataset.tab;
+    loadWardrobe({ render: activeTab === 'wardrobe', silent: true, softRender: true }).then(function(items) {
+      if (hasPendingWardrobeImages(items) && Date.now() - startedAt < limit) {
+        wardrobeAutoRefreshTimer = setTimeout(poll, 5000);
+      }
+    }).catch(function() {
+      if (Date.now() - startedAt < limit) {
+        wardrobeAutoRefreshTimer = setTimeout(poll, 8000);
+      }
+    });
+  };
+  wardrobeAutoRefreshTimer = setTimeout(poll, 3000);
+}
+
+function refreshWardrobeAfterFavoriteChange(options) {
+  options = options || {};
+  if (!options.softRender) wardrobeLoaded = false;
+  return loadWardrobe({
+    render: document.querySelector('.tab.active')?.dataset.tab === 'wardrobe',
+    silent: options.silent !== false,
+    softRender: options.softRender === true
+  }).catch(function() {
+    return null;
+  });
+}
+
+function updateWardrobeItemWardrobeImage(outfitId, wardrobeImage) {
+  if (!outfitId || !wardrobeImage) return false;
+  var updated = false;
+  wardrobeItems = wardrobeItems.map(function(item) {
+    if (!item || item.id !== outfitId) return item;
+    updated = true;
+    var merged = Object.assign({}, item, { wardrobe_image: wardrobeImage });
+    delete merged.wardrobe_image_status;
+    return merged;
+  });
+  return updated;
+}
+
+function renderWardrobeFromCache() {
+  applyWardrobeItems(wardrobeItems, { render: true, softRender: true });
+}
+
+function findWardrobeItem(outfitId) {
+  outfitId = String(outfitId || '').trim();
+  if (!outfitId) return null;
+  return (wardrobeItems || []).find(function(item) {
+    return item && String(item.id || '') === outfitId;
+  }) || null;
+}
+
+function replaceWardrobeItem(outfitId, nextItem) {
+  outfitId = String(outfitId || '').trim();
+  if (!outfitId || !nextItem) return false;
+  var updated = false;
+  wardrobeItems = wardrobeItems.map(function(item) {
+    if (!item || String(item.id || '') !== outfitId) return item;
+    updated = true;
+    return nextItem;
+  });
+  return updated;
+}
+
+function openWardrobeEdit(btn) {
+  var outfitId = btn && btn.dataset ? String(btn.dataset.outfitId || '').trim() : '';
+  var item = findWardrobeItem(outfitId);
+  if (!item) {
+    showToast('找不到这套衣柜穿搭');
+    return;
+  }
+  var outfit = item.outfit || {};
+  document.getElementById('wardrobeEditId').value = outfitId;
+  document.getElementById('wardrobeEditStyle').value = outfit['风格'] || item.outfit_style || '';
+  document.getElementById('wardrobeEditHair').value = outfit['发型'] || '';
+  document.getElementById('wardrobeEditWear').value = outfit['穿搭'] || '';
+  document.getElementById('wardrobeEditOverlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  setTimeout(function() {
+    var hairInput = document.getElementById('wardrobeEditHair');
+    if (hairInput) hairInput.focus();
+  }, 50);
+}
+
+function closeWardrobeEdit() {
+  var overlay = document.getElementById('wardrobeEditOverlay');
+  if (overlay) overlay.classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+async function saveWardrobeEdit() {
+  var outfitId = String(document.getElementById('wardrobeEditId')?.value || '').trim();
+  var style = String(document.getElementById('wardrobeEditStyle')?.value || '').trim();
+  var hair = String(document.getElementById('wardrobeEditHair')?.value || '').trim();
+  var wear = String(document.getElementById('wardrobeEditWear')?.value || '').trim();
+  var btn = document.getElementById('wardrobeEditSaveBtn');
+  if (!outfitId) {
+    showToast('保存失败：找不到这套穿搭');
+    return;
+  }
+  if (!hair && !wear) {
+    showToast('发型和穿搭不能同时为空');
+    return;
+  }
+  var originalText = btn ? btn.textContent : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '保存中...';
+  }
+  try {
+    var res = await fetch('/api/favorite-outfits/' + encodeURIComponent(outfitId) + apiKeyQuery(), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        outfit_style: style,
+        outfit: {
+          '风格': style,
+          '发型': hair,
+          '穿搭': wear
+        }
+      })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (res.status === 409 && data.error === 'wardrobe_image_generating') {
+      showToast(data.message || '衣架图正在生成中，请稍后再编辑');
+      return;
+    }
+    if (!res.ok || data.error) throw new Error(data.message || data.error || ('HTTP ' + res.status));
+
+    var nextItem = data.item;
+    if (!nextItem) {
+      var current = findWardrobeItem(outfitId) || {};
+      nextItem = Object.assign({}, current, {
+        outfit_style: style,
+        outfit: { '风格': style, '发型': hair, '穿搭': wear },
+        wardrobe_image_status: { status: 'queued', message: '穿搭已更新，衣架图等待重新生成' }
+      });
+      delete nextItem.wardrobe_image;
+    }
+    if (replaceWardrobeItem(outfitId, nextItem)) {
+      applyWardrobeItems(wardrobeItems, { render: true, softRender: true });
+    } else {
+      await refreshWardrobeAfterFavoriteChange({ silent: true, softRender: true });
+    }
+    closeWardrobeEdit();
+    scheduleWardrobeAutoRefresh();
+    showToast('已保存，衣架图会按新穿搭重新生成');
+  } catch(e) {
+    showToast('保存失败：' + (e && e.message ? e.message : '未知错误'));
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = originalText || '保存并重生成';
+    }
+  }
+}
+
+function setWardrobeCardBusy(btn, busy, text) {
+  var card = btn ? btn.closest('.wardrobe-card') : null;
+  if (!card) return;
+  card.querySelectorAll('button').forEach(function(actionBtn) {
+    actionBtn.disabled = !!busy;
+  });
+  var status = card.querySelector('.wardrobe-status');
+  if (!status && busy) {
+    status = document.createElement('div');
+    status.className = 'wardrobe-status';
+    var actions = card.querySelector('.wardrobe-actions');
+    if (actions) actions.appendChild(status);
+  }
+  if (status) status.textContent = busy ? (text || '生成中...') : '';
+}
+
+async function generateWardrobeImage(btn) {
+  if (!btn || btn.disabled) return;
+  const outfitId = String(btn.dataset.outfitId || '').trim();
+  if (!outfitId) {
+    showToast('❌ 找不到这套收藏方案');
+    return;
+  }
+  const originalText = btn.textContent;
+  const startedAt = Date.now();
+  let rendered = false;
+  const updateBusyText = function() {
+    const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+    const label = elapsed < 60 ? ('生成中 ' + elapsed + 's') : ('生成中 ' + Math.floor(elapsed / 60) + 'm' + String(elapsed % 60).padStart(2, '0') + 's');
+    btn.textContent = label;
+    setWardrobeCardBusy(btn, true, '衣架图生成中，通常需要 1-2 分钟');
+  };
+  updateBusyText();
+  const busyTimer = setInterval(updateBusyText, 1000);
+  showToast('🧥 正在生成衣架图，通常需要 1-2 分钟...', 6000);
+  try {
+    const res = await fetch('/api/favorite-outfits/' + encodeURIComponent(outfitId) + '/wardrobe-image' + apiKeyQuery(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ aspect: '3:4', resolution: '1k' })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 409 && data.error === 'wardrobe_image_generating') {
+      showToast('⏳ ' + (data.message || '这套衣架图正在生成中，请稍后刷新。'), 5000);
+      return;
+    }
+    if (!res.ok || data.error) throw new Error(data.message || data.error || ('HTTP ' + res.status));
+    if (data.wardrobe_image && updateWardrobeItemWardrobeImage(outfitId, data.wardrobe_image)) {
+      renderWardrobeFromCache();
+      rendered = true;
+    } else {
+      await refreshWardrobeAfterFavoriteChange({ silent: false });
+      rendered = true;
+    }
+    showToast('✨ 衣架图生成完成');
+  } catch(e) {
+    showToast('❌ 衣架图生成失败：' + (e && e.message ? e.message : '未知错误'));
+  } finally {
+    clearInterval(busyTimer);
+    if (!rendered) {
+      btn.textContent = originalText;
+      setWardrobeCardBusy(btn, false, '');
+    }
+  }
+}
+
+document.addEventListener('click', function(event) {
+  const btn = event.target.closest('[data-wardrobe-action]');
+  if (!btn) return;
+  const action = btn.dataset.wardrobeAction || '';
+  if (action === 'generate') {
+    event.preventDefault();
+    event.stopPropagation();
+    generateWardrobeImage(btn);
+  } else if (action === 'edit') {
+    event.preventDefault();
+    event.stopPropagation();
+    openWardrobeEdit(btn);
+  } else if (action === 'use-ref') {
+    event.preventDefault();
+    event.stopPropagation();
+    openCustomGenFromWardrobe(btn);
+  }
+});
+
+window.generateWardrobeImage = generateWardrobeImage;
+window.openCustomGenFromWardrobe = openCustomGenFromWardrobe;
+window.openWardrobeEdit = openWardrobeEdit;
+window.closeWardrobeEdit = closeWardrobeEdit;
+window.saveWardrobeEdit = saveWardrobeEdit;
 
 function setFavoriteOutfitButtonState(btn, isFavorite, favoriteId) {
   if (!btn) return;
@@ -6357,75 +7136,6 @@ function syncCurrentFavoriteButtonAfterRemoval(favoriteId) {
   }
 }
 
-function renderFavoriteOutfitPlans(items) {
-  items = Array.isArray(items) ? items : [];
-  if (!items.length) {
-    return '<div class="egg-fav-empty">还没有收藏穿搭方案</div>';
-  }
-  var html = '<div class="egg-fav-panel-title"><span>收藏穿搭方案</span><span class="egg-fav-panel-count">' + items.length + ' 套</span></div>';
-  html += '<div class="egg-fav-panel-note">生成参考：只借鉴发型、穿搭气质、配色、版型和材质；不带入原动作、场景和日程。</div>';
-  html += '<div class="egg-fav-list">';
-  for (var i = 0; i < items.length; i++) {
-    var item = items[i] || {};
-    var outfit = item.outfit || {};
-    var style = outfit['风格'] || item.outfit_style || '收藏方案';
-    var hair = outfit['发型'] || '';
-    var wear = outfit['穿搭'] || '';
-    var dateText = item.date || '';
-    var removePayloadAttr = favoriteOutfitPayloadAttrFromItem(item, false);
-    html += '<div class="egg-fav-item">';
-    html += '<div class="egg-fav-meta"><span class="egg-fav-title"><span class="egg-fav-style">' + escapeHtml(style) + '</span><span class="egg-fav-ref">参考中</span></span><span class="egg-fav-date">' + escapeHtml(dateText) + '</span></div>';
-    if (hair) html += '<div class="egg-fav-line"><strong>发型：</strong>' + escapeHtml(hair) + '</div>';
-    if (wear) html += '<div class="egg-fav-line"><strong>穿搭：</strong>' + escapeHtml(wear) + '</div>';
-    if (!hair && !wear) html += '<div class="egg-fav-line">这套方案没有可展示的发型/穿搭内容</div>';
-    html += '<div class="egg-fav-actions"><button class="egg-fav-remove-btn" type="button" data-payload="' + removePayloadAttr + '" onclick="removeFavoriteOutfitPlan(this)">取消收藏</button></div>';
-    html += '</div>';
-  }
-  html += '</div>';
-  return html;
-}
-
-function loadFavoriteOutfitPanel(panel) {
-  if (!panel) return Promise.resolve();
-  panel.innerHTML = '<div class="egg-fav-empty">正在读取收藏方案...</div>';
-  return fetch('/api/favorite-outfits' + apiKeyQuery())
-    .then(function(r) {
-      return r.json().then(function(data) {
-        if (!r.ok || data.error) throw new Error(data.error || 'favorite_list_failed');
-        return data;
-      });
-    })
-    .then(function(data) {
-      panel.innerHTML = renderFavoriteOutfitPlans(data.items || []);
-      panel.dataset.loaded = '1';
-      panel.dataset.count = String((data.items || []).length);
-    })
-    .catch(function(e) {
-      panel.innerHTML = '<div class="egg-fav-empty">收藏方案加载失败</div>';
-      showToast('查看收藏方案失败：' + (e && e.message ? e.message : '未知错误'));
-    });
-}
-
-function toggleFavoriteOutfitPanel(btn) {
-  var overlay = document.getElementById('eggFavoriteOutfitsOverlay');
-  var body = document.getElementById('eggFavoriteOutfitsBody');
-  if (!overlay || !body || !btn) return;
-  overlay.classList.add('show');
-  btn.setAttribute('aria-expanded', 'true');
-  btn.disabled = true;
-  loadFavoriteOutfitPanel(body)
-    .finally(function() {
-      btn.disabled = false;
-    });
-}
-
-function closeFavoriteOutfitModal() {
-  var overlay = document.getElementById('eggFavoriteOutfitsOverlay');
-  if (overlay) overlay.classList.remove('show');
-  var btn = document.querySelector('.egg-outfit-view-btn');
-  if (btn) btn.setAttribute('aria-expanded', 'false');
-}
-
 function removeFavoriteOutfitPlan(btn) {
   if (!btn || btn.disabled) return;
   var payload = readFavoriteOutfitPayload(btn);
@@ -6448,8 +7158,7 @@ function removeFavoriteOutfitPlan(btn) {
     showToast('已取消收藏穿搭方案');
     scheduleEggCache = { html: '', dateText: '', updatedAt: 0 };
     syncCurrentFavoriteButtonAfterRemoval(data.id || payload.id || '');
-    var panel = btn.closest('.egg-fav-body') || document.getElementById('eggFavoriteOutfitsBody');
-    return loadFavoriteOutfitPanel(panel);
+    return refreshWardrobeAfterFavoriteChange();
   }).catch(function(e) {
     showToast('取消收藏失败：' + (e && e.message ? e.message : '未知错误'));
   }).finally(function() {
@@ -6613,7 +7322,7 @@ function openScheduleEgg() {
     return;
   }
   overlay.classList.add('show');
-  loadScheduleEggData();
+  loadScheduleEggData({ force: true });
 }
 
 function refreshScheduleEgg() {
@@ -6750,8 +7459,106 @@ function copyPrompt() {
   document.body.removeChild(ta);
 }
 
+function ensureLiveLogOverlay() {
+  let overlay = document.getElementById('liveLogOverlay');
+  if (overlay) return overlay;
+  overlay = document.createElement('div');
+  overlay.id = 'liveLogOverlay';
+  overlay.className = 'prompt-overlay';
+  overlay.onclick = function(e) { if (e.target === this) closeLiveLogs(); };
+  overlay.innerHTML = '<div class="prompt-card log-card">' +
+    '<div class="prompt-header"><span>📜 运行诊断日志</span><button class="prompt-close" onclick="closeLiveLogs()">✕</button></div>' +
+    '<div class="prompt-body log-body"><pre id="liveLogText">正在读取日志...</pre></div>' +
+    '<div class="prompt-footer">' +
+      '<span class="log-status" id="liveLogStatus">准备刷新</span>' +
+      '<label class="log-toggle"><input id="liveLogAuto" type="checkbox" checked onchange="toggleLiveLogAuto()">自动刷新</label>' +
+      '<button class="prompt-copy-btn" onclick="refreshLiveLogs(true)">刷新</button>' +
+      '<button class="prompt-copy-btn" onclick="copyLiveLogs()">复制</button>' +
+    '</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+function setLiveLogStatus(text) {
+  const el = document.getElementById('liveLogStatus');
+  if (el) el.textContent = text || '';
+}
+
+function refreshLiveLogs(manual) {
+  const textEl = document.getElementById('liveLogText');
+  if (!textEl) return Promise.resolve();
+  if (manual) setLiveLogStatus('正在刷新...');
+  return fetch(appendApiKeyQuery('/api/logs?lines=120&mode=diagnostic'))
+    .then(r => r.json().then(data => ({ ok: r.ok, data })))
+    .then(({ ok, data }) => {
+      if (!ok || data.error) throw new Error(data.message || data.detail || data.error || 'log_failed');
+      const text = data.text || data.message || '暂无日志';
+      textEl.textContent = text;
+      textEl.scrollTop = textEl.scrollHeight;
+      const time = new Date().toLocaleTimeString();
+      const countText = data.status === 'ok'
+        ? `已更新 ${time} · 有用信息 ${data.filtered_count || 0} 条 · 原始错误 ${data.raw_error_count || 0} 条`
+        : `未找到日志 ${time}`;
+      setLiveLogStatus(countText);
+    })
+    .catch(e => {
+      textEl.textContent = '读取日志失败：' + (e && e.message ? e.message : '未知错误');
+      setLiveLogStatus('读取失败');
+    });
+}
+
+function scheduleLiveLogRefresh() {
+  if (liveLogTimer) {
+    clearInterval(liveLogTimer);
+    liveLogTimer = null;
+  }
+  const auto = document.getElementById('liveLogAuto');
+  const overlay = document.getElementById('liveLogOverlay');
+  if (auto && auto.checked && overlay && overlay.classList.contains('show')) {
+    liveLogTimer = setInterval(() => refreshLiveLogs(false), 1500);
+  }
+}
+
+function toggleLiveLogAuto() {
+  scheduleLiveLogRefresh();
+}
+
+function openLiveLogs() {
+  const overlay = ensureLiveLogOverlay();
+  overlay.classList.add('show');
+  refreshLiveLogs(true).then(scheduleLiveLogRefresh);
+}
+
+function closeLiveLogs() {
+  const overlay = document.getElementById('liveLogOverlay');
+  if (overlay) overlay.classList.remove('show');
+  if (liveLogTimer) {
+    clearInterval(liveLogTimer);
+    liveLogTimer = null;
+  }
+}
+
+function copyLiveLogs() {
+  const text = document.getElementById('liveLogText')?.textContent || '';
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => {
+    showToast('日志已复制 ✅');
+  }).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try { document.execCommand('copy'); showToast('日志已复制 ✅'); }
+    catch(e) { showToast('复制失败，请手动选择复制'); }
+    document.body.removeChild(ta);
+  });
+}
+
 // ESC 关闭
-document.addEventListener('keydown', function(e) { if (e.key === 'Escape') { closeFavoriteOutfitModal(); closeScheduleEgg(); closePrompt(); } });
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') { closeScheduleEgg(); closePrompt(); closeLiveLogs(); } });
 </script>
 </body>
 </html>

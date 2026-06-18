@@ -102,6 +102,28 @@ class DailyScheduler:
             except Exception:
                 return None
 
+        def _response_error(resp) -> str:
+            if resp is None:
+                return "no response"
+            try:
+                data = resp.json()
+                if isinstance(data, dict):
+                    error = data.get("error")
+                    if isinstance(error, dict):
+                        message = error.get("message") or error.get("code") or error.get("type")
+                        if message:
+                            return str(message)[:300]
+                    if data.get("msg"):
+                        return str(data.get("msg"))[:300]
+                    if data.get("status") and "choices" not in data:
+                        return json.dumps(data, ensure_ascii=False)[:300]
+            except Exception:
+                pass
+            try:
+                return (resp.text or "")[:300]
+            except Exception:
+                return f"HTTP {getattr(resp, 'status_code', 'unknown')}"
+
         for model in models:
             payload = {
                 "model": model,
@@ -114,16 +136,29 @@ class DailyScheduler:
                     None,
                     lambda p=payload: _do_request(chat_url, headers, p, timeout),
                 )
-                if resp and resp.status_code == 200:
+                if resp is not None and resp.status_code == 200:
                     data = resp.json()
-                    msg = data["choices"][0]["message"]
+                    choices = data.get("choices") if isinstance(data, dict) else None
+                    if not choices:
+                        logger.error(
+                            "LLM call returned invalid response: model=%s, detail=%s",
+                            model,
+                            _response_error(resp),
+                        )
+                        continue
+                    msg = choices[0]["message"]
                     content = (msg.get("content") or msg.get("reasoning_content") or "").strip()
                     if content:
                         return content
                     logger.error(f"LLM call returned empty content: model={model}")
                 else:
-                    status = resp.status_code if resp else "no response"
-                    logger.error(f"LLM call failed: model={model}, status={status}")
+                    status = resp.status_code if resp is not None else "no response"
+                    logger.error(
+                        "LLM call failed: model=%s, status=%s, detail=%s",
+                        model,
+                        status,
+                        _response_error(resp),
+                    )
             except Exception as e:
                 logger.error(f"LLM call error: model={model}, {e}")
         return None
@@ -161,7 +196,6 @@ class DailyScheduler:
 日期：{today.year}年{today.month}月{today.day}日
 星期：{weekday}
 可选穿搭风格：{style_list_text}
-可选参考底模：cool（冷御风/利落酷感）, girly（少女元气/明亮活泼）, sweet（甜美柔软/温柔可爱）
 心情色彩：{mood}
 日程类型：{sched_type}
 
@@ -180,11 +214,10 @@ class DailyScheduler:
 【任务要求】
 请为今日生成一份完整的穿搭和日程计划。
 
-⚠️ 你需要自己选择当天最合适的 outfit_style 和 base_style：
+⚠️ 你需要自己选择当天最合适的 outfit_style，并写出 reference_query：
 - outfit_style 必须从 [{style_list_text}] 中选择一个，不要使用未启用的风格。
-- base_style 必须且只能是 cool / girly / sweet 三选一，代表今天图生图使用的参考底模。
-- base_style 要贴近你选择的 outfit_style、穿搭气质、场景氛围，不要机械按固定映射选择。
-- 如果存在收藏穿搭偏好，只影响 outfit_style、base_style、outfit 和 prompt 里的发型/服装部分：参考服装气质、配色、版型、材质和搭配层次，生成相近但新的组合。
+- reference_query 是给系统选择参考图用的自然语言提示，必须概括今天适合的参考图气质、风格、发型/脸部氛围、服装色系和场景 mood；不要写 cool/girly/sweet 三选一，不要写文件名。
+- 如果存在收藏穿搭偏好，只影响 outfit_style、reference_query、outfit 和 prompt 里的发型/服装部分：参考服装气质、配色、版型、材质和搭配层次，生成相近但新的组合。
 - 如果存在不喜欢穿搭反馈，请由你判断相似度并减少相近方向：避开高度相似的配色、版型、材质、发型、搭配层次和整体气质；不要机械禁用某个大类风格。
 - 不要照抄收藏里的完整发型短语、单品组合或旧描述；不要参考、复用或联想收藏里的日程、动作、场景。schedule、schedule_prompt、动作、场景必须根据今日信息重新决定。
 
@@ -245,7 +278,7 @@ class DailyScheduler:
 JSON 格式（字段名固定，value 替换为实际内容）：
 {{
     "outfit_style": "风格名",
-    "base_style": "cool/girly/sweet 三选一",
+    "reference_query": "适合今天生图参考图的自然语言描述，包含气质、发型/脸部氛围、服装色系、场景 mood",
     "outfit": "风格：xxx \\n发型：xxx \\n穿搭：xxx \\n动作：xxx \\n场景：xxx",
     "schedule": "HH:mm 中文活动描述\\nHH:mm 中文活动描述\\n...",
     "schedule_prompt": "HH:mm English activity\\nHH:mm English activity\\n...",
@@ -724,6 +757,13 @@ JSON 格式（字段名固定，value 替换为实际内容）：
             schedule_prompt = (data.get("schedule_prompt", "") or data.get("schedule_en", "")).strip()
             outfit_display = data.get("outfit", "").strip()
             base_style = self._normalize_base_style(data.get("base_style", ""))
+            reference_query = str(data.get("reference_query") or "").strip()
+            if not reference_query:
+                reference_query = " | ".join(
+                    part.strip()
+                    for part in (data.get("outfit_style", ""), outfit_display, llm_prompt)
+                    if str(part or "").strip()
+                )[:600]
             if not schedule_display or not schedule_prompt or not self._contains_cjk(schedule_display):
                 logger.warning(f"日程字段不完整或展示日程非中文 (attempt {attempt+1})")
                 continue
@@ -733,9 +773,6 @@ JSON 格式（字段名固定，value 替换为实际内容）：
             )
             if alignment_error:
                 logger.warning(f"日程/生图日程结构不合格 (attempt {attempt+1}): {alignment_error}")
-                continue
-            if base_style not in BASE_STYLE_OPTIONS:
-                logger.warning(f"base_style 无效 (attempt {attempt+1}): {base_style}")
                 continue
             missing_display = self._missing_required_periods(schedule_display)
             missing_prompt = self._missing_required_periods(schedule_prompt)
@@ -767,6 +804,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
                 date=date_str,
                 outfit_style=data.get("outfit_style", ""),
                 base_style=base_style,
+                reference_query=reference_query,
                 outfit=outfit_display,
                 schedule=schedule_display,
                 schedule_prompt=schedule_prompt,
@@ -777,7 +815,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
                 outfit_keywords=outfit_kw,
                 scene_keywords=scene_kw,
             )
-            logger.info(f"日程生成成功: {entry.outfit_style} | base_style={entry.base_style} | outfit_kw={outfit_kw[:50]} | scene_kw={scene_kw[:50]}")
+            logger.info(f"日程生成成功: {entry.outfit_style} | reference_query={entry.reference_query[:60]} | outfit_kw={outfit_kw[:50]} | scene_kw={scene_kw[:50]}")
             return entry
 
         logger.error(f"日程生成失败: 重试 {3} 次均未成功")

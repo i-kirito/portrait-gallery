@@ -8,7 +8,8 @@ class DailyEntry:
     """单日数据"""
     date: str  # yyyy-mm-dd
     outfit_style: str = ""
-    base_style: str = ""  # cool / girly / sweet, chosen by LLM for the day's reference model
+    base_style: str = ""  # legacy compatibility only; reference images are selected from profiles
+    reference_query: str = ""  # natural-language reference-image matching hint from LLM
     outfit: str = ""
     schedule: str = ""
     schedule_prompt: str = ""  # English schedule used for image prompt injection
@@ -41,6 +42,7 @@ class DailyEntry:
             date=data.get("date", ""),
             outfit_style=data.get("outfit_style", ""),
             base_style=data.get("base_style", ""),
+            reference_query=data.get("reference_query", ""),
             outfit=data.get("outfit", ""),
             schedule=data.get("schedule", ""),
             schedule_prompt=data.get("schedule_prompt", ""),

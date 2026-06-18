@@ -858,38 +858,16 @@ def generate(
         if not ref_image:
             print(f"⚠️ style '{style}' 参考图不存在，将使用纯文生图", file=sys.stderr)
 
-    # Auto-pick a style for GPT Image via LLM to keep face consistent.
-    # Custom/Hermes text2img keeps pure text generation: classify for labels,
-    # but do not attach the built-in reference image unless one was requested.
+    # Auto style classification is label-only. The app-level reference profile
+    # selector is responsible for choosing actual image-to-image references.
     custom_like_source = source in {"custom", "hermes_api"}
     if engine == "gptimage" and not no_auto_style and not explicit_style and not requested_ref_image and theme != "sexy":
-        # 先检查当天是否已有风格，保持一天一致
-        today_str = date.today().isoformat()
-        today_style = ""
-        if source not in {"chat", "custom", "hermes_api"} and os.path.exists(_SCHEDULE_PATH):
-            try:
-                with open(_SCHEDULE_PATH, encoding="utf-8") as f:
-                    sched_data = json.load(f)
-                for k, v in sched_data.items():
-                    if isinstance(v, dict) and v.get("date") == today_str and v.get("base_style"):
-                        today_style = v["base_style"]
-                        break
-            except Exception:
-                pass
-        
-        if today_style:
-            # 复用当天已有风格
-            auto_style = today_style
-            ref_image = STYLE_REF_MAP.get(auto_style)
-            print(f"📅 Reusing today's style: {auto_style} (ref_image={'✓' if ref_image else '✗'})", file=sys.stderr)
-        else:
-            # Use the user's prompt (before appearance injection) for classification
-            classify_input = prompt_override or resolved_prompt
-            auto_style = _classify_style(classify_input)
-            ref_image = None if custom_like_source else STYLE_REF_MAP.get(auto_style)
-            if auto_style:
-                label_only = " label-only" if custom_like_source else ""
-                print(f"🧠 LLM selected style{label_only}: {auto_style} (ref_image={'✓' if ref_image else '✗'})", file=sys.stderr)
+        classify_input = prompt_override or resolved_prompt
+        auto_style = _classify_style(classify_input)
+        ref_image = None
+        if auto_style:
+            label_only = " label-only" if custom_like_source else " label-only; no hardcoded ref"
+            print(f"🧠 LLM selected style{label_only}: {auto_style}", file=sys.stderr)
     elif requested_ref_image:
         ref_image = requested_ref_image
 

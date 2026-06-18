@@ -14,6 +14,7 @@ import re
 import shutil
 import sys
 import subprocess
+import time
 from datetime import datetime, time as dt_time
 
 from aiohttp import web
@@ -48,6 +49,7 @@ TODAY_PHOTO_SOURCES = {"cron", "web"}
 FAILED_SCHEDULE_TEXT = "生成失败"
 WECHAT_CAPTION_DELAY_SECONDS = 8
 WECHAT_SEND_TIMEOUT_SECONDS = 90
+PHOTO_JOB_INFLIGHT_STALE_GRACE_SECONDS = 120
 WECHAT_RETRY_DELAYS_SECONDS = (60, 180)
 WECHAT_RETRYABLE_MARKERS = (
     "rate limited",
@@ -110,7 +112,7 @@ def save_schedule_entry(data_dir: str, entry: DailyEntry):
             # If there's already an entry under new_key, merge rather than overwrite
             if new_key in all_data:
                 existing = all_data[new_key]
-                preserve_fields = ("favorite", "source", "time", "model_name", "base_style")
+                preserve_fields = ("favorite", "source", "time", "model_name", "base_style", "reference_query")
                 if not img_filename:
                     preserve_fields = preserve_fields + ("schedule_prompt", "schedule_details")
                 for field in preserve_fields:
@@ -169,9 +171,18 @@ class PortraitGalleryApp:
 
         # Backfill photo job controls
         self._photo_jobs_inflight: set[str] = set()
+        self._photo_jobs_inflight_started: dict[str, float] = {}
         self._failed_photo_jobs: dict[str, dict] = self._load_failed_photo_jobs()
         self._inflight_lock = asyncio.Lock()
         self._backfill_semaphore = asyncio.Semaphore(1)
+
+    async def _select_reference_for_generation(self, context: dict) -> dict:
+        text = json.dumps(context, ensure_ascii=False, default=str)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: self.web_server._select_reference_for_generation_sync(text),
+        )
 
     def _failed_photo_jobs_path(self) -> str:
         return os.path.join(self.data_dir, "photo_job_failures.json")
@@ -210,14 +221,30 @@ class PortraitGalleryApp:
                 save_schedule_entry(self.data_dir, entry)
             return entry
 
-        logger.info(f"日程生成成功: {entry.outfit_style} | base_style={entry.base_style}")
+        logger.info(f"日程生成成功: {entry.outfit_style} | reference_query={entry.reference_query[:60]}")
 
         # 先保存 date-key 日程；后续图片条目会去掉全天计划字段，避免卡片重复承载大块日程。
         save_schedule_entry(self.data_dir, entry)
 
         # 2. 生成图片
+        selected_reference = {}
         if entry.prompt and entry.status == "ok":
-            filename = await self.image_gen.generate_for_outfit(entry.prompt, entry.outfit_style, entry.base_style)
+            selected_reference = await self._select_reference_for_generation({
+                "source": "daily_initial",
+                "outfit_style": entry.outfit_style,
+                "outfit": entry.outfit,
+                "reference_query": entry.reference_query,
+                "prompt": entry.prompt,
+                "schedule": entry.schedule,
+                "schedule_details": entry.schedule_details,
+            })
+            filename = await self.image_gen.generate_for_outfit(
+                entry.prompt,
+                entry.outfit_style,
+                entry.base_style,
+                ref_image=selected_reference.get("path", ""),
+                no_auto_style=not bool(selected_reference.get("path")),
+            )
             if filename:
                 entry.image_filename = filename
                 entry.image_path = f"/images/{filename}"
@@ -228,6 +255,19 @@ class PortraitGalleryApp:
         # 3. 保存图片条目
         if entry.image_filename:
             save_schedule_entry(self.data_dir, entry)
+            if selected_reference:
+                store = ScheduleStore(self.data_dir)
+                def _update_reference(all_data):
+                    if entry.image_filename in all_data:
+                        all_data[entry.image_filename]["selected_reference"] = {
+                            key: selected_reference.get(key, "")
+                            for key in ("id", "filename", "url", "label", "prompt", "source", "selection_mode", "selection_reason")
+                        }
+                    return all_data
+                try:
+                    store.update(_update_reference)
+                except Exception as e:
+                    logger.error("保存初始生图参考图信息失败: %s", e)
         return entry
 
     async def generate_custom(
@@ -525,9 +565,6 @@ class PortraitGalleryApp:
             if not custom_ref_image:
                 logger.warning("自定义参考图重抽未找到原参考图，将退回文生图: %s", image_filename)
         style = None
-        if not original_is_pure and engine == "gptimage" and base_style in {"cool", "girly", "sweet"}:
-            if not is_custom_source or has_custom_reference:
-                style = base_style
         size = (meta.get("size") or "").strip()
         custom_user_prompt = self._extract_custom_user_prompt(original)
         custom_shot_type = normalize_custom_shot_type(original.get("shot_type", ""))
@@ -552,24 +589,38 @@ class PortraitGalleryApp:
                 reroll_prompt_final = False
                 reroll_no_auto_style = False
                 reroll_caption = True
-                current_base_style = self._today_schedule_base_style()
-                if current_base_style:
-                    style = current_base_style
             else:
                 reroll_source = "custom"
                 reroll_prompt = prompt
                 reroll_prompt_final = True
-                reroll_no_auto_style = False
+                reroll_no_auto_style = True
                 reroll_caption = False
-                style = base_style if engine == "gptimage" and base_style in {"cool", "girly", "sweet"} else None
 
         ref_image = custom_ref_image if is_custom_source and custom_ref_image else ""
+        selected_reference = {}
+        if engine == "gptimage" and is_scheduled_reroll and reroll_uses_today_schedule:
+            schedule_context_entry = self._today_schedule_entry()
+            selected_reference = await self._select_reference_for_generation({
+                "source": "cron_reroll",
+                "schedule_time": schedule_time,
+                "theme": reroll_theme,
+                "activity": schedule_time,
+                "outfit_style": schedule_context_entry.get("outfit_style", ""),
+                "outfit": schedule_context_entry.get("outfit", ""),
+                "reference_query": schedule_context_entry.get("reference_query", ""),
+                "prompt": schedule_context_entry.get("prompt", ""),
+                "schedule": schedule_context_entry.get("schedule", ""),
+                "schedule_prompt": schedule_context_entry.get("schedule_prompt", ""),
+                "schedule_details": schedule_context_entry.get("schedule_details", []),
+            })
+            ref_image = selected_reference.get("path", "")
+            reroll_no_auto_style = not bool(ref_image)
 
         filename = await self.image_gen.generate(
             reroll_prompt,
             style=style,
             engine=engine,
-            timeout=image_process_timeout(self.config, with_reference_fallback=bool(style or ref_image)),
+            timeout=image_process_timeout(self.config, with_reference_fallback=bool(ref_image)),
             ref_image=ref_image,
             size=size,
             source=reroll_source,
@@ -613,12 +664,24 @@ class PortraitGalleryApp:
                 "replacement_key": replacement_key,
             })
             if is_scheduled_reroll:
-                for field in ("outfit_style", "outfit", "base_style"):
+                for field in (
+                    "outfit_style",
+                    "outfit",
+                    "base_style",
+                    "reference_query",
+                    "outfit_keywords",
+                    "scene_keywords",
+                ):
                     value = schedule_context_entry.get(field) if isinstance(schedule_context_entry, dict) else None
                     if value and not generated.get(field):
                         generated[field] = value
                 if schedule_time:
                     generated["schedule_time"] = schedule_time
+                if selected_reference:
+                    generated["selected_reference"] = {
+                        key: selected_reference.get(key, "")
+                        for key in ("id", "filename", "url", "label", "prompt", "source", "selection_mode", "selection_reason")
+                    }
             else:
                 for field in ("outfit_style", "outfit", "schedule_time", "shot_type", "prompt_mode", "pure_prompt", "custom_prompt", "custom_ref_mode"):
                     value = original.get(field)
@@ -729,6 +792,51 @@ class PortraitGalleryApp:
         image_dir = getattr(self.web_server, "image_dir", os.path.join(self.data_dir, "images"))
         return os.path.isfile(os.path.join(image_dir, os.path.basename(path)))
 
+    def _mark_photo_job_inflight(self, slot_key: str):
+        if not slot_key:
+            return
+        self._photo_jobs_inflight.add(slot_key)
+        self._photo_jobs_inflight_started[slot_key] = time.time()
+
+    def _clear_photo_job_inflight(self, slot_key: str):
+        if not slot_key:
+            return
+        self._photo_jobs_inflight.discard(slot_key)
+        self._photo_jobs_inflight_started.pop(slot_key, None)
+
+    def _photo_job_stale_seconds(self) -> int:
+        return image_process_timeout(self.config, with_reference_fallback=True) + PHOTO_JOB_INFLIGHT_STALE_GRACE_SECONDS
+
+    def _expire_stale_photo_jobs(self):
+        if not self._photo_jobs_inflight:
+            return
+        now_ts = time.time()
+        stale_after = self._photo_job_stale_seconds()
+        changed = False
+        for slot_key in list(self._photo_jobs_inflight):
+            started_at = float(self._photo_jobs_inflight_started.get(slot_key) or now_ts)
+            if now_ts - started_at <= stale_after:
+                continue
+            date_text, _, time_text = slot_key.partition(" ")
+            if not re.match(r'^\d{4}-\d{2}-\d{2}$', date_text or "") or not re.match(r'^\d{2}:\d{2}$', time_text or ""):
+                self._clear_photo_job_inflight(slot_key)
+                continue
+            if not self._check_photo_exists_for_slot(date_text, time_text):
+                hour = int(time_text.split(":", 1)[0])
+                activity = self._today_schedule_activity_map().get(time_text, "")
+                self._failed_photo_jobs[slot_key] = {
+                    "theme": self._theme_for_hour(hour),
+                    "time": time_text,
+                    "activity": activity,
+                    "failed_at": datetime.now().isoformat(),
+                    "error": f"stale running state after {int(now_ts - started_at)}s",
+                    "error_summary": "生成状态卡住，已转为可重试",
+                }
+                changed = True
+            self._clear_photo_job_inflight(slot_key)
+        if changed:
+            self._save_failed_photo_jobs()
+
     def _today_completed_photo_count(self) -> int:
         today_str = datetime.now().strftime("%Y-%m-%d")
         seen = set()
@@ -751,6 +859,7 @@ class PortraitGalleryApp:
         return len(seen)
 
     def _today_inflight_photo_count(self, today_str: str = "") -> int:
+        self._expire_stale_photo_jobs()
         today_str = today_str or datetime.now().strftime("%Y-%m-%d")
         return sum(1 for key in self._photo_jobs_inflight if key.startswith(f"{today_str} "))
 
@@ -810,6 +919,7 @@ class PortraitGalleryApp:
         return times
 
     def _today_inflight_photo_times(self, today_str: str = "") -> set[str]:
+        self._expire_stale_photo_jobs()
         today_str = today_str or datetime.now().strftime("%Y-%m-%d")
         times = set()
         for slot_key in self._photo_jobs_inflight:
@@ -1090,6 +1200,7 @@ class PortraitGalleryApp:
             for entry in all_data.values():
                 if (
                     self._is_usable_schedule_entry(entry)
+                    and not entry.get("image_filename")
                     and entry.get("date") == today_str
                 ):
                     return entry
@@ -1099,45 +1210,6 @@ class PortraitGalleryApp:
 
     def _today_schedule_text(self) -> str:
         return self._today_schedule_entry().get("schedule", "")
-
-    @staticmethod
-    def _normalize_base_style(value: str) -> str:
-        base_style = str(value or "").strip().lower()
-        return base_style if base_style in {"cool", "girly", "sweet"} else ""
-
-    def _today_existing_photo_base_style(self) -> str:
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        latest_ts = -1
-        latest_style = ""
-        try:
-            all_data = ScheduleStore(self.data_dir).load()
-            for entry in all_data.values():
-                if not isinstance(entry, dict):
-                    continue
-                if entry.get("date") != today_str or entry.get("status") != "ok":
-                    continue
-                if entry.get("source", "") != "cron":
-                    continue
-                img_file = entry.get("image_filename", "")
-                if not img_file or not self._photo_image_exists(img_file):
-                    continue
-                base_style = self._normalize_base_style(entry.get("base_style", ""))
-                if not base_style:
-                    continue
-                match = re.search(r'_(\d{10})\.\w+$', img_file)
-                ts = int(match.group(1)) if match else 0
-                if ts >= latest_ts:
-                    latest_ts = ts
-                    latest_style = base_style
-        except Exception as e:
-            logger.error(f"读取今日已完成生图底模失败: {e}")
-        return latest_style
-
-    def _today_schedule_base_style(self) -> str:
-        base_style = self._normalize_base_style(self._today_schedule_entry().get("base_style", ""))
-        if base_style:
-            return base_style
-        return self._today_existing_photo_base_style()
 
     def rebuild_photo_jobs(self) -> list:
         """Rebuild dynamic photo jobs from today's saved schedule."""
@@ -1263,7 +1335,7 @@ class PortraitGalleryApp:
                     logger.error(f"补拍任务失败: {slot_key}, error={e}", exc_info=True)
         finally:
             async with self._inflight_lock:
-                self._photo_jobs_inflight.discard(slot_key)
+                self._clear_photo_job_inflight(slot_key)
 
     @staticmethod
     def _theme_for_hour(hour: int) -> str:
@@ -1293,6 +1365,7 @@ class PortraitGalleryApp:
 
     def list_photo_jobs(self) -> list:
         """List actual pending APScheduler photo jobs for the Web UI."""
+        self._expire_stale_photo_jobs()
         activity_by_time = self._today_schedule_activity_map()
         jobs = []
         today_str = datetime.now().strftime("%Y-%m-%d")
@@ -1332,13 +1405,20 @@ class PortraitGalleryApp:
                 continue
             seen_times.add(time_text)
             hour = int(time_text.split(":", 1)[0])
+            started_at = float(self._photo_jobs_inflight_started.get(slot_key) or time.time())
+            running_seconds = max(0, int(time.time() - started_at))
+            stale_after = self._photo_job_stale_seconds()
             jobs.append({
                 "id": f"photo_backfill_{time_text.replace(':', '_')}",
                 "type": "photo",
                 "status": "running",
                 "theme": self._theme_for_hour(hour),
                 "time": time_text,
-                "run_at": datetime.now().isoformat(),
+                "run_at": datetime.fromtimestamp(started_at).isoformat(),
+                "started_at": datetime.fromtimestamp(started_at).isoformat(),
+                "running_seconds": running_seconds,
+                "stale_after_seconds": stale_after,
+                "retryable": running_seconds >= stale_after,
                 "activity": activity_by_time.get(time_text, ""),
                 "source": "backfill",
             })
@@ -1383,13 +1463,37 @@ class PortraitGalleryApp:
         text = detail or ""
         lower = text.lower()
         reasons = []
+
+        endpoint_match = re.search(r'\[(https?://[^/\]]+|[\w.-]+:\d+)\]', text)
+        endpoint = endpoint_match.group(1) if endpoint_match else ""
+        if not endpoint and "192.168.31.216:8090" in lower:
+            endpoint = "192.168.31.216:8090"
+
+        connection_failed = any(
+            token in lower
+            for token in (
+                "failed to establish a new connection",
+                "connecttimeouterror",
+                "connection refused",
+                "host is down",
+                "no route to host",
+            )
+        )
+        request_timed_out = "timeout" in lower or "timed out" in lower
+        if endpoint and connection_failed:
+            reasons.append(f"GPT Image 中转 {endpoint} 当时连接失败")
+        elif endpoint and request_timed_out:
+            reasons.append(f"GPT Image 中转 {endpoint} 当时响应超时")
+
+        if "dial tcp: lookup" in lower or "no such host" in lower:
+            reasons.append("上游中转内部 DNS 解析失败")
         if "ssleoferror" in lower or "unexpected_eof_while_reading" in lower:
             reasons.append("GPT Image 上游 SSL 连接被断开")
-        elif "max retries exceeded" in lower:
-            reasons.append("GPT Image 上游连接重试耗尽")
-        elif "timeout" in lower or "timed out" in lower:
+        if "max retries exceeded" in lower and not (connection_failed or request_timed_out):
+            reasons.append("连接多次重试仍失败")
+        if request_timed_out and not endpoint:
             reasons.append("生图请求超时")
-        elif "unauthorized" in lower or "invalid api key" in lower or "401" in lower:
+        if "unauthorized" in lower or "invalid api key" in lower or "401" in lower:
             reasons.append("API Key 校验失败")
         elif "rate limit" in lower or "429" in lower:
             reasons.append("上游限流")
@@ -1399,16 +1503,37 @@ class PortraitGalleryApp:
             reasons.append("GPT Image 上游 503")
         elif "direct gpt api error 504" in lower:
             reasons.append("GPT Image 上游 504")
-        elif "path not found" in lower or "direct gpt api error 404" in lower or " 404" in lower:
-            reasons.append("GPT Image Base URL 端点错误")
-        elif "generation failed" in lower:
-            reasons.append("生图链路返回失败")
+        elif "path not found" in lower or "images api error 404" in lower:
+            reasons.append("当前中转不支持 Images API，已尝试 chat 兼容生图")
+
+        if (
+            "no base64 image in response" in lower
+            and (
+                "cannot create" in lower
+                or "can't help" in lower
+                or "not able to create" in lower
+                or "sexualized" in lower
+                or "minors" in lower
+                or "restricted" in lower
+            )
+        ):
+            reasons.append("GPT Image 返回安全拒绝，未产生图片")
+        elif "no base64 image in response" in lower:
+            reasons.append("GPT Image 返回了文字但没有图片")
+
+        if "generation failed" in lower or "gpt image endpoint failed" in lower:
+            reasons.append("GPT Image 最终没有返回图片")
 
         if "gitee fallback is disabled" in lower:
-            reasons.append("Gitee 兜底未启用")
+            reasons.append("当时 Gitee 回退未启用，无法自动换线路")
 
         if reasons:
-            return "；".join(dict.fromkeys(reasons))
+            unique = "；".join(dict.fromkeys(reasons))
+            if "Gitee" not in unique and ("连接失败" in unique or "响应超时" in unique):
+                unique += "；请检查中转服务状态后重试"
+            elif "DNS" in unique:
+                unique += "；请检查中转内部上游域名或 DNS"
+            return unique
         first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
         return first_line[:120] if first_line else "未知失败"
 
@@ -1427,6 +1552,7 @@ class PortraitGalleryApp:
             return {"status": "error", "time": time_text, "message": "schedule_time_not_found"}
 
         async with self._inflight_lock:
+            self._expire_stale_photo_jobs()
             if slot_key in self._photo_jobs_inflight:
                 return {"status": "running", "time": time_text}
             snapshot = self._photo_quota_snapshot(
@@ -1447,7 +1573,7 @@ class PortraitGalleryApp:
                     "scheduled_today": scheduled,
                     "planned_today": planned_total,
                 }
-            self._photo_jobs_inflight.add(slot_key)
+            self._mark_photo_job_inflight(slot_key)
             if self._failed_photo_jobs.pop(slot_key, None) is not None:
                 self._save_failed_photo_jobs()
 
@@ -1465,6 +1591,7 @@ class PortraitGalleryApp:
         if slot_key and time_text:
             today_str, _, _ = slot_key.partition(" ")
             async with self._inflight_lock:
+                self._expire_stale_photo_jobs()
                 if self._check_photo_exists_for_slot(today_str, time_text):
                     logger.info(f"跳过生图任务（该时间点已有图片）: {time_text}")
                     return True
@@ -1481,7 +1608,7 @@ class PortraitGalleryApp:
                             f"planned={planned_total}, inflight={inflight}, max={max_daily}"
                         )
                         return True
-                    self._photo_jobs_inflight.add(slot_key)
+                    self._mark_photo_job_inflight(slot_key)
                     reserved_slot = True
                 elif quota_reserved:
                     logger.info(
@@ -1495,10 +1622,29 @@ class PortraitGalleryApp:
             "--caption",
             "--source", "cron",
         ]
-        base_style = self._today_schedule_base_style()
-        if base_style:
-            cmd.extend(["--style", base_style])
-            logger.info(f"定时生图使用当天 LLM 选择的底模: {base_style}")
+        daily_entry = self._today_schedule_entry()
+        selected_reference = await self._select_reference_for_generation({
+            "source": "cron",
+            "theme": theme,
+            "schedule_time": schedule_time,
+            "activity": activity,
+            "outfit_style": daily_entry.get("outfit_style", ""),
+            "outfit": daily_entry.get("outfit", ""),
+            "reference_query": daily_entry.get("reference_query", ""),
+            "prompt": daily_entry.get("prompt", ""),
+            "schedule": daily_entry.get("schedule", ""),
+            "schedule_prompt": daily_entry.get("schedule_prompt", ""),
+            "schedule_details": daily_entry.get("schedule_details", []),
+        })
+        if selected_reference.get("path"):
+            cmd.extend(["--ref-image", selected_reference["path"]])
+            logger.info(
+                "定时生图选择参考图: %s mode=%s",
+                selected_reference.get("label") or selected_reference.get("filename"),
+                selected_reference.get("selection_mode", ""),
+            )
+        else:
+            cmd.append("--no-auto-style")
         if schedule_time:
             cmd.extend(["--schedule-time", schedule_time])
         try:
@@ -1534,6 +1680,20 @@ class PortraitGalleryApp:
 
                 # 按设置的推送渠道发送到 TG / 微信。
                 if image_path:
+                    filename = os.path.basename(image_path)
+                    if selected_reference and filename:
+                        store = ScheduleStore(self.data_dir)
+                        def _update_reference(all_data):
+                            if filename in all_data:
+                                all_data[filename]["selected_reference"] = {
+                                    key: selected_reference.get(key, "")
+                                    for key in ("id", "filename", "url", "label", "prompt", "source", "selection_mode", "selection_reason")
+                                }
+                            return all_data
+                        try:
+                            store.update(_update_reference)
+                        except Exception as e:
+                            logger.error("保存定时生图参考图信息失败: %s", e)
                     caption_text = self._gallery_caption_for_image(image_path, caption_text)
                     send_ok = await self._send_generated_photo(image_path, caption_text)
                     if not send_ok:
@@ -1587,7 +1747,7 @@ class PortraitGalleryApp:
         finally:
             if reserved_slot:
                 async with self._inflight_lock:
-                    self._photo_jobs_inflight.discard(slot_key)
+                    self._clear_photo_job_inflight(slot_key)
 
     def _runtime_keys_config(self) -> dict:
         return load_json_file(api_keys_path(self.data_dir))
