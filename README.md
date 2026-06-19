@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.1.9**
+当前版本：**v1.2.0**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -300,6 +300,15 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥
 
 ## 🧾 Release Notes
+
+### v1.2.0
+
+- 自定义生图模型链路修复：Agnes 模型会显示为 Agnes，Images API 失败后不再误切到 chat-compatible GPT Image 链路。
+- 定时日程、现在在干嘛和日程重抽不再把衣柜衣架图当作直接图生图底图；衣柜仅作为发型/穿搭风格偏好参考。
+- 实时诊断日志持久化到 `logs/gallery.log`，重启不丢失，并自动清理 3 天前轮转日志。
+- 诊断弹窗只展示最新 3 条原始错误，原始错误区域单独上色，`content_policy_violation` 等错误会中文化提示。
+- 微信/Hermes 推送增加串行队列和 iLink cooldown 识别，图片已送达但文案被限流时不再把整次推送标红。
+- 生图失败、来源、模型名和文生图/图生图元数据展示继续收敛，便于排查 Hermes/API、自定义生图和日程生图链路。
 
 ### v1.1.9
 
