@@ -1054,11 +1054,14 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
     # Map model_name to display label
     model_label = ""
     if model_name:
-        if "gpt-image" in model_name:
+        model_lower = model_name.lower()
+        if model_lower.startswith("agnes-image-"):
+            model_label = "Agnes"
+        elif "gpt-image" in model_lower:
             model_label = "GPT Image"
-        elif "z-image" in model_name or "gitee" in model_name:
+        elif "z-image" in model_lower or "gitee" in model_lower:
             model_label = "Gitee"
-        elif "gemini" in model_name:
+        elif "gemini" in model_lower:
             model_label = "Gemini"
         else:
             model_label = model_name

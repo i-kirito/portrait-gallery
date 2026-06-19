@@ -97,9 +97,9 @@ python3 main.py
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/path/to/portrait-gallery/logs/gallery.log</string>
+    <string>/path/to/portrait-gallery/logs/launcher.log</string>
     <key>StandardErrorPath</key>
-    <string>/path/to/portrait-gallery/logs/gallery.log</string>
+    <string>/path/to/portrait-gallery/logs/launcher.log</string>
 </dict>
 </plist>
 ```
@@ -119,6 +119,8 @@ launchctl start com.hermes.portrait-gallery
 # 查看日志
 tail -f /path/to/portrait-gallery/logs/gallery.log
 ```
+
+应用会追加写入 `logs/gallery.log`，重启不会覆盖；日志按天轮转，并自动清理 3 天前的轮转文件。`launcher.log` 只保留启动器自身输出，避免和应用日志重复写入。
 
 ## 📐 架构
 

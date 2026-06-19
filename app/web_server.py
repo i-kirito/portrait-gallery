@@ -398,6 +398,8 @@ class GalleryServer:
         low = (text or "").lower()
         if "fallback is disabled" in low:
             return "Gitee 回退没有开启，GPT Image 失败后不会自动改走 Gitee。"
+        if "content_policy_violation" in low or "safety system" in low:
+            return "上游安全策略拒绝了这次图片请求，请调整提示词或参考图后重试。"
         if "lookup" in low and (
             "server misbehaving" in low
             or "name or service not known" in low
@@ -607,9 +609,18 @@ class GalleryServer:
         if text.startswith("Generate now error"):
             return "现在在干嘛生图异常：" + cls._diagnose_error_text(text)
 
+        if text.startswith("Agnes Images API failed; not retrying chat-compatible GPT Image endpoint"):
+            return "Agnes 图片接口失败，已停止，不再改走 GPT 聊天兼容端点。"
+        if text.startswith("Agnes Images API unsupported; not retrying chat-compatible GPT Image endpoint"):
+            return "当前中转不支持 Agnes 图片接口，已停止，不再改走 GPT 聊天兼容端点。"
         if text.startswith("Images API failed; retrying chat-compatible GPT Image endpoint"):
             return "图片接口失败，正在改用聊天兼容 GPT Image 端点重试。"
-        if text.startswith("Images API error") or text.startswith("Images API failed"):
+        if (
+            text.startswith("Images API error")
+            or text.startswith("Images API failed")
+            or text.startswith("Agnes Images API")
+            or text.startswith("GPT Image Images API")
+        ):
             m = re.search(r'\[([^\]]+)\].*?\(attempt ([^)]+)\)', text)
             where = f"：{m.group(1)}" if m else ""
             attempt = f"，第 {m.group(2)} 次" if m else ""
@@ -619,6 +630,8 @@ class GalleryServer:
             where = f"：{m.group(1)}" if m else ""
             attempt = f"，第 {m.group(2)} 次" if m else ""
             return f"聊天兼容 GPT Image 端点调用失败{where}{attempt}。" + cls._diagnose_error_text(text)
+        if text.startswith("Agnes img2img failed"):
+            return "Agnes 图生图失败，正在改用 Agnes 文生图重试。"
         if text.startswith("GPT Image img2img failed"):
             return "图生图失败，正在改用文生图重试。"
         if text.startswith("GPT Image failed; Gitee fallback is disabled"):
@@ -626,6 +639,9 @@ class GalleryServer:
         if text.startswith("ERROR: GPT Image endpoint failed"):
             endpoint = text.split(":", 2)[-1].strip()
             return f"GPT Image 端点最终失败：{endpoint}。"
+        if text.startswith("ERROR: Agnes endpoint failed"):
+            endpoint = text.split(":", 2)[-1].strip()
+            return f"Agnes 端点最终失败：{endpoint}。"
         if text.startswith("ERROR: generation failed"):
             return "图片生成最终失败。"
 
@@ -673,14 +689,26 @@ class GalleryServer:
         return any(keyword in haystack for keyword in LOG_USEFUL_KEYWORDS)
 
     @classmethod
-    def _format_diagnostic_logs(cls, text: str, max_items: int = 120, max_raw_errors: int = 80) -> dict:
+    def _format_diagnostic_logs(cls, text: str, max_items: int = 120, max_raw_errors: int = 3) -> dict:
         diagnostic_items = []
-        raw_errors = []
+        raw_error_blocks = []
+        current_raw_error_block = None
         in_error_block = False
         total_count = 0
 
         def add_diagnostic(severity: int, key: str, line: str):
             diagnostic_items.append((total_count, severity, key, line))
+
+        def start_raw_error_block(line: str):
+            nonlocal current_raw_error_block
+            current_raw_error_block = [line]
+            raw_error_blocks.append(current_raw_error_block)
+
+        def append_raw_error_line(line: str):
+            if current_raw_error_block is None:
+                start_raw_error_block(line)
+            else:
+                current_raw_error_block.append(line)
 
         for raw in (text or "").splitlines():
             line = raw.rstrip()
@@ -689,6 +717,7 @@ class GalleryServer:
             total_count += 1
             match = LOG_ENTRY_RE.match(line)
             if match:
+                current_raw_error_block = None
                 ts = match.group("ts")
                 level = match.group("level")
                 logger_name = match.group("logger")
@@ -711,18 +740,18 @@ class GalleryServer:
                     f"- {cls._format_log_time(ts)} {level_label}：{translated}",
                 )
                 if level in {"ERROR", "CRITICAL"}:
-                    raw_errors.append(line)
+                    start_raw_error_block(line)
                 continue
 
             if in_error_block:
-                raw_errors.append(line)
+                append_raw_error_line(line)
                 if cls._is_error_detail_line(line):
                     translated = cls._translate_log_message(line, "ERROR", "")
                     add_diagnostic(2, f"错误:{translated}", f"- 错误：{translated}")
                 continue
 
             if cls._is_error_detail_line(line):
-                raw_errors.append(line)
+                start_raw_error_block(line)
                 translated = cls._translate_log_message(line, "ERROR", "")
                 add_diagnostic(2, f"错误:{translated}", f"- 错误：{translated}")
 
@@ -738,7 +767,12 @@ class GalleryServer:
             selected.extend(info_items[-remaining:])
         selected.sort(key=lambda item: item[0])
         diagnostics = [item[3] for item in selected]
-        raw_errors = raw_errors[-max_raw_errors:]
+        selected_raw_error_blocks = raw_error_blocks[-max_raw_errors:]
+        raw_error_lines = []
+        for idx, block in enumerate(selected_raw_error_blocks):
+            if idx:
+                raw_error_lines.append("")
+            raw_error_lines.extend(block)
         output = [
             "运行诊断",
             f"已隐藏普通访问日志，只保留最近 {len(diagnostics)} 条有用信息。",
@@ -747,14 +781,14 @@ class GalleryServer:
             output.extend(diagnostics)
         else:
             output.append("最近没有生图、日程或错误相关日志。普通接口访问日志已隐藏。")
-        if raw_errors:
-            output.extend(["", "原始错误"])
-            output.extend(raw_errors)
+        if raw_error_lines:
+            output.extend(["", f"原始错误（最新 {len(selected_raw_error_blocks)} 条）"])
+            output.extend(raw_error_lines)
         return {
             "text": "\n".join(output),
             "filtered_count": len(diagnostics),
             "total_count": total_count,
-            "raw_error_count": len(raw_errors),
+            "raw_error_count": len(selected_raw_error_blocks),
         }
 
     async def handle_logs(self, request: web.Request):
@@ -2609,6 +2643,8 @@ class GalleryServer:
         """Normalize stored model ids to stable gallery display labels."""
         name = (model_name or "").strip()
         lower = name.lower()
+        if lower.startswith("agnes-image-"):
+            return "Agnes"
         if "gpt-image" in lower or lower == "gpt image":
             return "GPT Image"
         if "z-image" in lower or "gitee" in lower:
@@ -3590,17 +3626,18 @@ class GalleryServer:
             self.uploaded_reference_dir,
         )
 
-    def _all_reference_profiles_for_selection(self) -> list[dict]:
+    def _all_reference_profiles_for_selection(self, include_wardrobe: bool = True) -> list[dict]:
         profiles = list(self._reference_profiles())
-        profiles.extend(self._iter_wardrobe_refs())
+        if include_wardrobe:
+            profiles.extend(self._iter_wardrobe_refs())
         return profiles
 
-    def _select_reference_for_generation_sync(self, context: str) -> dict:
+    def _select_reference_for_generation_sync(self, context: str, include_wardrobe: bool = True) -> dict:
         selected = select_reference_profile(
             self.config,
             self.data_dir,
             context,
-            self._all_reference_profiles_for_selection(),
+            self._all_reference_profiles_for_selection(include_wardrobe=include_wardrobe),
         )
         if not selected:
             return {}
@@ -4511,7 +4548,10 @@ JSON 格式：
                 loop = asyncio.get_running_loop()
                 selected_reference = await loop.run_in_executor(
                     None,
-                    lambda: self._select_reference_for_generation_sync(reference_context),
+                    lambda: self._select_reference_for_generation_sync(
+                        reference_context,
+                        include_wardrobe=False,
+                    ),
                 )
             cmd = [
                 self._python_executable(),

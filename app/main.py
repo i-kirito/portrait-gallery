@@ -15,7 +15,9 @@ import shutil
 import sys
 import subprocess
 import time
+from logging.handlers import TimedRotatingFileHandler
 from datetime import datetime, time as dt_time
+from typing import Optional
 
 from aiohttp import web
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -42,15 +44,17 @@ from settings import (
     reference_filename_to_style,
     resolve_config_path,
     resolve_data_dir,
+    resolve_project_root,
     resolve_script_dir,
 )
 
 TODAY_PHOTO_SOURCES = {"cron", "web"}
 FAILED_SCHEDULE_TEXT = "生成失败"
-WECHAT_CAPTION_DELAY_SECONDS = 8
+WECHAT_CAPTION_DELAY_SECONDS = 35
 WECHAT_SEND_TIMEOUT_SECONDS = 90
 PHOTO_JOB_INFLIGHT_STALE_GRACE_SECONDS = 120
 WECHAT_RETRY_DELAYS_SECONDS = (60, 180)
+WECHAT_COOLDOWN_BUFFER_SECONDS = 5
 WECHAT_RETRYABLE_MARKERS = (
     "rate limited",
     "too many requests",
@@ -64,12 +68,91 @@ WECHAT_RETRYABLE_MARKERS = (
     "temporarily unavailable",
 )
 REFERENCE_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+LOG_RETENTION_DAYS = 3
+LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+
+def _persistent_log_path() -> str:
+    override = str(os.getenv("HERMES_GALLERY_LOG", "") or "").strip()
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
+    root = resolve_project_root(os.getenv("CONFIG_PATH", ""))
+    return str(root / "logs" / "gallery.log")
+
+
+def _stream_targets_path(stream, path: str) -> bool:
+    try:
+        if not path or not os.path.exists(path):
+            return False
+        stream_stat = os.fstat(stream.fileno())
+        path_stat = os.stat(path)
+        return stream_stat.st_dev == path_stat.st_dev and stream_stat.st_ino == path_stat.st_ino
+    except Exception:
+        return False
+
+
+def _cleanup_old_log_files(log_path: str, retention_days: int = LOG_RETENTION_DAYS):
+    log_dir = os.path.dirname(log_path)
+    log_name = os.path.basename(log_path)
+    if not log_dir or not os.path.isdir(log_dir):
+        return
+    cutoff = time.time() - max(1, retention_days) * 86400
+    for filename in os.listdir(log_dir):
+        if filename == log_name or not filename.startswith(f"{log_name}."):
+            continue
+        path = os.path.join(log_dir, filename)
+        try:
+            if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
+                os.remove(path)
+        except OSError:
+            continue
+
+
+def configure_logging() -> str:
+    log_path = _persistent_log_path()
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    _cleanup_old_log_files(log_path)
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    formatter = logging.Formatter(LOG_FORMAT)
+
+    existing_files = {
+        os.path.abspath(getattr(handler, "baseFilename", ""))
+        for handler in root_logger.handlers
+        if getattr(handler, "baseFilename", "")
+    }
+    if os.path.abspath(log_path) not in existing_files:
+        file_handler = TimedRotatingFileHandler(
+            log_path,
+            when="midnight",
+            interval=1,
+            backupCount=LOG_RETENTION_DAYS,
+            encoding="utf-8",
+        )
+        file_handler.setFormatter(formatter)
+        file_handler.setLevel(logging.INFO)
+        root_logger.addHandler(file_handler)
+
+    stdout_is_log = _stream_targets_path(sys.stdout, log_path)
+    stderr_is_log = _stream_targets_path(sys.stderr, log_path)
+    has_console = any(
+        isinstance(handler, logging.StreamHandler)
+        and not getattr(handler, "baseFilename", "")
+        for handler in root_logger.handlers
+    )
+    if not has_console and not (stdout_is_log or stderr_is_log):
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        console_handler.setLevel(logging.INFO)
+        root_logger.addHandler(console_handler)
+
+    return log_path
+
+
+PERSISTENT_LOG_PATH = configure_logging()
 logger = logging.getLogger("portrait_gallery")
+logger.info("持久化日志已启用: %s，自动清理 %s 天前的轮转日志", PERSISTENT_LOG_PATH, LOG_RETENTION_DAYS)
 
 
 def save_schedule_entry(data_dir: str, entry: DailyEntry):
@@ -175,13 +258,30 @@ class PortraitGalleryApp:
         self._failed_photo_jobs: dict[str, dict] = self._load_failed_photo_jobs()
         self._inflight_lock = asyncio.Lock()
         self._backfill_semaphore = asyncio.Semaphore(1)
+        self._hermes_send_lock = asyncio.Lock()
+        self._hermes_send_cooldown_until = 0.0
 
-    async def _select_reference_for_generation(self, context: dict) -> dict:
+    @staticmethod
+    def _schedule_reference_source(source: str) -> bool:
+        return str(source or "").strip().lower() in {
+            "daily_initial",
+            "cron",
+            "cron_reroll",
+            "generate_now",
+        }
+
+    async def _select_reference_for_generation(self, context: dict, include_wardrobe: Optional[bool] = None) -> dict:
+        source = str((context or {}).get("source") or "").strip().lower()
+        if include_wardrobe is None:
+            include_wardrobe = not self._schedule_reference_source(source)
         text = json.dumps(context, ensure_ascii=False, default=str)
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,
-            lambda: self.web_server._select_reference_for_generation_sync(text),
+            lambda: self.web_server._select_reference_for_generation_sync(
+                text,
+                include_wardrobe=include_wardrobe,
+            ),
         )
 
     def _failed_photo_jobs_path(self) -> str:
@@ -1497,6 +1597,8 @@ class PortraitGalleryApp:
             reasons.append("API Key 校验失败")
         elif "rate limit" in lower or "429" in lower:
             reasons.append("上游限流")
+        elif "content_policy_violation" in lower or "safety system" in lower:
+            reasons.append("上游安全策略拒绝了这次图片请求")
         elif "direct gpt api error 502" in lower:
             reasons.append("GPT Image 上游 502")
         elif "direct gpt api error 503" in lower:
@@ -1521,7 +1623,9 @@ class PortraitGalleryApp:
         elif "no base64 image in response" in lower:
             reasons.append("GPT Image 返回了文字但没有图片")
 
-        if "generation failed" in lower or "gpt image endpoint failed" in lower:
+        if "agnes endpoint failed" in lower:
+            reasons.append("Agnes 最终没有返回图片")
+        elif "generation failed" in lower or "gpt image endpoint failed" in lower:
             reasons.append("GPT Image 最终没有返回图片")
 
         if "gitee fallback is disabled" in lower:
@@ -1840,22 +1944,35 @@ class PortraitGalleryApp:
         )
         label = "微信" if channel == "wechat" else "TG"
 
-        image_ok = await self._run_hermes_send(hermes_cmd, target, f"MEDIA:{image_path}", f"{label}图片")
-        if not image_ok:
-            logger.error(f"{label}发送失败: 图片未送达，跳过文案发送")
-            return False
+        async with self._hermes_send_lock:
+            image_ok = await self._run_hermes_send(
+                hermes_cmd,
+                target,
+                f"MEDIA:{image_path}",
+                f"{label}图片",
+                required=True,
+            )
+            if not image_ok:
+                logger.error(f"{label}发送失败: 图片未送达，跳过文案发送")
+                return False
 
-        caption_ok = True
-        if caption:
-            logger.info(f"{label}图片发送成功，等待 {WECHAT_CAPTION_DELAY_SECONDS}s 后发送文案以降低限流概率")
-            await asyncio.sleep(WECHAT_CAPTION_DELAY_SECONDS)
-            caption_ok = await self._run_hermes_send(hermes_cmd, target, caption, f"{label}文案")
+            caption_ok = True
+            if caption:
+                logger.info(f"{label}图片发送成功，等待 {WECHAT_CAPTION_DELAY_SECONDS}s 后发送文案以降低限流概率")
+                await asyncio.sleep(WECHAT_CAPTION_DELAY_SECONDS)
+                caption_ok = await self._run_hermes_send(
+                    hermes_cmd,
+                    target,
+                    caption,
+                    f"{label}文案",
+                    required=False,
+                )
 
         if image_ok and caption_ok:
             logger.info(f"{label}发送完成")
             return True
-        logger.warning(f"{label}发送部分成功: image_ok={image_ok}, caption_ok={caption_ok}")
-        return False
+        logger.warning(f"{label}图片已送达，文案发送被限流或失败: image_ok={image_ok}, caption_ok={caption_ok}")
+        return image_ok
 
     async def _send_to_openclaw(self, channel: str, image_path: str, caption: str, delivery: dict) -> bool:
         """Send image and optional caption through OpenClaw when available."""
@@ -1929,17 +2046,26 @@ class PortraitGalleryApp:
         logger.warning(f"OpenClaw {label}推送失败: exit={result.returncode}, output={output}")
         return False
 
-    async def _run_hermes_send(self, hermes_cmd: str, target: str, message: str, label: str) -> bool:
+    async def _run_hermes_send(
+        self,
+        hermes_cmd: str,
+        target: str,
+        message: str,
+        label: str,
+        required: bool = True,
+    ) -> bool:
         """Run `hermes send` with outer retry/backoff for Weixin rate limits."""
         attempts = 1 + len(WECHAT_RETRY_DELAYS_SECONDS)
         last_output = ""
+        retry_after = 0.0
 
         for attempt_idx in range(attempts):
             attempt_no = attempt_idx + 1
             if attempt_idx:
-                delay = WECHAT_RETRY_DELAYS_SECONDS[attempt_idx - 1]
+                delay = retry_after or WECHAT_RETRY_DELAYS_SECONDS[attempt_idx - 1]
                 logger.info(f"{label}发送重试等待 {delay}s ({attempt_no}/{attempts})")
                 await asyncio.sleep(delay)
+            await self._wait_hermes_send_cooldown(label)
 
             logger.info(f"发送{label}: attempt={attempt_no}/{attempts}")
             try:
@@ -1969,7 +2095,13 @@ class PortraitGalleryApp:
 
             last_output = output or f"exit code {result.returncode}"
             retryable = self._is_retryable_wechat_error(last_output)
-            log_fn = logger.warning if retryable and attempt_no < attempts else logger.error
+            cooldown_seconds = self._extract_wechat_cooldown_seconds(last_output)
+            if cooldown_seconds:
+                retry_after = max(1.0, cooldown_seconds + WECHAT_COOLDOWN_BUFFER_SECONDS)
+                self._mark_hermes_send_cooldown(retry_after)
+            elif retryable and attempt_no < attempts:
+                retry_after = float(WECHAT_RETRY_DELAYS_SECONDS[attempt_idx])
+            log_fn = logger.warning if (retryable and attempt_no < attempts) or not required else logger.error
             log_fn(
                 f"{label}发送失败: attempt={attempt_no}/{attempts}, "
                 f"exit={result.returncode}, retryable={retryable}, output={last_output}"
@@ -1977,8 +2109,23 @@ class PortraitGalleryApp:
             if not retryable:
                 break
 
-        logger.error(f"{label}发送最终失败: {last_output}")
+        log_fn = logger.error if required else logger.warning
+        log_fn(f"{label}发送最终失败: {last_output}")
         return False
+
+    async def _wait_hermes_send_cooldown(self, label: str):
+        wait_seconds = max(0.0, self._hermes_send_cooldown_until - time.monotonic())
+        if wait_seconds > 0:
+            logger.info(f"{label}等待 Hermes/iLink 冷却 {wait_seconds:.1f}s")
+            await asyncio.sleep(wait_seconds)
+
+    def _mark_hermes_send_cooldown(self, seconds: float):
+        if seconds <= 0:
+            return
+        self._hermes_send_cooldown_until = max(
+            self._hermes_send_cooldown_until,
+            time.monotonic() + seconds,
+        )
 
     @staticmethod
     def _hermes_send_output(stdout: str, stderr: str) -> str:
@@ -1992,6 +2139,23 @@ class PortraitGalleryApp:
     def _is_retryable_wechat_error(output: str) -> bool:
         text = (output or "").lower()
         return any(marker in text for marker in WECHAT_RETRYABLE_MARKERS)
+
+    @staticmethod
+    def _extract_wechat_cooldown_seconds(output: str) -> float:
+        text = output or ""
+        patterns = (
+            r"cooldown active for\s+([0-9]+(?:\.[0-9]+)?)\s*s",
+            r"retry(?:\s|-)?after[:=]?\s*([0-9]+(?:\.[0-9]+)?)\s*s",
+            r"冷却\s*([0-9]+(?:\.[0-9]+)?)\s*秒",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                try:
+                    return max(0.0, float(match.group(1)))
+                except ValueError:
+                    return 0.0
+        return 0.0
 
     def _schedule_time(self) -> tuple[int, int]:
         raw = str(self.config.get("config", {}).get("schedule_time", "07:00")).strip()

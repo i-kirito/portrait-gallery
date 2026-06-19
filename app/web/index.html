@@ -2876,6 +2876,9 @@ textarea:focus-visible,
 .prompt-copy-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(192,132,252,0.4); }
 .log-card { width: min(980px, calc(100vw - 32px)); max-height: 84vh; }
 .log-body pre { min-height: 56vh; max-height: 64vh; overflow: auto; white-space: pre-wrap; word-break: break-word; background: #111827; color: #d1fae5; border: 1px solid #263244; }
+.log-body pre .log-diagnostic { color: #d1fae5; }
+.log-body pre .log-raw-title { color: #fbbf24; font-weight: 800; }
+.log-body pre .log-raw-block { color: #fecaca; }
 .log-status { margin-right: auto; color: #8b5cf6; font-size: 12px; font-weight: 700; }
 .log-toggle { display: inline-flex; align-items: center; gap: 6px; margin-right: 10px; color: #6b7280; font-size: 12px; font-weight: 700; user-select: none; }
 .log-toggle input { accent-color: #8b5cf6; }
@@ -6144,6 +6147,8 @@ function summarizePhotoJobError(jobOrText) {
     reasons.push('API Key 校验失败');
   } else if (lower.includes('rate limit') || lower.includes('429')) {
     reasons.push('上游限流');
+  } else if (lower.includes('content_policy_violation') || lower.includes('safety system')) {
+    reasons.push('上游安全策略拒绝了这次图片请求');
   } else if (lower.includes('path not found') || lower.includes('images api error 404')) {
     reasons.push('当前中转不支持 Images API，已尝试 chat 兼容生图');
   }
@@ -6162,7 +6167,9 @@ function summarizePhotoJobError(jobOrText) {
   } else if (lower.includes('no base64 image in response')) {
     reasons.push('GPT Image 返回了文字但没有图片');
   }
-  if (lower.includes('generation failed') || lower.includes('gpt image endpoint failed')) {
+  if (lower.includes('agnes endpoint failed')) {
+    reasons.push('Agnes 最终没有返回图片');
+  } else if (lower.includes('generation failed') || lower.includes('gpt image endpoint failed')) {
     reasons.push('GPT Image 最终没有返回图片');
   }
   if (lower.includes('gitee fallback is disabled')) {
@@ -7485,6 +7492,26 @@ function setLiveLogStatus(text) {
   if (el) el.textContent = text || '';
 }
 
+function renderLiveLogHtml(text) {
+  const raw = String(text || '');
+  const marker = raw.match(/\n原始错误[^\n]*\n/);
+  if (!marker || typeof marker.index !== 'number') {
+    return '<span class="log-diagnostic">' + escapeHtml(raw) + '</span>';
+  }
+  const before = raw.slice(0, marker.index);
+  const title = marker[0];
+  const after = raw.slice(marker.index + title.length);
+  return '<span class="log-diagnostic">' + escapeHtml(before) + '</span>'
+    + '<span class="log-raw-title">' + escapeHtml(title) + '</span>'
+    + '<span class="log-raw-block">' + escapeHtml(after) + '</span>';
+}
+
+function setLiveLogText(text) {
+  const textEl = document.getElementById('liveLogText');
+  if (!textEl) return;
+  textEl.innerHTML = renderLiveLogHtml(text || '');
+}
+
 function refreshLiveLogs(manual) {
   const textEl = document.getElementById('liveLogText');
   if (!textEl) return Promise.resolve();
@@ -7494,7 +7521,7 @@ function refreshLiveLogs(manual) {
     .then(({ ok, data }) => {
       if (!ok || data.error) throw new Error(data.message || data.detail || data.error || 'log_failed');
       const text = data.text || data.message || '暂无日志';
-      textEl.textContent = text;
+      setLiveLogText(text);
       textEl.scrollTop = textEl.scrollHeight;
       const time = new Date().toLocaleTimeString();
       const countText = data.status === 'ok'
@@ -7503,7 +7530,7 @@ function refreshLiveLogs(manual) {
       setLiveLogStatus(countText);
     })
     .catch(e => {
-      textEl.textContent = '读取日志失败：' + (e && e.message ? e.message : '未知错误');
+      setLiveLogText('读取日志失败：' + (e && e.message ? e.message : '未知错误'));
       setLiveLogStatus('读取失败');
     });
 }
