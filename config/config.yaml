@@ -16,7 +16,7 @@ schedule:
     start: '18:00'
     end: '23:59'
 llm:
-  base_url: http://your-cpa-proxy:port/v1
+  base_url: ''
   model: gemini-3.5-flash
   fallback_model: deepseek-v4-flash
   enhance_max_tokens: 400
@@ -44,9 +44,9 @@ image_gen:
   metadata_category: portrait
   metadata_size: 1536x2048
   gpt_model: gpt-image-2
-  gpt_base_url: https://your-gpt-image-endpoint/v1/chat/completions
+  gpt_base_url: ''
   gitee_model: z-image-turbo
-  gitee_url: https://ai.gitee.com/v1/images/generations
+  gitee_url: ''
   gemini_model: gemini-3.1-flash-image
 character:
   appearance: adult portrait subject with natural facial features, realistic body
@@ -71,7 +71,7 @@ integrations:
   hermes_cli: ''
   wechat_target: weixin
 update:
-  github_api: https://api.github.com/repos/i-kirito/portrait-gallery/releases/latest
+  github_api: ''
   remote: origin
   branch: main
 data_dir: data

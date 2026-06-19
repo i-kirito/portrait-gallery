@@ -42,6 +42,7 @@ from settings import (
     llm_request_config,
     load_enabled_outfit_styles,
     load_runtime_persona,
+    normalize_chat_url,
     normalize_outfit_styles,
     normalize_custom_image_size,
     normalize_custom_shot_type,
@@ -288,6 +289,7 @@ class GalleryServer:
         self.app.router.add_get("/api/config/keys", self.handle_get_keys)
         self.app.router.add_post("/api/config/keys", self.handle_save_keys)
         self.app.router.add_get("/api/models", self.handle_models)
+        self.app.router.add_post("/api/models/test", self.handle_test_llm_model)
         self.app.router.add_get("/api/image-models", self.handle_image_models)
         # Hermes 纯净生图 API（不注入 persona）
         self.app.router.add_post("/api/hermes/text-to-image", self.handle_hermes_text_to_image)
@@ -1936,6 +1938,20 @@ class GalleryServer:
                 return proxy
         return ""
 
+    def _github_api_url(self) -> str:
+        """Return the update-check GitHub API URL from local config or env."""
+        keys = self._load_api_keys_config()
+        update_config = self.config.get("update", {}) if isinstance(self.config.get("update"), dict) else {}
+        for value in (
+            keys.get("github_api"),
+            os.getenv("GITHUB_RELEASE_API"),
+            update_config.get("github_api"),
+        ):
+            url = str(value or "").strip()
+            if url:
+                return url
+        return ""
+
     def _github_proxy_env(self) -> dict[str, str]:
         proxy = self._github_proxy()
         if not proxy:
@@ -2297,6 +2313,15 @@ class GalleryServer:
         local_cpa_url = str(keys_config.get("cpa_url", "") or "").strip()
         if local_cpa_url == default_cpa_url:
             local_cpa_url = ""
+        default_gitee_url = str(image_config.get("gitee_url", "") or "").strip()
+        local_gitee_url = str(keys_config.get("gitee_url", "") or "").strip()
+        if local_gitee_url == default_gitee_url:
+            local_gitee_url = ""
+        update_config = self.config.get("update", {}) if isinstance(self.config.get("update"), dict) else {}
+        default_github_api = str(update_config.get("github_api", "") or "").strip()
+        local_github_api = str(keys_config.get("github_api", "") or "").strip()
+        if local_github_api == default_github_api:
+            local_github_api = ""
         persona = load_runtime_persona(self.config, self.data_dir)
         persona_source = normalize_persona_source(keys_config.get("persona_source"))
         local_image_dir = normalize_image_dir(keys_config.get("image_dir"), self.data_dir)
@@ -2318,6 +2343,9 @@ class GalleryServer:
         return web.json_response({
             "gallery_title": gallery_title,
             "gitee_key": self._mask_key(gitee_key),
+            "gitee_url": local_gitee_url or default_gitee_url,
+            "gitee_url_local": local_gitee_url,
+            "gitee_url_default": default_gitee_url,
             "gpt_key": self._mask_key(keys_config.get("gpt_key", "")),
             "gpt_base_url": local_gpt_base_url or default_gpt_base_url,
             "gpt_base_url_local": local_gpt_base_url,
@@ -2342,6 +2370,9 @@ class GalleryServer:
             "outfit_styles": DEFAULT_OUTFIT_STYLES,
             "enabled_outfit_styles": load_enabled_outfit_styles(self.config, self.data_dir),
             "github_proxy": self._github_proxy(),
+            "github_api": local_github_api or default_github_api,
+            "github_api_local": local_github_api,
+            "github_api_default": default_github_api,
             "image_dir": effective_image_dir,
             "image_dir_local": local_image_dir,
             "image_dir_default": default_dir,
@@ -3088,6 +3119,9 @@ class GalleryServer:
                     llm_config = self.config.get("llm", {}) if isinstance(self.config.get("llm"), dict) else {}
                     raw_default_gpt_base_url = str(image_config.get("gpt_base_url", "") or "").strip()
                     default_gpt_base_url = self._configured_image_base_url(raw_default_gpt_base_url)
+                    default_gitee_url = str(image_config.get("gitee_url", "") or "").strip()
+                    update_config = self.config.get("update", {}) if isinstance(self.config.get("update"), dict) else {}
+                    default_github_api = str(update_config.get("github_api", "") or "").strip()
                     self._drop_redundant_local_url_override(
                         keys_config,
                         "gpt_base_url",
@@ -3098,6 +3132,16 @@ class GalleryServer:
                         keys_config,
                         "cpa_url",
                         llm_config.get("base_url", ""),
+                    )
+                    self._drop_redundant_local_url_override(
+                        keys_config,
+                        "gitee_url",
+                        default_gitee_url,
+                    )
+                    self._drop_redundant_local_url_override(
+                        keys_config,
+                        "github_api",
+                        default_github_api,
                     )
 
                     # 更新配置（只更新提供的字段）
@@ -3118,6 +3162,20 @@ class GalleryServer:
                         )
                     if "cpa_key" in body and body["cpa_key"]:
                         keys_config["cpa_key"] = body["cpa_key"]
+                    if "gitee_url" in body:
+                        self._store_local_url_override(
+                            keys_config,
+                            "gitee_url",
+                            body.get("gitee_url"),
+                            default_gitee_url,
+                        )
+                    if "github_api" in body:
+                        self._store_local_url_override(
+                            keys_config,
+                            "github_api",
+                            body.get("github_api"),
+                            default_github_api,
+                        )
                     # appearance: always update (empty string = remove local appearance)
                     if "appearance" in body:
                         keys_config["appearance"] = body["appearance"]
@@ -3153,6 +3211,28 @@ class GalleryServer:
                             keys_config["image_dir"] = target_image_dir
                         else:
                             keys_config.pop("image_dir", None)
+
+                    if self._body_bool(body, "validate_required_config"):
+                        plugin_config = self._load_plugin_config()
+                        gitee_keys = plugin_config.get("gitee_config", {}).get("api_keys", [])
+                        existing_gitee_key = str((gitee_keys[0] if gitee_keys else "") or "").strip()
+                        required_fields = [
+                            ("Gitee API URL", keys_config.get("gitee_url")),
+                            ("Gitee API Key", body.get("gitee_key") or existing_gitee_key),
+                            ("GPT Image Base URL", keys_config.get("gpt_base_url")),
+                            ("GPT Image Key", body.get("gpt_key") or keys_config.get("gpt_key")),
+                            ("CPA Base URL", keys_config.get("cpa_url")),
+                            ("CPA API Key", body.get("cpa_key") or keys_config.get("cpa_key")),
+                            ("GitHub Release API URL", keys_config.get("github_api")),
+                            ("GitHub API 代理", keys_config.get("github_proxy")),
+                        ]
+                        missing = [label for label, value in required_fields if not str(value or "").strip()]
+                        if missing:
+                            return web.json_response({
+                                "error": "missing_required_config",
+                                "message": "请先填写：" + "、".join(missing),
+                                "missing": missing,
+                            }, status=400)
 
                     # 写入 api_keys_config.json
                     with open(api_keys_path, 'w', encoding='utf-8') as f:
@@ -3247,6 +3327,121 @@ class GalleryServer:
         except Exception as e:
             logger.error(f"Get models error: {e}")
             return web.json_response({"models": [], "error": str(e)})
+
+    @staticmethod
+    def _llm_test_response_error(resp: aiohttp.ClientResponse, data) -> str:
+        if isinstance(data, dict):
+            error = data.get("error")
+            if isinstance(error, dict):
+                message = error.get("message") or error.get("code") or error.get("type")
+                if message:
+                    return str(message)[:500]
+            for key in ("message", "msg", "detail"):
+                if data.get(key):
+                    return str(data.get(key))[:500]
+            if data.get("status") and "choices" not in data:
+                return json.dumps(data, ensure_ascii=False)[:500]
+        if isinstance(data, str) and data.strip():
+            return data.strip()[:500]
+        return f"HTTP {resp.status}"
+
+    async def handle_test_llm_model(self, request: web.Request):
+        """Send a tiny chat completion request to verify the selected schedule LLM model."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        try:
+            request_config = llm_request_config(self.config, self.data_dir)
+            base_url = str(body.get("cpa_url") or request_config.get("base_url") or "").strip()
+            chat_url = normalize_chat_url(base_url) if base_url else request_config.get("chat_url", "")
+            api_key = str(body.get("cpa_key") or request_config.get("api_key") or "").strip()
+            model = str(body.get("model") or "").strip()
+            if not model:
+                models = request_config.get("models") or []
+                model = str(models[0] if models else "").strip()
+            if not chat_url:
+                return web.json_response({
+                    "success": False,
+                    "message": "LLM Base URL 未配置，请先填写 CPA Base URL。",
+                }, status=400)
+            if not model:
+                return web.json_response({
+                    "success": False,
+                    "message": "未选择要测试的日程生成模型。",
+                }, status=400)
+
+            headers = {"Content-Type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "user", "content": "请只回复 OK，用于测试模型是否可用。"},
+                ],
+                "max_tokens": 16,
+                "temperature": 0,
+            }
+            started = time.monotonic()
+            timeout = aiohttp.ClientTimeout(total=20)
+            async with aiohttp.ClientSession(trust_env=True, timeout=timeout) as session:
+                async with session.post(chat_url, headers=headers, json=payload) as resp:
+                    elapsed_ms = int((time.monotonic() - started) * 1000)
+                    try:
+                        data = await resp.json()
+                    except Exception:
+                        data = await resp.text()
+                    if resp.status != 200:
+                        detail = self._llm_test_response_error(resp, data)
+                        return web.json_response({
+                            "success": False,
+                            "model": model,
+                            "status": resp.status,
+                            "latency_ms": elapsed_ms,
+                            "message": f"模型不可用：HTTP {resp.status}",
+                            "detail": detail,
+                        }, status=200)
+                    choices = data.get("choices") if isinstance(data, dict) else None
+                    if not choices:
+                        detail = self._llm_test_response_error(resp, data)
+                        return web.json_response({
+                            "success": False,
+                            "model": model,
+                            "status": resp.status,
+                            "latency_ms": elapsed_ms,
+                            "message": "模型返回格式不完整，没有 choices。",
+                            "detail": detail,
+                        }, status=200)
+                    msg = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+                    content = str(msg.get("content") or msg.get("reasoning_content") or "").strip()
+                    if not content:
+                        return web.json_response({
+                            "success": False,
+                            "model": model,
+                            "status": resp.status,
+                            "latency_ms": elapsed_ms,
+                            "message": "模型有响应，但内容为空。",
+                        }, status=200)
+                    return web.json_response({
+                        "success": True,
+                        "model": model,
+                        "latency_ms": elapsed_ms,
+                        "message": f"模型可用，响应 {elapsed_ms}ms。",
+                        "reply": content[:80],
+                    })
+        except asyncio.TimeoutError:
+            return web.json_response({
+                "success": False,
+                "message": "测试超时：20 秒内没有收到模型响应。",
+            }, status=200)
+        except Exception as e:
+            logger.error(f"Test LLM model error: {e}")
+            return web.json_response({
+                "success": False,
+                "message": f"测试失败：{e}",
+            }, status=200)
 
     async def handle_image_models(self, request: web.Request):
         """获取 GPT Image/CPA/AxonHub 可用生图模型列表"""
@@ -5082,7 +5277,7 @@ JSON 格式：
     async def _check_update_payload(self) -> tuple[dict, int]:
         import aiohttp
 
-        github_api = self.config.get("update", {}).get("github_api", "")
+        github_api = self._github_api_url()
         current_version = self._load_version()
         protection = self._update_protection_summary()
         if not github_api:

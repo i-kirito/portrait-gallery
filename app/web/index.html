@@ -528,6 +528,32 @@ textarea:focus-visible,
   cursor: pointer;
   padding: 3px 0;
 }
+.sk-llm-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+.sk-llm-test-btn {
+  min-height: 39px;
+  padding: 0 14px;
+  border: 1px solid #eadcf4;
+  border-radius: 11px;
+  background: #fffafd;
+  color: #7c3aed;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sk-llm-test-btn:hover {
+  border-color: #c084fc;
+  background: #faf5ff;
+}
+.sk-llm-test-btn:disabled {
+  opacity: 0.58;
+  cursor: default;
+}
 .sk-field .sk-status {
   font-size: 11px;
   color: #999;
@@ -3082,9 +3108,12 @@ textarea:focus-visible,
     <div class="sk-field">
       <label for="skLlmModel">🧠 日程生成模型</label>
       <div class="sk-desc">用于每日日程生成和穿搭翻译的 LLM 模型</div>
-      <select id="skLlmModel">
-        <option value="">加载中...</option>
-      </select>
+      <div class="sk-llm-row">
+        <select id="skLlmModel">
+          <option value="">加载中...</option>
+        </select>
+        <button type="button" class="sk-llm-test-btn" id="skLlmTestBtn" onclick="testLlmModel()">测试</button>
+      </div>
       <div class="sk-status" id="skLlmModelStatus">加载中...</div>
     </div>
     <div class="sk-field">
@@ -3107,8 +3136,14 @@ textarea:focus-visible,
       <div class="sk-status" id="skPushStatus">加载中...</div>
     </div>
     <div class="sk-field">
+      <label for="skGiteeUrl">Gitee API URL</label>
+      <div class="sk-desc">Gitee 生图接口地址，必须填写完整接口地址</div>
+      <input type="text" id="skGiteeUrl" placeholder="必填：填写你的 Gitee 生图接口地址">
+      <div class="sk-status" id="skGiteeUrlStatus">加载中...</div>
+    </div>
+    <div class="sk-field">
       <label for="skGiteeKey">Gitee API Key</label>
-      <div class="sk-desc">Gitee 生图密钥</div>
+      <div class="sk-desc">Gitee 生图密钥，必须填写</div>
       <input type="password" id="skGiteeKey" placeholder="输入新密钥（留空则不修改）">
       <div class="sk-inline-status sk-gitee-status-row">
         <div class="sk-gitee-status-main">
@@ -3129,32 +3164,38 @@ textarea:focus-visible,
     </div>
     <div class="sk-field">
       <label for="skGptBaseUrl">GPT Image Base URL</label>
-      <div class="sk-desc">OpenAI 兼容生图基础地址；填到 /v1 即可，自动适配 Images API 或 chat 兼容链路</div>
-      <input type="text" id="skGptBaseUrl" placeholder="例如 http://127.0.0.1:8090/v1">
+      <div class="sk-desc">OpenAI 兼容生图基础地址；必须填写，填到 /v1 即可</div>
+      <input type="text" id="skGptBaseUrl" placeholder="必填：填写你的 GPT Image /v1 地址">
       <div class="sk-status" id="skGptBaseUrlStatus">加载中...</div>
     </div>
     <div class="sk-field">
       <label for="skGptKey">GPT Image Key</label>
-      <div class="sk-desc">端点需要鉴权时填写；本地或免密中转可留空</div>
+      <div class="sk-desc">GPT Image 认证密钥，必须填写</div>
       <input type="password" id="skGptKey" placeholder="输入新密钥（留空则不修改）">
       <div class="sk-status" id="skGptStatus">加载中...</div>
     </div>
     <div class="sk-field">
       <label for="skCpaUrl">CPA Base URL</label>
-      <div class="sk-desc">Gemini 生图和 LLM 调度使用，填 CPA 的 /v1 地址</div>
-      <input type="text" id="skCpaUrl" placeholder="留空则使用配置默认值">
+      <div class="sk-desc">Gemini 生图和 LLM 调度使用，必须填写 CPA 的 /v1 地址</div>
+      <input type="text" id="skCpaUrl" placeholder="必填：填写你的 CPA /v1 地址">
       <div class="sk-status" id="skCpaUrlStatus">加载中...</div>
     </div>
     <div class="sk-field">
       <label for="skCpaKey">CPA API Key</label>
-      <div class="sk-desc">CPA 认证密钥</div>
+      <div class="sk-desc">CPA 认证密钥，必须填写</div>
       <input type="password" id="skCpaKey" placeholder="输入新密钥（留空则不修改）">
       <div class="sk-status" id="skCpaKeyStatus">加载中...</div>
     </div>
     <div class="sk-field">
+      <label for="skGithubApi">GitHub Release API URL</label>
+      <div class="sk-desc">检查更新和在线更新使用，必须填写 releases/latest API 地址</div>
+      <input type="text" id="skGithubApi" placeholder="必填：填写仓库 releases/latest API 地址">
+      <div class="sk-status" id="skGithubApiStatus">加载中...</div>
+    </div>
+    <div class="sk-field">
       <label for="skGithubProxy">GitHub API 代理</label>
-      <div class="sk-desc">用于检查更新和在线更新；例如 http://127.0.0.1:7890，留空则直连或使用系统代理</div>
-      <input type="text" id="skGithubProxy" placeholder="http://127.0.0.1:7890">
+      <div class="sk-desc">用于检查更新和在线更新，必须填写本机可用代理 URL</div>
+      <input type="text" id="skGithubProxy" placeholder="必填：填写你的 GitHub API 代理地址">
       <div class="sk-status" id="skGithubProxyStatus">加载中...</div>
     </div>
     <div class="sk-field sk-storage-field">
@@ -3448,10 +3489,60 @@ function displayOutfitStyle(e) {
   return isBaseModelStyle(style) ? "自定义" : style;
 }
 
+function compareStyleFilterLabels(a, b) {
+  const customA = String(a || "").trim() === "自定义";
+  const customB = String(b || "").trim() === "自定义";
+  if (customA !== customB) return customA ? 1 : -1;
+  return String(a || "").localeCompare(String(b || ""), "zh-CN");
+}
+
 function displayBaseStyle(e) {
   const style = String((e && e.base_style) || "").trim();
   if (!isBaseModelStyle(style)) return "";
   return style.toLowerCase();
+}
+
+const REFERENCE_STYLE_LABELS = {
+  cool: "冷御风",
+  girly: "少女风",
+  sweet: "甜妹风"
+};
+
+const REFERENCE_FILE_LABELS = {
+  "reference_face.jpg": "冷御风",
+  "ref_style_girly.jpg": "少女风",
+  "ref_style_sweet.jpg": "甜妹风"
+};
+
+function cleanReferenceLabel(value) {
+  let text = String(value || "").trim();
+  if (!text) return "";
+  const fileName = text.split(/[\\/]/).pop().split("?")[0];
+  if (REFERENCE_FILE_LABELS[fileName]) return REFERENCE_FILE_LABELS[fileName];
+  if (/\.(png|jpe?g|webp)$/i.test(fileName)) text = fileName.replace(/^zhuzhu_/i, "");
+  const lower = text.toLowerCase();
+  if (REFERENCE_STYLE_LABELS[lower]) return REFERENCE_STYLE_LABELS[lower];
+  text = text.replace(/^🖼\s*/, "");
+  text = text.replace(/^zhuzhu_/i, "");
+  text = text.replace(/^(参考图|参考像|内置图|默认参考|本地参考|图生图参考)\s*[·:：-]\s*/i, "");
+  if (!text || /^(default|builtin|upload|uploaded|reference|参考图|参考像|内置图)$/i.test(text)) return "";
+  return text;
+}
+
+function referenceDisplayName(e, selected, refImage) {
+  const fields = [
+    selected.label,
+    selected.style,
+    selected.reference_label,
+    selected.filename,
+    refImage,
+    e.base_style
+  ];
+  for (const field of fields) {
+    const label = cleanReferenceLabel(field);
+    if (label) return label;
+  }
+  return "";
 }
 
 function displayReferenceMeta(e) {
@@ -3461,9 +3552,8 @@ function displayReferenceMeta(e) {
   const isActualImg2Img = mode === "img2img" || mode === "image-to-image" || !!refImage;
   if (!isActualImg2Img) return "";
   const selected = e.selected_reference && typeof e.selected_reference === "object" ? e.selected_reference : {};
-  const label = String(selected.label || selected.source || "").trim();
-  if (label) return `🖼 ${label}`;
-  return "🖼 参考图";
+  const label = referenceDisplayName(e, selected, refImage);
+  return label ? `🖼 参考像 · ${label}` : "🖼 参考像";
 }
 
 function displayImageSizeMeta(e) {
@@ -4066,7 +4156,7 @@ function renderGallery() {
   }
   // Style filter bar for gallery tab
   if (!showTodayOnly && !showFavoritesOnly && !showUnfavoritesOnly) {
-    const styles = [...new Set(allEntries.map(e => displayOutfitStyle(e)).filter(Boolean))].sort();
+    const styles = [...new Set(allEntries.map(e => displayOutfitStyle(e)).filter(Boolean))].sort(compareStyleFilterLabels);
     if (styles.length) {
       const stylePills = styles.map(s => {
         const active = currentTagFilter && currentTagFilter.toLowerCase() === s.toLowerCase();
@@ -5568,54 +5658,81 @@ async function loadSettingsStatus() {
     // Update status indicators
     updateStatus("skGiteeStatus", data.gitee_key);
     updateStatus("skCpaKeyStatus", data.cpa_key);
+    const giteeUrlEl = document.getElementById("skGiteeUrl");
+    const giteeUrlStatus = document.getElementById("skGiteeUrlStatus");
+    if (giteeUrlEl) {
+      giteeUrlEl.value = data.gitee_url_local || data.gitee_url || "";
+      giteeUrlEl.dataset.localValue = data.gitee_url_local || "";
+      giteeUrlEl.dataset.defaultValue = data.gitee_url_default || "";
+    }
+    if (giteeUrlStatus) {
+      if (giteeUrlEl && giteeUrlEl.value.trim()) {
+        giteeUrlStatus.textContent = "✓ 已设置";
+        giteeUrlStatus.className = "sk-status set";
+      } else {
+        giteeUrlStatus.textContent = "○ 必填";
+        giteeUrlStatus.className = "sk-status unset";
+      }
+    }
     const gptBaseUrlEl = document.getElementById("skGptBaseUrl");
     const gptBaseUrlStatus = document.getElementById("skGptBaseUrlStatus");
-    gptBaseUrlEl.value = data.gpt_base_url_local || "";
+    gptBaseUrlEl.value = data.gpt_base_url_local || data.gpt_base_url || "";
     gptBaseUrlEl.dataset.localValue = data.gpt_base_url_local || "";
     gptBaseUrlEl.dataset.defaultValue = data.gpt_base_url_default || "";
-    gptBaseUrlEl.placeholder = data.gpt_base_url_default
-      ? `默认：${data.gpt_base_url_default}`
-      : "例如 http://127.0.0.1:8090/v1/images/generations";
-    if (data.gpt_base_url_local) {
-      gptBaseUrlStatus.textContent = "✓ 本机已设置";
+    if (gptBaseUrlEl.value.trim()) {
+      gptBaseUrlStatus.textContent = "✓ 已设置";
       gptBaseUrlStatus.className = "sk-status set";
-    } else if (data.gpt_base_url) {
-      gptBaseUrlStatus.textContent = "○ 使用配置默认值";
-      gptBaseUrlStatus.className = "sk-status unset";
     } else {
-      gptBaseUrlStatus.textContent = "○ 未设置";
+      gptBaseUrlStatus.textContent = "○ 必填";
       gptBaseUrlStatus.className = "sk-status unset";
     }
     const gptStatus = document.getElementById("skGptStatus");
     if (data.gpt_key) {
       updateStatus("skGptStatus", data.gpt_key);
-    } else if (data.gpt_base_url) {
-      gptStatus.textContent = "○ 未设置（免密端点可留空）";
-      gptStatus.className = "sk-status unset";
     } else {
-      updateStatus("skGptStatus", data.gpt_key);
+      gptStatus.textContent = "○ 必填";
+      gptStatus.className = "sk-status unset";
     }
     const cpaUrlEl = document.getElementById("skCpaUrl");
     const cpaUrlStatus = document.getElementById("skCpaUrlStatus");
-    cpaUrlEl.value = data.cpa_url_local || "";
+    cpaUrlEl.value = data.cpa_url_local || data.cpa_url || "";
     cpaUrlEl.dataset.localValue = data.cpa_url_local || "";
     cpaUrlEl.dataset.defaultValue = data.cpa_url_default || "";
-    cpaUrlEl.placeholder = data.cpa_url_default
-      ? `默认：${data.cpa_url_default}`
-      : "例如 http://127.0.0.1:8090/v1";
-    if (data.cpa_url_local) {
-      cpaUrlStatus.textContent = "✓ 本机已设置";
+    if (cpaUrlEl.value.trim()) {
+      cpaUrlStatus.textContent = "✓ 已设置";
       cpaUrlStatus.className = "sk-status set";
-    } else if (data.cpa_url) {
-      cpaUrlStatus.textContent = "○ 使用配置默认值";
-      cpaUrlStatus.className = "sk-status unset";
     } else {
-      cpaUrlStatus.textContent = "○ 未设置";
+      cpaUrlStatus.textContent = "○ 必填";
       cpaUrlStatus.className = "sk-status unset";
     }
     const githubProxyEl = document.getElementById("skGithubProxy");
+    const githubApiEl = document.getElementById("skGithubApi");
+    const githubApiStatus = document.getElementById("skGithubApiStatus");
+    if (githubApiEl) {
+      githubApiEl.value = data.github_api_local || data.github_api || "";
+      githubApiEl.dataset.localValue = data.github_api_local || "";
+      githubApiEl.dataset.defaultValue = data.github_api_default || "";
+    }
+    if (githubApiStatus) {
+      if (githubApiEl && githubApiEl.value.trim()) {
+        githubApiStatus.textContent = "✓ 已设置";
+        githubApiStatus.className = "sk-status set";
+      } else {
+        githubApiStatus.textContent = "○ 必填";
+        githubApiStatus.className = "sk-status unset";
+      }
+    }
     githubProxyEl.value = data.github_proxy || "";
-    updateStatus("skGithubProxyStatus", data.github_proxy);
+    const githubProxyStatus = document.getElementById("skGithubProxyStatus");
+    if (githubProxyStatus) {
+      if (data.github_proxy) {
+        githubProxyStatus.textContent = "✓ 已设置";
+        githubProxyStatus.className = "sk-status set";
+      } else {
+        githubProxyStatus.textContent = "○ 必填";
+        githubProxyStatus.className = "sk-status unset";
+      }
+    }
     const imageDirEl = document.getElementById("skImageDir");
     const imageDirStatus = document.getElementById("skImageDirStatus");
     if (imageDirEl) {
@@ -5807,14 +5924,91 @@ window.updateCleanupCustomVisibility = updateCleanupCustomVisibility;
 window.previewImageCleanup = previewImageCleanup;
 window.runImageCleanup = runImageCleanup;
 
+async function testLlmModel() {
+  const btn = document.getElementById("skLlmTestBtn");
+  const status = document.getElementById("skLlmModelStatus");
+  const model = (document.getElementById("skLlmModel")?.value || "").trim();
+  const cpaUrl = (document.getElementById("skCpaUrl")?.value || "").trim();
+  const cpaKey = (document.getElementById("skCpaKey")?.value || "").trim();
+  if (!model) {
+    showToast("请先选择日程生成模型");
+    if (status) {
+      status.textContent = "未选择模型";
+      status.className = "sk-status unset";
+    }
+    return;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "测试中...";
+  }
+  if (status) {
+    status.textContent = "正在测试 " + model + "...";
+    status.className = "sk-status unset";
+  }
+
+  try {
+    const payload = { model };
+    if (cpaUrl) payload.cpa_url = cpaUrl;
+    if (cpaKey) payload.cpa_key = cpaKey;
+    const res = await fetch(`${API}/api/models/test`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || data.error || "测试失败");
+    const detail = data.detail ? "：" + data.detail : "";
+    if (data.success) {
+      const latency = data.latency_ms ? ` · ${data.latency_ms}ms` : "";
+      if (status) {
+        status.textContent = "✓ 模型可用: " + (data.model || model) + latency;
+        status.className = "sk-status set";
+      }
+      showToast("✅ 模型可用");
+    } else {
+      if (status) {
+        status.textContent = "✕ " + (data.message || "模型不可用") + detail;
+        status.className = "sk-status unset";
+      }
+      showToast("❌ " + (data.message || "模型不可用"));
+    }
+  } catch(e) {
+    if (status) {
+      status.textContent = "✕ 测试失败：" + (e && e.message ? e.message : "未知错误");
+      status.className = "sk-status unset";
+    }
+    showToast("❌ 模型测试失败");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "测试";
+    }
+  }
+}
+
+function hasSavedSecret(fieldName) {
+  if (!settingsSnapshot) return false;
+  const value = settingsSnapshot[fieldName];
+  return !!(value && String(value).trim());
+}
+
+function requireSettingsValue(label, value, missing) {
+  if (!String(value || "").trim()) missing.push(label);
+}
+
 async function saveSettings() {
+  const giteeUrl = document.getElementById("skGiteeUrl").value.trim();
   const giteeKey = document.getElementById("skGiteeKey").value.trim();
   const gptKey = document.getElementById("skGptKey").value.trim();
   const gptBaseUrlEl = document.getElementById("skGptBaseUrl");
   const cpaUrlEl = document.getElementById("skCpaUrl");
+  const githubApiEl = document.getElementById("skGithubApi");
   const gptBaseUrl = gptBaseUrlEl.value.trim();
   const cpaUrl = cpaUrlEl.value.trim();
   const cpaKey = document.getElementById("skCpaKey").value.trim();
+  const githubApi = githubApiEl.value.trim();
   const githubProxy = document.getElementById("skGithubProxy").value.trim();
   const imageDir = document.getElementById("skImageDir").value.trim();
   const appearance = document.getElementById("skAppearance").value.trim();
@@ -5823,6 +6017,24 @@ async function saveSettings() {
   const pushChannel = getPushChannel();
   const llmModel = document.getElementById("skLlmModel").value;
   const giteeFallbackEnabled = document.getElementById("skGiteeFallback").checked;
+  const missing = [];
+  requireSettingsValue("Gitee API URL", giteeUrl, missing);
+  if (!giteeKey && !hasSavedSecret("gitee_key")) missing.push("Gitee API Key");
+  requireSettingsValue("GPT Image Base URL", gptBaseUrl, missing);
+  if (!gptKey && !hasSavedSecret("gpt_key")) missing.push("GPT Image Key");
+  requireSettingsValue("CPA Base URL", cpaUrl, missing);
+  if (!cpaKey && !hasSavedSecret("cpa_key")) missing.push("CPA API Key");
+  requireSettingsValue("GitHub Release API URL", githubApi, missing);
+  requireSettingsValue("GitHub API 代理", githubProxy, missing);
+  if (missing.length) {
+    showToast("请先填写：" + missing.join("、"), 7000);
+    const status = document.getElementById("skGithubProxyStatus");
+    if (status) {
+      status.textContent = "缺少必填：" + missing.join("、");
+      status.className = "sk-status unset";
+    }
+    return;
+  }
 
   const btn = document.getElementById("skSaveBtn");
   btn.disabled = true;
@@ -5830,11 +6042,14 @@ async function saveSettings() {
   
   try {
     const body = {};
+    body.validate_required_config = true;
     if (giteeKey) body.gitee_key = giteeKey;
+    body.gitee_url = giteeUrl;
     if (gptKey) body.gpt_key = gptKey;
-    if (gptBaseUrl || gptBaseUrlEl.dataset.localValue) body.gpt_base_url = gptBaseUrl;
-    if (cpaUrl || cpaUrlEl.dataset.localValue) body.cpa_url = cpaUrl;
+    body.gpt_base_url = gptBaseUrl;
+    body.cpa_url = cpaUrl;
     if (cpaKey) body.cpa_key = cpaKey;
+    body.github_api = githubApi;
     body.github_proxy = githubProxy;
     body.image_dir = imageDir;
     // appearance: always send (empty = remove local appearance)
@@ -5859,7 +6074,7 @@ async function saveSettings() {
       await loadDisplayConfig();
       await loadGallery();
     } else {
-      showToast("❌ " + (data.error || "保存失败"));
+      showToast("❌ " + (data.message || data.error || "保存失败"), 7000);
     }
   } catch(e) {
     showToast("❌ " + e.message);
@@ -6117,7 +6332,6 @@ function summarizePhotoJobError(jobOrText) {
   var endpoint = '';
   var endpointMatch = raw.match(/\[(https?:\/\/[^/\]]+|[\w.-]+:\d+)\]/);
   if (endpointMatch) endpoint = endpointMatch[1];
-  if (!endpoint && lower.includes('192.168.31.216:8090')) endpoint = '192.168.31.216:8090';
   var connectionFailed = [
     'failed to establish a new connection',
     'connecttimeouterror',

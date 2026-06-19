@@ -1566,8 +1566,6 @@ class PortraitGalleryApp:
 
         endpoint_match = re.search(r'\[(https?://[^/\]]+|[\w.-]+:\d+)\]', text)
         endpoint = endpoint_match.group(1) if endpoint_match else ""
-        if not endpoint and "192.168.31.216:8090" in lower:
-            endpoint = "192.168.31.216:8090"
 
         connection_failed = any(
             token in lower

@@ -184,6 +184,15 @@ def get_cpa_chat_url() -> str:
 
 
 def get_image_model(key: str, default: str = "") -> str:
+    if os.path.exists(_API_KEYS_CONFIG_PATH):
+        try:
+            with open(_API_KEYS_CONFIG_PATH, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            local_value = str(config.get(key, "") or "").strip()
+            if local_value:
+                return local_value
+        except Exception:
+            pass
     return str(get_nested(_GALLERY_CONFIG, f"image_gen.{key}", default) or default).strip()
 
 
