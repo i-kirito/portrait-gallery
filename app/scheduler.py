@@ -146,7 +146,7 @@ class DailyScheduler:
                             _response_error(resp),
                         )
                         continue
-                    msg = choices[0]["message"]
+                    msg = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
                     content = (msg.get("content") or msg.get("reasoning_content") or "").strip()
                     if content:
                         return content
