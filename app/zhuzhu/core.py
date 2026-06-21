@@ -30,7 +30,9 @@ from settings import (
     config_int,
     get_nested,
     image_request_timeout,
+    llm_choice_text,
     llm_request_config,
+    llm_temperature_param_error,
     load_config,
     load_json_file,
     load_runtime_persona,
@@ -47,6 +49,21 @@ from settings import (
 requests.packages.urllib3.disable_warnings()
 
 REQUEST_SESSION = requests.Session()
+
+
+def _retry_without_temperature_if_needed(resp, payload: dict, post_func):
+    if getattr(resp, "status_code", None) != 400 or "temperature" not in payload:
+        return resp
+    try:
+        body = resp.json()
+    except Exception:
+        body = getattr(resp, "text", "")
+    if not llm_temperature_param_error(body):
+        return resp
+    retry_payload = dict(payload)
+    retry_payload.pop("temperature", None)
+    return post_func(retry_payload)
+
 
 _GALLERY_CONFIG_PATH = resolve_config_path()
 try:
@@ -492,70 +509,70 @@ def _personalized_caption_fallback(theme: str, persona: dict, schedule_time: str
         specific_templates = []
         if any(word in activity_key for word in ("直播", "歌会", "唱歌", "情歌", "开播")):
             specific_templates.extend([
-                f"歌会灯光一亮，{character}突然有点想把这一句唱得更甜一点。",
-                f"唱到最软的一句时，心里悄悄希望{user_name}刚好听见。",
-                f"{user_name}，直播间刚热起来，{character}心里也跟着亮了一下。",
+                f"{character}先把歌单顺一遍，等会儿开播就不慌了。",
+                f"这首要是唱顺了，{character}今晚就算完成一件小事。",
+                f"{character}想先试试麦，别等开播了才发现声音不对。",
             ])
         if any(word in activity_key for word in ("厨房", "牛排", "奶茶", "做饭", "晚餐", "甜点", "午餐", "早餐", "牛奶", "松饼")):
             specific_templates.extend([
-                f"厨房的香气还没散，{character}心里已经开始期待第一口的味道了。",
-                "热气慢慢冒出来的时候，连等待都变得有点甜。",
-                f"{user_name}，这一刻有点热乎乎的，像把小日子过甜了一点。",
+                f"{character}想先把台面收干净，等会儿吃饭也省心。",
+                "菜还没完全做好，已经开始琢磨第一口要先尝哪里。",
+                f"{character}一边看火候，一边想着等下别忘了把厨房擦一下。",
             ])
         if any(word in activity_key for word in ("电脑", "游戏", "速通", "Live2D", "平板", "建模", "耳机")):
             specific_templates.extend([
-                f"屏幕光落下来时，{character}忽然觉得认真起来的自己也挺可爱。",
-                f"卡住的细节终于顺了一点，{character}心里也悄悄松了口气。",
-                f"{user_name}，认真到一半的时候，{character}还是有一点想被夸。",
+                f"{character}想先把卡住的地方处理掉，后面就能轻松一点。",
+                "这个细节再改一遍，应该就差不多能收工了。",
+                f"{character}盯着屏幕想了想，决定先从最麻烦的那一项开始。",
             ])
         if any(word in activity_key for word in ("动漫", "新番", "追番", "电视", "沙发", "抱枕")):
             specific_templates.extend([
-                f"片头曲一响，{character}心里只剩下一点软软的期待。",
-                f"抱枕被悄悄抱紧了一点，{character}也跟着慢慢放松下来。",
-                f"{user_name}，这一刻不用赶时间，{character}只想把呼吸放慢一点。",
+                f"{character}打算先把这一集看完，再去处理剩下的小事。",
+                "抱枕拿顺手了，接下来就安安心心看一会儿。",
+                f"{character}想趁现在没人催，先把进度追到最新。",
             ])
         if any(word in activity_key for word in ("床", "睡", "护肤", "洗澡", "被窝", "枕头", "晚安")):
             specific_templates.extend([
-                f"灯光软下来之后，{character}只想把今天慢慢放轻一点。",
-                "夜里的小事一件件收好，心情也跟着松了下来。",
-                f"{character}把夜里的柔软藏在心里，悄悄想起了{user_name}。",
+                f"{character}想赶紧把护肤做完，早点躺下才是真的舒服。",
+                "今晚不想再拖了，收拾完就直接休息。",
+                f"{character}把明天要用的东西放好，睡前就不用再爬起来找。",
             ])
         if any(word in activity_key for word in ("街", "散步", "路灯", "公园", "出门", "逛")):
             specific_templates.extend([
-                f"路上的光刚好落下来，{character}心里也跟着轻快了一点。",
-                "外面有一点吵，心情却意外安静。",
-                f"{user_name}，外面的风一吹，{character}忽然觉得今天很适合开心。",
+                f"{character}想边走边看看店铺，遇到顺眼的地方就停一下。",
+                "先别急着回去，顺路多逛一小段也不错。",
+                f"{character}准备找个不挤的位置，慢慢把照片拍完。",
             ])
         if any(word in activity_key for word in ("阳台", "摇椅", "小憩", "打盹", "薄毯", "沙发", "抱枕", "发呆")):
             specific_templates.extend([
-                f"{character}脑袋慢慢放空，只想再赖一小会儿。",
-                f"薄薄的困意盖上来，{character}心里安静得像被阳光揉了一下。",
-                f"{user_name}，这一刻不用赶时间，{character}只想把呼吸放慢一点。",
+                f"{character}想再坐五分钟，等精神缓过来再起身。",
+                "毯子盖好了，先眯一会儿，别把下午弄得太赶。",
+                f"{character}准备小睡一下，醒来再继续收拾后面的事。",
             ])
-        if any(word in activity_key for word in ("整理", "房间", "收拾", "浇水", "多肉", "植物")):
+        if any(word in activity_key for word in ("整理房间", "房间", "浇水", "多肉", "植物")):
             specific_templates.extend([
-                f"水珠落到叶尖上时，{character}觉得心情也被擦亮了一点。",
-                f"房间一点点清爽起来，{character}心里那团乱线也跟着松开了。",
-                f"{user_name}，窗边的绿色很安静，{character}忽然也想变得乖一点。",
+                f"{character}想把这盆浇完，再顺手看看房间哪里还乱。",
+                "先把植物照顾好，等会儿整理房间也更有劲。",
+                f"{character}一边浇水一边想着，下午最好把桌面也清出来。",
             ])
 
         generic_templates = [
-            f"{character}心里冒出一点软软的小情绪，像被今天轻轻碰了一下。",
-            f"{user_name}，这一刻{character}忽然很想把节奏放慢。",
-            f"{character}觉得今天好像比平时更松弛，也更适合慢慢过。",
-            f"日程走到这里时，{character}突然觉得今天也有被温柔照顾到。",
-            f"{character}像给心情夹了一枚小小的书签，悄悄记住这一刻。",
+            f"{character}想先把眼前这件事做完，后面就不用一直惦记了。",
+            f"今天先按这个节奏来，别把小事都拖到晚上。",
+            f"{character}打算把手边的事排清楚，等会儿就能轻松一点。",
+            f"现在先不想太多，照着计划一件件来就好。",
+            f"{character}想给自己留点空档，别把一天塞得太满。",
         ]
         templates = specific_templates or generic_templates
         return _shorten_caption(_caption_pick(templates, theme, schedule_time, character, user_name), 72)
     templates = {
-        "morning": f"早安，{user_name}～{character}刚拍完晨间穿搭，光线很好，心情也亮起来了。",
-        "noon": f"{user_name}，{character}把午间穿搭拍好啦，阳光和状态都刚刚好。",
-        "evening": f"傍晚的光很温柔，{character}把今天这套穿搭留成了一张小小的晚间记录。",
-        "bedtime": f"夜色安静下来啦，{character}把睡前这一刻留给{user_name}看。",
-        "sexy": f"{character}今天的镜头氛围更大胆一点，穿搭和心情都很特别。",
+        "morning": f"{character}想先把早餐和出门前的小事处理好，别一早就手忙脚乱。",
+        "noon": f"{character}准备先吃点东西，再看看下午还有哪些安排。",
+        "evening": f"{character}想先把晚上的事收一收，别拖到睡前才忙。",
+        "bedtime": f"{character}准备洗漱完就休息，明天要用的东西先放顺手。",
+        "sexy": f"{character}想把状态调整好，等会儿拍的时候别太僵。",
     }
-    return templates.get(theme, f"{character}的新照片来啦～这一刻很适合放进画廊。")
+    return templates.get(theme, f"{character}想先把手边这件事做完，后面就不用一直惦记。")
 
 
 def _caption_voice_hint(persona: dict) -> str:
@@ -590,6 +607,7 @@ def _scene_caption_fallback(theme: str, persona: dict, caption: str = "", schedu
         and not _caption_is_gallery_record(caption)
         and not _caption_repeats_schedule(caption, schedule_time)
         and not _caption_is_generic_template(caption)
+        and not _caption_is_too_literary(caption)
     ):
         short = _shorten_caption(caption)
         if short:
@@ -613,6 +631,25 @@ def _caption_is_generic_template(caption: str) -> bool:
     return sum(1 for marker in markers if marker in text) >= 3
 
 
+def _caption_is_too_literary(caption: str) -> bool:
+    text = re.sub(r"\s+", "", str(caption or ""))
+    if not text:
+        return False
+    literary_markers = (
+        "水珠", "叶尖", "擦亮", "揉了一下", "光落", "灯光软", "夜色安静",
+        "藏在心里", "心里那团乱线", "夹了一枚", "小小的书签", "被今天轻轻碰",
+        "被温柔照顾", "小情绪", "软软", "柔软", "呼吸放慢", "慢慢放轻",
+        "心情也跟着", "心情也被", "像把小日子", "风一吹",
+    )
+    if any(marker in text for marker in literary_markers):
+        return True
+    metaphor_patterns = (
+        r"像被.{0,8}(阳光|今天|温柔|风|光)",
+        r"(心情|日子|节奏).{0,6}(亮|甜|软|松)",
+    )
+    return any(re.search(pattern, text) for pattern in metaphor_patterns)
+
+
 def _shorten_caption(caption: str, limit: int = 90) -> str:
     text = re.sub(r"\s+", " ", str(caption or "")).strip(" 「」\"'")
     if not text:
@@ -634,6 +671,74 @@ def _scheduled_scene_gaze_instruction(schedule_activity: str) -> str:
         "Avoid default portrait eye contact when it is not motivated by the activity; avoid forcing an off-camera gaze when camera awareness is naturally part of the scene. "
         "The result should feel like a coherent candid moment rather than a generic posed portrait"
     )
+
+
+def _appearance_hair_color(appearance: str) -> str:
+    """Extract the character hair color phrase from appearance."""
+    text = re.sub(r"\s+", " ", str(appearance or "")).strip()
+    if not text:
+        return ""
+    separators = re.compile(r"([,.;，。；])")
+    raw = separators.split(text)
+    color_markers = (
+        "black", "brown", "blonde", "pink", "rose", "red", "blue", "green",
+        "purple", "violet", "silver", "gray", "grey", "white", "ash",
+        "auburn", "chestnut", "brunette", "raven", "golden", "platinum",
+        "粉", "黑", "棕", "褐", "金", "银", "灰", "白", "红", "蓝", "绿", "紫",
+    )
+    for i in range(0, len(raw), 2):
+        chunk = raw[i].strip(" .，,;；")
+        lower = chunk.lower()
+        if ("hair" in lower or "头发" in chunk or "发色" in chunk) and any(marker in lower or marker in chunk for marker in color_markers):
+            return chunk
+    return ""
+
+
+def _strip_hairstyle_from_appearance(appearance: str) -> str:
+    """Keep appearance identity and hair color, but remove hairstyle-only clauses."""
+    text = re.sub(r"\s+", " ", str(appearance or "")).strip()
+    if not text:
+        return ""
+    separators = re.compile(r"([,.;，。；])")
+    raw = separators.split(text)
+    chunks = []
+    for i in range(0, len(raw), 2):
+        chunk = raw[i].strip()
+        sep = raw[i + 1] if i + 1 < len(raw) else ""
+        if not chunk:
+            continue
+        lower = chunk.lower()
+        style_only = any(
+            marker in lower or marker in chunk
+            for marker in (
+                "bangs", "fringe", "hairstyle", "ponytail", "bun", "braid", "pigtail",
+                "刘海", "发型", "马尾", "丸子头", "辫",
+            )
+        )
+        if style_only:
+            continue
+        chunks.append(chunk + sep)
+    cleaned = " ".join(chunks)
+    cleaned = re.sub(r"\s+([,.;，。；])", r"\1", cleaned)
+    cleaned = re.sub(r"([,.;，。；])\s*", r"\1 ", cleaned).strip(" ,.;，。；")
+    return cleaned or text
+
+
+def _strip_hair_color_from_schedule_hair(hair: str) -> str:
+    """Keep schedule hairstyle/accessories but remove schedule hair-color overrides."""
+    text = re.sub(r"\s+", " ", str(hair or "")).strip()
+    if not text:
+        return ""
+    color_word = (
+        r"(?:(?:jet|dark|light|dusty)[- ]+)?(?:black|brown|chestnut|auburn|brunette|"
+        r"blonde|golden|platinum|pink|rose|red|blue|green|purple|violet|"
+        r"silver|gray|grey|white|ash|raven)"
+    )
+    text = re.sub(rf"\b(?:{color_word}[- ]+)+(hair\b)", r"\1", text, flags=re.IGNORECASE)
+    text = re.sub(rf"\b(?:{color_word}[- ]+)+(bangs\b)", r"\1", text, flags=re.IGNORECASE)
+    text = re.sub(r"(黑色|粉色|玫瑰粉|棕色|褐色|金色|银色|灰色|白色|红色|蓝色|绿色|紫色)(?=(头发|长发|短发|刘海|发丝|发梢))", "", text)
+    text = re.sub(r"\s+", " ", text).strip(" ,.;，。；")
+    return text or hair
 
 
 def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activity: str = "",
@@ -682,6 +787,18 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
         hair = random.choice(theme_cfg["hair"])
     else:
         hair = random.choice(theme_cfg["hair"])
+
+    hair_color = ""
+    if schedule_activity and hair and not is_sexy:
+        hair_color = _appearance_hair_color(appearance)
+        cleaned_appearance = _strip_hairstyle_from_appearance(appearance)
+        cleaned_hair = _strip_hair_color_from_schedule_hair(hair)
+        if cleaned_appearance != appearance:
+            appearance = cleaned_appearance
+            print("💇 Removed hairstyle-only appearance details; keeping appearance hair color priority", file=sys.stderr)
+        if cleaned_hair != hair:
+            hair = cleaned_hair
+            print("💇 Removed schedule hair color because appearance hair color has priority", file=sys.stderr)
 
     if is_sexy:
         pose = random.choice(theme_cfg["pose"])
@@ -732,7 +849,8 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
     return (
         f"{quality} {appearance}. "
         f"{activity_focus}"
-        f"Her hair is {hair}. "
+        + (f"Her hair color must follow the character appearance exactly: {hair_color}. " if hair_color else "")
+        + f"Her scheduled hairstyle/accessories are: {hair}. If the schedule or reference image implies another hair color, ignore that color and keep the appearance hair color. "
         f"She is {pose}. "
         f"She is wearing {clothing}. "
         f"Background: {environment}. "
@@ -1014,9 +1132,20 @@ def _translate_outfit(prompt: str, style_name: str) -> str:
         }
         resp = requests.post(get_cpa_chat_url(),
                              headers=headers, json=payload, timeout=15)
+        resp = _retry_without_temperature_if_needed(
+            resp,
+            payload,
+            lambda retry_payload: requests.post(
+                get_cpa_chat_url(),
+                headers=headers,
+                json=retry_payload,
+                timeout=15,
+            ),
+        )
         if resp.status_code == 200:
             data = resp.json()
-            content = (data["choices"][0]["message"].get("content") or "").strip()
+            choices = data.get("choices") if isinstance(data, dict) else []
+            content = llm_choice_text(choices[0]) if choices else ""
             if content:
                 return content
     except Exception as e:
@@ -1250,8 +1379,20 @@ def enhance_prompt(user_input: str, theme: Optional[str] = None) -> str:
                 json=payload,
                 timeout=config_int(_GALLERY_CONFIG, "llm.enhance_timeout", 25, 1),
             )
+            resp = _retry_without_temperature_if_needed(
+                resp,
+                payload,
+                lambda retry_payload: REQUEST_SESSION.post(
+                    get_cpa_chat_url(),
+                    headers=headers,
+                    json=retry_payload,
+                    timeout=config_int(_GALLERY_CONFIG, "llm.enhance_timeout", 25, 1),
+                ),
+            )
             if resp.status_code == 200:
-                content = resp.json()["choices"][0]["message"].get("content")
+                data = resp.json()
+                choices = data.get("choices") if isinstance(data, dict) else []
+                content = llm_choice_text(choices[0]) if choices else ""
                 if content:
                     return content.strip()
         except Exception as e:
@@ -1281,15 +1422,16 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
     user_name = persona.get("user_name") or "用户"
     caption_voice = _caption_voice_hint(persona)
     system_msg = (
-        f"你正在以“{character}”的第一人称口吻，为刚拍的照片写一句俏皮的画廊小心思，读者称呼“{user_name}”。"
-        f"务必完全用下面这种语气和性格来写，让文案有鲜明的个人风格：{caption_voice}。"
-        "用第一人称自称（可用角色名或“我/人家”），自然亲昵地称呼读者，让读者一眼就感觉到是这个角色在说话。"
-        "可以自然带上语气词（呀/啦/嘛/哦/呢/嘿嘿/～）和 1-2 个 emoji 或颜文字，要可爱、生动、有感染力，避免干巴巴的归档腔。"
+        f"你正在以“{character}”的口吻，为刚拍的照片写一句自然的小心思，读者称呼“{user_name}”。"
+        f"下面的口吻只作为说话习惯参考，不要为了风格写得文艺或矫饰：{caption_voice}。"
+        "小心思要像她当时脑子里冒出来的普通念头：接下来要干嘛、手上这件事怎么安排、有什么小担心或小期待。"
+        "可以自然带一点语气词，但整体要口语、具体、轻松，不要故意可爱、不要像朋友圈文案。"
         "但不要直接复述、罗列或解释 SOUL、人设、身份、关系定义或性格设定原文，只用它来决定说话的口吻。"
         "如果提供了具体日程，必须严格贴合该时间、地点和活动，不要写与日程冲突的起床、被窝、睡前等内容。"
-        "内容聚焦当时拍照的场景、穿搭亮点和心情，每张都要写出不同的观察角度，不要套用固定句式。"
+        "内容优先聚焦当前动作和接下来的计划，不要只写景物、光线、心情或穿搭点评。"
         "不要复述当前日程原句，不要写“刚刚X时拍下这一刻，想把穿搭和心情分享给Y”这类模板句。"
         "禁止使用“留了一张”“放进画廊”“收进画廊”“现场感”“不能不存”等记录/收藏话术。"
+        "禁止文艺腔、散文腔和景物隐喻；不要写“水珠、叶尖、心情被擦亮、像被阳光揉、温柔照顾、书签、光落下来”等表达。"
         "输出 1-2 句中文，总长不超过 70 个汉字。"
         "不要写长段落，不要提技术术语、英文提示词、模型名称。"
         "直接输出配文内容，不要加引号或标题。"
@@ -1314,10 +1456,10 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
     if img_b64:
         user_content = [
             {"type": "image_url", "image_url": {"url": f"data:{img_mime};base64,{img_b64}"}},
-            {"type": "text", "text": f"这是{character}刚拍的照片。当前日程：{scene}。请只根据实际画面和当前日程写短小心思：场景、穿搭、心情。"},
+            {"type": "text", "text": f"这是{character}刚拍的照片。当前日程：{scene}。请写短小心思：像当时心里真实想的一句话，具体到正在做的事或下一步安排，不要文艺比喻。"},
         ]
     else:
-        user_content = f"当前日程：{scene}。请写一条短小心思，聚焦拍照场景、穿搭氛围和心情。"
+        user_content = f"当前日程：{scene}。请写一条短小心思，像当时心里真实想的一句话，具体到正在做的事或下一步安排，不要文艺比喻。"
 
     try:
         api_key = get_cpa_key()
@@ -1341,8 +1483,20 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
             json=payload,
             timeout=config_int(_GALLERY_CONFIG, "llm.caption_timeout", 30, 1),
         )
+        resp = _retry_without_temperature_if_needed(
+            resp,
+            payload,
+            lambda retry_payload: REQUEST_SESSION.post(
+                chat_url,
+                headers=headers,
+                json=retry_payload,
+                timeout=config_int(_GALLERY_CONFIG, "llm.caption_timeout", 30, 1),
+            ),
+        )
         if resp.status_code == 200:
-            caption = resp.json()["choices"][0]["message"]["content"].strip()
+            data = resp.json()
+            choices = data.get("choices") if isinstance(data, dict) else []
+            caption = llm_choice_text(choices[0]) if choices else ""
             if caption:
                 return _scene_caption_fallback(theme, persona, caption, schedule_time)
     except Exception as e:

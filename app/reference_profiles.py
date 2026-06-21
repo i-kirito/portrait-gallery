@@ -15,7 +15,7 @@ from urllib.parse import unquote
 
 import requests
 
-from settings import builtin_reference_map, llm_request_config
+from settings import builtin_reference_map, llm_choice_text, llm_request_config, llm_temperature_param_error
 
 REFERENCE_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
 
@@ -289,14 +289,21 @@ def _post_llm(config: dict, data_dir: str, messages: list[dict], max_tokens: int
                 "temperature": temperature,
             }
             resp = requests.post(chat_url, headers=headers, json=payload, timeout=45)
+            if resp.status_code == 400:
+                try:
+                    body = resp.json()
+                except Exception:
+                    body = resp.text
+                if llm_temperature_param_error(body):
+                    payload.pop("temperature", None)
+                    resp = requests.post(chat_url, headers=headers, json=payload, timeout=45)
             if resp.status_code != 200:
                 continue
             data = resp.json()
             choices = data.get("choices") if isinstance(data, dict) else []
             if not choices:
                 continue
-            msg = choices[0].get("message", {})
-            content = (msg.get("content") or msg.get("reasoning_content") or "").strip()
+            content = llm_choice_text(choices[0])
             if content:
                 return content
         except Exception:

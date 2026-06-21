@@ -315,9 +315,9 @@ class PortraitGalleryApp:
         """生成日程 → 生图 → 保存"""
         # 1. 生成日程
         entry = await self.scheduler_gen.generate_today()
-        if not entry or entry.status == "failed":
+        if not entry or entry.status != "ok" or entry.source == "fallback":
             logger.error("日程生成失败")
-            if entry:
+            if entry and entry.source != "fallback":
                 save_schedule_entry(self.data_dir, entry)
             return entry
 
@@ -858,7 +858,7 @@ class PortraitGalleryApp:
 
         if not entry or entry.status != "ok":
             logger.error("日程生成失败")
-            if entry and entry.schedule and entry.schedule != FAILED_SCHEDULE_TEXT:
+            if entry and entry.source != "fallback" and entry.schedule and entry.schedule != FAILED_SCHEDULE_TEXT:
                 save_schedule_entry(self.data_dir, entry)
             return entry
 
@@ -1280,6 +1280,7 @@ class PortraitGalleryApp:
         return (
             isinstance(entry, dict)
             and entry.get("status") == "ok"
+            and entry.get("source") != "fallback"
             and bool((entry.get("schedule") or "").strip())
             and entry.get("schedule") != FAILED_SCHEDULE_TEXT
         )

@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.2.0**
+当前版本：**v1.2.1**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -74,53 +74,21 @@ cd app
 python3 main.py
 ```
 
-#### 方式二：launchd 原生运行（macOS 推荐）
+#### 方式二：Python 后台运行（本机推荐）
 
-1. 创建 plist 文件：
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.hermes.portrait-gallery</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/bin/python3</string>
-        <string>/path/to/portrait-gallery/app/main.py</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>/path/to/portrait-gallery</string>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/path/to/portrait-gallery/logs/launcher.log</string>
-    <key>StandardErrorPath</key>
-    <string>/path/to/portrait-gallery/logs/launcher.log</string>
-</dict>
-</plist>
-```
-
-2. 加载服务：
+`app/run_launch.sh` 会自动定位项目目录、优先使用项目 `.venv`，并设置
+`CONFIG_PATH`、`GALLERY_DATA_DIR` 等运行环境：
 
 ```bash
-# 创建日志目录
-mkdir -p /path/to/portrait-gallery/logs
-
-# 加载服务
-launchctl load ~/Library/LaunchAgents/com.hermes.portrait-gallery.plist
-
-# 启动服务
-launchctl start com.hermes.portrait-gallery
-
-# 查看日志
-tail -f /path/to/portrait-gallery/logs/gallery.log
+nohup ./app/run_launch.sh >/tmp/portrait_gallery_manual_start.log 2>&1 &
+curl http://localhost:18889/api/health
 ```
 
-应用会追加写入 `logs/gallery.log`，重启不会覆盖；日志按天轮转，并自动清理 3 天前的轮转文件。`launcher.log` 只保留启动器自身输出，避免和应用日志重复写入。
+服务启动后，网页设置里的“重启服务”按钮会调用 `/api/restart`，
+由当前 Python 服务拉起新的 Python 进程并退出旧进程；不会拉取代码，
+也不会修改本地配置、API Key、图片或参考图。
+
+应用会追加写入 `logs/gallery.log`，重启不会覆盖；日志按天轮转，并自动清理 3 天前的轮转文件。
 
 ## 📐 架构
 
@@ -300,6 +268,14 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥
 
 ## 🧾 Release Notes
+
+### v1.2.1
+
+- 日程生成失败时不再把本地 fallback 伪装成真实日程，避免 LLM 不可用时误触发定时/即时生图。
+- 统一日程可用性判断：刷新、今日生图、generate-now 和子进程生图都会排除 `source=fallback` 的历史脏数据。
+- 修复发色优先链路：appearance 发色优先，日程发型只决定发型/发饰，并收紧 `light/dark` 发色清洗误伤。
+- 设置页重启回归 Python 模式，`app/run_launch.sh` 会自动加载本地 `.venv`、配置和数据目录，重启不修改本地 Key/URL。
+- 模型测试增加多次轮询和 `temperature` 不兼容自动重试，便于 AxonHub/第三方 OpenAI-compatible 模型排查。
 
 ### v1.2.0
 

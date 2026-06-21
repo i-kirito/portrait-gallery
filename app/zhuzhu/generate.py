@@ -14,6 +14,7 @@ import requests
 from core import (
     CONFIG_PATH,
     SECRETARY_SCHEDULE_PATH,
+    _strip_hair_color_from_schedule_hair,
     build_caption_for_image,
     build_prompt,
     enhance_prompt,
@@ -28,7 +29,7 @@ from generate_gitee import MODEL_NAME as GITEE_MODEL_NAME
 from generate_gitee import generate as generate_with_gitee
 from generate_gptimage import GPTIMAGE_DIRECT_MODEL
 from generate_gptimage import generate as generate_with_gptimage
-from settings import outfit_style_to_prompt_hint, style_reference_filename
+from settings import llm_choice_text, llm_temperature_param_error, outfit_style_to_prompt_hint, style_reference_filename
 
 # Gemini image generation always uses the CPA Base URL config.
 _GEMINI_CPA_MODEL = get_image_model("gemini_model", "gemini-3.1-flash-image")
@@ -131,10 +132,21 @@ def _chat_llm(messages: list[dict], max_tokens: int, temperature: float) -> str:
                 "temperature": temperature,
             }
             resp = requests.post(chat_url, headers=headers, json=payload, timeout=30)
+            if resp.status_code == 400:
+                try:
+                    body = resp.json()
+                except Exception:
+                    body = resp.text
+                if llm_temperature_param_error(body):
+                    payload.pop("temperature", None)
+                    resp = requests.post(chat_url, headers=headers, json=payload, timeout=30)
             if resp.status_code != 200:
                 continue
-            msg = resp.json()["choices"][0]["message"]
-            content = (msg.get("content") or msg.get("reasoning_content") or "").strip()
+            data = resp.json()
+            choices = data.get("choices") if isinstance(data, dict) else []
+            if not choices:
+                continue
+            content = llm_choice_text(choices[0])
             if content:
                 return content
         except Exception as e:
@@ -523,6 +535,8 @@ def _schedule_detail_text(detail: dict) -> str:
     )
     for field, label in labels:
         value = re.sub(r"\s+", " ", str(detail.get(field, ""))).strip(" .")
+        if field == "hair_en":
+            value = _strip_hair_color_from_schedule_hair(value)
         if value:
             parts.append(f"{label}: {value}")
     return ". ".join(parts)
@@ -533,6 +547,7 @@ def _schedule_detail_keywords(detail: dict, fallback_outfit: str = "") -> tuple[
         return fallback_outfit, "", ""
     outfit = re.sub(r"\s+", " ", str(detail.get("outfit_en", "") or fallback_outfit)).strip()
     hair = re.sub(r"\s+", " ", str(detail.get("hair_en", ""))).strip()
+    hair = _strip_hair_color_from_schedule_hair(hair)
     scene_parts = []
     for field in ("scene_en", "props_en", "lighting_en"):
         value = re.sub(r"\s+", " ", str(detail.get(field, ""))).strip(" .")
@@ -590,6 +605,15 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "", schedule
                 data = json.load(f)
         except (json.JSONDecodeError, OSError):
             data = {}
+
+    def _usable_daily_schedule(entry: dict) -> bool:
+        return (
+            isinstance(entry, dict)
+            and entry.get("source") != "fallback"
+            and entry.get("status", "ok") == "ok"
+            and bool(str(entry.get("schedule") or "").strip())
+            and entry.get("schedule") != "生成失败"
+        )
     
     # Search for schedule: first try date key, then scan all entries for today
     schedule = ""
@@ -599,7 +623,7 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "", schedule
     scene_kw = ""
     schedule_details = []
     daily = data.get(today_str)
-    if daily and daily.get("schedule") and daily["schedule"] not in ("生成失败", ""):
+    if _usable_daily_schedule(daily):
         schedule = daily["schedule"]
         schedule_prompt = daily.get("schedule_prompt", "") or daily["schedule"]
         outfit_info = daily.get("outfit", "")
@@ -615,8 +639,7 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "", schedule
             if (
                 not entry.get("image_filename")
                 and entry.get("date") == today_str
-                and entry.get("schedule")
-                and entry["schedule"] not in ("生成失败", "")
+                and _usable_daily_schedule(entry)
             ):
                 schedule = entry["schedule"]
                 schedule_prompt = entry.get("schedule_prompt", "") or entry["schedule"]
@@ -627,6 +650,10 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "", schedule
                 break
 
     detail_by_time = _schedule_detail_map(schedule_details)
+
+    if schedule_time_override and not schedule and not schedule_detail_override:
+        print("📋 No usable daily LLM schedule found for schedule override; skipping schedule action injection", file=sys.stderr)
+        return "", "", "", "", ""
 
     if schedule_time_override:
         raw_slot, activity = _normalize_schedule_slot(schedule_time_override)

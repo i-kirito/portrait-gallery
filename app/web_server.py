@@ -6,6 +6,7 @@ import ipaddress
 import json
 import logging
 import os
+import shlex
 import shutil
 import sys
 import subprocess
@@ -39,7 +40,10 @@ from settings import (
     build_child_env,
     configured_python,
     image_process_timeout,
+    llm_choice_text,
     llm_request_config,
+    llm_response_excerpt,
+    llm_temperature_param_error,
     load_enabled_outfit_styles,
     load_runtime_persona,
     normalize_chat_url,
@@ -183,6 +187,7 @@ class GalleryServer:
         self.picxazz_sync = PicxazzSyncClient(config, data_dir)
         self._image_info_cache = {}
         self._wardrobe_image_locks: dict[str, asyncio.Lock] = {}
+        self._restart_scheduled = False
         os.makedirs(self.default_image_dir, exist_ok=True)
         os.makedirs(self.image_dir, exist_ok=True)
         os.makedirs(self.reference_dir, exist_ok=True)
@@ -298,10 +303,12 @@ class GalleryServer:
         self.app.router.add_post("/api/hermes/check-update", self.handle_hermes_check_update)
         self.app.router.add_get("/api/hermes/update", self.handle_hermes_check_update)
         self.app.router.add_post("/api/hermes/update", self.handle_hermes_update)
+        self.app.router.add_post("/api/hermes/restart", self.handle_hermes_restart)
         # 版本管理
         self.app.router.add_get("/api/version", self.handle_version)
         self.app.router.add_post("/api/check-update", self.handle_check_update)
         self.app.router.add_post("/api/update", self.handle_update)
+        self.app.router.add_post("/api/restart", self.handle_restart)
         # 日程彩蛋
         self.app.router.add_get("/api/schedule-detail", self.handle_schedule_detail)
         self.app.router.add_get("/api/photo-jobs", self.handle_photo_jobs)
@@ -335,6 +342,83 @@ class GalleryServer:
 
     async def handle_health(self, request: web.Request):
         return web.json_response({"status": "ok"})
+
+    def _schedule_python_restart(self, reason: str = "manual", delay: float = 0.8) -> tuple[bool, str]:
+        if self._restart_scheduled:
+            return True, "服务重启已在执行中。"
+
+        project_root = resolve_project_root(self.config_path, self.config)
+        run_script = project_root / "app" / "run_launch.sh"
+        if not run_script.is_file():
+            return False, f"找不到 Python 启动脚本：{run_script}"
+        log_path = project_root / "logs" / "gallery.log"
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            return False, f"无法创建日志目录：{e}"
+
+        child_delay = max(0.3, delay + 0.4)
+        command = (
+            f"sleep {child_delay:.1f}; "
+            f"cd {shlex.quote(str(project_root))}; "
+            f"exec {shlex.quote(str(run_script))} >> {shlex.quote(str(log_path))} 2>&1"
+        )
+        env = self._child_env()
+        self._restart_scheduled = True
+        try:
+            subprocess.Popen(
+                ["/bin/zsh", "-lc", command],
+                cwd=str(project_root),
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError as e:
+            self._restart_scheduled = False
+            return False, f"启动 Python 重启进程失败：{e}"
+
+        logger.warning("Python 服务重启已安排: reason=%s delay=%.1fs script=%s", reason, delay, run_script)
+        loop = asyncio.get_running_loop()
+        loop.call_later(max(0.1, delay), lambda: os._exit(0))
+        return True, "服务即将以 Python 模式重启，不会拉取代码或修改本地设置。"
+
+    async def handle_restart(self, request: web.Request):
+        """Restart the Python service without git or config changes."""
+        scheduled, message = self._schedule_python_restart("api_restart")
+        return web.json_response(
+            {
+                "status": "ok" if scheduled else "restart_failed",
+                "restart_scheduled": bool(scheduled),
+                "will_restart": bool(scheduled),
+                "service_manager": "python",
+                "message": message,
+            },
+            status=202 if scheduled else 500,
+        )
+
+    async def handle_hermes_restart(self, request: web.Request):
+        """Hermes-friendly Python restart endpoint."""
+        scheduled, message = self._schedule_python_restart("hermes_api_restart")
+        return web.json_response(
+            {
+                "api": "hermes_restart",
+                "status": "ok" if scheduled else "restart_failed",
+                "restart_scheduled": bool(scheduled),
+                "will_restart": bool(scheduled),
+                "service_manager": "python",
+                "message": message,
+                "preserves": [
+                    "git working tree",
+                    "config/config.yaml",
+                    "data/",
+                    "logs/",
+                    "API Key / Base URL / appearance",
+                ],
+            },
+            status=202 if scheduled else 500,
+        )
 
     def _log_file_candidates(self) -> list[str]:
         candidates = []
@@ -2256,9 +2340,6 @@ class GalleryServer:
                 if source == "preserved":
                     status_text = "preserved"
                     message = "LLM 暂不可用，已保留当前今日日程。"
-                elif source == "fallback":
-                    status_text = "fallback"
-                    message = "LLM 暂不可用，已使用本地兜底日程。"
                 else:
                     status_text = "ok"
                     message = "日程已刷新。"
@@ -2607,7 +2688,7 @@ class GalleryServer:
         if not parts:
             return ""
 
-        caption = "今天想过得松一点：" + "，".join(parts) + "，慢慢把心放下来。"
+        caption = "今天先按这个节奏来：" + "，".join(parts) + "，别把事情都拖到最后。"
         return caption[:90].rstrip("，,。.!！?；;、") + "。"
 
     @staticmethod
@@ -2619,6 +2700,7 @@ class GalleryServer:
             "主人", "亲一口", "抱抱", "怀里", "来找我玩", "被夸",
             "美照", "自拍", "拍照", "照片", "画面", "造型", "画廊",
             "记录", "收藏", "穿得这么", "好看", "性感",
+            "水珠", "叶尖", "擦亮", "像被阳光揉", "温柔照顾", "书签", "光落下来",
         )
         if any(marker in text for marker in bad_markers):
             return False
@@ -2637,6 +2719,7 @@ class GalleryServer:
             and bool((entry.get("schedule") or "").strip())
             and entry.get("schedule") != FAILED_SCHEDULE_TEXT
             and entry.get("status") == "ok"
+            and entry.get("source") != "fallback"
         )
 
     @staticmethod
@@ -3360,6 +3443,33 @@ class GalleryServer:
             return data.strip()[:500]
         return f"HTTP {resp.status}"
 
+    @staticmethod
+    def _llm_test_failure_summary(attempts: list[dict]) -> str:
+        if not attempts:
+            return ""
+        parts = []
+        for item in attempts[-5:]:
+            index = item.get("attempt", "?")
+            status = item.get("status")
+            detail = str(item.get("detail") or "").strip()
+            message = str(item.get("message") or "").strip()
+            text = detail or message
+            if status:
+                head = f"第 {index} 次 HTTP {status}"
+            else:
+                head = f"第 {index} 次"
+            if text:
+                parts.append(f"{head}: {text[:160]}")
+            else:
+                parts.append(head)
+        return "；".join(parts)
+
+    @staticmethod
+    def _llm_test_final_message(failures: list[dict], attempts: int) -> str:
+        if failures and all(item.get("kind") == "empty_content" for item in failures):
+            return f"原始接口已连通，但连续 {attempts} 次没有返回可读取文本；日程生成需要文本内容。"
+        return f"模型连续测试 {attempts} 次都失败。"
+
     async def handle_test_llm_model(self, request: web.Request):
         """Send a tiny chat completion request to verify the selected schedule LLM model."""
         try:
@@ -3387,6 +3497,16 @@ class GalleryServer:
                     "success": False,
                     "message": "未选择要测试的日程生成模型。",
                 }, status=400)
+            try:
+                attempts = int(body.get("attempts") or 5)
+            except (TypeError, ValueError):
+                attempts = 5
+            attempts = max(1, min(8, attempts))
+            try:
+                timeout_seconds = int(body.get("timeout_seconds") or 12)
+            except (TypeError, ValueError):
+                timeout_seconds = 12
+            timeout_seconds = max(5, min(20, timeout_seconds))
 
             headers = {"Content-Type": "application/json"}
             if api_key:
@@ -3399,57 +3519,110 @@ class GalleryServer:
                 "max_tokens": 16,
                 "temperature": 0,
             }
-            started = time.monotonic()
-            timeout = aiohttp.ClientTimeout(total=20)
+            failures = []
+            timeout = aiohttp.ClientTimeout(total=timeout_seconds)
             async with aiohttp.ClientSession(trust_env=True, timeout=timeout) as session:
-                async with session.post(chat_url, headers=headers, json=payload) as resp:
-                    elapsed_ms = int((time.monotonic() - started) * 1000)
+                for attempt in range(1, attempts + 1):
+                    started = time.monotonic()
                     try:
-                        data = await resp.json()
-                    except Exception:
-                        data = await resp.text()
-                    if resp.status != 200:
-                        detail = self._llm_test_response_error(resp, data)
-                        return web.json_response({
-                            "success": False,
-                            "model": model,
-                            "status": resp.status,
-                            "latency_ms": elapsed_ms,
-                            "message": f"模型不可用：HTTP {resp.status}",
-                            "detail": detail,
-                        }, status=200)
-                    choices = data.get("choices") if isinstance(data, dict) else None
-                    if not choices:
-                        detail = self._llm_test_response_error(resp, data)
-                        return web.json_response({
-                            "success": False,
-                            "model": model,
-                            "status": resp.status,
-                            "latency_ms": elapsed_ms,
-                            "message": "模型返回格式不完整，没有 choices。",
-                            "detail": detail,
-                        }, status=200)
-                    msg = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
-                    content = str(msg.get("content") or msg.get("reasoning_content") or "").strip()
-                    if not content:
-                        return web.json_response({
-                            "success": False,
-                            "model": model,
-                            "status": resp.status,
-                            "latency_ms": elapsed_ms,
-                            "message": "模型有响应，但内容为空。",
-                        }, status=200)
-                    return web.json_response({
-                        "success": True,
-                        "model": model,
-                        "latency_ms": elapsed_ms,
-                        "message": f"模型可用，响应 {elapsed_ms}ms。",
-                        "reply": content[:80],
-                    })
+                        async with session.post(chat_url, headers=headers, json=payload) as resp:
+                            elapsed_ms = int((time.monotonic() - started) * 1000)
+                            try:
+                                data = await resp.json()
+                            except Exception:
+                                data = await resp.text()
+                            adjusted = False
+                            if (
+                                resp.status == 400
+                                and "temperature" in payload
+                                and llm_temperature_param_error(data)
+                            ):
+                                retry_payload = dict(payload)
+                                retry_payload.pop("temperature", None)
+                                adjusted = True
+                                started = time.monotonic()
+                                async with session.post(chat_url, headers=headers, json=retry_payload) as retry_resp:
+                                    elapsed_ms = int((time.monotonic() - started) * 1000)
+                                    try:
+                                        data = await retry_resp.json()
+                                    except Exception:
+                                        data = await retry_resp.text()
+                                    resp = retry_resp
+                            if resp.status != 200:
+                                detail = self._llm_test_response_error(resp, data)
+                                failures.append({
+                                    "attempt": attempt,
+                                    "status": resp.status,
+                                    "latency_ms": elapsed_ms,
+                                    "message": f"HTTP {resp.status}",
+                                    "detail": detail,
+                                    "adjusted_temperature": adjusted,
+                                })
+                            else:
+                                choices = data.get("choices") if isinstance(data, dict) else None
+                                if not choices:
+                                    detail = self._llm_test_response_error(resp, data)
+                                    failures.append({
+                                        "attempt": attempt,
+                                        "kind": "invalid_response",
+                                        "status": resp.status,
+                                        "latency_ms": elapsed_ms,
+                                        "message": "模型返回格式不完整，没有 choices",
+                                        "detail": detail,
+                                    })
+                                else:
+                                    content = llm_choice_text(choices[0])
+                                    if not content:
+                                        failures.append({
+                                            "attempt": attempt,
+                                            "kind": "empty_content",
+                                            "status": resp.status,
+                                            "latency_ms": elapsed_ms,
+                                            "message": "接口连通，但未返回可读取文本",
+                                            "detail": llm_response_excerpt(data),
+                                        })
+                                    else:
+                                        return web.json_response({
+                                            "success": True,
+                                            "model": model,
+                                            "attempt": attempt,
+                                            "attempts": attempts,
+                                            "failed_attempts": failures[-3:],
+                                            "adjusted_temperature": adjusted,
+                                            "latency_ms": elapsed_ms,
+                                            "message": (
+                                                f"模型可用，第 {attempt}/{attempts} 次测试成功，响应 {elapsed_ms}ms。"
+                                                + ("已自动去掉 temperature 参数。" if adjusted else "")
+                                            ),
+                                            "reply": content[:80],
+                                        })
+                    except asyncio.TimeoutError:
+                        failures.append({
+                            "attempt": attempt,
+                            "message": f"测试超时：{timeout_seconds} 秒内没有收到模型响应",
+                        })
+                    except Exception as exc:
+                        failures.append({
+                            "attempt": attempt,
+                            "message": f"请求失败：{exc}",
+                        })
+                    if attempt < attempts:
+                        await asyncio.sleep(0.35)
+
+            detail = self._llm_test_failure_summary(failures)
+            return web.json_response({
+                "success": False,
+                "model": model,
+                "reachable": any(item.get("status") == 200 for item in failures),
+                "attempts": attempts,
+                "failed_attempts": failures[-5:],
+                "message": self._llm_test_final_message(failures, attempts),
+                "detail": detail,
+            }, status=200)
         except asyncio.TimeoutError:
             return web.json_response({
                 "success": False,
-                "message": "测试超时：20 秒内没有收到模型响应。",
+                "message": "测试超时：没有收到模型响应。",
             }, status=200)
         except Exception as e:
             logger.error(f"Test LLM model error: {e}")
@@ -4599,7 +4772,16 @@ JSON 格式：
                 "max_tokens": 900,
                 "temperature": 0.25,
             }
-            return requests.post(chat_url, headers=headers, json=payload, timeout=45)
+            resp = requests.post(chat_url, headers=headers, json=payload, timeout=45)
+            if resp.status_code == 400:
+                try:
+                    body = resp.json()
+                except Exception:
+                    body = resp.text
+                if llm_temperature_param_error(body):
+                    payload.pop("temperature", None)
+                    return requests.post(chat_url, headers=headers, json=payload, timeout=45)
+            return resp
 
         loop = asyncio.get_running_loop()
         for model in models:
@@ -4630,8 +4812,7 @@ JSON 格式：
                 if not choices:
                     logger.warning("Generate-now LLM inference invalid response: model=%s", model)
                     continue
-                msg = choices[0]["message"]
-                content = (msg.get("content") or msg.get("reasoning_content") or "").strip()
+                content = llm_choice_text(choices[0])
                 parsed = self._parse_generate_now_detail(content, now_str)
                 if parsed:
                     merged = dict(fallback)
@@ -5444,8 +5625,13 @@ JSON 格式：
 
         response["message"] = "更新成功，服务即将重启；本地 API Key、Base URL、appearance、图片和参考图已保留"
         if restart:
-            loop = asyncio.get_running_loop()
-            loop.call_later(1.0, lambda: os.execv(sys.executable, [sys.executable] + sys.argv))
+            scheduled, restart_message = self._schedule_python_restart("safe_update", delay=1.0)
+            response["will_restart"] = bool(scheduled)
+            response["message"] = (
+                "更新成功，服务即将以 Python 模式重启；本地 API Key、Base URL、appearance、图片和参考图已保留"
+                if scheduled
+                else f"更新成功，但未能自动重启：{restart_message}"
+            )
         else:
             response["message"] = "更新成功；本地 API Key、Base URL、appearance、图片和参考图已保留"
         return response, 200

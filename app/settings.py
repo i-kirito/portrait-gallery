@@ -954,6 +954,97 @@ def merge_no_proxy(*values: Any) -> str:
     return ",".join(merged)
 
 
+def llm_temperature_param_error(value: Any) -> bool:
+    """Return True when an OpenAI-compatible endpoint rejects temperature."""
+    if isinstance(value, dict):
+        chunks: list[str] = []
+        error = value.get("error")
+        if isinstance(error, dict):
+            chunks.extend(str(error.get(key) or "") for key in ("message", "code", "type"))
+        for key in ("message", "msg", "detail", "error"):
+            item = value.get(key)
+            if item:
+                chunks.append(str(item))
+        text = " ".join(chunks) or json.dumps(value, ensure_ascii=False)
+    else:
+        text = str(value or "")
+    lower = text.lower()
+    if "temperature" not in lower:
+        return False
+    return any(
+        marker in lower
+        for marker in (
+            "deprecated",
+            "not supported",
+            "unsupported",
+            "not allowed",
+            "unrecognized",
+            "unknown parameter",
+            "invalid parameter",
+        )
+    )
+
+
+def llm_text_from_value(value: Any) -> str:
+    """Extract readable text from common OpenAI-compatible content shapes."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float, bool)):
+        return str(value).strip()
+    if isinstance(value, list):
+        parts = [llm_text_from_value(item) for item in value]
+        return "\n".join(part for part in parts if part).strip()
+    if isinstance(value, dict):
+        for key in ("text", "content", "value", "output_text", "reasoning_content"):
+            text = llm_text_from_value(value.get(key))
+            if text:
+                return text
+    return ""
+
+
+def llm_choice_text(choice: Any) -> str:
+    """Extract text from one chat completion choice."""
+    if not isinstance(choice, dict):
+        return llm_text_from_value(choice)
+    message = choice.get("message")
+    if isinstance(message, dict):
+        text = (
+            llm_text_from_value(message.get("content"))
+            or llm_text_from_value(message.get("reasoning_content"))
+            or llm_text_from_value(message.get("text"))
+        )
+        if text:
+            return text
+    delta = choice.get("delta")
+    if isinstance(delta, dict):
+        text = (
+            llm_text_from_value(delta.get("content"))
+            or llm_text_from_value(delta.get("reasoning_content"))
+            or llm_text_from_value(delta.get("text"))
+        )
+        if text:
+            return text
+    return (
+        llm_text_from_value(choice.get("text"))
+        or llm_text_from_value(choice.get("content"))
+        or llm_text_from_value(choice.get("reasoning_content"))
+    )
+
+
+def llm_response_excerpt(value: Any, limit: int = 500) -> str:
+    """Return a compact raw-response excerpt for diagnostics."""
+    if isinstance(value, str):
+        text = value.strip()
+    else:
+        try:
+            text = json.dumps(value, ensure_ascii=False)
+        except Exception:
+            text = str(value or "")
+    return text[:max(80, limit)].strip()
+
+
 def llm_request_config(config: dict, data_dir: str) -> dict:
     keys = load_json_file(api_keys_path(data_dir))
     base_url = (

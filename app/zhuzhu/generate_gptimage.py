@@ -288,8 +288,9 @@ def _generate_via_images_api(prompt: str, ref_image: Optional[str], size: Option
         else:
             edit_prompt += (
                 "\n[IMPORTANT] Use the reference image ONLY as a facial/style reference. "
-                "Do NOT copy the hairstyle, clothing, pose, body posture, hand gestures, gaze direction, camera angle, framing, background, lighting, or expression "
-                "unless the text description explicitly asks for them."
+                "Do NOT copy the hairstyle, hair color, hair accessories, clothing, pose, body posture, hand gestures, gaze direction, camera angle, framing, background, lighting, or expression "
+                "unless the text description explicitly asks for them. "
+                "If the text says the hair must be a specific color or hairstyle, that text is absolute and overrides the reference image completely, even when the reference image shows pink, red, light, or otherwise different hair."
             )
 
     for attempt in range(MAX_RETRIES):
@@ -401,7 +402,7 @@ def _generate_via_chat_gpt(prompt: str, ref_image: Optional[str] = None, size: O
             if _is_wardrobe_reference(ref_image):
                 face_instruction = "\n[IMPORTANT] Use the reference image ONLY as an outfit reference. Recreate the clothing pieces, layering, silhouette, colors, materials, accessories, footwear, and displayed wig hairstyle from the reference image on the person described in the text. Do NOT treat the reference image as a face reference, and do NOT copy any pose, body posture, gaze direction, camera angle, framing, background, lighting, or expression from it."
             else:
-                face_instruction = "\n[IMPORTANT] Use the reference image ONLY as a facial reference. Focus on matching the face shape, facial structure, and overall facial features to achieve high similarity with the person in the reference image. Do NOT copy or reference the hairstyle, hair color, hair accessories, clothing, outfit, pose, body posture, hand gestures, gaze direction, camera angle, framing, background, lighting, or any other non-facial elements from the reference image. All of these must strictly follow the text description above. Do NOT copy the facial expression, mouth shape, tongue, or grin from the reference image — the expression must also strictly follow the text description."
+                face_instruction = "\n[IMPORTANT] Use the reference image ONLY as a facial reference. Focus on matching the face shape, facial structure, and overall facial features to achieve high similarity with the person in the reference image. Do NOT copy or reference the hairstyle, hair color, hair accessories, clothing, outfit, pose, body posture, hand gestures, gaze direction, camera angle, framing, background, lighting, or any other non-facial elements from the reference image. All of these must strictly follow the text description above. If the text says the hair must be a specific color or hairstyle, that text is absolute and overrides the reference image completely, even when the reference image shows pink, red, light, or otherwise different hair. Do NOT copy the facial expression, mouth shape, tongue, or grin from the reference image — the expression must also strictly follow the text description."
             content = [
                 {"type": "image_url", "image_url": {"url": compressed_img}},
                 {"type": "text", "text": prompt + face_instruction},

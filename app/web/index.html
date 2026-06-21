@@ -825,14 +825,16 @@ textarea:focus-visible,
 .sk-footer-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
+  align-items: end;
+  gap: 16px;
   width: 100%;
 }
 .sk-actions {
   display: flex;
   gap: 10px;
   justify-content: flex-end;
+  align-items: center;
+  padding-bottom: 1px;
 }
 .sk-actions .btn {
   padding: 10px 18px;
@@ -847,19 +849,36 @@ textarea:focus-visible,
 }
 .sk-actions .btn-secondary:hover { background: #eee; }
 .sk-update-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  grid-template-areas:
+    "version version"
+    "check restart";
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  justify-content: start;
+  gap: 7px 8px;
   min-width: 0;
+  max-width: 100%;
 }
 .sk-update-row .btn {
-  padding: 10px 12px;
-  min-width: 104px;
+  padding: 9px 12px;
+  min-width: 100px;
+  min-height: 36px;
+  font-size: 13px;
+  border-radius: 999px;
+}
+#checkUpdateBtn { grid-area: check; }
+#restartServiceBtn { grid-area: restart; }
+.sk-update-row .btn-secondary {
+  background: #eef7ff;
+  border-color: #d7e9f8;
+  color: #486274;
 }
 .sk-version-text {
+  grid-area: version;
   font-size: 12px;
-  color: #999;
+  line-height: 1.2;
+  color: #8b94a3;
   white-space: nowrap;
 }
 .sk-update-result {
@@ -921,6 +940,13 @@ textarea:focus-visible,
   .sk-actions,
   .sk-update-row {
     width: 100%;
+  }
+  .sk-update-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .sk-update-row .btn {
+    width: 100%;
+    min-width: 0;
   }
   .sk-actions .btn { flex: 1; }
   .sk-segmented,
@@ -2992,7 +3018,7 @@ textarea:focus-visible,
 
 <div class="header">
   <div class="header-left">
-      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.2.0</span></h1>
+      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.2.1</span></h1>
   </div>
   <div class="tabs">
     <button class="tab" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="showUnfavoriteGallery(event)"><span class="tab-label">✨ 全部</span><span class="tab-badge" id="badge-all">0</span></button>
@@ -3237,7 +3263,8 @@ textarea:focus-visible,
       <div class="sk-footer-main">
         <div class="sk-update-row">
           <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
-          <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.2.0</span></span>
+          <button class="btn btn-secondary" id="restartServiceBtn" onclick="restartService()">🔄 重启服务</button>
+          <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.2.1</span></span>
         </div>
         <div class="sk-actions">
           <button class="btn btn-secondary" onclick="closeSettings()">关闭</button>
@@ -5941,15 +5968,15 @@ async function testLlmModel() {
 
   if (btn) {
     btn.disabled = true;
-    btn.textContent = "测试中...";
+    btn.textContent = "轮询中...";
   }
   if (status) {
-    status.textContent = "正在测试 " + model + "...";
+    status.textContent = "正在轮询测试 " + model + "，单次上游失败会继续重试...";
     status.className = "sk-status unset";
   }
 
   try {
-    const payload = { model };
+    const payload = { model, attempts: 5, timeout_seconds: 12 };
     if (cpaUrl) payload.cpa_url = cpaUrl;
     if (cpaKey) payload.cpa_key = cpaKey;
     const res = await fetch(`${API}/api/models/test`, {
@@ -5962,8 +5989,9 @@ async function testLlmModel() {
     const detail = data.detail ? "：" + data.detail : "";
     if (data.success) {
       const latency = data.latency_ms ? ` · ${data.latency_ms}ms` : "";
+      const attempt = data.attempt && data.attempts ? ` · 第 ${data.attempt}/${data.attempts} 次命中` : "";
       if (status) {
-        status.textContent = "✓ 模型可用: " + (data.model || model) + latency;
+        status.textContent = "✓ 模型可用: " + (data.model || model) + latency + attempt;
         status.className = "sk-status set";
       }
       showToast("✅ 模型可用");
@@ -6160,6 +6188,73 @@ async function applyUpdate() {
     }
   } catch(e) {
     resultDiv.innerHTML = `<div class="sk-update-pill error">❌ 更新失败: ${e.message}</div>`;
+  }
+}
+
+function waitForServiceOnline(resultDiv, timeoutMs = 12000) {
+  const start = Date.now();
+  const poll = async () => {
+    try {
+      const res = await fetch(`${API}/api/health?restart_check=${Date.now()}`, { cache: "no-store" });
+      if (res.ok) {
+        if (resultDiv) {
+          resultDiv.innerHTML = `<div class="sk-update-pill ok">✅ 服务已恢复，正在刷新...</div>`;
+        }
+        setTimeout(() => location.reload(), 500);
+        return;
+      }
+    } catch(e) {
+      // Service may be between execv and bind; keep polling briefly.
+    }
+    if (Date.now() - start >= timeoutMs) {
+      if (resultDiv) {
+        resultDiv.innerHTML = `<div class="sk-update-pill error">⚠️ 还没确认服务恢复，正在刷新重试...</div>`;
+      }
+      setTimeout(() => location.reload(), 800);
+      return;
+    }
+    setTimeout(poll, 700);
+  };
+  setTimeout(poll, 1200);
+}
+
+async function restartService() {
+  const btn = document.getElementById("restartServiceBtn");
+  const resultDiv = document.getElementById("updateResult");
+  if (!btn || !resultDiv) return;
+
+  if (!confirm("确定要重启服务吗？这只会重载当前进程，不会拉取代码，也不会修改本地设置。")) return;
+
+  btn.disabled = true;
+  btn.textContent = "⏳ 重启中...";
+  resultDiv.innerHTML = `<div class="sk-update-pill ok">⏳ 正在请求服务重启...</div>`;
+
+  try {
+    const res = await fetch(`${API}/api/restart`, { method: "POST" });
+    const rawText = await res.text();
+    let data = {};
+    if (rawText) {
+      try {
+        data = JSON.parse(rawText);
+      } catch(e) {
+        data = { error: rawText };
+      }
+    }
+    if (!res.ok || data.error) {
+      const message = res.status === 404
+        ? "当前后端还没加载重启接口，请先用 app/run_launch.sh 启动一次；之后这个按钮会按 Python 模式重启。"
+        : (data.message || data.error || `HTTP ${res.status}`);
+      resultDiv.innerHTML = `<div class="sk-update-pill error">❌ ${escapeHtml(message)}</div>`;
+      btn.disabled = false;
+      btn.textContent = "🔄 重启服务";
+      return;
+    }
+    resultDiv.innerHTML = `<div class="sk-update-pill ok">✅ ${escapeHtml(data.message || "服务即将重启")}</div>`;
+    waitForServiceOnline(resultDiv);
+  } catch(e) {
+    resultDiv.innerHTML = `<div class="sk-update-pill error">❌ 重启失败: ${escapeHtml(e.message || "未知错误")}</div>`;
+    btn.disabled = false;
+    btn.textContent = "🔄 重启服务";
   }
 }
 
