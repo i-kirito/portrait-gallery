@@ -3869,7 +3869,11 @@ function extractOutfitText(outfit) {
 
 function renderCaptionLinks(caption) {
   if (!caption) return "";
-  return String(caption).replace(/#([^\s#]+)/g, '<a class="tag-link" href="#" onclick="filterByTag(\'$1\'); return false;">' + '#' + '$1</a>');
+  const escaped = escapeHtml(String(caption));
+  return escaped.replace(/#([^\s#]+)/g, function(match, tag) {
+    const safeTag = escapeAttr(tag);
+    return '<a class="tag-link" href="#" onclick="filterByTag(\'' + safeTag + '\'); return false;">#' + tag + '</a>';
+  });
 }
 
 function renderThoughtBlock(caption, className = "tc-thought") {
@@ -4015,8 +4019,8 @@ function renderToday() {
       if (slots.length) {
         schedHtml = slots.map(slot => {
           const m = slot.match(/^(\d{1,2}:\d{2})\s*(.*)/);
-          if (m) return `<div class="sched-item"><span class="sched-label">${m[1]}</span><span class="sched-text">${m[2].trim()}</span></div>`;
-          return `<div class="sched-item"><span class="sched-text">${slot}</span></div>`;
+          if (m) return `<div class="sched-item"><span class="sched-label">${escapeHtml(m[1])}</span><span class="sched-text">${escapeHtml(m[2].trim())}</span></div>`;
+          return `<div class="sched-item"><span class="sched-text">${escapeHtml(slot)}</span></div>`;
         }).join('');
       }
     }
@@ -4594,7 +4598,9 @@ function openModal(e) {
   if (!e.image_filename) return;
   currentModalImg = e.image_filename;
   resetModalDetailHeight();
-  document.getElementById("modalImageWrap").innerHTML = `<img src="/images/${e.image_filename}" alt="${e.caption || appDisplay.shareTitle}" decoding="async" onclick="openFullscreenImg('/images/${e.image_filename}')">`;
+  const modalImgFilename = escapeAttr(e.image_filename);
+  const modalAltText = escapeAttr(e.caption || appDisplay.shareTitle);
+  document.getElementById("modalImageWrap").innerHTML = `<img src="/images/${modalImgFilename}" alt="${modalAltText}" decoding="async" onclick="openFullscreenImg('/images/${modalImgFilename}')">`;
   const modalImg = document.querySelector("#modalImageWrap img");
   if (modalImg) modalImg.onload = syncModalDetailHeight;
   document.getElementById("modalDate").textContent = formatDate(e.date) + (e.time ? ' ' + e.time : '');
@@ -4620,12 +4626,12 @@ function openModal(e) {
     ? `<button type="button" class="outfit-magic-btn" onclick="quickCustomImg2ImgFromModal(event,this)" title="用自定义输入框提示词图生图" aria-label="用自定义输入框提示词图生图"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i></button>`
     : "";
   document.getElementById("modalOutfit").innerHTML = e.outfit
-    ? `<span class="outfit-label">${modalOutfitLabel(e)}</span><span class="outfit-divider">|</span><span class="outfit-text">${extractOutfitText(e.outfit)}</span>${outfitMagicBtn}`
+    ? `<span class="outfit-label">${modalOutfitLabel(e)}</span><span class="outfit-divider">|</span><span class="outfit-text">${escapeHtml(extractOutfitText(e.outfit))}</span>${outfitMagicBtn}`
     : '--';
   // Schedule
   const schedEl = document.getElementById("modalSchedule");
   if (e.schedule_time) {
-    schedEl.innerHTML = `<div class="sched-item"><span class="sched-text">${e.schedule_time}</span></div>`;
+    schedEl.innerHTML = `<div class="sched-item"><span class="sched-text">${escapeHtml(e.schedule_time)}</span></div>`;
     schedEl.style.display = "block";
   } else if (e.schedule) {
     const parsed = parseSchedule(e.schedule);
@@ -4633,21 +4639,21 @@ function openModal(e) {
       schedEl.innerHTML = parsed.items.map(item => {
         const label = item.time || item.icon;
         const text = item.text;
-        if (label) return `<div class="sched-item"><span class="sched-label">${label}</span><span class="sched-text">${text}</span></div>`;
-        return `<div class="sched-item"><span class="sched-text">${text}</span></div>`;
+        if (label) return `<div class="sched-item"><span class="sched-label">${escapeHtml(label)}</span><span class="sched-text">${escapeHtml(text)}</span></div>`;
+        return `<div class="sched-item"><span class="sched-text">${escapeHtml(text)}</span></div>`;
       }).join('');
       schedEl.style.display = "block";
     } else {
       const contextText = modalSourceContext(e);
       if (contextText) {
-        schedEl.innerHTML = `<div class="sched-item modal-source-item"><span class="sched-label">来源</span><span class="sched-text">${contextText}</span></div>`;
+        schedEl.innerHTML = `<div class="sched-item modal-source-item"><span class="sched-label">来源</span><span class="sched-text">${escapeHtml(contextText)}</span></div>`;
         schedEl.style.display = "block";
       } else { schedEl.style.display = "none"; }
     }
   } else {
     const contextText = modalSourceContext(e);
     if (contextText) {
-      schedEl.innerHTML = `<div class="sched-item modal-source-item"><span class="sched-label">来源</span><span class="sched-text">${contextText}</span></div>`;
+      schedEl.innerHTML = `<div class="sched-item modal-source-item"><span class="sched-label">来源</span><span class="sched-text">${escapeHtml(contextText)}</span></div>`;
       schedEl.style.display = "block";
     } else { schedEl.style.display = "none"; }
   }
