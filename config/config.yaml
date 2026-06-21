@@ -69,6 +69,7 @@ integrations:
   send_enabled: true
   push_channel: wechat
   hermes_cli: ''
+  openclaw_cli: ''
   wechat_target: weixin
 update:
   github_api: ''

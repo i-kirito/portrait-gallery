@@ -2365,6 +2365,15 @@ class GalleryServer:
             "gpt_base_url": local_gpt_base_url or default_gpt_base_url,
             "gpt_base_url_local": local_gpt_base_url,
             "gpt_base_url_default": default_gpt_base_url,
+            "gpt_image_endpoints": [
+                {
+                    "label": str(ep.get("label", "") or "").strip(),
+                    "base_url": str(ep.get("base_url", "") or "").strip(),
+                    "api_key": self._mask_key(str(ep.get("api_key", "") or "")),
+                }
+                for ep in (keys_config.get("gpt_image_endpoints") or [])
+                if isinstance(ep, dict)
+            ],
             "cpa_url": local_cpa_url or default_cpa_url,
             "cpa_url_local": local_cpa_url,
             "cpa_url_default": default_cpa_url,
@@ -2398,6 +2407,8 @@ class GalleryServer:
             "push_channel": push_channel,
             "push_channel_local": normalize_push_channel(local_push_channel_raw) if local_push_channel_raw else "",
             "push_agent": push_agent,
+            "hermes_cli": str((integrations.get("hermes_cli") or "") or "").strip(),
+            "openclaw_cli": str((integrations.get("openclaw_cli") or "") or "").strip(),
         })
 
     def _mask_key(self, key: str) -> str:
@@ -3168,6 +3179,32 @@ class GalleryServer:
                             body.get("gpt_base_url"),
                             default_gpt_base_url,
                         )
+                    if "gpt_image_endpoints" in body:
+                        raw_endpoints = body.get("gpt_image_endpoints")
+                        if isinstance(raw_endpoints, list):
+                            existing_endpoints = keys_config.get("gpt_image_endpoints") or []
+                            cleaned = []
+                            for idx, ep in enumerate(raw_endpoints):
+                                if not isinstance(ep, dict):
+                                    continue
+                                label = str(ep.get("label", "") or "").strip()
+                                base_url = str(ep.get("base_url", "") or "").strip()
+                                api_key = str(ep.get("api_key", "") or "").strip()
+                                if not label and not base_url:
+                                    continue
+                                # Masked key preservation (Bug 1 fix): if the submitted key
+                                # looks masked, keep the previously stored key at this index.
+                                if api_key and "*" in api_key:
+                                    existing_key = ""
+                                    if isinstance(existing_endpoints, list) and idx < len(existing_endpoints):
+                                        existing_key = str(existing_endpoints[idx].get("api_key", "") or "")
+                                    api_key = existing_key
+                                cleaned.append({
+                                    "label": label,
+                                    "base_url": base_url,
+                                    "api_key": api_key,
+                                })
+                            keys_config["gpt_image_endpoints"] = cleaned
                     if "cpa_url" in body:
                         self._store_local_url_override(
                             keys_config,
@@ -3297,6 +3334,28 @@ class GalleryServer:
                     logger.info(f"LLM model updated to: {body['llm_model']}")
                 except Exception as e:
                     logger.error(f"Save llm_model error: {e}")
+
+            # 保存 hermes_cli / openclaw_cli 到 config.yaml
+            hermes_or_openclaw_keys = [k for k in ("hermes_cli", "openclaw_cli") if k in body]
+            if hermes_or_openclaw_keys and self.config_path and os.path.exists(self.config_path):
+                try:
+                    import yaml
+                    with open(self.config_path, 'r', encoding='utf-8') as f:
+                        full_config = yaml.safe_load(f) or {}
+                    if "integrations" not in full_config:
+                        full_config["integrations"] = {}
+                    for key in hermes_or_openclaw_keys:
+                        value = str(body.get(key) or "").strip()
+                        if value:
+                            full_config["integrations"][key] = value
+                        else:
+                            full_config["integrations"].pop(key, None)
+                    with open(self.config_path, 'w', encoding='utf-8') as f:
+                        yaml.dump(full_config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                    self.config["integrations"] = full_config["integrations"]
+                    logger.info(f"Integrations updated: {hermes_or_openclaw_keys}")
+                except Exception as e:
+                    logger.error(f"Save integrations error: {e}")
 
             if image_dir_changed:
                 self._set_runtime_image_dir(self._resolve_image_dir())
@@ -4739,6 +4798,9 @@ JSON 格式：
                 child_env_extra["CPA_API_KEY"] = cpa_key
             if gpt_key or cpa_key:
                 child_env_extra["GPT_IMAGE_API_KEY"] = gpt_key or cpa_key
+            gpt_image_endpoints = keys_config.get("gpt_image_endpoints") or []
+            if isinstance(gpt_image_endpoints, list) and gpt_image_endpoints:
+                child_env_extra["GPT_IMAGE_ENDPOINTS"] = json.dumps(gpt_image_endpoints, ensure_ascii=False)
             if cpa_base_url:
                 child_env_extra["CPA_BASE_URL"] = cpa_base_url
             child_env = self._child_env(child_env_extra)
