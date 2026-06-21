@@ -2908,6 +2908,56 @@ textarea:focus-visible,
 .log-status { margin-right: auto; color: #8b5cf6; font-size: 12px; font-weight: 700; }
 .log-toggle { display: inline-flex; align-items: center; gap: 6px; margin-right: 10px; color: #6b7280; font-size: 12px; font-weight: 700; user-select: none; }
 .log-toggle input { accent-color: #8b5cf6; }
+    .sk-endpoints-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .sk-endpoint-row {
+      display: grid;
+      grid-template-columns: 100px 1fr 1fr auto;
+      gap: 6px;
+      align-items: center;
+    }
+    .sk-endpoint-row input {
+      width: 100%;
+      padding: 6px 8px;
+      border: 1px solid var(--sk-border, #ddd);
+      border-radius: 6px;
+      font-size: 13px;
+      box-sizing: border-box;
+    }
+    .sk-endpoint-row input[type="password"] {
+      font-family: monospace;
+    }
+    .sk-endpoint-del-btn {
+      padding: 4px 10px;
+      border: 1px solid #e74c3c;
+      background: transparent;
+      color: #e74c3c;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .sk-endpoint-del-btn:hover {
+      background: #e74c3c;
+      color: #fff;
+    }
+    .sk-endpoint-add-btn {
+      padding: 6px 14px;
+      border: 1px dashed var(--sk-border, #aaa);
+      background: transparent;
+      color: var(--sk-text, #333);
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .sk-endpoint-add-btn:hover {
+      border-color: var(--sk-accent, #4a90d9);
+      color: var(--sk-accent, #4a90d9);
+    }
 
 </style>
 </head>
@@ -3136,6 +3186,18 @@ textarea:focus-visible,
       <div class="sk-status" id="skPushStatus">加载中...</div>
     </div>
     <div class="sk-field">
+      <label for="skHermesCliPath">Hermes CLI 路径</label>
+      <div class="sk-desc">Hermes CLI 可执行文件路径；留空则自动从 PATH 或默认安装位置查找</div>
+      <input type="text" id="skHermesCliPath" placeholder="留空自动查找；例如 ~/.hermes/hermes-agent/venv/Scripts/hermes.exe">
+      <div class="sk-status" id="skHermesCliStatus">加载中...</div>
+    </div>
+    <div class="sk-field">
+      <label for="skOpenclawCliPath">OpenClaw CLI 路径</label>
+      <div class="sk-desc">OpenClaw CLI 可执行文件路径；留空则自动从 PATH 查找</div>
+      <input type="text" id="skOpenclawCliPath" placeholder="留空自动查找；例如 D:\tools\openclaw\openclaw.exe">
+      <div class="sk-status" id="skOpenclawCliStatus">加载中...</div>
+    </div>
+    <div class="sk-field">
       <label for="skGiteeUrl">Gitee API URL</label>
       <div class="sk-desc">Gitee 生图接口地址，必须填写完整接口地址</div>
       <input type="text" id="skGiteeUrl" placeholder="必填：填写你的 Gitee 生图接口地址">
@@ -3173,6 +3235,13 @@ textarea:focus-visible,
       <div class="sk-desc">GPT Image 认证密钥，必须填写</div>
       <input type="password" id="skGptKey" placeholder="输入新密钥（留空则不修改）">
       <div class="sk-status" id="skGptStatus">加载中...</div>
+    </div>
+    <div class="sk-field">
+      <label>GPT Image 多端点（可选）</label>
+      <div class="sk-desc">配置多个 Base URL + API Key；填写后将优先使用第一个端点，留空则使用上方的单端点配置</div>
+      <div id="skGptEndpointsList" class="sk-endpoints-list"></div>
+      <button type="button" class="sk-endpoint-add-btn" onclick="addGptEndpointRow()">+ 添加端点</button>
+      <div class="sk-status" id="skGptEndpointsStatus">加载中...</div>
     </div>
     <div class="sk-field">
       <label for="skCpaUrl">CPA Base URL</label>
@@ -5655,6 +5724,26 @@ async function loadSettingsStatus() {
     applyDisplayConfig(data);
     setPushChannel(data.push_channel || "wechat");
 
+    // Load CLI paths
+    const hermesCliEl = document.getElementById("skHermesCliPath");
+    const hermesCliStatus = document.getElementById("skHermesCliStatus");
+    if (hermesCliEl) {
+      hermesCliEl.value = data.hermes_cli || "";
+    }
+    if (hermesCliStatus) {
+      hermesCliStatus.textContent = data.hermes_cli ? "✓ 已设置" : "○ 留空自动查找";
+      hermesCliStatus.className = data.hermes_cli ? "sk-status set" : "sk-status unset";
+    }
+    const openclawCliEl = document.getElementById("skOpenclawCliPath");
+    const openclawCliStatus = document.getElementById("skOpenclawCliStatus");
+    if (openclawCliEl) {
+      openclawCliEl.value = data.openclaw_cli || "";
+    }
+    if (openclawCliStatus) {
+      openclawCliStatus.textContent = data.openclaw_cli ? "✓ 已设置" : "○ 留空自动查找";
+      openclawCliStatus.className = data.openclaw_cli ? "sk-status set" : "sk-status unset";
+    }
+
     // Update status indicators
     updateStatus("skGiteeStatus", data.gitee_key);
     updateStatus("skCpaKeyStatus", data.cpa_key);
@@ -5692,6 +5781,23 @@ async function loadSettingsStatus() {
     } else {
       gptStatus.textContent = "○ 必填";
       gptStatus.className = "sk-status unset";
+    }
+    // Load GPT Image endpoints
+    const endpointsStatus = document.getElementById("skGptEndpointsStatus");
+    if (endpointsStatus) {
+      if (data.gpt_image_endpoints && data.gpt_image_endpoints.length > 0) {
+        endpointsStatus.textContent = `✓ ${data.gpt_image_endpoints.length} 个端点`;
+        endpointsStatus.className = "sk-status set";
+      } else {
+        endpointsStatus.textContent = "○ 未配置（使用单端点）";
+        endpointsStatus.className = "sk-status unset";
+      }
+    }
+    if (data.gpt_image_endpoints && Array.isArray(data.gpt_image_endpoints)) {
+      clearGptEndpointRows();
+      data.gpt_image_endpoints.forEach(ep => {
+        addGptEndpointRow(ep.label || "", ep.base_url || "", ep.api_key || "");
+      });
     }
     const cpaUrlEl = document.getElementById("skCpaUrl");
     const cpaUrlStatus = document.getElementById("skCpaUrlStatus");
@@ -5998,6 +6104,43 @@ function requireSettingsValue(label, value, missing) {
   if (!String(value || "").trim()) missing.push(label);
 }
 
+function addGptEndpointRow(label = "", baseUrl = "", apiKey = "") {
+  const list = document.getElementById("skGptEndpointsList");
+  if (!list) return;
+  const row = document.createElement("div");
+  row.className = "sk-endpoint-row";
+  row.innerHTML = `
+    <input type="text" class="sk-endpoint-label" placeholder="标签" value="${label.replace(/"/g, '&quot;')}">
+    <input type="text" class="sk-endpoint-url" placeholder="Base URL (/v1)" value="${baseUrl.replace(/"/g, '&quot;')}">
+    <input type="password" class="sk-endpoint-key" placeholder="API Key" value="${apiKey.replace(/"/g, '&quot;')}">
+    <button type="button" class="sk-endpoint-del-btn" onclick="this.parentElement.remove()">删除</button>
+  `;
+  list.appendChild(row);
+}
+
+function clearGptEndpointRows() {
+  const list = document.getElementById("skGptEndpointsList");
+  if (list) list.innerHTML = "";
+}
+
+function collectGptEndpoints() {
+  const list = document.getElementById("skGptEndpointsList");
+  if (!list) return [];
+  const rows = list.querySelectorAll(".sk-endpoint-row");
+  const endpoints = [];
+  rows.forEach(row => {
+    const label = row.querySelector(".sk-endpoint-label").value.trim();
+    const baseUrl = row.querySelector(".sk-endpoint-url").value.trim();
+    const apiKey = row.querySelector(".sk-endpoint-key").value.trim();
+    if (baseUrl || apiKey) {
+      const ep = { base_url: baseUrl, api_key: apiKey };
+      if (label) ep.label = label;
+      endpoints.push(ep);
+    }
+  });
+  return endpoints;
+}
+
 async function saveSettings() {
   const giteeUrl = document.getElementById("skGiteeUrl").value.trim();
   const giteeKey = document.getElementById("skGiteeKey").value.trim();
@@ -6047,6 +6190,7 @@ async function saveSettings() {
     body.gitee_url = giteeUrl;
     if (gptKey) body.gpt_key = gptKey;
     body.gpt_base_url = gptBaseUrl;
+    body.gpt_image_endpoints = collectGptEndpoints();
     body.cpa_url = cpaUrl;
     if (cpaKey) body.cpa_key = cpaKey;
     body.github_api = githubApi;
@@ -6057,6 +6201,8 @@ async function saveSettings() {
     body.persona_source = personaSource;
     body.persona = personaSource === "custom" ? persona : "";
     body.push_channel = pushChannel;
+    body.hermes_cli = document.getElementById("skHermesCliPath").value.trim();
+    body.openclaw_cli = document.getElementById("skOpenclawCliPath").value.trim();
     body.gitee_fallback_enabled = giteeFallbackEnabled;
     // llm_model: always send
     body.llm_model = llmModel;
