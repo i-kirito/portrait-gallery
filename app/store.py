@@ -1,5 +1,17 @@
 """Thread-safe schedule_data.json store with file locking and atomic writes."""
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    class _FcntlFallback:
+        LOCK_SH = 1
+        LOCK_EX = 2
+        LOCK_UN = 8
+
+        @staticmethod
+        def flock(_fd, _op):
+            return None
+
+    fcntl = _FcntlFallback()
 import json
 import logging
 import os

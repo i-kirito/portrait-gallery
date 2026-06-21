@@ -32,6 +32,7 @@ from settings import (
     image_request_timeout,
     llm_choice_text,
     llm_request_config,
+    llm_response_excerpt,
     llm_temperature_param_error,
     load_config,
     load_json_file,
@@ -507,11 +508,17 @@ def _personalized_caption_fallback(theme: str, persona: dict, schedule_time: str
     if activity:
         activity_key = re.sub(r"\s+", "", activity)
         specific_templates = []
-        if any(word in activity_key for word in ("直播", "歌会", "唱歌", "情歌", "开播")):
+        if any(word in activity_key for word in ("歌会", "唱歌", "情歌", "练歌", "歌曲", "吉他曲", "曲目")):
             specific_templates.extend([
                 f"{character}先把歌单顺一遍，等会儿开播就不慌了。",
                 f"这首要是唱顺了，{character}今晚就算完成一件小事。",
                 f"{character}想先试试麦，别等开播了才发现声音不对。",
+            ])
+        if any(word in activity_key for word in ("直播", "开播", "设备", "妆容", "灯光", "麦克风", "麦")):
+            specific_templates.extend([
+                f"{character}先把灯光和麦检查好，等会儿开播就不慌了。",
+                "口红和眼妆再确认一下，开播前别漏掉小细节。",
+                f"{character}想先试一下设备，别等直播开始才手忙脚乱。",
             ])
         if any(word in activity_key for word in ("厨房", "牛排", "奶茶", "做饭", "晚餐", "甜点", "午餐", "早餐", "牛奶", "松饼")):
             specific_templates.extend([
@@ -599,19 +606,33 @@ def _caption_voice_hint(persona: dict) -> str:
     return voice[:180]
 
 
+def _caption_rejection_reason(caption: str, schedule_time: str = "") -> str:
+    if not caption:
+        return "empty"
+    checks = (
+        ("persona_leak", _caption_has_persona_leak(caption)),
+        ("reader_address", _caption_addresses_reader(caption, schedule_time)),
+        ("tone_problem", _caption_has_tone_problem(caption, schedule_time)),
+        ("schedule_conflict", _caption_conflicts_with_schedule(caption, schedule_time)),
+        ("gallery_record", _caption_is_gallery_record(caption)),
+        ("repeat_schedule", _caption_repeats_schedule(caption, schedule_time)),
+        ("generic_template", _caption_is_generic_template(caption)),
+        ("too_literary", _caption_is_too_literary(caption)),
+    )
+    for reason, failed in checks:
+        if failed:
+            return reason
+    return ""
+
+
 def _scene_caption_fallback(theme: str, persona: dict, caption: str = "", schedule_time: str = "") -> str:
-    if (
-        caption
-        and not _caption_has_persona_leak(caption)
-        and not _caption_conflicts_with_schedule(caption, schedule_time)
-        and not _caption_is_gallery_record(caption)
-        and not _caption_repeats_schedule(caption, schedule_time)
-        and not _caption_is_generic_template(caption)
-        and not _caption_is_too_literary(caption)
-    ):
+    rejection_reason = _caption_rejection_reason(caption, schedule_time)
+    if not rejection_reason:
         short = _shorten_caption(caption)
         if short:
             return short
+    elif caption:
+        print(f"[caption] llm caption rejected: reason={rejection_reason} text={caption[:100]}", file=sys.stderr)
     return _personalized_caption_fallback(theme, persona, schedule_time)
 
 
@@ -623,6 +644,31 @@ def _caption_has_persona_leak(caption: str) -> bool:
         "end of input", "start of output", "ignore previous",
     )
     return any(marker in text for marker in leak_markers)
+
+
+def _caption_addresses_reader(caption: str, schedule_time: str = "") -> bool:
+    if not _caption_activity(schedule_time):
+        return False
+    text = re.sub(r"\s+", "", str(caption or ""))
+    if not text:
+        return False
+    markers = (
+        "主人", "主人大人", "等你", "给你看", "让你看", "你来看", "被你",
+        "陪我", "找你", "见你", "给你", "让你", "想被你",
+        "他看见", "她看见", "等他", "等她", "让他看", "让她看", "给他看", "给她看",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _caption_has_tone_problem(caption: str, schedule_time: str = "") -> bool:
+    if not _caption_activity(schedule_time):
+        return False
+    text = re.sub(r"\s+", "", str(caption or ""))
+    markers = (
+        "勾人", "诱人", "诱惑", "撩人", "撩一下", "暧昧", "性感", "涩",
+        "给谁看", "被看见", "最迷人", "心跳加速",
+    )
+    return any(marker in text for marker in markers)
 
 
 def _caption_is_generic_template(caption: str) -> bool:
@@ -1420,9 +1466,18 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
     persona = _runtime_persona()
     character = persona.get("name") or "角色"
     user_name = persona.get("user_name") or "用户"
-    caption_voice = _caption_voice_hint(persona)
+    caption_voice = (
+        "自然、口语、具体，像自己在心里安排下一步，不撒娇、不营业、不对任何人说话"
+        if activity
+        else _caption_voice_hint(persona)
+    )
+    address_rule = (
+        "这是她自己的心里小计划，不是在对读者说话；不要称呼读者，不要写“主人/你/他/等你来看/给你看”等互动句，也不要写性感、诱惑、勾人、被谁看见。"
+        if activity
+        else f"读者称呼“{user_name}”，可以自然亲近但不要写成固定营业话术。"
+    )
     system_msg = (
-        f"你正在以“{character}”的口吻，为刚拍的照片写一句自然的小心思，读者称呼“{user_name}”。"
+        f"你正在以“{character}”的口吻，为刚拍的照片写一句自然的小心思。{address_rule}"
         f"下面的口吻只作为说话习惯参考，不要为了风格写得文艺或矫饰：{caption_voice}。"
         "小心思要像她当时脑子里冒出来的普通念头：接下来要干嘛、手上这件事怎么安排、有什么小担心或小期待。"
         "可以自然带一点语气词，但整体要口语、具体、轻松，不要故意可爱、不要像朋友圈文案。"
@@ -1438,7 +1493,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         "绝对不要在末尾加「网页版」「查看详情」「点击查看」等任何引导性后缀。"
     )
 
-    if img_b64:
+    if img_b64 and not activity:
         try:
             img_data = base64.b64decode(img_b64)
             img = Image.open(io.BytesIO(img_data))
@@ -1453,52 +1508,88 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
             print(f"[caption] image compress failed: {e}", file=sys.stderr)
             img_b64 = None
 
-    if img_b64:
-        user_content = [
-            {"type": "image_url", "image_url": {"url": f"data:{img_mime};base64,{img_b64}"}},
-            {"type": "text", "text": f"这是{character}刚拍的照片。当前日程：{scene}。请写短小心思：像当时心里真实想的一句话，具体到正在做的事或下一步安排，不要文艺比喻。"},
-        ]
-    else:
-        user_content = f"当前日程：{scene}。请写一条短小心思，像当时心里真实想的一句话，具体到正在做的事或下一步安排，不要文艺比喻。"
+    text_user_content = (
+        f"当前日程：{scene}。请写一条短小心思，像当时心里真实想的一句话，"
+        "具体到正在做的事或下一步安排，不要文艺比喻。"
+    )
+    request_variants: list[tuple[str, object]] = []
+    if img_b64 and not activity:
+        request_variants.append((
+            "image",
+            [
+                {"type": "image_url", "image_url": {"url": f"data:{img_mime};base64,{img_b64}"}},
+                {"type": "text", "text": f"这是{character}刚拍的照片。{text_user_content}"},
+            ],
+        ))
+    request_variants.append(("text", text_user_content))
 
     try:
         api_key = get_cpa_key()
         models = get_llm_models()
         chat_url = get_cpa_chat_url()
         if not api_key or not models or not chat_url:
+            print("[caption] llm config missing; using fallback caption", file=sys.stderr)
             return _personalized_caption_fallback(theme, persona, schedule_time)
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        payload = {
-            "model": models[0],
-            "messages": [
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_content},
-            ],
-            "max_tokens": min(config_int(_GALLERY_CONFIG, "llm.caption_max_tokens", 90, 1), 120),
-            "temperature": config_float(_GALLERY_CONFIG, "llm.caption_temperature", 0.9, 0),
-        }
-        resp = REQUEST_SESSION.post(
-            chat_url,
-            headers=headers,
-            json=payload,
-            timeout=config_int(_GALLERY_CONFIG, "llm.caption_timeout", 30, 1),
-        )
-        resp = _retry_without_temperature_if_needed(
-            resp,
-            payload,
-            lambda retry_payload: REQUEST_SESSION.post(
-                chat_url,
-                headers=headers,
-                json=retry_payload,
-                timeout=config_int(_GALLERY_CONFIG, "llm.caption_timeout", 30, 1),
-            ),
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            choices = data.get("choices") if isinstance(data, dict) else []
-            caption = llm_choice_text(choices[0]) if choices else ""
-            if caption:
-                return _scene_caption_fallback(theme, persona, caption, schedule_time)
+        timeout = config_int(_GALLERY_CONFIG, "llm.caption_timeout", 30, 1)
+        caption_max_tokens = max(900, min(config_int(_GALLERY_CONFIG, "llm.caption_max_tokens", 900, 1), 1200))
+        for model in models:
+            for mode, user_content in request_variants:
+                attempts = 3 if activity else 1
+                for attempt in range(1, attempts + 1):
+                    payload = {
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": system_msg},
+                            {"role": "user", "content": user_content},
+                        ],
+                        "max_tokens": caption_max_tokens,
+                        "temperature": config_float(_GALLERY_CONFIG, "llm.caption_temperature", 0.9, 0),
+                    }
+                    resp = REQUEST_SESSION.post(
+                        chat_url,
+                        headers=headers,
+                        json=payload,
+                        timeout=timeout,
+                    )
+                    resp = _retry_without_temperature_if_needed(
+                        resp,
+                        payload,
+                        lambda retry_payload: REQUEST_SESSION.post(
+                            chat_url,
+                            headers=headers,
+                            json=retry_payload,
+                            timeout=timeout,
+                        ),
+                    )
+                    try:
+                        data = resp.json()
+                    except Exception:
+                        data = getattr(resp, "text", "")
+                    if resp.status_code != 200:
+                        print(
+                            f"[caption] llm request failed: model={model} mode={mode} attempt={attempt}/{attempts} status={resp.status_code} detail={llm_response_excerpt(data, 180)}",
+                            file=sys.stderr,
+                        )
+                        continue
+                    choices = data.get("choices") if isinstance(data, dict) else []
+                    caption = llm_choice_text(choices[0]) if choices else ""
+                    if not caption:
+                        print(
+                            f"[caption] llm returned empty caption: model={model} mode={mode} attempt={attempt}/{attempts} detail={llm_response_excerpt(data, 180)}",
+                            file=sys.stderr,
+                        )
+                        continue
+                    rejection_reason = _caption_rejection_reason(caption, schedule_time)
+                    if rejection_reason:
+                        print(
+                            f"[caption] llm caption rejected: model={model} mode={mode} attempt={attempt}/{attempts} reason={rejection_reason} text={caption[:100]}",
+                            file=sys.stderr,
+                        )
+                        continue
+                    result = _shorten_caption(caption)
+                    if result:
+                        return result
     except Exception as e:
         print(f"[caption] llm failed: {e}", file=sys.stderr)
 

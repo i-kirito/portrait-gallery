@@ -5,6 +5,14 @@ import sys
 import os
 
 
+def _restart_process():
+    """Restart the current process without relying on Unix-only execv."""
+    if sys.platform.startswith("win"):
+        subprocess.Popen([sys.executable] + sys.argv, close_fds=True)
+        os._exit(0)
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
 def update():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     result = subprocess.run(
@@ -20,4 +28,4 @@ def update():
 
 def restart():
     """重启当前进程"""
-    os.execv(sys.executable, [sys.executable] + sys.argv)
+    _restart_process()

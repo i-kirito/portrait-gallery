@@ -68,8 +68,62 @@ def _configured_image_base_url(url: str) -> str:
     return base
 
 
+def _normalize_gpt_image_endpoint(item: dict) -> dict:
+    base_url = _configured_image_base_url(str(item.get("base_url", "") or "").strip())
+    api_key = str(item.get("api_key", "") or "").strip()
+    label = str(item.get("label", "") or "").strip()
+    if not base_url or not api_key:
+        return {}
+    endpoint = {"base_url": base_url, "api_key": api_key}
+    if label:
+        endpoint["label"] = label
+    return endpoint
+
+
+def _load_gpt_image_endpoints() -> list[dict]:
+    """Load complete GPT Image endpoints from env or local key config."""
+    env_json = os.getenv("GPT_IMAGE_ENDPOINTS", "").strip()
+    if env_json:
+        try:
+            data = json.loads(env_json)
+            if isinstance(data, list):
+                endpoints = [
+                    endpoint
+                    for item in data
+                    if isinstance(item, dict)
+                    for endpoint in (_normalize_gpt_image_endpoint(item),)
+                    if endpoint
+                ]
+                if endpoints:
+                    return endpoints
+        except (json.JSONDecodeError, TypeError) as e:
+            print(f"Failed to parse GPT_IMAGE_ENDPOINTS env var: {e}", file=sys.stderr)
+
+    config_path = _API_KEYS_CONFIG_PATH
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            raw = config.get("gpt_image_endpoints")
+            if isinstance(raw, list):
+                return [
+                    endpoint
+                    for item in raw
+                    if isinstance(item, dict)
+                    for endpoint in (_normalize_gpt_image_endpoint(item),)
+                    if endpoint
+                ]
+        except Exception as e:
+            print(f"Failed to read gpt_image_endpoints from api_keys_config.json: {e}", file=sys.stderr)
+    return []
+
+
 def _get_gpt_key() -> str:
     """Read GPT key from environment variable or api_keys_config.json."""
+    endpoints = _load_gpt_image_endpoints()
+    if endpoints:
+        return endpoints[0]["api_key"]
+
     env_key = os.getenv("GPT_IMAGE_API_KEY", "")
     if env_key:
         return env_key
@@ -90,6 +144,10 @@ def _get_gpt_key() -> str:
 
 def _get_gpt_raw_base_url() -> str:
     """Read GPT Image base URL from environment or api_keys_config.json."""
+    endpoints = _load_gpt_image_endpoints()
+    if endpoints:
+        return endpoints[0]["base_url"]
+
     env_url = os.getenv("GPT_IMAGE_BASE_URL", "")
     if env_url:
         return env_url.strip().rstrip("/")
