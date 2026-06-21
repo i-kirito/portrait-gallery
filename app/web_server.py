@@ -1,6 +1,14 @@
 """Web 画廊服务器 - aiohttp"""
 import asyncio
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    # Windows: fcntl is Unix-only; provide no-op stubs so the app can run.
+    import fcntl  # type: ignore[no-redef]
+    fcntl = type("fcntl", (), {
+        "LOCK_SH": 1, "LOCK_EX": 2, "LOCK_UN": 8, "LOCK_NB": 4,
+        "flock": staticmethod(lambda fd, op: 0),
+    })()
 import hashlib
 import ipaddress
 import json
@@ -160,6 +168,15 @@ UPDATE_PROTECTED_PREFIXES = (
     "app/references/uploads/",
 )
 LOCALHOST_NAMES = {"localhost", "127.0.0.1", "::1", "[::1]"}
+
+
+def _restart_process():
+    """跨平台重启当前进程"""
+    if sys.platform.startswith("win"):
+        subprocess.Popen([sys.executable] + sys.argv, close_fds=True)
+        os._exit(0)
+    else:
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 class GalleryServer:
@@ -5430,7 +5447,7 @@ JSON 格式：
         response["message"] = "更新成功，服务即将重启；本地 API Key、Base URL、appearance、图片和参考图已保留"
         if restart:
             loop = asyncio.get_running_loop()
-            loop.call_later(1.0, lambda: os.execv(sys.executable, [sys.executable] + sys.argv))
+            loop.call_later(1.0, lambda: _restart_process())
         else:
             response["message"] = "更新成功；本地 API Key、Base URL、appearance、图片和参考图已保留"
         return response, 200

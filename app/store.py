@@ -1,5 +1,13 @@
 """Thread-safe schedule_data.json store with file locking and atomic writes."""
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    # Windows: fcntl is Unix-only; provide no-op stubs so the app can run.
+    import fcntl  # type: ignore[no-redef]
+    fcntl = type("fcntl", (), {
+        "LOCK_SH": 1, "LOCK_EX": 2, "LOCK_UN": 8, "LOCK_NB": 4,
+        "flock": staticmethod(lambda fd, op: 0),
+    })()
 import json
 import logging
 import os

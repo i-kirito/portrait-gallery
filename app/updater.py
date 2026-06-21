@@ -5,6 +5,15 @@ import sys
 import os
 
 
+def _restart_process():
+    """跨平台重启当前进程"""
+    if sys.platform.startswith("win"):
+        subprocess.Popen([sys.executable] + sys.argv, close_fds=True)
+        os._exit(0)
+    else:
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
 def update():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     result = subprocess.run(

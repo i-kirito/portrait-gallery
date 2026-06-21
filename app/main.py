@@ -1929,15 +1929,18 @@ class PortraitGalleryApp:
         integrations = self.config.get("integrations", {})
         hermes_cmd = integrations.get("hermes_cli", "") or os.getenv("HERMES_CLI", "") or shutil.which("hermes")
         if not hermes_cmd:
-            candidate = os.path.join(os.path.expanduser("~"), ".hermes", "hermes-agent", "venv", "bin", "hermes")
-            if os.path.exists(candidate):
-                hermes_cmd = candidate
+            venv_subdir = "Scripts" if sys.platform.startswith("win") else "bin"
+            for candidate_name in ("hermes.exe", "hermes") if sys.platform.startswith("win") else ("hermes",):
+                candidate = os.path.join(os.path.expanduser("~"), ".hermes", "hermes-agent", "venv", venv_subdir, candidate_name)
+                if os.path.exists(candidate):
+                    hermes_cmd = candidate
+                    break
         if not hermes_cmd:
             logger.warning("未找到 Hermes CLI，跳过推送")
             return False
         channel = normalize_push_channel(channel)
         target = delivery.get("wechat_target") if channel == "wechat" else (
-            str(integrations.get("hermes_telegram_target") or "").strip()
+            str(delivery.get("telegram_target") or "").strip()
             or "telegram"
         )
         label = "微信" if channel == "wechat" else "TG"
