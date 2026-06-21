@@ -50,7 +50,7 @@ from settings import (
 
 TODAY_PHOTO_SOURCES = {"cron", "web"}
 FAILED_SCHEDULE_TEXT = "生成失败"
-WECHAT_CAPTION_DELAY_SECONDS = 35
+WECHAT_CAPTION_DELAY_SECONDS = 3
 WECHAT_SEND_TIMEOUT_SECONDS = 90
 PHOTO_JOB_INFLIGHT_STALE_GRACE_SECONDS = 120
 WECHAT_RETRY_DELAYS_SECONDS = (60, 180)
@@ -843,14 +843,8 @@ class PortraitGalleryApp:
         # 生成新日程
         entry = await self.scheduler_gen.generate_today()
         
-        if not entry or entry.status != "ok":
-            logger.error("日程生成失败")
-            if entry and entry.schedule and entry.schedule != FAILED_SCHEDULE_TEXT:
-                save_schedule_entry(self.data_dir, entry)
-            return entry
-
         # LLM 不通时 scheduler 会返回 fallback；刷新按钮不应因此覆盖已有可用日程。
-        if entry.source == "fallback":
+        if not entry or entry.source == "fallback" or entry.status != "ok":
             existing_entry = self._today_schedule_entry()
             existing_missing = self._schedule_missing_required_periods(existing_entry.get("schedule", "")) if existing_entry else []
             if existing_entry and not existing_missing:
@@ -860,7 +854,13 @@ class PortraitGalleryApp:
                 await self._schedule_dynamic_photos(preserved.schedule)
                 return preserved
             if existing_entry and existing_missing:
-                logger.warning(f"现有今日日程缺少时间段 {existing_missing}，使用兜底日程修复")
+                logger.warning(f"现有今日日程缺少时间段 {existing_missing}，无法直接保留")
+
+        if not entry or entry.status != "ok":
+            logger.error("日程生成失败")
+            if entry and entry.schedule and entry.schedule != FAILED_SCHEDULE_TEXT:
+                save_schedule_entry(self.data_dir, entry)
+            return entry
 
         # 清除旧日程（日期 key）
         store = ScheduleStore(self.data_dir)

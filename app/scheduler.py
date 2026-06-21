@@ -823,17 +823,113 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 
     def _build_fallback_entry(self, today: date) -> DailyEntry:
         date_str = today.isoformat()
+        weekday = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"][today.weekday()]
+        enabled_styles = load_enabled_outfit_styles(self.config, self.data_dir) or DEFAULT_OUTFIT_STYLES
+        preferred_style = "休闲风" if "休闲风" in enabled_styles else enabled_styles[0]
+        outfit_display = (
+            f"风格：{preferred_style}\n"
+            "发型：低丸子头配素色发夹\n"
+            "穿搭：浅灰针织开衫搭配白色棉质上衣，下装选择深蓝直筒牛仔裤，脚穿米白帆布鞋，配一个小号帆布托特包和细银色耳钉，整体干净轻便，袖口微卷显得更适合日常走动。\n"
+            "动作：坐在餐桌旁整理今天要用的小物\n"
+            "场景：晨光照进来的家中餐桌旁"
+        )
+        outfit_en = (
+            "light gray knitted cardigan, white cotton top, dark blue straight-leg jeans, "
+            "off-white canvas sneakers, small canvas tote bag, delicate silver stud earrings, clean casual silhouette"
+        )
+        hair_en = "low bun secured with a plain hair clip, a few neat loose strands around the face"
+        schedule_items = [
+            (
+                "08:30",
+                "在餐桌旁整理早餐和今天要用的小物",
+                "arrange breakfast and today's small essentials at the dining table",
+                "sitting at the dining table, placing breakfast plates and small daily items neatly by hand",
+                "home dining table with breakfast plates, a tote bag, keys, and soft morning daylight",
+                "breakfast plates, keys, tote bag",
+                "soft natural morning daylight",
+            ),
+            (
+                "10:30",
+                "坐在书桌前处理消息并记录待办",
+                "reply to messages and write a short to-do list at the desk",
+                "sitting at a tidy desk, looking down at a notebook while one hand writes and the other rests near a phone",
+                "bright home desk area with notebook, phone, pen, and calm late-morning daylight",
+                "notebook, pen, phone",
+                "clear late-morning daylight",
+            ),
+            (
+                "12:30",
+                "在厨房准备清爽午餐并收拾台面",
+                "prepare a light lunch and wipe the kitchen counter",
+                "standing by the kitchen counter, arranging a simple lunch bowl while wiping the counter with one hand",
+                "clean home kitchen counter with salad bowl, cup, towel, and midday daylight",
+                "lunch bowl, cup, kitchen towel",
+                "bright midday daylight",
+            ),
+            (
+                "15:30",
+                "靠窗整理衣柜和随手拍的灵感图",
+                "organize wardrobe ideas and casual inspiration photos near the window",
+                "standing near the wardrobe, holding a few clothing pieces and checking inspiration photos on a phone",
+                "bedroom wardrobe corner beside a window, folded clothes, hangers, and gentle afternoon daylight",
+                "folded clothes, hangers, phone",
+                "gentle afternoon daylight",
+            ),
+            (
+                "19:00",
+                "准备晚餐并把厨房台面清理干净",
+                "prepare dinner and clean the kitchen counter",
+                "standing in the kitchen, putting ingredients into a bowl and clearing the counter naturally",
+                "home kitchen in early evening with dinner ingredients, clean counter, and warm indoor light",
+                "dinner ingredients, bowl, clean counter",
+                "warm early-evening indoor light",
+            ),
+            (
+                "21:30",
+                "泡一杯热饮后做睡前护肤放松",
+                "make a warm drink and do a relaxed bedtime skincare routine",
+                "standing by the bathroom sink, holding a warm mug nearby and gently applying skincare",
+                "cozy bathroom vanity with skincare bottles, towel, warm mug, and soft night indoor light",
+                "warm mug, skincare bottles, towel",
+                "soft night indoor light",
+            ),
+        ]
+        schedule = "\n".join(f"{time_text} {activity_zh}" for time_text, activity_zh, *_ in schedule_items)
+        schedule_prompt = "\n".join(f"{time_text} {activity_en}" for time_text, _activity_zh, activity_en, *_ in schedule_items)
+        schedule_details = [
+            {
+                "time": time_text,
+                "activity_zh": activity_zh,
+                "activity_en": activity_en,
+                "action_en": action_en,
+                "scene_en": scene_en,
+                "outfit_en": outfit_en,
+                "hair_en": hair_en,
+                "props_en": props_en,
+                "lighting_en": lighting_en,
+            }
+            for time_text, activity_zh, activity_en, action_en, scene_en, props_en, lighting_en in schedule_items
+        ]
         return DailyEntry(
             date=date_str,
-            outfit_style="",
+            outfit_style=preferred_style,
             base_style="",
-            outfit="生成失败",
-            schedule="生成失败",
-            schedule_prompt="",
-            prompt="",
-            caption="",
-            status="failed",
+            reference_query=(
+                f"{preferred_style} casual daily reference, natural low bun, clean light gray and denim outfit, "
+                f"home routine mood on {weekday}, soft everyday atmosphere"
+            ),
+            outfit=outfit_display,
+            schedule=schedule,
+            schedule_prompt=schedule_prompt,
+            schedule_details=schedule_details,
+            prompt=(
+                "realistic daily portrait, low bun with a plain hair clip, light gray knitted cardigan, "
+                "white cotton top, dark blue straight-leg jeans, off-white canvas sneakers, small canvas tote bag, "
+                "sitting at a home dining table arranging breakfast plates and daily essentials, soft morning daylight"
+            ),
+            caption="今天就按舒服一点的节奏来，先把手边的小事整理顺，再留点时间把衣柜和晚饭都慢慢收拾好。",
+            status="ok",
             source="fallback",
-            outfit_keywords="",
-            scene_keywords="",
+            outfit_keywords="knitted cardigan, white cotton top, straight-leg jeans, canvas sneakers, canvas tote bag, silver earrings",
+            scene_keywords="home dining table, breakfast plates, morning daylight, daily essentials",
         )

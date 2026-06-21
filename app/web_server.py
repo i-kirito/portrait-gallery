@@ -542,6 +542,8 @@ class GalleryServer:
 
         if text.startswith("日程生成失败"):
             return "日程生成失败：重试后仍未拿到合格结果。"
+        if text.startswith("日程生成使用兜底结果，保留现有今日日程"):
+            return "文本模型暂时没有返回可用日程，已保留现有今日日程。"
 
         m = re.search(r'LLM 返回为空 \(attempt (\d+)\)', text)
         if m:
@@ -565,6 +567,10 @@ class GalleryServer:
             return "文本模型配置缺失：聊天接口地址或模型未填写。"
         if text.startswith("LLM call error"):
             return "文本模型调用失败：" + cls._diagnose_error_text(text)
+        if text.startswith("LLM call returned invalid response"):
+            m = re.search(r'model=([^,\s]+)', text)
+            model = f"（模型：{m.group(1).strip()}）" if m else ""
+            return f"文本模型返回格式不完整{model}，没有可用内容。"
         if text.startswith("LLM call returned empty content"):
             return "文本模型返回空内容。"
 
@@ -2247,9 +2253,18 @@ class GalleryServer:
             entry = await self.on_refresh_schedule()
             if entry and entry.status == "ok":
                 source = getattr(entry, "source", "") or ""
+                if source == "preserved":
+                    status_text = "preserved"
+                    message = "LLM 暂不可用，已保留当前今日日程。"
+                elif source == "fallback":
+                    status_text = "fallback"
+                    message = "LLM 暂不可用，已使用本地兜底日程。"
+                else:
+                    status_text = "ok"
+                    message = "日程已刷新。"
                 return web.json_response({
-                    "status": "preserved" if source == "preserved" else "ok",
-                    "message": "LLM 暂不可用，已保留当前今日日程。" if source == "preserved" else "日程已刷新。",
+                    "status": status_text,
+                    "message": message,
                     "entry": entry.to_dict(),
                 })
             return web.json_response({
