@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.2.1**
+当前版本：**v1.2.2**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -268,6 +268,16 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥
 
 ## 🧾 Release Notes
+
+### v1.2.2
+
+- 强化 LLM 日程 JSON 输出链路：增加 strict JSON 输出协议、JSON 修复重试和 schedule_details 结构兼容，避免模型输出说明文字时直接失败。
+- 日程生成恢复 full → compact → emergency 逐级降级，保留历史穿搭、收藏/不喜欢反馈和完整人设口吻，只在失败后使用极简 prompt。
+- Hermes/API 生图支持写入调用方文案和中文穿搭展示描述；无中文描述时短超时尝试 LLM 压缩，失败立即使用本地 fallback，不阻塞生图链路。
+- 自定义生图和 Hermes 生图元数据补充 `display_outfit` / `outfit_description`，画廊详情优先展示中文穿搭描述和衣柜参考标签。
+- 运行诊断日志隐藏已被后续成功覆盖的旧 LLM 原始错误，并保留真实请求超时/连接失败原因。
+- 衣柜页优化为一行 4 套，衣柜参考只在点击“用它生图”后进入自定义生图参考区。
+- 小心思 caption 统一选择可用文案，避免单字/空文案覆盖 gallery 已有内容。
 
 ### v1.2.1
 

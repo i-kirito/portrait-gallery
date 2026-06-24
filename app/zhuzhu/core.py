@@ -610,6 +610,7 @@ def _caption_rejection_reason(caption: str, schedule_time: str = "") -> str:
     if not caption:
         return "empty"
     checks = (
+        ("too_short", not _caption_is_usable(caption)),
         ("persona_leak", _caption_has_persona_leak(caption)),
         ("reader_address", _caption_addresses_reader(caption, schedule_time)),
         ("tone_problem", _caption_has_tone_problem(caption, schedule_time)),
@@ -623,6 +624,21 @@ def _caption_rejection_reason(caption: str, schedule_time: str = "") -> str:
         if failed:
             return reason
     return ""
+
+
+def _caption_is_usable(caption: str) -> bool:
+    text = re.sub(r"\s+", "", str(caption or "")).strip("，,。.!！?；;、")
+    return len(text) >= 4
+
+
+def _best_caption(caption: str = "", fallback: str = "") -> str:
+    caption = str(caption or "").strip()
+    fallback = str(fallback or "").strip()
+    if _caption_is_usable(caption):
+        return caption
+    if _caption_is_usable(fallback):
+        return fallback
+    return caption or fallback
 
 
 def _scene_caption_fallback(theme: str, persona: dict, caption: str = "", schedule_time: str = "") -> str:
@@ -1267,6 +1283,7 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
         style_name = str(daily_context.get("outfit_style") or style_name).strip() or style_name
     full_outfit = str(daily_context.get("outfit") or "").strip()
     outfit_value = full_outfit or f"风格：{style_name} 穿搭：{outfit_desc}"
+    caption_value = _best_caption(caption, daily_context.get("caption"))
 
     entry = {
         "id": filename,
@@ -1279,7 +1296,7 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
         "image_path": f"/images/{filename}",
         "image_filename": filename,
         "prompt": prompt,
-        "caption": caption or str(daily_context.get("caption") or "").strip(),
+        "caption": caption_value,
         "favorite": False,
         "status": "ok",
         "source": source,

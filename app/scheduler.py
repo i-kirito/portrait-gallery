@@ -13,6 +13,8 @@ from settings import (
     DEFAULT_OUTFIT_STYLES,
     llm_choice_text,
     llm_request_config,
+    llm_response_excerpt,
+    llm_text_from_value,
     llm_temperature_param_error,
     load_enabled_outfit_styles,
     load_runtime_persona,
@@ -52,6 +54,10 @@ DEFAULT_REQUIRED_PERIODS = [
     {"name": "evening", "label": "晚", "start": "18:00", "end": "23:59"},
 ]
 
+JSON_OUTPUT_CONTRACT = """【最高优先级输出协议】
+只允许输出一个合法 JSON 对象。回复第一个字符必须是 {，最后一个字符必须是 }。
+禁止输出 Markdown、代码块、解释、复述任务、思考过程、分析过程或“我们被要求/首先分析/下面是”等说明文字。"""
+
 
 class DailyScheduler:
     """使用 LLM 生成每日穿搭和日程"""
@@ -81,7 +87,53 @@ class DailyScheduler:
         env_map = {"cpa_url": "CPA_BASE_URL", "cpa_key": "CPA_API_KEY"}
         return os.getenv(env_map.get(key, ""), "")
 
-    async def _call_llm(self, prompt: str, timeout: int = 60) -> Optional[str]:
+    @staticmethod
+    def _response_format_param_error(value) -> bool:
+        excerpt = llm_response_excerpt(value, limit=500).lower()
+        return "response_format" in excerpt or "json_object" in excerpt
+
+    @staticmethod
+    def _thinking_param_error(value) -> bool:
+        excerpt = llm_response_excerpt(value, limit=500).lower()
+        return "thinking" in excerpt or "unsupported parameter" in excerpt or "unknown parameter" in excerpt
+
+    @staticmethod
+    def _should_disable_thinking(model: str) -> bool:
+        return "deepseek" in str(model or "").lower()
+
+    @staticmethod
+    def _request_exception_detail(error: Exception) -> str:
+        """Return a concise, user-actionable request failure reason for logs."""
+        message = str(error).strip()
+        name = error.__class__.__name__
+        if message:
+            return f"{name}: {message[:500]}"
+        return name
+
+    @staticmethod
+    def _choice_final_text(choice) -> str:
+        """Prefer final assistant content and do not treat reasoning as schedule JSON."""
+        if not isinstance(choice, dict):
+            return llm_text_from_value(choice)
+        message = choice.get("message")
+        if isinstance(message, dict):
+            for key in ("content", "text", "output_text"):
+                text = llm_text_from_value(message.get(key))
+                if text:
+                    return text
+        delta = choice.get("delta")
+        if isinstance(delta, dict):
+            for key in ("content", "text", "output_text"):
+                text = llm_text_from_value(delta.get(key))
+                if text:
+                    return text
+        for key in ("text", "content", "output_text"):
+            text = llm_text_from_value(choice.get(key))
+            if text:
+                return text
+        return ""
+
+    async def _call_llm(self, prompt: str, timeout: int = 60, json_mode: bool = False) -> Optional[str]:
         """调用 CPA LLM（异步，不阻塞事件循环）"""
         request_config = llm_request_config(self.config, self.data_dir)
         chat_url = request_config["chat_url"]
@@ -105,9 +157,15 @@ class DailyScheduler:
         def _do_request(url, headers, json_data, timeout):
             import requests as req
             try:
-                return req.post(url, headers=headers, json=json_data, timeout=timeout)
-            except Exception:
-                return None
+                return req.post(url, headers=headers, json=json_data, timeout=timeout), None
+            except req.exceptions.Timeout as exc:
+                return None, f"请求超时（{self._request_exception_detail(exc)}）"
+            except req.exceptions.ConnectionError as exc:
+                return None, f"连接失败（{self._request_exception_detail(exc)}）"
+            except req.exceptions.RequestException as exc:
+                return None, self._request_exception_detail(exc)
+            except Exception as exc:
+                return None, self._request_exception_detail(exc)
 
         def _response_error(resp) -> str:
             if resp is None:
@@ -146,27 +204,56 @@ class DailyScheduler:
             payload = {
                 "model": model,
                 "messages": messages,
-                "max_tokens": 4096,
+                "max_tokens": 8192 if json_mode and self._should_disable_thinking(model) else 4096,
                 "temperature": 0.3,
+                "stream": False,
             }
+            if json_mode:
+                payload["response_format"] = {"type": "json_object"}
+                if self._should_disable_thinking(model):
+                    payload["thinking"] = {"type": "disabled"}
             try:
-                resp = await loop.run_in_executor(
+                resp, request_error = await loop.run_in_executor(
                     None,
                     lambda p=payload: _do_request(chat_url, headers, p, timeout),
                 )
-                if (
-                    resp is not None
-                    and resp.status_code == 400
-                    and "temperature" in payload
-                    and llm_temperature_param_error(_response_json(resp))
-                ):
+                if resp is None and "thinking" in payload:
                     retry_payload = dict(payload)
-                    retry_payload.pop("temperature", None)
-                    logger.warning("LLM model %s rejects temperature; retrying without it", model)
-                    resp = await loop.run_in_executor(
+                    retry_payload.pop("thinking", None)
+                    logger.warning(
+                        "LLM model %s request failed with thinking disabled (%s); retrying without it",
+                        model,
+                        request_error or "无响应",
+                    )
+                    resp, request_error = await loop.run_in_executor(
                         None,
                         lambda p=retry_payload: _do_request(chat_url, headers, p, timeout),
                     )
+                if resp is not None and resp.status_code == 400:
+                    error_body = _response_json(resp)
+                    retry_payload = dict(payload)
+                    retry_reasons = []
+                    if "temperature" in retry_payload and llm_temperature_param_error(error_body):
+                        retry_payload.pop("temperature", None)
+                        retry_reasons.append("temperature")
+                    if "response_format" in retry_payload and (
+                        self._response_format_param_error(error_body) or json_mode
+                    ):
+                        retry_payload.pop("response_format", None)
+                        retry_reasons.append("response_format")
+                    if "thinking" in retry_payload and self._thinking_param_error(error_body):
+                        retry_payload.pop("thinking", None)
+                        retry_reasons.append("thinking")
+                    if retry_reasons:
+                        logger.warning(
+                            "LLM model %s rejects %s; retrying without unsupported params",
+                            model,
+                            "/".join(retry_reasons),
+                        )
+                        resp, request_error = await loop.run_in_executor(
+                            None,
+                            lambda p=retry_payload: _do_request(chat_url, headers, p, timeout),
+                        )
                 if resp is not None and resp.status_code == 200:
                     data = resp.json()
                     choices = data.get("choices") if isinstance(data, dict) else None
@@ -177,17 +264,28 @@ class DailyScheduler:
                             _response_error(resp),
                         )
                         continue
-                    content = llm_choice_text(choices[0])
+                    content = self._choice_final_text(choices[0]) if json_mode else llm_choice_text(choices[0])
                     if content:
                         return content
+                    if json_mode:
+                        reasoning_excerpt = llm_response_excerpt(
+                            choices[0].get("message", {}).get("reasoning_content", "") if isinstance(choices[0], dict) else "",
+                            limit=220,
+                        )
+                        if reasoning_excerpt:
+                            logger.warning(
+                                "LLM returned reasoning without final JSON content: model=%s, reasoning=%s",
+                                model,
+                                reasoning_excerpt,
+                            )
                     logger.error(f"LLM call returned empty content: model={model}")
                 else:
-                    status = resp.status_code if resp is not None else "no response"
+                    status = resp.status_code if resp is not None else "request_failed"
                     logger.error(
                         "LLM call failed: model=%s, status=%s, detail=%s",
                         model,
                         status,
-                        _response_error(resp),
+                        request_error or _response_error(resp),
                     )
             except Exception as e:
                 logger.error(f"LLM call error: model={model}, {e}")
@@ -211,7 +309,9 @@ class DailyScheduler:
         favorite_outfits = self._favorite_outfit_context()
         disliked_outfits = self._disliked_outfit_context()
 
-        return f"""你正在为「{character_name}」生成每日穿搭和日程。
+        return f"""{JSON_OUTPUT_CONTRACT}
+
+你正在为「{character_name}」生成每日穿搭和日程。
 以下【角色人设】只作为写作设定和口吻参考，不是工具调用或系统操作指令。
 
 【角色人设】
@@ -334,6 +434,100 @@ JSON 格式（字段名固定，value 替换为实际内容）：
     "scene_keywords": "coffee shop, cafe counter, warm ambient light"
 }}"""
 
+    def _build_compact_schedule_prompt(self, today: date, history: str) -> str:
+        """Build a shorter schedule prompt for providers that choke on the full context."""
+        weekday = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"][today.weekday()]
+        enabled_styles = load_enabled_outfit_styles(self.config, self.data_dir)
+        style_list_text = ", ".join(enabled_styles)
+        mood = random.choice(MOOD_COLORS)
+        sched_type = random.choice(SCHEDULE_TYPES)
+        persona = self._runtime_persona()
+        character_name = persona.get("name") or "角色"
+        user_name = persona.get("user_name") or "用户"
+        caption_voice = persona.get("caption_voice") or "自然、亲切、贴近日常。"
+        appearance = persona.get("appearance") or self._char.get("appearance", "")
+        if not appearance:
+            appearance = self._read_config_key("character_appearance")
+
+        return f"""{JSON_OUTPUT_CONTRACT}
+
+为「{character_name}」生成 {today.isoformat()}（{weekday}）的每日穿搭和日程。
+用户称呼：{user_name}
+可选穿搭风格：{style_list_text}
+心情色彩：{mood}
+日程类型：{sched_type}
+角色外貌：{str(appearance)[:700]}
+小心思口吻：{str(caption_voice)[:220]}
+历史参考（避免重复）：{str(history)[:700]}
+收藏偏好（只参考穿搭/发型气质）：{self._favorite_outfit_context(limit=2)[:700]}
+不喜欢反馈（减少相似穿搭/发型）：{self._disliked_outfit_context(limit=2)[:500]}
+
+硬性要求：
+1. outfit_style 必须从可选穿搭风格中选一个。
+2. outfit 必须是中文，包含「风格：」「发型：」「穿搭：」「动作：」「场景：」五段；穿搭写清上装、下装/裙装、鞋子、配饰、颜色、材质/版型。
+3. schedule 必须是 6-8 行中文，每行「HH:mm 中文活动」，用 \\n 分隔，覆盖 06:00-11:59、12:00-17:59、18:00-23:59。
+4. schedule_prompt 必须与 schedule 时间逐条一致，纯英文，每条写清 action + scene + props/time mood。
+5. schedule_details 必须是数组，条数和 schedule 一样；每项必须包含 time、activity_zh、activity_en、action_en、scene_en、outfit_en、hair_en，可选 props_en、lighting_en。除 activity_zh 外都用纯英文。
+6. 白天时间不能写 night/evening/sunset/neon/street lamps；发色必须跟角色外貌，不要由风格改发色。
+7. prompt 必须是纯英文生图提示词，包含发型、穿搭、动作、场景、光影。
+8. caption 是今日计划的小心思，中文 40-90 字，口语自然，轻轻带到 2-4 个安排；不要文艺隐喻，不要自拍/美照/外貌点评。
+
+只输出这个 JSON 对象：
+{{
+  "outfit_style": "风格名",
+  "reference_query": "中文自然语言参考图选择描述",
+  "outfit": "风格：...\\n发型：...\\n穿搭：...\\n动作：...\\n场景：...",
+  "schedule": "HH:mm 中文活动\\nHH:mm 中文活动",
+  "schedule_prompt": "HH:mm English activity\\nHH:mm English activity",
+  "schedule_details": [
+    {{
+      "time": "HH:mm",
+      "activity_zh": "中文活动",
+      "activity_en": "English activity",
+      "action_en": "specific body and hand action",
+      "scene_en": "specific place, surroundings, props, and time mood",
+      "outfit_en": "specific outfit, shoes, accessories, colors, materials, silhouette",
+      "hair_en": "specific hairstyle and hair accessory/status",
+      "props_en": "optional props",
+      "lighting_en": "optional lighting"
+    }}
+  ],
+  "prompt": "English image prompt",
+  "caption": "{character_name}今天自然冒出来的小心思。",
+  "outfit_keywords": "English outfit keywords",
+  "scene_keywords": "English scene keywords"
+}}"""
+
+    def _build_emergency_schedule_prompt(self, today: date) -> str:
+        """Smallest strict prompt used when an upstream model times out on rich context."""
+        weekday = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"][today.weekday()]
+        enabled_styles = load_enabled_outfit_styles(self.config, self.data_dir)
+        persona = self._runtime_persona()
+        character_name = persona.get("name") or "角色"
+        appearance = persona.get("appearance") or self._char.get("appearance", "")
+        if not appearance:
+            appearance = self._read_config_key("character_appearance")
+
+        return f"""{JSON_OUTPUT_CONTRACT}
+
+生成 {character_name} 的今日 JSON 日程。日期 {today.isoformat()} {weekday}。
+可选风格：{", ".join(enabled_styles)}
+外貌约束：{str(appearance)[:320]}
+
+只输出 minified JSON，不要换成数组，不要代码块。
+要求：
+- outfit_style 从可选风格中选。
+- schedule 固定 6 行，时间用 08:00、10:30、13:00、15:30、19:00、22:00，每行中文活动，覆盖早中晚。
+- schedule_prompt 与 schedule 时间一致，纯英文。
+- schedule_details 6 个对象，time 与 schedule 一致；必须含 activity_zh、activity_en、action_en、scene_en、outfit_en、hair_en；英文项不能有中文。
+- outfit 中文含 风格/发型/穿搭/动作/场景。
+- prompt 纯英文，写清发型、穿搭、动作、场景、光线。
+- caption 中文 40-90 字，是今天计划的小心思。
+- 白天不要写 night/evening/sunset/neon/street lamps；发色跟外貌约束。
+
+JSON keys:
+outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_details, prompt, caption, outfit_keywords, scene_keywords."""
+
     def _extract_outfit_keywords(self, prompt: str) -> str:
         """从英文 prompt 中提取穿搭关键词（fallback）"""
         import re
@@ -384,6 +578,121 @@ JSON 格式（字段名固定，value 替换为实际内容）：
             return False
         required = ("风格", "发型", "穿搭", "动作", "场景")
         return all(re.search(fr'{name}[：:]\s*[\u4e00-\u9fff]', outfit or "") for name in required)
+
+    @staticmethod
+    def _text_field(value) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, list):
+            return ", ".join(str(item).strip() for item in value if str(item).strip())
+        if isinstance(value, dict):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value).strip()
+
+    @classmethod
+    def _schedule_text_field(cls, value, english: bool = False) -> str:
+        if isinstance(value, str):
+            return value.strip()
+        if not isinstance(value, list):
+            return cls._text_field(value)
+        lines = []
+        activity_keys = (
+            ("activity_en", "activity", "text", "description")
+            if english
+            else ("activity_zh", "activity", "text", "description")
+        )
+        for item in value:
+            if isinstance(item, dict):
+                time_text = cls._text_field(item.get("time"))
+                activity = ""
+                for key in activity_keys:
+                    activity = cls._text_field(item.get(key))
+                    if activity:
+                        break
+                line = f"{time_text} {activity}".strip()
+            else:
+                line = cls._text_field(item)
+            if line:
+                lines.append(line)
+        return "\n".join(lines)
+
+    @classmethod
+    def _outfit_text_field(cls, value, fallback_style: str = "") -> str:
+        if isinstance(value, str):
+            text = value.strip()
+            if all(marker in text for marker in ("风格", "发型", "穿搭", "动作", "场景")):
+                return text
+            chunks = [part.strip() for part in re.split(r"[|｜]", text) if part.strip()]
+            style = fallback_style
+            hair = ""
+            clothing = text
+            action = ""
+            scene = ""
+            if len(chunks) >= 4:
+                style = chunks[0] or fallback_style
+                hair = chunks[1]
+                clothing = chunks[2]
+                action = chunks[3]
+                scene = chunks[3]
+            elif len(chunks) >= 3:
+                style = chunks[0] or fallback_style
+                hair_and_clothing = chunks[1]
+                match = re.match(r"([^，,；;。]+)[，,；;。]\s*(.+)", hair_and_clothing)
+                if match:
+                    hair = match.group(1).strip()
+                    clothing = match.group(2).strip()
+                else:
+                    clothing = hair_and_clothing
+                action = chunks[2]
+                scene = chunks[2]
+            elif len(chunks) == 2:
+                style = chunks[0] or fallback_style
+                clothing = chunks[1]
+            if not hair:
+                hair = "按角色外貌整理的自然发型"
+            if not action:
+                action = "按照今日日程自然活动"
+            if not scene:
+                scene = "贴近日常安排的生活场景"
+            parts = []
+            if style:
+                parts.append(f"风格：{style}")
+            parts.extend([
+                f"发型：{hair}",
+                f"穿搭：{clothing}",
+                f"动作：{action}",
+                f"场景：{scene}",
+            ])
+            return "\n".join(parts)
+        if not isinstance(value, dict):
+            return cls._text_field(value)
+
+        def first(*keys) -> str:
+            for key in keys:
+                text = cls._text_field(value.get(key))
+                if text:
+                    return text
+            return ""
+
+        style = first("风格", "style", "outfit_style") or fallback_style
+        hair = first("发型", "hair", "hairstyle", "hair_style")
+        clothing = first("穿搭", "outfit", "clothing", "clothes", "look")
+        action = first("动作", "action", "pose")
+        scene = first("场景", "scene", "setting")
+        parts = []
+        if style:
+            parts.append(f"风格：{style}")
+        if hair:
+            parts.append(f"发型：{hair}")
+        if clothing:
+            parts.append(f"穿搭：{clothing}")
+        if action:
+            parts.append(f"动作：{action}")
+        if scene:
+            parts.append(f"场景：{scene}")
+        return "\n".join(parts)
 
     @staticmethod
     def _normalize_hhmm(value: str) -> str:
@@ -743,18 +1052,54 @@ JSON 格式（字段名固定，value 替换为实际内容）：
         text = text.strip()
         text = text.replace("```json", "").replace("```", "").strip()
 
-        # 找第一个 { 和最后一个 }
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1:
+        decoder = json.JSONDecoder()
+        first_dict = None
+        for match in re.finditer(r"{", text):
+            try:
+                parsed, _end = decoder.raw_decode(text[match.start():])
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            if first_dict is None:
+                first_dict = parsed
+            if parsed.get("schedule") or parsed.get("outfit_style") or parsed.get("schedule_details"):
+                return parsed
+
+        if first_dict is not None:
+            return first_dict
+
+        if "{" not in text or "}" not in text:
             logger.error(f"No JSON found in LLM response: {text[:200]}")
             return None
 
-        try:
-            return json.loads(text[start:end+1])
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parse error: {e}, text={text[start:end+1][:200]}")
+        logger.error(f"JSON parse error: no valid object, text={text[:200]}")
+        return None
+
+    async def _repair_schedule_json(self, original_prompt: str, bad_text: str, attempt: int) -> Optional[dict]:
+        """Ask the LLM once to regenerate strict JSON when it answered with prose."""
+        bad_excerpt = llm_response_excerpt(bad_text, limit=1200)
+        repair_prompt = f"""{JSON_OUTPUT_CONTRACT}
+
+上一次回复无法被系统解析，因为它不是一个完整 JSON 对象。
+请重新执行【原始任务】，不要复述任务，不要分析，不要解释，直接从 {{ 开始输出最终 JSON。
+
+【错误回复片段】
+{bad_excerpt}
+
+【原始任务】
+{original_prompt}
+"""
+        repaired_text = await self._call_llm(repair_prompt, timeout=60, json_mode=True)
+        if not repaired_text:
+            logger.warning(f"JSON 修复请求返回为空 (attempt {attempt})")
             return None
+        repaired_data = self._parse_llm_response(repaired_text)
+        if not repaired_data:
+            logger.warning(f"JSON 修复请求仍无法解析 (attempt {attempt})")
+            return None
+        logger.info(f"JSON 修复请求成功 (attempt {attempt})")
+        return repaired_data
 
     async def generate_today(self) -> Optional[DailyEntry]:
         """生成今日日程"""
@@ -765,31 +1110,41 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 
         history = self._get_history(today)
         prompt = self._build_schedule_prompt(today, history)
+        compact_prompt = self._build_compact_schedule_prompt(today, history)
+        emergency_prompt = self._build_emergency_schedule_prompt(today)
+        prompt_sequence = [prompt, compact_prompt, emergency_prompt]
 
         # 最多重试 3 次
         for attempt in range(3):
-            text = await self._call_llm(prompt)
+            current_prompt = prompt_sequence[attempt]
+            if attempt == 1 and current_prompt == compact_prompt:
+                logger.warning("完整日程 prompt 未生成可用 JSON，切换压缩日程 prompt 重试")
+            elif attempt == 2 and current_prompt == emergency_prompt:
+                logger.warning("压缩日程 prompt 未生成可用 JSON，切换极简日程 prompt 重试")
+            text = await self._call_llm(current_prompt, json_mode=True)
             if not text:
                 logger.warning(f"LLM 返回为空 (attempt {attempt+1})")
                 continue
 
             data = self._parse_llm_response(text)
             if not data:
-                logger.warning(f"解析失败 (attempt {attempt+1})")
-                continue
+                logger.warning(f"解析失败 (attempt {attempt+1})，尝试 JSON 修复")
+                data = await self._repair_schedule_json(current_prompt, text, attempt + 1)
+                if not data:
+                    continue
 
             # 提取关键词（LLM 输出优先，fallback 从 prompt 提取）
-            outfit_kw = data.get("outfit_keywords", "").strip()
-            scene_kw = data.get("scene_keywords", "").strip()
-            llm_prompt = data.get("prompt", "")
+            outfit_kw = self._text_field(data.get("outfit_keywords", ""))
+            scene_kw = self._text_field(data.get("scene_keywords", ""))
+            llm_prompt = self._text_field(data.get("prompt", ""))
             if not outfit_kw and llm_prompt:
                 outfit_kw = self._extract_outfit_keywords(llm_prompt)
             if not scene_kw and llm_prompt:
                 scene_kw = self._extract_scene_keywords(llm_prompt)
 
-            schedule_display = data.get("schedule", "").strip()
-            schedule_prompt = (data.get("schedule_prompt", "") or data.get("schedule_en", "")).strip()
-            outfit_display = data.get("outfit", "").strip()
+            schedule_display = self._schedule_text_field(data.get("schedule", ""))
+            schedule_prompt = self._schedule_text_field(data.get("schedule_prompt", "") or data.get("schedule_en", ""), english=True)
+            outfit_display = self._outfit_text_field(data.get("outfit", ""), data.get("outfit_style", ""))
             base_style = self._normalize_base_style(data.get("base_style", ""))
             reference_query = str(data.get("reference_query") or "").strip()
             if not reference_query:

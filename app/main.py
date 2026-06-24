@@ -380,6 +380,7 @@ class PortraitGalleryApp:
         api_source: str = "",
         api_caption: str = "",
         image_model: str = "",
+        api_description: str = "",
     ) -> DailyEntry:
         """自定义 prompt 生图"""
         today_str = datetime.now().strftime("%Y-%m-%d")
@@ -445,10 +446,14 @@ class PortraitGalleryApp:
                 sum(ord(ch) for ch in f"{filename}|{user_prompt}|{shot_label}") % len(caption_templates)
             ]
 
+        display_prompt = str(api_description or "").strip()
+        if not display_prompt:
+            display_prompt = user_prompt[:80] if entry_source != "hermes_api" else "Hermes 自定义生图：按原始描述生成的场景、动作和穿搭。"
+
         entry = DailyEntry(
             date=today_str,
             outfit_style="自定义",
-            outfit=f"风格：自定义{' 模式：纯' if pure else ''} 视角：{shot_label} 穿搭：{user_prompt[:80]}",
+            outfit=f"风格：自定义{' 模式：纯' if pure else ''} 视角：{shot_label} 穿搭：{display_prompt}",
             schedule="",
             prompt=generation_prompt,
             caption=caption,
@@ -464,7 +469,7 @@ class PortraitGalleryApp:
             custom_ref_mode=custom_ref_mode,
         )
         save_schedule_entry(self.data_dir, entry)
-        self._update_image_metadata_caption(filename, caption)
+        self._update_image_metadata_caption(filename, caption, display_prompt)
         logger.info(f"自定义生图成功: {filename}")
         return entry
 
@@ -544,7 +549,7 @@ class PortraitGalleryApp:
                 except OSError:
                     pass
 
-    def _update_image_metadata_caption(self, filename: str, caption: str):
+    def _update_image_metadata_caption(self, filename: str, caption: str, display_outfit: str = ""):
         if not filename:
             return
         path = os.path.join(self.data_dir, "image_metadata.json")
@@ -555,6 +560,10 @@ class PortraitGalleryApp:
         if not isinstance(entry, dict):
             return
         entry["caption"] = str(caption or "").strip()
+        display_outfit = str(display_outfit or "").strip()
+        if display_outfit:
+            entry["display_outfit"] = display_outfit
+            entry["outfit_description"] = display_outfit
         tmp_path = f"{path}.tmp"
         try:
             with open(tmp_path, "w", encoding="utf-8") as f:
@@ -1773,8 +1782,11 @@ class PortraitGalleryApp:
                         image_path = line.split("SUCCESS:", 1)[1].strip()
                     if "Synced to gallery" in line:
                         logger.info(f"定时生图成功: {line}")
-                    if "CAPTION:" in line:
-                        caption_text = line.split("CAPTION:", 1)[1].strip()
+                    if line.startswith("CAPTION:"):
+                        caption_text = self._prefer_caption_text(
+                            line.split("CAPTION:", 1)[1].strip(),
+                            caption_text,
+                        )
                         logger.info(f"Caption: {caption_text}")
                 logger.info(f"定时生图完成: theme={theme}")
                 if slot_key:
@@ -1916,10 +1928,44 @@ class PortraitGalleryApp:
                         entry = value
                         break
             caption = str((entry or {}).get("caption") or "").strip()
-            return caption or fallback or ""
+            fallback = str(fallback or "").strip()
+            if self._caption_text_usable(caption) or not self._caption_text_usable(fallback):
+                return caption or fallback or ""
+
+            def _repair_caption(all_data):
+                target = all_data.get(filename)
+                if isinstance(target, dict):
+                    target["caption"] = fallback
+                    return all_data
+                for value in all_data.values():
+                    if isinstance(value, dict) and value.get("image_filename") == filename:
+                        value["caption"] = fallback
+                        break
+                return all_data
+
+            try:
+                ScheduleStore(self.data_dir).update(_repair_caption)
+            except Exception as update_error:
+                logger.warning("修复画廊小心思失败，使用生成输出文案: %s", update_error)
+            return fallback
         except Exception as e:
             logger.warning("读取画廊小心思失败，使用生成输出文案: %s", e)
             return fallback or ""
+
+    @staticmethod
+    def _caption_text_usable(text: str) -> bool:
+        text = re.sub(r"\s+", "", str(text or "")).strip("，,。.!！?；;、")
+        return len(text) >= 4
+
+    @classmethod
+    def _prefer_caption_text(cls, candidate: str = "", current: str = "") -> str:
+        candidate = str(candidate or "").strip()
+        current = str(current or "").strip()
+        if cls._caption_text_usable(candidate):
+            return candidate
+        if cls._caption_text_usable(current):
+            return current
+        return candidate or current
 
     async def _send_to_wechat(self, image_path: str, caption: str) -> bool:
         """Send image and caption to WeChat via hermes CLI."""

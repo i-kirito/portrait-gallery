@@ -906,7 +906,7 @@ def generate(
         path = generate_with_gitee(
             theme,
             send=False,
-            caption=caption,
+            caption=False,
             prompt_override=resolved_prompt,
             prompt_is_final=True,
             source=source,
@@ -919,7 +919,7 @@ def generate(
         path = generate_with_gptimage(
             theme,
             send=False,
-            caption=caption,
+            caption=False,
             prompt_override=resolved_prompt,
             ref_image=ref_image,
             size=size,
@@ -937,7 +937,7 @@ def generate(
                 path = generate_with_gitee(
                     theme,
                     send=False,
-                    caption=caption,
+                    caption=False,
                     prompt_override=resolved_prompt,
                     prompt_is_final=True,
                     source=source,
@@ -958,7 +958,7 @@ def generate(
                 path = generate_with_gitee(
                     theme,
                     send=False,
-                    caption=caption,
+                    caption=False,
                     prompt_override=resolved_prompt,
                     prompt_is_final=True,
                     source=source,
@@ -973,7 +973,7 @@ def generate(
         path = generate_with_gitee(
             theme,
             send=False,
-            caption=caption,
+            caption=False,
             prompt_override=resolved_prompt,
             prompt_is_final=True,
             source=source,
@@ -987,7 +987,7 @@ def generate(
             path = generate_with_gptimage(
                 theme,
                 send=False,
-                caption=caption,
+                caption=False,
                 prompt_override=resolved_prompt,
                 ref_image=ref_image,
                 size=size,
@@ -1003,8 +1003,9 @@ def generate(
     caption_text = None
     if path and caption:
         caption_text = build_caption_for_image(theme, path, schedule_time=schedule_raw)
-        if caption_text and send:
-            send_photo(path, caption_text)
+        if caption_text:
+            if send:
+                send_photo(path, caption_text)
             print(f"CAPTION:{caption_text}")
 
     # Sync to Docker portrait gallery
