@@ -5348,10 +5348,20 @@ JSON 格式：
         """根据今日日程的当前时间点生图 (💭 现在在干嘛)"""
         proc = None
         try:
+            # B1 (2026-06-26): 可选 extra_hint，让聊天生图能在日程活动上叠加主人微调
+            extra_hint = ""
+            try:
+                if request.can_read_body:
+                    body = await request.json()
+                    if isinstance(body, dict):
+                        extra_hint = str(body.get("extra_hint", "") or "").strip()[:200]
+            except Exception:
+                extra_hint = ""
+
             now = datetime.now()
             now_str = now.strftime("%H:%M")
             today_str = now.strftime("%Y-%m-%d")
-            logger.info("Generate now: time=%s, using today's schedule chain", now_str)
+            logger.info("Generate now: time=%s, extra_hint=%r, using today's schedule chain", now_str, extra_hint)
 
             # 1) 读取今日日程，并让 LLM 基于全天计划推断当前具体活动。
             daily = self._today_schedule_entry(today_str)
@@ -5377,6 +5387,11 @@ JSON 格式：
 
             now_detail["time"] = now_str
             now_detail["activity_zh"] = now_activity
+            # B1 (2026-06-26): 把主人微调 hint 叠加进活动与日程时间，影响 prompt/参考图选择
+            if extra_hint:
+                now_activity = self._clean_activity_text(f"{now_activity}，{extra_hint}", max_len=96)
+                now_detail["activity_zh"] = now_activity
+                now_detail["extra_hint"] = extra_hint
             schedule_time = f"{now_str} {now_activity}".strip()
             schedule_detail_json = json.dumps(now_detail, ensure_ascii=False, separators=(",", ":"))
             theme = self._theme_for_schedule_time(now_str)

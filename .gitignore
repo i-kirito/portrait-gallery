@@ -9,6 +9,7 @@ config/local.yaml
 # Backups
 *.bak
 *.bak2
+*.bak_*
 *.backup-*
 *.bak.*
 
@@ -35,6 +36,7 @@ Thumbs.db
 # Temp
 *.tmp
 .tmp/
+canvas/
 
 # Generated images
 *.png
