@@ -20,6 +20,7 @@ from datetime import datetime, time as dt_time
 from typing import Optional
 
 from aiohttp import web
+from apscheduler.events import EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from data import DailyEntry
@@ -55,6 +56,7 @@ WECHAT_SEND_TIMEOUT_SECONDS = 90
 PHOTO_JOB_INFLIGHT_STALE_GRACE_SECONDS = 120
 WECHAT_RETRY_DELAYS_SECONDS = (60, 180)
 WECHAT_COOLDOWN_BUFFER_SECONDS = 5
+PHOTO_JOB_MISFIRE_GRACE_SECONDS = 10 * 60
 WECHAT_RETRYABLE_MARKERS = (
     "rate limited",
     "too many requests",
@@ -251,10 +253,12 @@ class PortraitGalleryApp:
         # APScheduler
         timezone = self.config.get("config", {}).get("timezone", "Asia/Shanghai")
         self.aps = AsyncIOScheduler(timezone=timezone)
+        self.aps.add_listener(self._handle_scheduler_event, EVENT_JOB_MISSED)
 
         # Backfill photo job controls
         self._photo_jobs_inflight: set[str] = set()
         self._photo_jobs_inflight_started: dict[str, float] = {}
+        self._photo_job_schedule_meta: dict[str, dict] = {}
         self._failed_photo_jobs: dict[str, dict] = self._load_failed_photo_jobs()
         self._inflight_lock = asyncio.Lock()
         self._backfill_semaphore = asyncio.Semaphore(1)
@@ -913,6 +917,59 @@ class PortraitGalleryApp:
         self._photo_jobs_inflight.discard(slot_key)
         self._photo_jobs_inflight_started.pop(slot_key, None)
 
+    @staticmethod
+    def _photo_job_id_for_time(time_text: str) -> str:
+        match = re.match(r"^\s*(\d{1,2}):(\d{2})", str(time_text or ""))
+        if not match:
+            return ""
+        return f"photo_dynamic_{int(match.group(1))}_{int(match.group(2))}"
+
+    def _handle_scheduler_event(self, event):
+        """Record missed dynamic photo jobs so they do not silently disappear."""
+        job_id = str(getattr(event, "job_id", "") or "")
+        if not job_id.startswith("photo_dynamic_"):
+            return
+
+        run_time = getattr(event, "scheduled_run_time", None)
+        if run_time is not None:
+            try:
+                run_time = run_time.astimezone(self.aps.timezone) if run_time.tzinfo else run_time
+            except Exception:
+                pass
+
+        meta = self._photo_job_schedule_meta.pop(job_id, {}) or {}
+        if run_time is None:
+            match = re.match(r"^photo_dynamic_(\d{1,2})_(\d{1,2})$", job_id)
+            if not match:
+                logger.warning("动态生图任务错过执行但无法解析时间: %s", job_id)
+                return
+            now = datetime.now()
+            run_time = datetime.combine(now.date(), dt_time(int(match.group(1)), int(match.group(2))))
+
+        date_text = run_time.strftime("%Y-%m-%d")
+        time_text = f"{run_time.hour:02d}:{run_time.minute:02d}"
+        if self._check_photo_exists_for_slot(date_text, time_text):
+            return
+
+        activity = str(meta.get("activity") or self._today_schedule_activity_map().get(time_text, "")).strip()
+        theme = str(meta.get("theme") or self._theme_for_hour(run_time.hour)).strip()
+        slot_key = f"{date_text} {time_text}"
+        self._failed_photo_jobs[slot_key] = {
+            "theme": theme,
+            "time": time_text,
+            "activity": activity,
+            "failed_at": datetime.now().isoformat(),
+            "error": f"APScheduler missed dynamic photo job {job_id} scheduled at {run_time.isoformat()}",
+            "error_summary": "服务当时繁忙，定时生图错过执行窗口，可手动重试",
+        }
+        self._save_failed_photo_jobs()
+        logger.warning(
+            "动态生图任务错过执行窗口，已转为可重试: %s time=%s activity=%s",
+            job_id,
+            time_text,
+            activity[:30],
+        )
+
     def _photo_job_stale_seconds(self) -> int:
         return image_process_timeout(self.config, with_reference_fallback=True) + PHOTO_JOB_INFLIGHT_STALE_GRACE_SECONDS
 
@@ -1343,6 +1400,7 @@ class PortraitGalleryApp:
         for job in self.aps.get_jobs():
             if job.id.startswith("photo_dynamic_"):
                 job.remove()
+                self._photo_job_schedule_meta.pop(job.id, None)
                 removed += 1
         if removed:
             logger.info(f"移除了 {removed} 个旧的动态生图任务")
@@ -1419,7 +1477,15 @@ class PortraitGalleryApp:
                 run_date=item["run_time"],
                 args=[item["theme"], f"{item['hour']:02d}:{item['minute']:02d} {item['activity']}"],
                 id=item["id"],
+                misfire_grace_time=PHOTO_JOB_MISFIRE_GRACE_SECONDS,
+                coalesce=True,
+                max_instances=1,
             )
+            self._photo_job_schedule_meta[item["id"]] = {
+                "theme": item["theme"],
+                "time": f"{item['hour']:02d}:{item['minute']:02d}",
+                "activity": item["activity"],
+            }
             logger.info(
                 f"添加动态生图任务: {item['hour']:02d}:{item['minute']:02d} "
                 f"theme={item['theme']} period={item.get('period_label') or '-'} "
@@ -1699,6 +1765,9 @@ class PortraitGalleryApp:
         """定时生图任务 - 调用 generate.py 完整链路"""
         logger.info(f"开始定时生图: theme={theme}, schedule_time={schedule_time}")
         slot_key, time_text, activity = self._slot_key_for_schedule_time(schedule_time)
+        job_id = self._photo_job_id_for_time(time_text)
+        if job_id:
+            self._photo_job_schedule_meta.pop(job_id, None)
         reserved_slot = False
         if slot_key and time_text:
             today_str, _, _ = slot_key.partition(" ")
