@@ -27,7 +27,7 @@ from pathlib import Path
 import time
 import re
 from typing import Optional
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 import uuid
 
 import aiohttp
@@ -2203,8 +2203,36 @@ class GalleryServer:
         ):
             url = str(value or "").strip()
             if url:
-                return url
+                return self._normalize_github_release_api_url(url)
         return ""
+
+    @staticmethod
+    def _normalize_github_release_api_url(url: str) -> str:
+        """Convert common GitHub web/repo URLs to the releases/latest API."""
+        raw_url = str(url or "").strip()
+        if not raw_url:
+            return ""
+
+        try:
+            parsed = urlparse(raw_url)
+        except Exception:
+            return raw_url
+
+        host = (parsed.netloc or "").lower()
+        path = (parsed.path or "").strip("/")
+        parts = [part for part in path.split("/") if part]
+
+        if host == "github.com" and len(parts) >= 2:
+            owner, repo = parts[0], parts[1]
+            return f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+
+        if host == "api.github.com" and len(parts) >= 3 and parts[0] == "repos":
+            owner, repo = parts[1], parts[2]
+            suffix = parts[3:]
+            if suffix in ([], ["releases"], ["releases", "latest"]):
+                return f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+
+        return raw_url
 
     def _github_proxy_env(self) -> dict[str, str]:
         proxy = self._github_proxy()
@@ -6060,15 +6088,32 @@ JSON 格式：
             timeout = aiohttp.ClientTimeout(total=20)
             async with aiohttp.ClientSession(trust_env=True, timeout=timeout, headers=headers) as session:
                 async with session.get(github_api, proxy=github_proxy or None) as resp:
+                    response_text = await resp.text()
                     if resp.status != 200:
-                        error_text = await resp.text()
-                        logger.error(f"GitHub API error: {resp.status}, {error_text}")
+                        logger.error(f"GitHub API error: {resp.status}, {response_text}")
                         error_message = f"GitHub API 请求失败: {resp.status}"
                         if resp.status == 403 and not github_proxy:
                             error_message += "（可在设置中填写 GitHub 代理后重试）"
                         return {"error": error_message}, 500
 
-                    data = await resp.json()
+                    try:
+                        data = json.loads(response_text)
+                    except json.JSONDecodeError:
+                        content_type = resp.headers.get("Content-Type", "")
+                        logger.error(
+                            "GitHub API returned non-JSON response: url=%s content_type=%s body=%s",
+                            github_api,
+                            content_type,
+                            response_text[:500],
+                        )
+                        return {
+                            "error": (
+                                "GitHub 更新地址返回的不是 JSON。请清空旧的 GitHub Release API URL，"
+                                "或改为 https://api.github.com/repos/i-kirito/portrait-gallery/releases/latest"
+                            ),
+                            "github_api": github_api,
+                        }, 500
+
                     latest_version = data.get("tag_name", "").lstrip("v")
                     if not latest_version:
                         return {"error": "无法获取最新版本号"}, 500

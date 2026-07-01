@@ -219,6 +219,13 @@ Docker 部署可将最后一行换成：
 docker compose up -d --build
 ```
 
+如果检查更新报 `Attempt to decode JSON with unexpected mimetype: text/html`，通常是旧本地配置把 GitHub 更新地址写成了仓库网页 `https://github.com/i-kirito/portrait-gallery`。升级到 `v1.2.6` 后会自动兼容；旧版本可先把 `config/config.yaml` 里的 `update.github_api` 清空，或改成：
+
+```yaml
+update:
+  github_api: https://api.github.com/repos/i-kirito/portrait-gallery/releases/latest
+```
+
 受保护路径包括：`.env`、`config/config.yaml`、`config/local.yaml`、`docker-compose.override.yml`、`data/`、`app/data/`、`logs/`、`app/references/uploads/`。
 
 ### 图片管理
@@ -283,6 +290,11 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥
 
 ## 🧾 Release Notes
+
+### v1.2.6
+
+- 兼容旧本地配置把 GitHub 更新地址写成仓库网页 URL 的情况，自动转换为 Releases API。
+- 修复检查更新遇到 `text/html` 响应时抛出 `Attempt to decode JSON with unexpected mimetype` 的问题，改为明确提示配置修复方式。
 
 ### v1.2.5
 
