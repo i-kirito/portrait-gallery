@@ -1,5 +1,5 @@
 config:
-  schedule_time: 07:00
+  schedule_time: 03:00-06:00
   timezone: Asia/Shanghai
 schedule:
   required_periods:

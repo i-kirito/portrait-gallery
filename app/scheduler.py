@@ -53,6 +53,8 @@ DEFAULT_REQUIRED_PERIODS = [
     {"name": "noon", "label": "中", "start": "12:00", "end": "17:59"},
     {"name": "evening", "label": "晚", "start": "18:00", "end": "23:59"},
 ]
+SCHEDULE_PHOTO_QUIET_START_MINUTE = 3 * 60
+SCHEDULE_PHOTO_QUIET_END_MINUTE = 6 * 60
 
 JSON_OUTPUT_CONTRACT = """【最高优先级输出协议】
 只允许输出一个合法 JSON 对象。回复第一个字符必须是 {，最后一个字符必须是 }。
@@ -362,14 +364,16 @@ class DailyScheduler:
 
 ⚠️ schedule 是 WebUI 展示用，必须用中文，必须有 6-8 条，严格使用 \\n 分隔，每行一条，格式为「HH:mm 中文活动描述」：
    下面示例只展示格式，不要照抄活动内容：
-   "09:00 起床整理今天的温柔穿搭\\n10:30 坐在咖啡馆窗边写手账\\n12:00 吃一份清爽午餐\\n14:00 在画室整理灵感草图\\n16:00 去公园散步拍照\\n18:00 回家做一顿简单晚餐\\n20:00 准备晚间直播\\n22:00 做睡前护肤准备休息"
+   "08:12 起床整理今天的温柔穿搭\\n10:27 坐在咖啡馆窗边写手账\\n12:43 吃一份清爽午餐\\n14:18 在画室整理灵感草图\\n16:36 去公园散步拍照\\n18:22 回家做一顿简单晚餐\\n20:17 准备晚间直播\\n22:11 做睡前护肤准备休息"
    不要用"早上9点"、"下午2点"等中文时间格式，必须用 HH:mm 数字格式！每行之间必须用 \\n 换行，不要用空格或句号分隔！
+   时间必须自然错开整点：分钟不能是 00，不要卡在 HH:00 这类整点；请用 08:12、10:27、13:18、15:42、18:36、21:18 这类上下浮动的分钟。
+   不要安排 03:00-05:59 的日程生图时间；这个时段只用于系统生成全天计划，不出现在 schedule、schedule_prompt 或 schedule_details。
    每条活动描述必须用中文写，要具体到场景/动作/道具（12-30 个汉字），不要只写"做早餐""出门""休息"等短句。
    每个时段的动作、道具和场景都由你根据今日人设、心情色彩、日程类型和穿搭自主决定；后续生图会直接采用这些日程动作，不会再用代码模板补动作。
 
 ⚠️ schedule_prompt 是生图 prompt 注入用，必须用纯英文，条数和时间必须与 schedule 一一对应：
    下面示例只展示格式，不要照抄活动内容：
-   "09:00 wake up and arrange today's soft outfit\\n10:30 write diary at a window table in a cafe\\n12:00 have a light refreshing lunch\\n14:00 organize inspiration sketches in an art studio\\n16:00 take a walk and photos in the park\\n18:00 cook a simple dinner at home\\n20:00 prepare for an evening livestream\\n22:00 do skincare and get ready for bedtime"
+   "08:12 wake up and arrange today's soft outfit\\n10:27 write diary at a window table in a cafe\\n12:43 have a light refreshing lunch\\n14:18 organize inspiration sketches in an art studio\\n16:36 take a walk and photos in the park\\n18:22 cook a simple dinner at home\\n20:17 prepare for an evening livestream\\n22:11 do skincare and get ready for bedtime"
    schedule 给用户看中文；schedule_prompt 只给生图 prompt 使用英文。
    schedule_prompt 的每条英文活动必须明确 action + scene + props/time mood，不能只写 vague daily routine。
 
@@ -465,7 +469,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 硬性要求：
 1. outfit_style 必须从可选穿搭风格中选一个。
 2. outfit 必须是中文，包含「风格：」「发型：」「穿搭：」「动作：」「场景：」五段；穿搭写清上装、下装/裙装、鞋子、配饰、颜色、材质/版型。
-3. schedule 必须是 6-8 行中文，每行「HH:mm 中文活动」，用 \\n 分隔，覆盖 06:00-11:59、12:00-17:59、18:00-23:59。
+3. schedule 必须是 6-8 行中文，每行「HH:mm 中文活动」，用 \\n 分隔，覆盖 06:00-11:59、12:00-17:59、18:00-23:59；分钟不能是 00，不要安排 03:00-05:59，时间要像 08:12、10:27、13:18、15:42、18:36 这样自然浮动。
 4. schedule_prompt 必须与 schedule 时间逐条一致，纯英文，每条写清 action + scene + props/time mood。
 5. schedule_details 必须是数组，条数和 schedule 一样；每项必须包含 time、activity_zh、activity_en、action_en、scene_en、outfit_en、hair_en，可选 props_en、lighting_en。除 activity_zh 外都用纯英文。
 6. 白天时间不能写 night/evening/sunset/neon/street lamps；发色必须跟角色外貌，不要由风格改发色。
@@ -517,7 +521,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 只输出 minified JSON，不要换成数组，不要代码块。
 要求：
 - outfit_style 从可选风格中选。
-- schedule 固定 6 行，时间用 08:00、10:30、13:00、15:30、19:00、22:00，每行中文活动，覆盖早中晚。
+- schedule 固定 6 行，时间用 08:12、10:27、13:18、15:42、18:36、22:11，每行中文活动，覆盖早中晚；不要用整点或 03:00-05:59。
 - schedule_prompt 与 schedule 时间一致，纯英文。
 - schedule_details 6 个对象，time 与 schedule 一致；必须含 activity_zh、activity_en、action_en、scene_en、outfit_en、hair_en；英文项不能有中文。
 - outfit 中文含 风格/发型/穿搭/动作/场景。
@@ -788,6 +792,20 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
         prompt_times = [item[0] for item in prompt_items]
         if display_times != prompt_times:
             return display_items, prompt_items, f"schedule 和 schedule_prompt 时间不一致: {display_times} != {prompt_times}"
+        exact_hour_times = []
+        quiet_times = []
+        for time_text in display_times:
+            minute = self._time_to_minutes(time_text)
+            if minute is None:
+                continue
+            if minute % 60 == 0:
+                exact_hour_times.append(time_text)
+            if SCHEDULE_PHOTO_QUIET_START_MINUTE <= minute < SCHEDULE_PHOTO_QUIET_END_MINUTE:
+                quiet_times.append(time_text)
+        if exact_hour_times:
+            return display_items, prompt_items, f"schedule 时间不要卡整点，分钟不能是 00: {exact_hour_times}"
+        if quiet_times:
+            return display_items, prompt_items, f"03:00-06:00 是日程生成时段，不安排生图日程: {quiet_times}"
         if self._contains_cjk(schedule_prompt):
             return display_items, prompt_items, "schedule_prompt 必须是纯英文，不能包含中文"
         for idx, (_time_text, activity) in enumerate(display_items, start=1):

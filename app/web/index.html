@@ -3065,7 +3065,7 @@ textarea:focus-visible,
 
 <div class="header">
   <div class="header-left">
-      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.2.3</span></h1>
+      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.2.4</span></h1>
   </div>
   <div class="tabs">
     <button class="tab" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="showUnfavoriteGallery(event)"><span class="tab-label">✨ 全部</span><span class="tab-badge" id="badge-all">0</span></button>
@@ -3279,12 +3279,6 @@ textarea:focus-visible,
       <div class="sk-status" id="skCpaKeyStatus">加载中...</div>
     </div>
     <div class="sk-field">
-      <label for="skGithubApi">GitHub Release API URL</label>
-      <div class="sk-desc">检查更新和在线更新使用，固定为当前仓库 releases/latest API 地址</div>
-      <input type="text" id="skGithubApi" readonly aria-readonly="true">
-      <div class="sk-status" id="skGithubApiStatus">加载中...</div>
-    </div>
-    <div class="sk-field">
       <label for="skGithubProxy">GitHub API 代理</label>
       <div class="sk-desc">用于检查更新和在线更新，必须填写本机可用代理 URL</div>
       <input type="text" id="skGithubProxy" placeholder="必填：填写你的 GitHub API 代理地址">
@@ -3330,7 +3324,7 @@ textarea:focus-visible,
         <div class="sk-update-row">
           <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
           <button class="btn btn-secondary" id="restartServiceBtn" onclick="restartService()">🔄 重启服务</button>
-          <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.2.3</span></span>
+          <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.2.4</span></span>
         </div>
         <div class="sk-actions">
           <button class="btn btn-secondary" onclick="closeSettings()">关闭</button>
@@ -5865,22 +5859,6 @@ async function loadSettingsStatus() {
       cpaUrlStatus.className = "sk-status unset";
     }
     const githubProxyEl = document.getElementById("skGithubProxy");
-    const githubApiEl = document.getElementById("skGithubApi");
-    const githubApiStatus = document.getElementById("skGithubApiStatus");
-    if (githubApiEl) {
-      githubApiEl.value = data.github_api || "";
-      githubApiEl.dataset.localValue = "";
-      githubApiEl.dataset.defaultValue = data.github_api_default || "";
-    }
-    if (githubApiStatus) {
-      if (githubApiEl && githubApiEl.value.trim()) {
-        githubApiStatus.textContent = "✓ 固定值";
-        githubApiStatus.className = "sk-status set";
-      } else {
-        githubApiStatus.textContent = "○ 未配置";
-        githubApiStatus.className = "sk-status unset";
-      }
-    }
     githubProxyEl.value = data.github_proxy || "";
     const githubProxyStatus = document.getElementById("skGithubProxyStatus");
     if (githubProxyStatus) {
@@ -7766,6 +7744,8 @@ function retryPhotoJob(timeText, btn) {
       startPhotoRetryPolling(timeText);
     } else if (data.status === 'limit_reached') {
       showToast(data.message || '今日生图计划已达上限');
+    } else if (data.status === 'quiet_hours' || data.status === 'quiet_schedule_time' || data.status === 'exact_schedule_time') {
+      showToast(data.message || '03:00-06:00 不执行生图');
     } else {
       keepDisabled = true;
       showToast('已开始补拍：' + timeText);
