@@ -178,6 +178,22 @@ UPDATE_PROTECTED_PREFIXES = (
     "app/references/uploads/",
 )
 LOCALHOST_NAMES = {"localhost", "127.0.0.1", "::1", "[::1]"}
+READ_ONLY_POST_API_PATHS = {
+    "/api/check-update",
+    "/api/hermes/check-update",
+}
+MANUAL_UPDATE_COMMAND = (
+    "cd /path/to/portrait-gallery && "
+    "git fetch origin main && "
+    "git checkout origin/main -- VERSION README.md Dockerfile docker-compose.yaml app && "
+    "./app/run_launch.sh"
+)
+DOCKER_MANUAL_UPDATE_COMMAND = (
+    "cd /path/to/portrait-gallery && "
+    "git fetch origin main && "
+    "git checkout origin/main -- VERSION README.md Dockerfile docker-compose.yaml app && "
+    "docker compose up -d --build"
+)
 
 
 class GalleryServer:
@@ -229,6 +245,15 @@ class GalleryServer:
         self._setup_routes()
 
     @staticmethod
+    def _request_host_name(request: web.Request) -> str:
+        host = str(request.host or "").split(",", 1)[0].strip().lower()
+        if host.startswith("["):
+            return host[1:].split("]", 1)[0]
+        if host.count(":") == 1:
+            return host.rsplit(":", 1)[0]
+        return host.strip("[]")
+
+    @staticmethod
     def _is_local_request(request: web.Request) -> bool:
         remote = request.remote or ""
         if not remote and request.transport:
@@ -236,13 +261,21 @@ class GalleryServer:
             if isinstance(peer, tuple) and peer:
                 remote = str(peer[0])
         remote = str(remote or "").strip().strip("[]")
+        host = GalleryServer._request_host_name(request)
+        host_is_local = host in LOCALHOST_NAMES
         if remote in LOCALHOST_NAMES:
             return True
         try:
-            return ipaddress.ip_address(remote).is_loopback
+            remote_ip = ipaddress.ip_address(remote)
+            if remote_ip.is_loopback:
+                return True
+            # Docker Desktop / bridge networking can make a host browser opened at
+            # localhost appear to aiohttp as the private bridge gateway. Keep
+            # that local-only flow usable without treating arbitrary hostnames
+            # as trusted.
+            return bool(host_is_local and remote_ip.is_private)
         except ValueError:
-            host = str(request.host or "").split(":", 1)[0].strip("[]").lower()
-            return host in LOCALHOST_NAMES
+            return host_is_local
 
     @staticmethod
     def _requires_local_or_key(request: web.Request) -> bool:
@@ -250,7 +283,21 @@ class GalleryServer:
             return False
         if request.method.upper() in {"GET", "HEAD", "OPTIONS"}:
             return False
+        if request.path in READ_ONLY_POST_API_PATHS:
+            return False
         return True
+
+    @staticmethod
+    def _local_or_key_required_payload() -> dict:
+        return {
+            "error": "local_or_api_key_required",
+            "message": (
+                "远程写操作需要配置 GALLERY_API_KEY 并通过 X-API-Key 调用；"
+                "如果是从 1.2.3 一键升级被拦截，请在部署机器执行手动安全升级命令。"
+            ),
+            "manual_update_command": MANUAL_UPDATE_COMMAND,
+            "docker_manual_update_command": DOCKER_MANUAL_UPDATE_COMMAND,
+        }
 
     @staticmethod
     @web.middleware
@@ -265,10 +312,7 @@ class GalleryServer:
                     return web.json_response({"error": "unauthorized"}, status=401)
             elif GalleryServer._requires_local_or_key(request) and not GalleryServer._is_local_request(request):
                 return web.json_response(
-                    {
-                        "error": "local_or_api_key_required",
-                        "message": "远程写操作需要配置 GALLERY_API_KEY 并通过 X-API-Key 调用。",
-                    },
+                    GalleryServer._local_or_key_required_payload(),
                     status=403,
                 )
         return await handler(request)
@@ -320,6 +364,7 @@ class GalleryServer:
         self.app.router.add_post("/api/hermes/restart", self.handle_hermes_restart)
         # 版本管理
         self.app.router.add_get("/api/version", self.handle_version)
+        self.app.router.add_get("/api/check-update", self.handle_check_update)
         self.app.router.add_post("/api/check-update", self.handle_check_update)
         self.app.router.add_post("/api/update", self.handle_update)
         self.app.router.add_post("/api/restart", self.handle_restart)

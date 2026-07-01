@@ -157,10 +157,11 @@ textarea:focus-visible,
 .tabs {
   grid-area: tabs;
   display: flex;
-  gap: 4px;
-  background: #f0ecf4;
-  padding: 3px;
-  border-radius: 14px;
+  gap: 6px;
+  background: #eee9f2;
+  padding: 4px;
+  border: 1px solid rgba(218, 207, 226, 0.9);
+  border-radius: 22px;
   justify-self: center;
   width: fit-content;
   max-width: 100%;
@@ -170,48 +171,64 @@ textarea:focus-visible,
 }
 .tabs::-webkit-scrollbar { display: none; }
 .tab {
-  min-height: 44px;
-  padding: 9px 18px;
-  border-radius: 14px;
+  min-height: 48px;
+  padding: 10px 22px;
+  border-radius: 18px;
   border: none;
   background: transparent;
-  font-size: 15px;
-  color: #888;
+  font-size: 16px;
+  color: #817986;
   cursor: pointer;
-  transition: all 0.2s;
-  font-weight: 500;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+  font-weight: 800;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
   white-space: nowrap;
 }
 .tab-label {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
+  line-height: 1;
+}
+.tab-icon {
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+  font-size: 20px;
+  line-height: 1;
+  filter: drop-shadow(0 1px 0 rgba(60, 42, 72, 0.22));
+  transform: translateY(-1px);
+}
+.tab-text {
   line-height: 1;
 }
 .tab.active {
   background: #fff;
   color: #e91e63;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  box-shadow: 0 8px 22px rgba(93, 64, 108, 0.1), 0 1px 2px rgba(93, 64, 108, 0.08);
+}
+.tab:not(.active):hover {
+  background: rgba(255,255,255,0.38);
+  color: #6f6472;
 }
 .tab-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 5px;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 16px;
-  border-radius: 8px;
-  background: #ff4757;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 18px;
+  border-radius: 999px;
+  background: #ff4766;
   color: #fff;
   flex: 0 0 auto;
   transform: translateY(0);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.62) inset;
 }
 
 /* ===== Settings Button ===== */
@@ -926,6 +943,28 @@ textarea:focus-visible,
   color: #4b7d4f;
   line-height: 1.45;
   margin: 8px 0 10px;
+}
+.sk-update-manual {
+  margin-top: 10px;
+  padding: 10px 11px;
+  border-radius: 10px;
+  background: #fff7fb;
+  border: 1px solid #f4d6e8;
+  color: #7a4d67;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.sk-update-manual code {
+  display: block;
+  margin-top: 6px;
+  padding: 8px;
+  border-radius: 8px;
+  background: #2f2434;
+  color: #fff;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
 }
 .sk-update-action {
   margin-top: 8px;
@@ -2490,8 +2529,10 @@ textarea:focus-visible,
   .header-actions { gap: 8px; }
   .header-gen-btn { min-height: 40px; padding: 0 12px; font-size: 13px; }
   .settings-btn { width: 38px; height: 38px; }
-  .tabs { padding: 3px; }
-  .tab { min-height: 40px; padding: 8px 10px; font-size: 14px; }
+  .tabs { padding: 3px; gap: 2px; border-radius: 18px; }
+  .tab { min-height: 40px; padding: 8px 5px; border-radius: 15px; font-size: 13px; gap: 4px; }
+  .tab-label { gap: 4px; }
+  .tab-icon { font-size: 16px; }
   .tab-badge { min-width: 15px; height: 15px; font-size: 9px; line-height: 15px; padding: 0 4px; }
   .container { padding: 16px 14px; }
   .wardrobe-head h2 { font-size: 20px; }
@@ -2692,9 +2733,9 @@ textarea:focus-visible,
 .gallery-grid.cols-2 .gallery-card .card-body .card-row1 .time { font-size: 13px; }
 .gallery-grid.cols-2 .gallery-card .card-body .card-meta { gap: 4px 5px; }
 .gallery-grid.cols-2 .gallery-card .card-body .card-meta .meta-tag { font-size: 11px; padding: 2px 7px; border-radius: 11px; }
-.gallery-grid.cols-2 .gallery-card .card-body .card-actions { gap: 7px; margin-top: 8px; padding-top: 8px; }
-.gallery-grid.cols-2 .gallery-card .card-body .card-actions .ca-btn { min-height: 36px; font-size: 13px; padding: 0 7px; }
-.gallery-grid.cols-2 .gallery-card .card-body .card-actions .ca-btn .ca-icon { font-size: 14px; }
+.gallery-grid.cols-2 .gallery-card .card-body .card-actions { gap: 5px; margin-top: 6px; padding-top: 6px; }
+.gallery-grid.cols-2 .gallery-card .card-body .card-actions .ca-btn { min-height: 31px; font-size: 12px; padding: 0 5px; }
+.gallery-grid.cols-2 .gallery-card .card-body .card-actions .ca-btn .ca-icon { font-size: 12.5px; }
 .gallery-grid.cols-2 .gallery-card .card-date-tag,
 .gallery-grid.cols-2 .gallery-card .card-style-tag { top: 9px; font-size: 12px; padding: 3px 9px; border-radius: 8px; }
 
@@ -2727,6 +2768,7 @@ textarea:focus-visible,
     gap: 4px;
   }
   .gallery-card .card-body .card-actions .ca-btn {
+    min-height: 30px;
     padding-inline: 3px;
     gap: 2px;
     font-size: 11px;
@@ -3065,13 +3107,13 @@ textarea:focus-visible,
 
 <div class="header">
   <div class="header-left">
-      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.2.4</span></h1>
+      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.2.5</span></h1>
   </div>
   <div class="tabs">
-    <button class="tab" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="showUnfavoriteGallery(event)"><span class="tab-label">✨ 全部</span><span class="tab-badge" id="badge-all">0</span></button>
-    <button class="tab" data-tab="today" onclick="switchTab('today')"><span class="tab-label">🌸 今日</span><span class="tab-badge" id="badge-today">0</span></button>
-    <button class="tab" data-tab="favorites" onclick="switchTab('favorites')"><span class="tab-label">❤️ 收藏</span><span class="tab-badge" id="badge-favorites">0</span></button>
-    <button class="tab" data-tab="wardrobe" onclick="switchTab('wardrobe')"><span class="tab-label">👗 衣柜</span><span class="tab-badge" id="badge-wardrobe">0</span></button>
+    <button class="tab" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="showUnfavoriteGallery(event)"><span class="tab-label"><span class="tab-icon" aria-hidden="true">✨</span><span class="tab-text">全部</span></span><span class="tab-badge" id="badge-all">0</span></button>
+    <button class="tab" data-tab="today" onclick="switchTab('today')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">🌸</span><span class="tab-text">今日</span></span><span class="tab-badge" id="badge-today">0</span></button>
+    <button class="tab" data-tab="favorites" onclick="switchTab('favorites')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">❤️</span><span class="tab-text">收藏</span></span><span class="tab-badge" id="badge-favorites">0</span></button>
+    <button class="tab" data-tab="wardrobe" onclick="switchTab('wardrobe')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">👗</span><span class="tab-text">衣柜</span></span><span class="tab-badge" id="badge-wardrobe">0</span></button>
   </div>
   <div class="header-actions">
     <button class="btn btn-primary header-gen-btn" onclick="openCustomGen()">🎀 穿搭生成</button>
@@ -3324,7 +3366,7 @@ textarea:focus-visible,
         <div class="sk-update-row">
           <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
           <button class="btn btn-secondary" id="restartServiceBtn" onclick="restartService()">🔄 重启服务</button>
-          <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.2.4</span></span>
+          <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.2.5</span></span>
         </div>
         <div class="sk-actions">
           <button class="btn btn-secondary" onclick="closeSettings()">关闭</button>
@@ -6301,11 +6343,11 @@ async function checkUpdate() {
   resultDiv.innerHTML = "";
   
   try {
-    const res = await fetch(`${API}/api/check-update`, { method: "POST" });
+    const res = await fetch(`${API}/api/check-update`, { method: "GET" });
     const data = await res.json();
     
     if (data.error) {
-      resultDiv.innerHTML = `<div class="sk-update-pill error">❌ ${escapeHtml(data.error)}</div>`;
+      resultDiv.innerHTML = renderUpdateError(data, "检查失败");
     } else if (data.update_available) {
       const latest = escapeHtml(data.latest || "");
       const changelog = escapeHtml(data.changelog || "更新内容详见 GitHub");
@@ -6345,7 +6387,7 @@ async function applyUpdate() {
     const data = await res.json();
     
     if (data.error) {
-      resultDiv.innerHTML = `<div class="sk-update-pill error">❌ ${escapeHtml(data.error)}</div>`;
+      resultDiv.innerHTML = renderUpdateError(data, "更新失败");
     } else {
       resultDiv.innerHTML = `<div class="sk-update-pill ok">✅ ${escapeHtml(data.message || '更新成功，服务已重启')}</div>`;
       // Reload page after 3 seconds
@@ -6356,6 +6398,21 @@ async function applyUpdate() {
   } catch(e) {
     resultDiv.innerHTML = `<div class="sk-update-pill error">❌ 更新失败: ${escapeHtml(e.message)}</div>`;
   }
+}
+
+function renderUpdateError(data, fallbackTitle) {
+  const title = escapeHtml(data.message || data.error || fallbackTitle || "操作失败");
+  const command = String(data.manual_update_command || "").trim();
+  const dockerCommand = String(data.docker_manual_update_command || "").trim();
+  const manualHtml = command || dockerCommand
+    ? `<div class="sk-update-manual">
+        <strong>手动安全升级</strong>
+        <span>把 <code style="display:inline;padding:1px 4px;margin:0;background:#fce4ec;color:#7a4d67;">/path/to/portrait-gallery</code> 替换成你的项目目录。</span>
+        ${command ? `<code>${escapeHtml(command)}</code>` : ""}
+        ${dockerCommand ? `<div style="margin-top:8px;">Docker 部署：</div><code>${escapeHtml(dockerCommand)}</code>` : ""}
+      </div>`
+    : "";
+  return `<div class="sk-update-pill error">❌ ${title}</div>${manualHtml}`;
 }
 
 function waitForServiceOnline(resultDiv, timeoutMs = 12000) {

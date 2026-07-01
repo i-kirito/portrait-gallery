@@ -204,6 +204,21 @@ curl -X POST http://localhost:18889/api/hermes/update \
   -d '{"dry_run": false, "restart": true}'
 ```
 
+如果旧版本（尤其是 `v1.2.3`）在 Web 一键升级时返回 `local_or_api_key_required`，请在部署机器执行手动安全升级命令：
+
+```bash
+cd /path/to/portrait-gallery
+git fetch origin main
+git checkout origin/main -- VERSION README.md Dockerfile docker-compose.yaml app
+./app/run_launch.sh
+```
+
+Docker 部署可将最后一行换成：
+
+```bash
+docker compose up -d --build
+```
+
 受保护路径包括：`.env`、`config/config.yaml`、`config/local.yaml`、`docker-compose.override.yml`、`data/`、`app/data/`、`logs/`、`app/references/uploads/`。
 
 ### 图片管理
@@ -268,6 +283,12 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥
 
 ## 🧾 Release Notes
+
+### v1.2.5
+
+- 修复 Docker/localhost 场景下一键安全升级可能被误判为远程写操作并返回 `local_or_api_key_required` 的问题。
+- 检查更新改为只读 GET 请求；升级被鉴权拦截时会显示手动安全升级命令。
+- 优化移动端顶部 Tab 和卡片底部 `收藏 / 分享 / 删除` 按钮尺寸。
 
 ### v1.2.4
 
