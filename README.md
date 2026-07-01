@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.2.2**
+当前版本：**v1.2.3**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -268,6 +268,12 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥
 
 ## 🧾 Release Notes
+
+### v1.2.3
+
+- 设置页的 GitHub Release API URL 改为当前仓库固定值，不再要求用户手动填写，旧本地覆盖会在保存设置时自动清理。
+- 检查更新默认使用 `https://api.github.com/repos/i-kirito/portrait-gallery/releases/latest`，仍保留环境变量或配置覆盖能力，便于特殊部署。
+- 默认画质提示词改为更自然的手机随拍风格，减少过度精修、塑料皮肤和 AI 感。
 
 ### v1.2.2
 

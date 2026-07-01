@@ -24,9 +24,10 @@ GENERIC_APPEARANCE = (
 )
 
 DEFAULT_QUALITY_PREFIX = (
-    "This image should look like a high-quality raw photo captured on a flagship smartphone. "
-    "Masterpiece clarity, hyper realistic, intimate atmosphere, natural skin texture, "
-    "clean face, no artifacts, no smudges."
+    "Candid smartphone photo, natural lighting, real skin texture with visible pores "
+    "and subtle imperfections. Casual composition, slightly imperfect framing as if "
+    "taken by a friend. Warm natural tones, no heavy retouching, no AI artifacts, "
+    "no plastic skin."
 )
 
 DEFAULT_STYLE_REFERENCE_FILES = {

@@ -298,6 +298,16 @@ textarea:focus-visible,
   color: #333;
   background: #fafafa;
 }
+.sk-field input[readonly] {
+  color: #666;
+  background: #f4f4f4;
+  cursor: default;
+}
+.sk-field input[readonly]:focus {
+  border-color: #e0e0e0;
+  box-shadow: none;
+  background: #f4f4f4;
+}
 .sk-field textarea {
   width: 100%;
   padding: 10px 14px;
@@ -3055,7 +3065,7 @@ textarea:focus-visible,
 
 <div class="header">
   <div class="header-left">
-      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.2.2</span></h1>
+      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.2.3</span></h1>
   </div>
   <div class="tabs">
     <button class="tab" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="showUnfavoriteGallery(event)"><span class="tab-label">✨ 全部</span><span class="tab-badge" id="badge-all">0</span></button>
@@ -3270,8 +3280,8 @@ textarea:focus-visible,
     </div>
     <div class="sk-field">
       <label for="skGithubApi">GitHub Release API URL</label>
-      <div class="sk-desc">检查更新和在线更新使用，必须填写 releases/latest API 地址</div>
-      <input type="text" id="skGithubApi" placeholder="必填：填写仓库 releases/latest API 地址">
+      <div class="sk-desc">检查更新和在线更新使用，固定为当前仓库 releases/latest API 地址</div>
+      <input type="text" id="skGithubApi" readonly aria-readonly="true">
       <div class="sk-status" id="skGithubApiStatus">加载中...</div>
     </div>
     <div class="sk-field">
@@ -3320,7 +3330,7 @@ textarea:focus-visible,
         <div class="sk-update-row">
           <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
           <button class="btn btn-secondary" id="restartServiceBtn" onclick="restartService()">🔄 重启服务</button>
-          <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.2.2</span></span>
+          <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.2.3</span></span>
         </div>
         <div class="sk-actions">
           <button class="btn btn-secondary" onclick="closeSettings()">关闭</button>
@@ -5858,16 +5868,16 @@ async function loadSettingsStatus() {
     const githubApiEl = document.getElementById("skGithubApi");
     const githubApiStatus = document.getElementById("skGithubApiStatus");
     if (githubApiEl) {
-      githubApiEl.value = data.github_api_local || data.github_api || "";
-      githubApiEl.dataset.localValue = data.github_api_local || "";
+      githubApiEl.value = data.github_api || "";
+      githubApiEl.dataset.localValue = "";
       githubApiEl.dataset.defaultValue = data.github_api_default || "";
     }
     if (githubApiStatus) {
       if (githubApiEl && githubApiEl.value.trim()) {
-        githubApiStatus.textContent = "✓ 已设置";
+        githubApiStatus.textContent = "✓ 固定值";
         githubApiStatus.className = "sk-status set";
       } else {
-        githubApiStatus.textContent = "○ 必填";
+        githubApiStatus.textContent = "○ 未配置";
         githubApiStatus.className = "sk-status unset";
       }
     }
@@ -6206,11 +6216,9 @@ async function saveSettings() {
   const gptKey = document.getElementById("skGptKey").value.trim();
   const gptBaseUrlEl = document.getElementById("skGptBaseUrl");
   const cpaUrlEl = document.getElementById("skCpaUrl");
-  const githubApiEl = document.getElementById("skGithubApi");
   const gptBaseUrl = gptBaseUrlEl.value.trim();
   const cpaUrl = cpaUrlEl.value.trim();
   const cpaKey = document.getElementById("skCpaKey").value.trim();
-  const githubApi = githubApiEl.value.trim();
   const githubProxy = document.getElementById("skGithubProxy").value.trim();
   const imageDir = document.getElementById("skImageDir").value.trim();
   const appearance = document.getElementById("skAppearance").value.trim();
@@ -6226,7 +6234,6 @@ async function saveSettings() {
   if (!gptKey && !hasSavedSecret("gpt_key")) missing.push("GPT Image Key");
   requireSettingsValue("CPA Base URL", cpaUrl, missing);
   if (!cpaKey && !hasSavedSecret("cpa_key")) missing.push("CPA API Key");
-  requireSettingsValue("GitHub Release API URL", githubApi, missing);
   requireSettingsValue("GitHub API 代理", githubProxy, missing);
   if (missing.length) {
     showToast("请先填写：" + missing.join("、"), 7000);
@@ -6252,7 +6259,6 @@ async function saveSettings() {
     body.gpt_image_endpoints = collectGptEndpoints();
     body.cpa_url = cpaUrl;
     if (cpaKey) body.cpa_key = cpaKey;
-    body.github_api = githubApi;
     body.github_proxy = githubProxy;
     body.image_dir = imageDir;
     // appearance: always send (empty = remove local appearance)

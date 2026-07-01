@@ -75,6 +75,8 @@ from settings import (
 
 logger = logging.getLogger(__name__)
 
+GITHUB_RELEASE_API_URL = "https://api.github.com/repos/i-kirito/portrait-gallery/releases/latest"
+
 # 日期 key 正则：匹配 YYYY-MM-DD 格式
 DATE_KEY_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 LOG_ENTRY_RE = re.compile(
@@ -2147,13 +2149,12 @@ class GalleryServer:
         return ""
 
     def _github_api_url(self) -> str:
-        """Return the update-check GitHub API URL from local config or env."""
-        keys = self._load_api_keys_config()
+        """Return the fixed update-check GitHub API URL."""
         update_config = self.config.get("update", {}) if isinstance(self.config.get("update"), dict) else {}
         for value in (
-            keys.get("github_api"),
             os.getenv("GITHUB_RELEASE_API"),
             update_config.get("github_api"),
+            GITHUB_RELEASE_API_URL,
         ):
             url = str(value or "").strip()
             if url:
@@ -2531,11 +2532,7 @@ class GalleryServer:
         local_gitee_url = str(keys_config.get("gitee_url", "") or "").strip()
         if local_gitee_url == default_gitee_url:
             local_gitee_url = ""
-        update_config = self.config.get("update", {}) if isinstance(self.config.get("update"), dict) else {}
-        default_github_api = str(update_config.get("github_api", "") or "").strip()
-        local_github_api = str(keys_config.get("github_api", "") or "").strip()
-        if local_github_api == default_github_api:
-            local_github_api = ""
+        default_github_api = self._github_api_url()
         persona = load_runtime_persona(self.config, self.data_dir)
         persona_source = normalize_persona_source(keys_config.get("persona_source"))
         local_image_dir = normalize_image_dir(keys_config.get("image_dir"), self.data_dir)
@@ -2593,8 +2590,8 @@ class GalleryServer:
             "outfit_styles": DEFAULT_OUTFIT_STYLES,
             "enabled_outfit_styles": load_enabled_outfit_styles(self.config, self.data_dir),
             "github_proxy": self._github_proxy(),
-            "github_api": local_github_api or default_github_api,
-            "github_api_local": local_github_api,
+            "github_api": default_github_api,
+            "github_api_local": "",
             "github_api_default": default_github_api,
             "image_dir": effective_image_dir,
             "image_dir_local": local_image_dir,
@@ -3417,8 +3414,7 @@ class GalleryServer:
                     raw_default_gpt_base_url = str(image_config.get("gpt_base_url", "") or "").strip()
                     default_gpt_base_url = self._configured_image_base_url(raw_default_gpt_base_url)
                     default_gitee_url = str(image_config.get("gitee_url", "") or "").strip()
-                    update_config = self.config.get("update", {}) if isinstance(self.config.get("update"), dict) else {}
-                    default_github_api = str(update_config.get("github_api", "") or "").strip()
+                    default_github_api = self._github_api_url()
                     self._drop_redundant_local_url_override(
                         keys_config,
                         "gpt_base_url",
@@ -3435,11 +3431,7 @@ class GalleryServer:
                         "gitee_url",
                         default_gitee_url,
                     )
-                    self._drop_redundant_local_url_override(
-                        keys_config,
-                        "github_api",
-                        default_github_api,
-                    )
+                    keys_config.pop("github_api", None)
 
                     # 更新配置（只更新提供的字段）
                     if "gpt_key" in body and body["gpt_key"]:
@@ -3473,13 +3465,6 @@ class GalleryServer:
                             "gitee_url",
                             body.get("gitee_url"),
                             default_gitee_url,
-                        )
-                    if "github_api" in body:
-                        self._store_local_url_override(
-                            keys_config,
-                            "github_api",
-                            body.get("github_api"),
-                            default_github_api,
                         )
                     # appearance: always update (empty string = remove local appearance)
                     if "appearance" in body:
@@ -3528,7 +3513,7 @@ class GalleryServer:
                             ("GPT Image Key", body.get("gpt_key") or keys_config.get("gpt_key")),
                             ("CPA Base URL", keys_config.get("cpa_url")),
                             ("CPA API Key", body.get("cpa_key") or keys_config.get("cpa_key")),
-                            ("GitHub Release API URL", keys_config.get("github_api")),
+                            ("GitHub Release API URL", default_github_api),
                             ("GitHub API 代理", keys_config.get("github_proxy")),
                         ]
                         missing = [label for label, value in required_fields if not str(value or "").strip()]
