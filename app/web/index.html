@@ -2989,6 +2989,12 @@ textarea:focus-visible,
 .log-body { padding-bottom: 10px; }
 .log-body pre { min-height: clamp(320px, 56vh, 680px); max-height: min(64vh, 680px); overflow: auto; white-space: pre-wrap; word-break: break-word; background: #111827; color: #d1fae5; border: 1px solid #263244; }
 .log-body pre .log-diagnostic { color: #d1fae5; }
+.log-body pre .log-line { display: block; min-height: 1.5em; }
+.log-body pre .log-level-debug { color: #c4b5fd; }
+.log-body pre .log-level-info { color: #bfdbfe; }
+.log-body pre .log-level-warn { color: #fde68a; }
+.log-body pre .log-level-error { color: #fecaca; }
+.log-body pre .log-summary { color: #d1fae5; font-weight: 700; }
 .log-body pre .log-raw-title { color: #fbbf24; font-weight: 800; }
 .log-body pre .log-raw-block { color: #fecaca; }
 .log-footer { justify-content: space-between; gap: 14px; padding-top: 10px; padding-bottom: 14px; }
@@ -4577,18 +4583,19 @@ ms.textContent = `
   gap: 7px;
 }
 .delete-confirm-overlay {
-  position:fixed;inset:0;z-index:10020;display:none;align-items:center;justify-content:center;
-  padding:24px;background:rgba(24,12,30,0.48);backdrop-filter:blur(14px);
-  animation:fadeIn 0.18s ease;
+  position:fixed;inset:0;z-index:10020;display:flex;align-items:center;justify-content:center;
+  padding:24px;background:rgba(24,12,30,0.36);opacity:0;visibility:hidden;pointer-events:none;
+  backdrop-filter:none;-webkit-backdrop-filter:none;transition:opacity 0.12s ease,visibility 0s linear 0.12s;contain:paint;
 }
-.delete-confirm-overlay.open { display:flex; }
+.delete-confirm-overlay.open { opacity:1;visibility:visible;pointer-events:auto;transition:opacity 0.12s ease; }
 .delete-confirm-card {
   width:min(360px,calc(100vw - 40px));background:linear-gradient(180deg,#fff 0%,#fff8fb 100%);
   border:1px solid rgba(255,255,255,0.8);border-radius:24px;padding:24px 22px 20px;
   box-shadow:0 24px 80px rgba(35,16,45,0.26);display:flex;flex-direction:column;align-items:center;gap:16px;
-  animation:deleteConfirmIn 0.2s cubic-bezier(0.16,1,0.3,1);
+  opacity:0;transform:translateY(8px) scale(0.985) translateZ(0);
+  transition:opacity 0.12s ease,transform 0.14s cubic-bezier(0.16,1,0.3,1);will-change:opacity,transform;
 }
-@keyframes deleteConfirmIn { from{opacity:0;transform:translateY(10px) scale(0.97)} to{opacity:1;transform:translateY(0) scale(1)} }
+.delete-confirm-overlay.open .delete-confirm-card { opacity:1;transform:translateY(0) scale(1) translateZ(0); }
 .delete-confirm-icon {
   width:54px;height:54px;border-radius:18px;background:linear-gradient(135deg,#fff0f5,#ffe2ec);
   display:flex;align-items:center;justify-content:center;color:#e91e63;font-size:24px;
@@ -4681,6 +4688,7 @@ document.body.appendChild(modalOverlay);
 const deleteConfirmOverlay = document.createElement("div");
 deleteConfirmOverlay.className = "delete-confirm-overlay";
 deleteConfirmOverlay.id = "deleteConfirmOverlay";
+deleteConfirmOverlay.setAttribute("aria-hidden", "true");
 deleteConfirmOverlay.innerHTML = `
   <div class="delete-confirm-card" role="dialog" aria-modal="true" aria-labelledby="deleteConfirmTitle" onclick="event.stopPropagation()">
     <div class="delete-confirm-icon" aria-hidden="true">🗑</div>
@@ -8010,13 +8018,13 @@ function ensureLiveLogOverlay() {
   overlay.className = 'prompt-overlay';
   overlay.onclick = function(e) { if (e.target === this) closeLiveLogs(); };
   overlay.innerHTML = '<div class="prompt-card log-card">' +
-    '<div class="prompt-header"><span>📜 运行诊断日志</span><button class="prompt-close" onclick="closeLiveLogs()">✕</button></div>' +
+    '<div class="prompt-header"><span>📜 运行日志</span><button class="prompt-close" onclick="closeLiveLogs()">✕</button></div>' +
     '<div class="prompt-body log-body"><pre id="liveLogText">正在读取日志...</pre></div>' +
     '<div class="prompt-footer log-footer">' +
       '<span class="log-status" id="liveLogStatus">准备刷新</span>' +
       '<div class="log-controls">' +
         '<label class="log-toggle"><input id="liveLogAuto" type="checkbox" checked onchange="toggleLiveLogAuto()">自动刷新</label>' +
-        '<button class="prompt-copy-btn" onclick="refreshLiveLogs(true)">刷新</button>' +
+        '<button class="prompt-copy-btn" onclick="refreshLiveLogs(true, true)">刷新</button>' +
         '<button class="prompt-copy-btn" onclick="copyLiveLogs()">复制</button>' +
       '</div>' +
     '</div>' +
@@ -8034,7 +8042,15 @@ function renderLiveLogHtml(text) {
   const raw = String(text || '');
   const marker = raw.match(/\n原始错误[^\n]*\n/);
   if (!marker || typeof marker.index !== 'number') {
-    return '<span class="log-diagnostic">' + escapeHtml(raw) + '</span>';
+    return raw.split('\n').map(line => {
+      let cls = 'log-line log-diagnostic';
+      if (line.startsWith('[DEBUG]')) cls = 'log-line log-level-debug';
+      else if (line.startsWith('[INFO]')) cls = 'log-line log-level-info';
+      else if (line.startsWith('[WARN]')) cls = 'log-line log-level-warn';
+      else if (line.startsWith('[ERROR]')) cls = 'log-line log-level-error';
+      else if (line.startsWith('运行日志') || /^INFO\s+\d+/.test(line)) cls = 'log-line log-summary';
+      return '<span class="' + cls + '">' + escapeHtml(line) + '</span>';
+    }).join('\n');
   }
   const before = raw.slice(0, marker.index);
   const title = marker[0];
@@ -8050,20 +8066,22 @@ function setLiveLogText(text) {
   textEl.innerHTML = renderLiveLogHtml(text || '');
 }
 
-function refreshLiveLogs(manual) {
+function refreshLiveLogs(manual, scrollToBottom) {
   const textEl = document.getElementById('liveLogText');
   if (!textEl) return Promise.resolve();
   if (manual) setLiveLogStatus('正在刷新...');
-  return fetch(appendApiKeyQuery('/api/logs?lines=120&mode=diagnostic'))
+  const keepScrollTop = textEl.scrollTop;
+  return fetch(appendApiKeyQuery('/api/logs?lines=100&mode=levels'))
     .then(r => r.json().then(data => ({ ok: r.ok, data })))
     .then(({ ok, data }) => {
       if (!ok || data.error) throw new Error(data.message || data.detail || data.error || 'log_failed');
       const text = data.text || data.message || '暂无日志';
       setLiveLogText(text);
-      textEl.scrollTop = textEl.scrollHeight;
+      textEl.scrollTop = scrollToBottom ? textEl.scrollHeight : keepScrollTop;
       const time = new Date().toLocaleTimeString();
+      const levels = data.level_counts || {};
       const countText = data.status === 'ok'
-        ? `已更新 ${time} · 有用信息 ${data.filtered_count || 0} 条 · 原始错误 ${data.raw_error_count || 0} 条`
+        ? `已更新 ${time} · 最近 ${data.filtered_count || 0} 条 · INFO ${levels.INFO || 0} · DEBUG ${levels.DEBUG || 0} · WARN ${levels.WARN || 0} · ERROR ${levels.ERROR || 0}`
         : `未找到日志 ${time}`;
       setLiveLogStatus(countText);
     })
@@ -8081,7 +8099,7 @@ function scheduleLiveLogRefresh() {
   const auto = document.getElementById('liveLogAuto');
   const overlay = document.getElementById('liveLogOverlay');
   if (auto && auto.checked && overlay && overlay.classList.contains('show')) {
-    liveLogTimer = setInterval(() => refreshLiveLogs(false), 1500);
+    liveLogTimer = setInterval(() => refreshLiveLogs(false, false), 1500);
   }
 }
 
@@ -8092,7 +8110,7 @@ function toggleLiveLogAuto() {
 function openLiveLogs() {
   const overlay = ensureLiveLogOverlay();
   overlay.classList.add('show');
-  refreshLiveLogs(true).then(scheduleLiveLogRefresh);
+  refreshLiveLogs(true, false).then(scheduleLiveLogRefresh);
 }
 
 function closeLiveLogs() {

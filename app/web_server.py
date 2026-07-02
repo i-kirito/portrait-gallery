@@ -976,6 +976,80 @@ class GalleryServer:
             "raw_error_count": len(selected_raw_error_blocks),
         }
 
+    @classmethod
+    def _format_level_logs(cls, text: str, max_items: int = 100) -> dict:
+        entries = []
+        display_levels = {
+            "DEBUG": "DEBUG",
+            "INFO": "INFO",
+            "WARNING": "WARN",
+            "ERROR": "ERROR",
+            "CRITICAL": "ERROR",
+        }
+
+        for raw in (text or "").splitlines():
+            line = raw.rstrip()
+            if not line.strip():
+                continue
+
+            match = LOG_ENTRY_RE.match(line)
+            if not match:
+                if entries and cls._is_error_detail_line(line):
+                    entries[-1]["message"] = f"{entries[-1]['message']} | {line.strip()}"
+                continue
+
+            ts = match.group("ts")
+            level = match.group("level")
+            logger_name = match.group("logger")
+            message = match.group("message")
+            display_level = display_levels.get(level, level)
+
+            if logger_name == "aiohttp.access":
+                access_match = LOG_ACCESS_RE.search(message or "")
+                if access_match:
+                    method = access_match.group("method")
+                    path = access_match.group("path").split("?", 1)[0]
+                    status = access_match.group("status")
+                    if path == "/api/logs":
+                        continue
+                    message_text = f"接口访问：{method} {path} -> {status}"
+                else:
+                    message_text = message.strip()
+            else:
+                message_text = cls._translate_log_message(message, level, logger_name)
+
+            entries.append({
+                "time": cls._format_log_time(ts),
+                "level": display_level,
+                "logger": logger_name,
+                "message": message_text,
+            })
+
+        selected = entries[-max_items:]
+        counts = {"DEBUG": 0, "INFO": 0, "WARN": 0, "ERROR": 0}
+        for item in selected:
+            counts[item["level"]] = counts.get(item["level"], 0) + 1
+
+        output = [
+            f"运行日志（最近 {len(selected)} 条）",
+            f"INFO {counts.get('INFO', 0)} · DEBUG {counts.get('DEBUG', 0)} · WARN {counts.get('WARN', 0)} · ERROR {counts.get('ERROR', 0)}",
+        ]
+        if selected:
+            output.append("")
+            for item in selected:
+                output.append(f"[{item['level']}] {item['time']} {item['logger']} ｜ {item['message']}")
+        else:
+            output.append("")
+            output.append("最近没有可显示的分类日志。")
+
+        return {
+            "text": "\n".join(output),
+            "filtered_count": len(selected),
+            "total_count": len(entries),
+            "raw_error_count": counts.get("ERROR", 0),
+            "level_counts": counts,
+        }
+
     async def handle_logs(self, request: web.Request):
         """Return a tail of the live gallery service log for the UI log viewer."""
         api_key = os.environ.get("GALLERY_API_KEY", "")
@@ -1005,7 +1079,8 @@ class GalleryServer:
         try:
             mode = str(request.query.get("mode") or "").strip().lower()
             raw_mode = mode == "raw" or request.query.get("raw") == "1"
-            read_lines = lines if raw_mode else min(5000, lines * 4)
+            level_mode = mode in {"levels", "level", "structured"}
+            read_lines = lines if raw_mode else min(5000, lines * (8 if level_mode else 4))
             text = self._redact_log_text(self._tail_log_file(path, read_lines))
             stat = os.stat(path)
             payload = {
@@ -1015,13 +1090,16 @@ class GalleryServer:
                 "mtime": stat.st_mtime,
                 "updated_at": int(time.time()),
                 "lines": lines,
-                "mode": "raw" if raw_mode else "diagnostic",
+                "mode": "raw" if raw_mode else "levels" if level_mode else "diagnostic",
             }
             if raw_mode:
                 payload["text"] = text
                 payload["total_count"] = len(text.splitlines())
                 payload["filtered_count"] = payload["total_count"]
                 payload["raw_error_count"] = 0
+            elif level_mode:
+                level_logs = self._format_level_logs(text, max_items=min(lines, 300))
+                payload.update(level_logs)
             else:
                 diagnostic = self._format_diagnostic_logs(text, max_items=min(lines, 120))
                 payload.update(diagnostic)
