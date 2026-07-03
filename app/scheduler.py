@@ -200,8 +200,28 @@ class DailyScheduler:
                 except Exception:
                     return None
 
+        retryable_statuses = {429, 500, 502, 503, 504}
+        direct_fallback_statuses = {401, 403}
+        per_model_attempts = 2
+
+        def _model_unavailable(detail: str) -> bool:
+            lower = str(detail or "").lower()
+            return any(
+                marker in lower
+                for marker in (
+                    "model not found",
+                    "model_not_found",
+                    "does not exist",
+                    "not exist",
+                    "no permission",
+                    "permission denied",
+                    "unauthorized",
+                    "forbidden",
+                )
+            )
+
         for model in models:
-            payload = {
+            base_payload = {
                 "model": model,
                 "messages": messages,
                 "max_tokens": 8192 if json_mode and self._should_disable_thinking(model) else 4096,
@@ -209,86 +229,116 @@ class DailyScheduler:
                 "stream": False,
             }
             if json_mode:
-                payload["response_format"] = {"type": "json_object"}
+                base_payload["response_format"] = {"type": "json_object"}
                 if self._should_disable_thinking(model):
-                    payload["thinking"] = {"type": "disabled"}
-            try:
-                resp, request_error = await loop.run_in_executor(
-                    None,
-                    lambda p=payload: _do_request(chat_url, headers, p, timeout),
-                )
-                if resp is None and "thinking" in payload:
-                    retry_payload = dict(payload)
-                    retry_payload.pop("thinking", None)
-                    logger.warning(
-                        "LLM model %s request failed with thinking disabled (%s); retrying without it",
-                        model,
-                        request_error or "无响应",
-                    )
+                    base_payload["thinking"] = {"type": "disabled"}
+            payload = dict(base_payload)
+            for attempt in range(1, per_model_attempts + 1):
+                try:
                     resp, request_error = await loop.run_in_executor(
                         None,
-                        lambda p=retry_payload: _do_request(chat_url, headers, p, timeout),
+                        lambda p=dict(payload): _do_request(chat_url, headers, p, timeout),
                     )
-                if resp is not None and resp.status_code == 400:
-                    error_body = _response_json(resp)
-                    retry_payload = dict(payload)
-                    retry_reasons = []
-                    if "temperature" in retry_payload and llm_temperature_param_error(error_body):
-                        retry_payload.pop("temperature", None)
-                        retry_reasons.append("temperature")
-                    if "response_format" in retry_payload and (
-                        self._response_format_param_error(error_body) or json_mode
-                    ):
-                        retry_payload.pop("response_format", None)
-                        retry_reasons.append("response_format")
-                    if "thinking" in retry_payload and self._thinking_param_error(error_body):
+                    if resp is None and "thinking" in payload:
+                        retry_payload = dict(payload)
                         retry_payload.pop("thinking", None)
-                        retry_reasons.append("thinking")
-                    if retry_reasons:
                         logger.warning(
-                            "LLM model %s rejects %s; retrying without unsupported params",
+                            "LLM model %s request failed with thinking disabled (%s); retrying without it",
                             model,
-                            "/".join(retry_reasons),
+                            request_error or "无响应",
                         )
                         resp, request_error = await loop.run_in_executor(
                             None,
                             lambda p=retry_payload: _do_request(chat_url, headers, p, timeout),
                         )
-                if resp is not None and resp.status_code == 200:
-                    data = resp.json()
-                    choices = data.get("choices") if isinstance(data, dict) else None
-                    if not choices:
-                        logger.error(
-                            "LLM call returned invalid response: model=%s, detail=%s",
-                            model,
-                            _response_error(resp),
-                        )
-                        continue
-                    content = self._choice_final_text(choices[0]) if json_mode else llm_choice_text(choices[0])
-                    if content:
-                        return content
-                    if json_mode:
-                        reasoning_excerpt = llm_response_excerpt(
-                            choices[0].get("message", {}).get("reasoning_content", "") if isinstance(choices[0], dict) else "",
-                            limit=220,
-                        )
-                        if reasoning_excerpt:
+                        payload = retry_payload
+                    if resp is not None and resp.status_code == 400:
+                        error_body = _response_json(resp)
+                        retry_payload = dict(payload)
+                        retry_reasons = []
+                        if "temperature" in retry_payload and llm_temperature_param_error(error_body):
+                            retry_payload.pop("temperature", None)
+                            retry_reasons.append("temperature")
+                        if "response_format" in retry_payload and (
+                            self._response_format_param_error(error_body) or json_mode
+                        ):
+                            retry_payload.pop("response_format", None)
+                            retry_reasons.append("response_format")
+                        if "thinking" in retry_payload and self._thinking_param_error(error_body):
+                            retry_payload.pop("thinking", None)
+                            retry_reasons.append("thinking")
+                        if retry_reasons:
                             logger.warning(
-                                "LLM returned reasoning without final JSON content: model=%s, reasoning=%s",
+                                "LLM model %s rejects %s; retrying without unsupported params",
                                 model,
-                                reasoning_excerpt,
+                                "/".join(retry_reasons),
                             )
-                    logger.error(f"LLM call returned empty content: model={model}")
-                else:
+                            resp, request_error = await loop.run_in_executor(
+                                None,
+                                lambda p=retry_payload: _do_request(chat_url, headers, p, timeout),
+                            )
+                            payload = retry_payload
+                    if resp is not None and resp.status_code == 200:
+                        data = resp.json()
+                        choices = data.get("choices") if isinstance(data, dict) else None
+                        if not choices:
+                            logger.error(
+                                "LLM call returned invalid response: model=%s, detail=%s",
+                                model,
+                                _response_error(resp),
+                            )
+                            break
+                        content = self._choice_final_text(choices[0]) if json_mode else llm_choice_text(choices[0])
+                        if content:
+                            return content
+                        if json_mode:
+                            reasoning_excerpt = llm_response_excerpt(
+                                choices[0].get("message", {}).get("reasoning_content", "") if isinstance(choices[0], dict) else "",
+                                limit=220,
+                            )
+                            if reasoning_excerpt:
+                                logger.warning(
+                                    "LLM returned reasoning without final JSON content: model=%s, reasoning=%s",
+                                    model,
+                                    reasoning_excerpt,
+                                )
+                        logger.error(f"LLM call returned empty content: model={model}")
+                        break
+
                     status = resp.status_code if resp is not None else "request_failed"
+                    detail = request_error or _response_error(resp)
                     logger.error(
-                        "LLM call failed: model=%s, status=%s, detail=%s",
+                        "LLM call failed: model=%s, status=%s, attempt=%s/%s, detail=%s",
                         model,
                         status,
-                        request_error or _response_error(resp),
+                        attempt,
+                        per_model_attempts,
+                        detail,
                     )
-            except Exception as e:
-                logger.error(f"LLM call error: model={model}, {e}")
+                    if (
+                        resp is not None
+                        and (status in direct_fallback_statuses or _model_unavailable(detail))
+                    ):
+                        break
+                    if (
+                        attempt < per_model_attempts
+                        and (resp is None or status in retryable_statuses)
+                    ):
+                        await asyncio.sleep(1)
+                        continue
+                    break
+                except Exception as e:
+                    logger.error(
+                        "LLM call error: model=%s, attempt=%s/%s, %s",
+                        model,
+                        attempt,
+                        per_model_attempts,
+                        e,
+                    )
+                    if attempt < per_model_attempts:
+                        await asyncio.sleep(1)
+                        continue
+                    break
         return None
 
     def _build_schedule_prompt(self, today: date, history: str) -> str:

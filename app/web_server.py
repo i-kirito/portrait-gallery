@@ -59,6 +59,7 @@ from settings import (
     load_enabled_outfit_styles,
     load_runtime_persona,
     normalize_chat_url,
+    normalize_llm_models,
     normalize_outfit_styles,
     normalize_custom_image_size,
     normalize_custom_shot_type,
@@ -2502,14 +2503,24 @@ class GalleryServer:
             except Exception as e:
                 logger.error(f"Load plugin config error: {e}")
 
-        # 读取 config.yaml 的 llm.model
+        # 读取 config.yaml 的 LLM 模型链
         llm_model = ""
+        llm_model_chain = []
         if self.config_path and os.path.exists(self.config_path):
             try:
                 import yaml
                 with open(self.config_path, 'r') as f:
                     full_config = yaml.safe_load(f) or {}
-                llm_model = full_config.get("llm", {}).get("model", "")
+                full_llm_config = full_config.get("llm", {}) if isinstance(full_config.get("llm"), dict) else {}
+                configured_chain = full_llm_config.get("models", [])
+                if isinstance(configured_chain, list) and configured_chain:
+                    llm_model_chain = normalize_llm_models(configured_chain)
+                else:
+                    llm_model_chain = normalize_llm_models(
+                        full_llm_config.get("model", ""),
+                        full_llm_config.get("fallback_model", ""),
+                    )
+                llm_model = llm_model_chain[0] if llm_model_chain else full_llm_config.get("model", "")
             except Exception as e:
                 logger.error(f"Load config.yaml error: {e}")
 
@@ -2602,6 +2613,7 @@ class GalleryServer:
             "image_dir_exists": os.path.isdir(effective_image_dir),
             "llm_model": llm_model,
             "llm_models": self.config.get("llm", {}),
+            "llm_model_chain": llm_model_chain,
             "gitee_fallback_enabled": gitee_fallback_enabled,
             "push_channel": push_channel,
             "push_channel_local": normalize_push_channel(local_push_channel_raw) if local_push_channel_raw else "",
@@ -3571,22 +3583,32 @@ class GalleryServer:
                 finally:
                     fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
-            # 保存 llm_model 到 config.yaml
-            if "llm_model" in body and self.config_path and os.path.exists(self.config_path):
+            # 保存 LLM 模型链到 config.yaml
+            if (
+                ("llm_model" in body or "llm_models" in body)
+                and self.config_path
+                and os.path.exists(self.config_path)
+            ):
                 try:
                     import yaml
                     with open(self.config_path, 'r') as f:
                         full_config = yaml.safe_load(f) or {}
                     if "llm" not in full_config:
                         full_config["llm"] = {}
-                    full_config["llm"]["model"] = body["llm_model"]
+                    requested_chain = normalize_llm_models(
+                        body.get("llm_model", ""),
+                        body.get("llm_models", []),
+                    )
+                    full_config["llm"]["models"] = requested_chain
+                    full_config["llm"]["model"] = requested_chain[0] if requested_chain else ""
+                    full_config["llm"]["fallback_model"] = requested_chain[1] if len(requested_chain) > 1 else ""
                     with open(self.config_path, 'w', encoding='utf-8') as f:
                         yaml.dump(full_config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
                     # 更新内存中的 config
                     self.config["llm"] = full_config["llm"]
-                    logger.info(f"LLM model updated to: {body['llm_model']}")
+                    logger.info("LLM model chain updated to: %s", ", ".join(requested_chain) or "(empty)")
                 except Exception as e:
-                    logger.error(f"Save llm_model error: {e}")
+                    logger.error(f"Save llm models error: {e}")
 
             hermes_or_openclaw_keys = [key for key in ("hermes_cli", "openclaw_cli") if key in body]
             if hermes_or_openclaw_keys and self.config_path and os.path.exists(self.config_path):
@@ -4755,24 +4777,83 @@ class GalleryServer:
                     return requests.post(chat_url, headers=headers, json=payload, timeout=5)
             return resp
 
-        loop = asyncio.get_running_loop()
-        for model in models[:1]:
+        retryable_statuses = {429, 500, 502, 503, 504}
+        direct_fallback_statuses = {401, 403}
+        per_model_attempts = 2
+
+        def _response_detail(resp) -> str:
+            if resp is None:
+                return "no response"
             try:
-                resp = await loop.run_in_executor(None, lambda m=model: _post_llm(m))
-                if resp is None or resp.status_code != 200:
-                    status = resp.status_code if resp is not None else "no response"
-                    logger.warning("Hermes display description translation failed: model=%s status=%s", model, status)
-                    continue
-                data = resp.json()
-                choices = data.get("choices") if isinstance(data, dict) else None
-                if not choices:
-                    logger.warning("Hermes display description translation invalid response: model=%s", model)
-                    continue
-                content = self._clean_display_description(llm_choice_text(choices[0]))
-                if self._is_usable_hermes_display_description(content):
-                    return content
-            except Exception as e:
-                logger.warning("Hermes display description translation error: model=%s err=%s", model, e)
+                body = resp.json()
+                error = body.get("error") if isinstance(body, dict) else None
+                if isinstance(error, dict):
+                    return str(error.get("message") or error.get("code") or "")[:240]
+                if isinstance(body, dict):
+                    return str(body.get("msg") or body.get("status") or body.get("message") or "")[:240]
+            except Exception:
+                return (resp.text or "")[:240]
+            return ""
+
+        def _model_unavailable(detail: str) -> bool:
+            lower = str(detail or "").lower()
+            return any(
+                marker in lower
+                for marker in (
+                    "model not found",
+                    "model_not_found",
+                    "does not exist",
+                    "not exist",
+                    "no permission",
+                    "permission denied",
+                    "unauthorized",
+                    "forbidden",
+                )
+            )
+
+        loop = asyncio.get_running_loop()
+        for model in models:
+            for attempt in range(1, per_model_attempts + 1):
+                try:
+                    resp = await loop.run_in_executor(None, lambda m=model: _post_llm(m))
+                    if resp is None or resp.status_code != 200:
+                        status = resp.status_code if resp is not None else "no response"
+                        detail = _response_detail(resp)
+                        logger.warning(
+                            "Hermes display description translation failed: model=%s status=%s attempt=%s/%s detail=%s",
+                            model,
+                            status,
+                            attempt,
+                            per_model_attempts,
+                            detail,
+                        )
+                        if status in direct_fallback_statuses or _model_unavailable(detail):
+                            break
+                        if attempt < per_model_attempts and (resp is None or status in retryable_statuses):
+                            await asyncio.sleep(1)
+                            continue
+                        break
+                    data = resp.json()
+                    choices = data.get("choices") if isinstance(data, dict) else None
+                    if not choices:
+                        logger.warning("Hermes display description translation invalid response: model=%s", model)
+                        break
+                    content = self._clean_display_description(llm_choice_text(choices[0]))
+                    if self._is_usable_hermes_display_description(content):
+                        return content
+                    break
+                except Exception as e:
+                    logger.warning(
+                        "Hermes display description translation error: model=%s attempt=%s/%s err=%s",
+                        model,
+                        attempt,
+                        per_model_attempts,
+                        e,
+                    )
+                    if attempt < per_model_attempts:
+                        await asyncio.sleep(1)
+                        continue
+                    break
         return ""
 
     async def _normalize_hermes_display_description(self, description: str, prompt: str, mode_label: str = "") -> str:
@@ -5289,43 +5370,82 @@ JSON 格式：
             return resp
 
         loop = asyncio.get_running_loop()
+        retryable_statuses = {429, 500, 502, 503, 504}
+        direct_fallback_statuses = {401, 403}
+        per_model_attempts = 2
+
+        def _model_unavailable(detail: str) -> bool:
+            lower = str(detail or "").lower()
+            return any(
+                marker in lower
+                for marker in (
+                    "model not found",
+                    "model_not_found",
+                    "does not exist",
+                    "not exist",
+                    "no permission",
+                    "permission denied",
+                    "unauthorized",
+                    "forbidden",
+                )
+            )
+
         for model in models:
-            try:
-                resp = await loop.run_in_executor(None, lambda m=model: _post_llm(m))
-                if resp is None or resp.status_code != 200:
-                    status = resp.status_code if resp is not None else "no response"
-                    detail = ""
-                    if resp is not None:
-                        try:
-                            body = resp.json()
-                            error = body.get("error") if isinstance(body, dict) else None
-                            if isinstance(error, dict):
-                                detail = str(error.get("message") or error.get("code") or "")[:240]
-                            elif isinstance(body, dict):
-                                detail = str(body.get("msg") or body.get("status") or "")[:240]
-                        except Exception:
-                            detail = (resp.text or "")[:240]
+            for attempt in range(1, per_model_attempts + 1):
+                try:
+                    resp = await loop.run_in_executor(None, lambda m=model: _post_llm(m))
+                    if resp is None or resp.status_code != 200:
+                        status = resp.status_code if resp is not None else "no response"
+                        detail = ""
+                        if resp is not None:
+                            try:
+                                body = resp.json()
+                                error = body.get("error") if isinstance(body, dict) else None
+                                if isinstance(error, dict):
+                                    detail = str(error.get("message") or error.get("code") or "")[:240]
+                                elif isinstance(body, dict):
+                                    detail = str(body.get("msg") or body.get("status") or "")[:240]
+                            except Exception:
+                                detail = (resp.text or "")[:240]
+                        logger.warning(
+                            "Generate-now LLM inference failed: model=%s status=%s attempt=%s/%s detail=%s",
+                            model,
+                            status,
+                            attempt,
+                            per_model_attempts,
+                            detail,
+                        )
+                        if status in direct_fallback_statuses or _model_unavailable(detail):
+                            break
+                        if attempt < per_model_attempts and (resp is None or status in retryable_statuses):
+                            await asyncio.sleep(1)
+                            continue
+                        break
+                    data = resp.json()
+                    choices = data.get("choices") if isinstance(data, dict) else None
+                    if not choices:
+                        logger.warning("Generate-now LLM inference invalid response: model=%s", model)
+                        break
+                    content = llm_choice_text(choices[0])
+                    parsed = self._parse_generate_now_detail(content, now_str)
+                    if parsed:
+                        merged = dict(fallback)
+                        merged.update(parsed)
+                        merged["time"] = now_str
+                        return merged
+                    break
+                except Exception as e:
                     logger.warning(
-                        "Generate-now LLM inference failed: model=%s status=%s detail=%s",
+                        "Generate-now LLM inference error: model=%s attempt=%s/%s err=%s",
                         model,
-                        status,
-                        detail,
+                        attempt,
+                        per_model_attempts,
+                        e,
                     )
-                    continue
-                data = resp.json()
-                choices = data.get("choices") if isinstance(data, dict) else None
-                if not choices:
-                    logger.warning("Generate-now LLM inference invalid response: model=%s", model)
-                    continue
-                content = llm_choice_text(choices[0])
-                parsed = self._parse_generate_now_detail(content, now_str)
-                if parsed:
-                    merged = dict(fallback)
-                    merged.update(parsed)
-                    merged["time"] = now_str
-                    return merged
-            except Exception as e:
-                logger.warning("Generate-now LLM inference error: model=%s err=%s", model, e)
+                    if attempt < per_model_attempts:
+                        await asyncio.sleep(1)
+                        continue
+                    break
         return fallback
 
     @staticmethod

@@ -554,6 +554,117 @@ textarea:focus-visible,
   opacity: 0.58;
   cursor: default;
 }
+.sk-llm-chain {
+  margin-top: 7px;
+}
+.sk-llm-chain,
+.sk-llm-chain-editor {
+  border: 1px solid #f0e6f6;
+  border-radius: 8px;
+  background: #fffafd;
+}
+.sk-llm-chain > summary,
+.sk-llm-chain-editor > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 9px;
+  color: #7c3aed;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  list-style: none;
+}
+.sk-llm-chain > summary::-webkit-details-marker,
+.sk-llm-chain-editor > summary::-webkit-details-marker {
+  display: none;
+}
+.sk-llm-chain-count {
+  color: #999;
+  font-size: 11px;
+  font-weight: 700;
+}
+.sk-llm-chain-body {
+  display: grid;
+  gap: 6px;
+  padding: 0 8px 8px;
+}
+.sk-llm-chain-preview {
+  overflow: hidden;
+  color: #777;
+  font-size: 11px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sk-llm-chain-editor {
+  background: #fff;
+}
+.sk-llm-chain-editor-body {
+  display: grid;
+  gap: 6px;
+  padding: 0 7px 7px;
+}
+.sk-llm-chain-list {
+  display: grid;
+  gap: 5px;
+  max-height: 126px;
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: #d8b4fe transparent;
+}
+.sk-llm-chain-list::-webkit-scrollbar {
+  width: 6px;
+}
+.sk-llm-chain-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #d8b4fe;
+}
+.sk-llm-chain-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sk-llm-chain-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 5px;
+}
+.sk-llm-chain-index {
+  color: #999;
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+}
+.sk-llm-chain-row select,
+.sk-llm-chain-add select {
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+.sk-llm-chain-btn {
+  min-width: 26px;
+  height: 30px;
+  border: 1px solid #eadcf4;
+  border-radius: 7px;
+  background: #fff;
+  color: #7c3aed;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+.sk-llm-chain-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.sk-llm-chain-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
 .sk-field .sk-status {
   font-size: 11px;
   color: #999;
@@ -3172,12 +3283,34 @@ textarea:focus-visible,
       <label for="skLlmModel">🧠 日程生成模型</label>
       <div class="sk-desc">用于每日日程生成和穿搭翻译的 LLM 模型</div>
       <div class="sk-llm-row">
-        <select id="skLlmModel">
+        <select id="skLlmModel" onchange="syncLlmChainPrimary()">
           <option value="">加载中...</option>
         </select>
         <button type="button" class="sk-llm-test-btn" id="skLlmTestBtn" onclick="testLlmModel()">测试</button>
       </div>
       <div class="sk-status" id="skLlmModelStatus">加载中...</div>
+      <details class="sk-llm-chain" id="skLlmChainDetails">
+        <summary>
+          <span>Fallback 链</span>
+          <span class="sk-llm-chain-count" id="skLlmChainCount">0 个备用</span>
+        </summary>
+        <div class="sk-llm-chain-body">
+          <div class="sk-llm-chain-preview" id="skLlmChainPreview">未配置备用模型</div>
+          <details class="sk-llm-chain-editor" id="skLlmChainEditor">
+            <summary>
+              <span>编辑备用模型</span>
+              <span class="sk-llm-chain-count">展开</span>
+            </summary>
+            <div class="sk-llm-chain-editor-body">
+              <div class="sk-llm-chain-list" id="skLlmChainList"></div>
+              <div class="sk-llm-chain-add">
+                <select id="skLlmChainAddSelect"></select>
+                <button type="button" class="sk-llm-chain-btn" onclick="addLlmChainModel()" title="添加模型" aria-label="添加模型">+</button>
+              </div>
+            </div>
+          </details>
+        </div>
+      </details>
     </div>
     <div class="sk-field">
       <label>📮 推送渠道</label>
@@ -3469,6 +3602,8 @@ let photoRetryPollTimer = null;
 let liveLogTimer = null;
 const favoriteRequests = new Set();
 let settingsSnapshot = null;
+let availableLlmModels = [];
+let llmModelChain = [];
 let scheduleEggCache = { html: "", dateText: "", updatedAt: 0 };
 let scheduleEggRequest = null;
 const appDisplay = {
@@ -5522,6 +5657,8 @@ function openSettings() {
   document.getElementById("skAppearance").value = "";
   document.getElementById("skPersona").value = "";
   document.getElementById("skGiteeFallback").checked = false;
+  availableLlmModels = [];
+  setLlmModelChain([]);
   setPushChannel("wechat");
   syncGiteeFallbackVisual(false);
   const cleanupResult = document.getElementById("skCleanupResult");
@@ -5919,37 +6056,39 @@ async function loadSettingsStatus() {
     }
     updatePersonaPreview(data);
 
-    // LLM Model: 填充下拉框
+    // LLM Model: 填充下拉框和 fallback 链
     const llmEl = document.getElementById("skLlmModel");
     const llmStatus = document.getElementById("skLlmModelStatus");
-    const configuredModels = [
-      data.llm_model,
-      data.llm_models && data.llm_models.fallback_model
-    ].filter(Boolean);
+    const configuredModels = Array.isArray(data.llm_model_chain) && data.llm_model_chain.length
+      ? data.llm_model_chain
+      : [
+          data.llm_model,
+          data.llm_models && data.llm_models.fallback_model
+        ].filter(Boolean);
     const models = (modelsData.models && modelsData.models.length > 0)
       ? modelsData.models
       : Array.from(new Set(configuredModels));
+    availableLlmModels = normalizeLlmModelList(models);
+    const configuredChain = normalizeLlmModelList(configuredModels);
+    const primaryModel = configuredChain[0] || data.llm_model || "";
 
     // 清空并填充选项
-    llmEl.innerHTML = "";
-    if (models.length > 0) {
-      models.forEach(m => {
-        const opt = document.createElement("option");
-        opt.value = m;
-        opt.textContent = m;
-        llmEl.appendChild(opt);
-      });
+    fillLlmSelect(llmEl, primaryModel, configuredChain);
+    if (primaryModel) {
+      ensureLlmSelectOption(llmEl, primaryModel);
+      llmEl.value = primaryModel;
     }
+    setLlmModelChain(configuredChain.slice(1));
 
     // 设置当前值
-    if (data.llm_model && models.includes(data.llm_model)) {
-      llmEl.value = data.llm_model;
-      llmStatus.textContent = "✓ 当前: " + data.llm_model;
+    if (primaryModel && availableLlmModels.includes(primaryModel)) {
+      llmEl.value = primaryModel;
+      llmStatus.textContent = "✓ 当前: " + primaryModel;
       llmStatus.className = "sk-status set";
-    } else if (data.llm_model) {
+    } else if (primaryModel) {
       // 当前模型不在列表中，仍然选中
-      llmEl.value = data.llm_model;
-      llmStatus.textContent = "⚠️ " + data.llm_model + "（不在可用列表中）";
+      llmEl.value = primaryModel;
+      llmStatus.textContent = "⚠️ " + primaryModel + "（不在可用列表中）";
       llmStatus.className = "sk-status unset";
     } else {
       llmStatus.textContent = "○ 使用默认";
@@ -6072,6 +6211,169 @@ async function runImageCleanup() {
 window.updateCleanupCustomVisibility = updateCleanupCustomVisibility;
 window.previewImageCleanup = previewImageCleanup;
 window.runImageCleanup = runImageCleanup;
+
+function normalizeLlmModelList(values) {
+  const result = [];
+  (Array.isArray(values) ? values : []).forEach(value => {
+    const text = String(value || "").trim();
+    if (text && !result.includes(text)) result.push(text);
+  });
+  return result;
+}
+
+function currentLlmPrimaryModel() {
+  return String(document.getElementById("skLlmModel")?.value || "").trim();
+}
+
+function fullLlmModelChain(extra = []) {
+  return normalizeLlmModelList([currentLlmPrimaryModel(), ...llmModelChain, ...extra]);
+}
+
+function currentLlmModelOptions(extra = []) {
+  return normalizeLlmModelList([...availableLlmModels, currentLlmPrimaryModel(), ...llmModelChain, ...extra]);
+}
+
+function ensureLlmSelectOption(select, model) {
+  if (!select || !model) return;
+  if (Array.from(select.options).some(opt => opt.value === model)) return;
+  const opt = document.createElement("option");
+  opt.value = model;
+  opt.textContent = model;
+  select.appendChild(opt);
+}
+
+function fillLlmSelect(select, selected, extra = []) {
+  if (!select) return;
+  const models = currentLlmModelOptions([selected, ...extra]);
+  select.innerHTML = "";
+  models.forEach(model => {
+    const opt = document.createElement("option");
+    opt.value = model;
+    opt.textContent = model;
+    select.appendChild(opt);
+  });
+  if (selected) {
+    ensureLlmSelectOption(select, selected);
+    select.value = selected;
+  }
+}
+
+function setLlmModelChain(models) {
+  const primary = currentLlmPrimaryModel();
+  llmModelChain = normalizeLlmModelList(models).filter(model => model !== primary);
+  renderLlmModelChain();
+}
+
+function renderLlmModelChain() {
+  const list = document.getElementById("skLlmChainList");
+  const count = document.getElementById("skLlmChainCount");
+  const preview = document.getElementById("skLlmChainPreview");
+  const addSelect = document.getElementById("skLlmChainAddSelect");
+  const primary = currentLlmPrimaryModel();
+  if (count) count.textContent = `${llmModelChain.length} 个备用`;
+  if (preview) {
+    const chain = fullLlmModelChain();
+    preview.textContent = chain.length > 1
+      ? chain.join(" → ")
+      : "未配置备用模型";
+  }
+  if (!list) return;
+  list.innerHTML = "";
+  llmModelChain.forEach((model, index) => {
+    const row = document.createElement("div");
+    row.className = "sk-llm-chain-row";
+
+    const idx = document.createElement("span");
+    idx.className = "sk-llm-chain-index";
+    idx.textContent = String(index + 1);
+    row.appendChild(idx);
+
+    const select = document.createElement("select");
+    fillLlmSelect(select, model);
+    select.onchange = () => updateLlmChainModel(index, select.value);
+    row.appendChild(select);
+
+    const up = document.createElement("button");
+    up.type = "button";
+    up.className = "sk-llm-chain-btn";
+    up.textContent = "↑";
+    up.title = "上移";
+    up.setAttribute("aria-label", "上移");
+    up.disabled = index === 0;
+    up.onclick = () => moveLlmChainModel(index, -1);
+    row.appendChild(up);
+
+    const down = document.createElement("button");
+    down.type = "button";
+    down.className = "sk-llm-chain-btn";
+    down.textContent = "↓";
+    down.title = "下移";
+    down.setAttribute("aria-label", "下移");
+    down.disabled = index >= llmModelChain.length - 1;
+    down.onclick = () => moveLlmChainModel(index, 1);
+    row.appendChild(down);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "sk-llm-chain-btn";
+    remove.textContent = "×";
+    remove.title = "删除";
+    remove.setAttribute("aria-label", "删除");
+    remove.onclick = () => removeLlmChainModel(index);
+    row.appendChild(remove);
+
+    list.appendChild(row);
+  });
+  if (addSelect) {
+    const unused = currentLlmModelOptions().filter(model => model !== primary && !llmModelChain.includes(model));
+    addSelect.innerHTML = "";
+    unused.forEach(model => {
+      const opt = document.createElement("option");
+      opt.value = model;
+      opt.textContent = model;
+      addSelect.appendChild(opt);
+    });
+    addSelect.disabled = unused.length === 0;
+  }
+}
+
+function syncLlmChainPrimary() {
+  const primary = currentLlmPrimaryModel();
+  if (!primary) return;
+  setLlmModelChain(llmModelChain.filter(model => model !== primary));
+}
+
+function updateLlmChainModel(index, value) {
+  const model = String(value || "").trim();
+  if (!model) return;
+  const next = llmModelChain.slice();
+  next[index] = model;
+  setLlmModelChain(next);
+}
+
+function moveLlmChainModel(index, direction) {
+  const target = index + direction;
+  if (target < 0 || target >= llmModelChain.length) return;
+  const next = llmModelChain.slice();
+  [next[index], next[target]] = [next[target], next[index]];
+  setLlmModelChain(next);
+}
+
+function removeLlmChainModel(index) {
+  const next = llmModelChain.slice();
+  next.splice(index, 1);
+  setLlmModelChain(next);
+}
+
+function addLlmChainModel() {
+  const select = document.getElementById("skLlmChainAddSelect");
+  const model = String(select?.value || "").trim();
+  if (!model) return;
+  setLlmModelChain([...llmModelChain, model]);
+}
+
+window.syncLlmChainPrimary = syncLlmChainPrimary;
+window.addLlmChainModel = addLlmChainModel;
 
 async function testLlmModel() {
   const btn = document.getElementById("skLlmTestBtn");
@@ -6218,6 +6520,7 @@ async function saveSettings() {
   const persona = document.getElementById("skPersona").value.trim();
   const pushChannel = getPushChannel();
   const llmModel = document.getElementById("skLlmModel").value;
+  const llmModels = fullLlmModelChain();
   const giteeFallbackEnabled = document.getElementById("skGiteeFallback").checked;
   const missing = [];
   requireSettingsValue("Gitee API URL", giteeUrl, missing);
@@ -6263,8 +6566,9 @@ async function saveSettings() {
     body.hermes_cli = document.getElementById("skHermesCliPath")?.value.trim() || "";
     body.openclaw_cli = document.getElementById("skOpenclawCliPath")?.value.trim() || "";
     body.gitee_fallback_enabled = giteeFallbackEnabled;
-    // llm_model: always send
+    // llm_model: always send; llm_models keeps the ordered fallback chain
     body.llm_model = llmModel;
+    body.llm_models = llmModels;
 
     const res = await fetch(`${API}/api/config/keys`, {
       method: "POST",
