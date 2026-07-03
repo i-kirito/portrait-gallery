@@ -467,6 +467,24 @@ def unique_values(*values: Any) -> list[str]:
     return result
 
 
+def normalize_llm_models(*values: Any) -> list[str]:
+    """Return a stable, de-duplicated LLM fallback chain."""
+    result: list[str] = []
+
+    def add(value: Any):
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                add(item)
+            return
+        text = _non_empty(value)
+        if text and text not in result:
+            result.append(text)
+
+    for value in values:
+        add(value)
+    return result
+
+
 def deep_merge(base: dict, override: dict) -> dict:
     merged = dict(base)
     for key, value in override.items():
@@ -1058,10 +1076,14 @@ def llm_request_config(config: dict, data_dir: str) -> dict:
         or _non_empty(os.getenv("CPA_API_KEY"))
         or _non_empty(get_nested(config, "llm.api_key", ""))
     )
-    models = unique_values(
-        get_nested(config, "llm.model", ""),
-        get_nested(config, "llm.fallback_model", ""),
-    )
+    configured_models = get_nested(config, "llm.models", [])
+    if isinstance(configured_models, (list, tuple)) and configured_models:
+        models = normalize_llm_models(configured_models)
+    else:
+        models = normalize_llm_models(
+            get_nested(config, "llm.model", ""),
+            get_nested(config, "llm.fallback_model", ""),
+        )
     return {"base_url": base_url.rstrip("/"), "chat_url": normalize_chat_url(base_url), "api_key": api_key, "models": models}
 
 
