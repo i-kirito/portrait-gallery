@@ -285,6 +285,7 @@ class GalleryServer:
         self.on_refresh_schedule = None
         self.on_rebuild_photo_jobs = None
         self.on_retry_photo_job = None
+        self.on_update_photo_plan = None
         self.on_image_dir_changed = None
 
         self.app = web.Application(middlewares=[self.api_key_middleware])
@@ -441,6 +442,8 @@ class GalleryServer:
         self.app.router.add_get("/api/photo-jobs", self.handle_photo_jobs)
         self.app.router.add_get("/api/keyword-cloud", self.handle_keyword_cloud)
         self.app.router.add_post("/api/photo-jobs/retry", self.handle_retry_photo_job)
+        self.app.router.add_patch("/api/photo-jobs/plan", self.handle_update_photo_plan)
+        self.app.router.add_post("/api/photo-jobs/plan", self.handle_update_photo_plan)
         self.app.router.add_get("/api/photo-job-limit", self.handle_photo_job_limit)
         self.app.router.add_post("/api/photo-job-limit", self.handle_photo_job_limit)
         self.app.router.add_get("/api/favorite-outfits", self.handle_favorite_outfits)
@@ -2983,6 +2986,41 @@ class GalleryServer:
             return web.json_response(result, status=http_status)
         except Exception as e:
             logger.error(f"Retry photo job error: {e}", exc_info=True)
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_update_photo_plan(self, request: web.Request):
+        """Update one activity in today's dynamic photo plan."""
+        if not self.on_update_photo_plan:
+            return web.json_response({"error": "update_unavailable"}, status=503)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+        raw_time = str(body.get("time") or body.get("schedule_time") or "").strip()
+        match = re.match(r'^\s*(\d{1,2}):(\d{2})\s*$', raw_time)
+        if not match:
+            return web.json_response({"error": "invalid_time"}, status=400)
+        hour, minute = int(match.group(1)), int(match.group(2))
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            return web.json_response({"error": "invalid_time"}, status=400)
+
+        activity = re.sub(r'\s+', ' ', str(body.get("activity") or "").strip())
+        if not activity:
+            return web.json_response({"error": "empty_activity"}, status=400)
+        if len(activity) > 160:
+            return web.json_response({"error": "activity_too_long"}, status=400)
+
+        schedule_time = f"{hour:02d}:{minute:02d}"
+        try:
+            result = self.on_update_photo_plan(schedule_time, activity)
+            status = result.get("status") if isinstance(result, dict) else ""
+            if status == "not_found":
+                return web.json_response(result, status=404)
+            http_status = 400 if status == "error" else 200
+            return web.json_response(result, status=http_status)
+        except Exception as e:
+            logger.error(f"Update photo plan error: {e}", exc_info=True)
             return web.json_response({"error": str(e)}, status=500)
 
     async def handle_photo_job_limit(self, request: web.Request):

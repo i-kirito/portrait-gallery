@@ -27,6 +27,11 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from data import DailyEntry
 from scheduler import DailyScheduler
 from image_gen import ImageGenerator
+from photo_plan_edit import (
+    normalize_schedule_clock,
+    replace_schedule_activity,
+    update_schedule_details_activity,
+)
 from web_server import GalleryServer
 from store import ScheduleStore
 from text_repair import repair_mojibake_text
@@ -270,6 +275,7 @@ class PortraitGalleryApp:
         self.web_server.on_refresh_schedule = self.refresh_schedule
         self.web_server.on_rebuild_photo_jobs = self.rebuild_photo_jobs
         self.web_server.on_retry_photo_job = self.retry_photo_job
+        self.web_server.on_update_photo_plan = self.update_photo_plan
         self.web_server.on_reroll_image = self.reroll_image
 
         # APScheduler
@@ -2255,6 +2261,107 @@ class PortraitGalleryApp:
 
     def _today_schedule_text(self) -> str:
         return self._today_schedule_entry().get("schedule", "")
+
+    def update_photo_plan(self, time_text: str, activity: str) -> dict:
+        """Update one activity line in today's saved schedule and pending photo job."""
+        normalized_time = normalize_schedule_clock(time_text)
+        activity = repair_mojibake_text(re.sub(r"\s+", " ", str(activity or "").strip())).strip()
+        if not normalized_time:
+            return {"status": "error", "message": "invalid_time"}
+        if not activity:
+            return {"status": "error", "time": normalized_time, "message": "empty_activity"}
+
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        result = {"status": "not_found", "time": normalized_time}
+
+        def _update(all_data):
+            if not isinstance(all_data, dict):
+                all_data = {}
+
+            schedule_key = ""
+            if self._is_usable_schedule_entry(all_data.get(today_str)):
+                schedule_key = today_str
+            if not schedule_key:
+                for key, entry in all_data.items():
+                    if (
+                        isinstance(entry, dict)
+                        and not entry.get("image_filename")
+                        and entry.get("date") == today_str
+                        and self._is_usable_schedule_entry(entry)
+                    ):
+                        schedule_key = key
+                        break
+
+            if not schedule_key:
+                result.update({"status": "not_found", "message": "today_schedule_not_found"})
+                return all_data
+
+            entry = dict(all_data.get(schedule_key) or {})
+            schedule_text, found = replace_schedule_activity(
+                entry.get("schedule", ""),
+                normalized_time,
+                activity,
+            )
+            if not found:
+                result.update({"status": "not_found", "message": "schedule_time_not_found"})
+                return all_data
+
+            entry["schedule"] = schedule_text
+            if entry.get("schedule_prompt"):
+                prompt_text, _ = replace_schedule_activity(
+                    entry.get("schedule_prompt", ""),
+                    normalized_time,
+                    activity,
+                )
+                entry["schedule_prompt"] = prompt_text
+            if isinstance(entry.get("schedule_details"), list):
+                details, _ = update_schedule_details_activity(
+                    entry.get("schedule_details"),
+                    normalized_time,
+                    activity,
+                )
+                entry["schedule_details"] = details
+            entry["schedule_edited_at"] = datetime.now().isoformat()
+            entry["schedule_edit_source"] = "web"
+            all_data[schedule_key] = entry
+            result.update({
+                "status": "ok",
+                "time": normalized_time,
+                "activity": activity,
+                "schedule_key": schedule_key,
+            })
+            return all_data
+
+        ScheduleStore(self.data_dir).update(_update)
+        if result.get("status") != "ok":
+            return result
+
+        slot_key = f"{today_str} {normalized_time}"
+        failed = self._failed_photo_jobs.get(slot_key)
+        if isinstance(failed, dict):
+            failed["activity"] = activity
+            self._save_failed_photo_jobs()
+            result["failed_job_updated"] = True
+
+        job_id = self._photo_job_id_for_time(normalized_time)
+        job_updated = False
+        if job_id:
+            job = self.aps.get_job(job_id)
+            if job:
+                run_time = self._local_job_run_time(job)
+                if not run_time or run_time.date() == datetime.now().date():
+                    theme = job.args[0] if getattr(job, "args", None) else self._theme_for_hour(int(normalized_time.split(":", 1)[0]))
+                    schedule_text_for_job = f"{normalized_time} {activity}".strip()
+                    job.modify(args=[theme, schedule_text_for_job])
+                    self._photo_job_schedule_meta[job_id] = {
+                        "theme": theme,
+                        "time": normalized_time,
+                        "activity": activity,
+                    }
+                    job_updated = True
+        result["job_updated"] = job_updated
+        logger.info("今日生图计划已编辑: time=%s activity=%s job_updated=%s", normalized_time, activity[:40], job_updated)
+        return result
 
     def rebuild_photo_jobs(self) -> list:
         """Rebuild dynamic photo jobs from today's saved schedule."""

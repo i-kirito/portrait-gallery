@@ -4628,6 +4628,11 @@ textarea:focus-visible,
 .egg-photo-time { font-weight: 600; color: #ff6b9d; min-width: 48px; font-variant-numeric: tabular-nums; }
 .egg-photo-theme { font-size: 11px; color: #888; background: #f5f3f7; padding: 2px 8px; border-radius: 6px; }
 .egg-photo-activity { grid-column: 1 / -1; min-width: 0; font-size: 12px; color: #666; line-height: 1.55; overflow-wrap: anywhere; word-break: break-word; }
+.egg-photo-activity.editable { cursor: text; border-radius: 8px; padding: 4px 6px; margin: -4px -6px; transition: background 0.16s ease, box-shadow 0.16s ease; }
+.egg-photo-activity.editable:hover { background: rgba(139,92,246,0.08); box-shadow: inset 0 0 0 1px rgba(139,92,246,0.12); }
+.egg-photo-activity.editing { padding: 0; margin: 0; }
+.egg-photo-edit-input { display: block; width: 100%; min-height: 54px; max-height: 120px; resize: vertical; box-sizing: border-box; border: 1px solid rgba(139,92,246,0.32); border-radius: 9px; padding: 8px 10px; background: #fff; color: #4b5563; font: inherit; line-height: 1.55; outline: none; box-shadow: 0 0 0 3px rgba(139,92,246,0.08); }
+.egg-photo-edit-input:disabled { opacity: 0.68; cursor: progress; }
 .egg-photo-style { grid-column: 5; grid-row: 1; justify-self: end; font-size: 11px; color: #888; white-space: nowrap; }
 .egg-photo-error { font-size: 11px; line-height: 1.45; color: #b91c1c; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; padding: 5px 8px; overflow-wrap: anywhere; }
 .egg-photo-error { grid-column: 1 / -1; }
@@ -11399,6 +11404,11 @@ function loadScheduleEggData(options) {
 
     // ===== 日程时间线（带 theme 徽章 + 状态标记）=====
     var schedule = detail.schedule || [];
+    var scheduleTimeMap = {};
+    for (var sm = 0; sm < schedule.length; sm++) {
+      var scheduleMapTime = extractClockTime(schedule[sm].time);
+      if (scheduleMapTime) scheduleTimeMap[scheduleMapTime] = schedule[sm].activity || '';
+    }
     var now = new Date();
     var nowH = now.getHours();
     var nowM = now.getMinutes();
@@ -11525,7 +11535,7 @@ function loadScheduleEggData(options) {
       planSeen[planTime] = true;
       planItems.push({
         time: planTime,
-        activity: job.activity || '',
+        activity: scheduleTimeMap[planTime] || job.activity || '',
         theme: job.theme || inferTheme(planTime),
         status: job.status || 'scheduled',
         photo: photoTimeMap[planTime] || null,
@@ -11539,7 +11549,7 @@ function loadScheduleEggData(options) {
       planSeen[photoJobTime] = true;
       planItems.push({
         time: photoJobTime,
-        activity: extractJobActivity(photo.schedule_time),
+        activity: scheduleTimeMap[photoJobTime] || extractJobActivity(photo.schedule_time),
         theme: inferTheme(photoJobTime),
         status: 'done',
         photo: photo,
@@ -11588,7 +11598,7 @@ function loadScheduleEggData(options) {
         html += '<span class="egg-photo-status-badge ' + planStatusCls + '">' + planStatusText + '</span>';
         html += '<span class="egg-photo-time">' + escapeHtml(plan.time) + '</span>';
         html += '<span class="egg-photo-theme">' + themeLabel(planTheme) + '</span>';
-        html += '<span class="egg-photo-activity">' + escapeHtml(plan.activity || '') + '</span>';
+        html += '<span class="egg-photo-activity editable" data-plan-time="' + escapeAttr(plan.time) + '" data-plan-activity="' + escapeAttr(plan.activity || '') + '" ondblclick="startPhotoPlanEdit(this)">' + escapeHtml(plan.activity || '') + '</span>';
         if ((planFailed || planRunningRetryable) && planErrorText) html += '<span class="egg-photo-error" title="' + escapeAttr(planErrorText) + '">' + escapeHtml(planErrorText) + '</span>';
         var planOutfitStyle = (plan.job && plan.job.outfit_style) || currentOutfitStyle || (planPhoto && planPhoto.outfit_style) || '';
         if (planOutfitStyle) html += '<span class="egg-photo-style">' + escapeHtml(planOutfitStyle) + '</span>';
@@ -12391,6 +12401,92 @@ function startPhotoRetryPolling(timeText) {
   };
 
   photoRetryPollTimer = setTimeout(poll, 1800);
+}
+
+function restorePhotoPlanActivity(holder, activity) {
+  if (!holder) return;
+  holder.classList.remove('editing');
+  holder.textContent = activity || '';
+  holder.dataset.planActivity = activity || '';
+}
+
+function startPhotoPlanEdit(el) {
+  if (!el || el.classList.contains('editing')) return;
+  var timeText = el.dataset.planTime || '';
+  var original = el.dataset.planActivity || el.textContent || '';
+  if (!timeText) return;
+
+  el.classList.add('editing');
+  el.textContent = '';
+  var input = document.createElement('textarea');
+  input.className = 'egg-photo-edit-input';
+  input.rows = 2;
+  input.value = original;
+  el.appendChild(input);
+  input.focus();
+  input.select();
+
+  var finished = false;
+  function cancelEdit() {
+    if (finished) return;
+    finished = true;
+    restorePhotoPlanActivity(el, original);
+  }
+  function commitEdit() {
+    if (finished) return;
+    var next = input.value.replace(/\s+/g, ' ').trim();
+    if (!next) {
+      showToast('计划内容不能为空');
+      cancelEdit();
+      return;
+    }
+    if (next === original.trim()) {
+      cancelEdit();
+      return;
+    }
+    finished = true;
+    input.disabled = true;
+    savePhotoPlanActivity(timeText, next, el, original);
+  }
+
+  input.addEventListener('keydown', function(e) {
+    if (e.isComposing) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelEdit();
+    } else if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      commitEdit();
+    }
+  });
+  input.addEventListener('blur', function() {
+    setTimeout(commitEdit, 0);
+  });
+}
+
+function savePhotoPlanActivity(timeText, activity, holder, previousActivity) {
+  var apiSuffix = apiKeyQuery();
+  fetch('/api/photo-jobs/plan' + apiSuffix, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ time: timeText, activity: activity })
+  }).then(function(r) {
+    return r.json().then(function(data) {
+      if (!r.ok) throw new Error(data.message || data.error || 'save_failed');
+      return data;
+    });
+  }).then(function() {
+    showToast('已更新计划：' + timeText);
+    scheduleEggCache = { html: '', dateText: '', updatedAt: 0 };
+    return loadScheduleEggData({ force: true });
+  }).catch(function(e) {
+    restorePhotoPlanActivity(holder, previousActivity || '');
+    var message = e && e.message ? e.message : 'save_failed';
+    if (message === 'schedule_time_not_found') message = '没有找到这条计划';
+    else if (message === 'empty_activity') message = '计划内容不能为空';
+    else if (message === 'activity_too_long') message = '计划内容太长了';
+    showToast('保存失败：' + message);
+  });
 }
 
 function retryPhotoJob(timeText, btn) {
