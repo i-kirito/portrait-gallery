@@ -10,6 +10,7 @@ import re
 import shutil
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
@@ -22,6 +23,7 @@ if _APP_DIR not in sys.path:
     sys.path.insert(0, _APP_DIR)
 
 from store import ScheduleStore
+from text_repair import repair_mojibake_text
 from settings import (
     DEFAULT_QUALITY_PREFIX,
     GENERIC_APPEARANCE,
@@ -64,6 +66,92 @@ def _retry_without_temperature_if_needed(resp, payload: dict, post_func):
     retry_payload = dict(payload)
     retry_payload.pop("temperature", None)
     return post_func(retry_payload)
+
+
+_LLM_RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+_LLM_DIRECT_FALLBACK_STATUSES = {401, 403}
+
+
+def _llm_response_detail(resp) -> str:
+    if resp is None:
+        return "no response"
+    try:
+        body = resp.json()
+        if isinstance(body, dict):
+            error = body.get("error")
+            if isinstance(error, dict):
+                return str(error.get("message") or error.get("code") or error.get("type") or "")[:240]
+            for key in ("message", "msg", "detail", "status"):
+                if body.get(key):
+                    return str(body.get(key))[:240]
+            return llm_response_excerpt(body, 240)
+    except Exception:
+        pass
+    return str(getattr(resp, "text", "") or f"HTTP {getattr(resp, 'status_code', 'unknown')}")[:240]
+
+
+def _llm_model_unavailable(detail: str) -> bool:
+    lower = str(detail or "").lower()
+    return any(
+        marker in lower
+        for marker in (
+            "model not found",
+            "model_not_found",
+            "does not exist",
+            "not exist",
+            "no permission",
+            "permission denied",
+            "unauthorized",
+            "forbidden",
+        )
+    )
+
+
+def _post_llm_with_retry(label: str, model: str, payload: dict, post_func, attempts: int = 2):
+    current_payload = dict(payload)
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            resp = post_func(current_payload)
+            if getattr(resp, "status_code", None) == 400 and "temperature" in current_payload:
+                try:
+                    body = resp.json()
+                except Exception:
+                    body = getattr(resp, "text", "")
+                if llm_temperature_param_error(body):
+                    retry_payload = dict(current_payload)
+                    retry_payload.pop("temperature", None)
+                    print(f"[{label}] {model} rejects temperature; retrying without it", file=sys.stderr)
+                    resp = post_func(retry_payload)
+                    current_payload = retry_payload
+
+            status = getattr(resp, "status_code", None)
+            if status == 200:
+                return resp
+
+            detail = _llm_response_detail(resp)
+            print(
+                f"[{label}] llm request failed: model={model} attempt={attempt}/{attempts} status={status or 'no response'} detail={detail}",
+                file=sys.stderr,
+            )
+            if status in _LLM_DIRECT_FALLBACK_STATUSES or _llm_model_unavailable(detail):
+                return None
+            if attempt < attempts and (resp is None or status in _LLM_RETRYABLE_STATUSES):
+                time.sleep(1)
+                continue
+            return None
+        except requests.RequestException as e:
+            print(f"[{label}] llm request error: model={model} attempt={attempt}/{attempts} err={e}", file=sys.stderr)
+            if attempt < attempts:
+                time.sleep(1)
+                continue
+            return None
+        except Exception as e:
+            print(f"[{label}] llm error: model={model} attempt={attempt}/{attempts} err={e}", file=sys.stderr)
+            if attempt < attempts:
+                time.sleep(1)
+                continue
+            return None
+    return None
 
 
 _GALLERY_CONFIG_PATH = resolve_config_path()
@@ -607,11 +695,13 @@ def _caption_voice_hint(persona: dict) -> str:
 
 
 def _caption_rejection_reason(caption: str, schedule_time: str = "") -> str:
+    caption = repair_mojibake_text(caption)
     if not caption:
         return "empty"
     checks = (
         ("too_short", not _caption_is_usable(caption)),
         ("persona_leak", _caption_has_persona_leak(caption)),
+        ("instruction_leak", _caption_has_instruction_leak(caption)),
         ("reader_address", _caption_addresses_reader(caption, schedule_time)),
         ("tone_problem", _caption_has_tone_problem(caption, schedule_time)),
         ("schedule_conflict", _caption_conflicts_with_schedule(caption, schedule_time)),
@@ -627,13 +717,14 @@ def _caption_rejection_reason(caption: str, schedule_time: str = "") -> str:
 
 
 def _caption_is_usable(caption: str) -> bool:
+    caption = repair_mojibake_text(caption)
     text = re.sub(r"\s+", "", str(caption or "")).strip("，,。.!！?；;、")
     return len(text) >= 4
 
 
 def _best_caption(caption: str = "", fallback: str = "") -> str:
-    caption = str(caption or "").strip()
-    fallback = str(fallback or "").strip()
+    caption = repair_mojibake_text(caption).strip()
+    fallback = repair_mojibake_text(fallback).strip()
     if _caption_is_usable(caption):
         return caption
     if _caption_is_usable(fallback):
@@ -642,6 +733,7 @@ def _best_caption(caption: str = "", fallback: str = "") -> str:
 
 
 def _scene_caption_fallback(theme: str, persona: dict, caption: str = "", schedule_time: str = "") -> str:
+    caption = repair_mojibake_text(caption)
     rejection_reason = _caption_rejection_reason(caption, schedule_time)
     if not rejection_reason:
         short = _shorten_caption(caption)
@@ -660,6 +752,34 @@ def _caption_has_persona_leak(caption: str) -> bool:
         "end of input", "start of output", "ignore previous",
     )
     return any(marker in text for marker in leak_markers)
+
+
+def _caption_has_instruction_leak(caption: str) -> bool:
+    text = re.sub(r"\s+", "", str(caption or ""))
+    if not text:
+        return False
+    markers = (
+        "我们被要求",
+        "被要求以",
+        "口吻写一句",
+        "照片的配文",
+        "内容要像",
+        "真实想法",
+        "具体到正在做的事",
+        "下一步安排",
+        "当前日程",
+        "请写一条",
+        "直接输出",
+        "不要加引号",
+        "不要写长段落",
+        "禁止使用",
+        "输出1-2句",
+        "小心思要像",
+        "下面的口吻",
+        "读者称呼",
+        "这是一条",
+    )
+    return any(marker in text for marker in markers)
 
 
 def _caption_addresses_reader(caption: str, schedule_time: str = "") -> bool:
@@ -977,7 +1097,7 @@ def save_image(img_data: bytes, theme: str, model_name: str, style: Optional[str
     ts = int(time.time())
     ext = detect_extension(img_data)
     style_part = f"_{style}" if style else ""
-    filename = f"zhuzhu_{theme}{style_part}_{ts}.{ext}"
+    filename = f"zhuzhu_{theme}{style_part}_{time.time_ns()}_{uuid.uuid4().hex[:8]}_{ts}.{ext}"
     path = os.path.join(WORKSPACE_MEDIA, filename)
 
     with open(path, "wb") as f:
@@ -1183,33 +1303,38 @@ def _translate_outfit(prompt: str, style_name: str) -> str:
         models = get_llm_models()
         if not models:
             return _fallback_from_prompt()
-        payload = {
-            "model": models[0],
-            "messages": [
-                {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": extraction_input[:500]},
-            ],
-            "max_tokens": 150,
-            "temperature": 0.3,
-        }
-        resp = requests.post(get_cpa_chat_url(),
-                             headers=headers, json=payload, timeout=15)
-        resp = _retry_without_temperature_if_needed(
-            resp,
-            payload,
-            lambda retry_payload: requests.post(
-                get_cpa_chat_url(),
-                headers=headers,
-                json=retry_payload,
-                timeout=15,
-            ),
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            choices = data.get("choices") if isinstance(data, dict) else []
-            content = llm_choice_text(choices[0]) if choices else ""
-            if content:
-                return content
+        for model in models:
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": extraction_input[:500]},
+                ],
+                "max_tokens": 150,
+                "temperature": 0.3,
+            }
+            resp = _post_llm_with_retry(
+                "translate_outfit",
+                model,
+                payload,
+                lambda request_payload: requests.post(
+                    get_cpa_chat_url(),
+                    headers=headers,
+                    json=request_payload,
+                    timeout=15,
+                ),
+            )
+            if resp is None:
+                continue
+            try:
+                data = resp.json()
+                choices = data.get("choices") if isinstance(data, dict) else []
+                content = llm_choice_text(choices[0]) if choices else ""
+                if content:
+                    return content
+                print(f"[translate_outfit] empty response: model={model}", file=sys.stderr)
+            except Exception as e:
+                print(f"[translate_outfit] invalid response: model={model} err={e}", file=sys.stderr)
     except Exception as e:
         print(f"[translate_outfit] LLM failed: {e}", file=sys.stderr)
     return _fallback_from_prompt()
@@ -1435,31 +1560,29 @@ def enhance_prompt(user_input: str, theme: Optional[str] = None) -> str:
             "max_tokens": config_int(_GALLERY_CONFIG, "llm.enhance_max_tokens", 400, 1),
             "temperature": config_float(_GALLERY_CONFIG, "llm.enhance_temperature", 0.85, 0),
         }
-        try:
-            resp = REQUEST_SESSION.post(
+        resp = _post_llm_with_retry(
+            "enhance",
+            model,
+            payload,
+            lambda request_payload: REQUEST_SESSION.post(
                 get_cpa_chat_url(),
                 headers=headers,
-                json=payload,
+                json=request_payload,
                 timeout=config_int(_GALLERY_CONFIG, "llm.enhance_timeout", 25, 1),
-            )
-            resp = _retry_without_temperature_if_needed(
-                resp,
-                payload,
-                lambda retry_payload: REQUEST_SESSION.post(
-                    get_cpa_chat_url(),
-                    headers=headers,
-                    json=retry_payload,
-                    timeout=config_int(_GALLERY_CONFIG, "llm.enhance_timeout", 25, 1),
-                ),
-            )
+            ),
+        )
+        if resp is None:
+            continue
+        try:
             if resp.status_code == 200:
                 data = resp.json()
                 choices = data.get("choices") if isinstance(data, dict) else []
                 content = llm_choice_text(choices[0]) if choices else ""
                 if content:
                     return content.strip()
+                print(f"[enhance] empty response: model={model}", file=sys.stderr)
         except Exception as e:
-            print(f"[enhance] {model} failed: {e}", file=sys.stderr)
+            print(f"[enhance] invalid response: model={model} err={e}", file=sys.stderr)
 
     return user_input
 
@@ -1551,6 +1674,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         timeout = config_int(_GALLERY_CONFIG, "llm.caption_timeout", 30, 1)
         caption_max_tokens = max(900, min(config_int(_GALLERY_CONFIG, "llm.caption_max_tokens", 900, 1), 1200))
         for model in models:
+            switch_model = False
             for mode, user_content in request_variants:
                 attempts = 3 if activity else 1
                 for attempt in range(1, attempts + 1):
@@ -1563,22 +1687,20 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
                         "max_tokens": caption_max_tokens,
                         "temperature": config_float(_GALLERY_CONFIG, "llm.caption_temperature", 0.9, 0),
                     }
-                    resp = REQUEST_SESSION.post(
-                        chat_url,
-                        headers=headers,
-                        json=payload,
-                        timeout=timeout,
-                    )
-                    resp = _retry_without_temperature_if_needed(
-                        resp,
+                    resp = _post_llm_with_retry(
+                        "caption",
+                        model,
                         payload,
-                        lambda retry_payload: REQUEST_SESSION.post(
+                        lambda request_payload: REQUEST_SESSION.post(
                             chat_url,
                             headers=headers,
-                            json=retry_payload,
+                            json=request_payload,
                             timeout=timeout,
                         ),
                     )
+                    if resp is None:
+                        switch_model = True
+                        break
                     try:
                         data = resp.json()
                     except Exception:
@@ -1590,7 +1712,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
                         )
                         continue
                     choices = data.get("choices") if isinstance(data, dict) else []
-                    caption = llm_choice_text(choices[0]) if choices else ""
+                    caption = repair_mojibake_text(llm_choice_text(choices[0]) if choices else "")
                     if not caption:
                         print(
                             f"[caption] llm returned empty caption: model={model} mode={mode} attempt={attempt}/{attempts} detail={llm_response_excerpt(data, 180)}",
@@ -1607,6 +1729,10 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
                     result = _shorten_caption(caption)
                     if result:
                         return result
+                if switch_model:
+                    break
+            if switch_model:
+                continue
     except Exception as e:
         print(f"[caption] llm failed: {e}", file=sys.stderr)
 

@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.2.4**
+当前版本：**v1.3.0**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -9,7 +9,10 @@
 ## ✨ 功能亮点
 
 - 📅 **LLM 日程驱动** — DeepSeek 自动生成每日穿搭日程（HH:mm 精度），按时触发生图
+- 👥 **多角色与群聊** — 支持本地角色库、单人图、合照、群聊房间、角色自动回复和群聊触发生图
 - 🎨 **多引擎生图** — 支持 OpenAI-compatible API (GPT Image / AxonHub / 自定义端点)、Gemini、Gitee z-image-turbo 可选回退（默认关闭）
+- 🧩 **三级 LLM 模型链** — 设置页维护主模型与多级 fallback，日程、caption、群聊和即时推断都会按链路降级
+- 🗓️ **真实日期约束** — 日程生成会识别周末、法定节假日、调休上班日和自定义假期，减少休息日写上班/上课的冲突
 - 🖼️ **Web 画廊** — 今日/全部/收藏/衣柜四 Tab，横版大卡 + 网格双布局
 - 🎀 **穿搭生成** — 自定义 prompt + 参考图 + 尺寸选择
 - ⏰ **动态调度** — LLM 日程驱动，根据 HH:mm 时间动态创建一次性生图任务
@@ -90,6 +93,23 @@ curl http://localhost:18889/api/health
 
 应用会追加写入 `logs/gallery.log`，重启不会覆盖；日志按天轮转，并自动清理 3 天前的轮转文件。
 
+#### 方式三：Docker Hub 镜像
+
+`docker-compose.yaml` 默认使用 `ikirito9/hermes-portrait-gallery:latest`，
+也可以通过 `PORTRAIT_GALLERY_IMAGE` 固定到发布版本：
+
+```bash
+PORTRAIT_GALLERY_IMAGE=ikirito9/hermes-portrait-gallery:1.3.0 docker compose up -d
+curl http://localhost:18889/api/health
+```
+
+本地开发仍可使用源码构建：
+
+```bash
+docker compose build
+docker compose up -d
+```
+
 ## 📐 架构
 
 ```
@@ -100,6 +120,10 @@ portrait-gallery/
 │   ├── core.py              # 生图核心（同步、元数据、翻译）
 │   ├── store.py             # 文件锁封装（并发安全读写）
 │   ├── scheduler.py         # LLM 日程生成
+│   ├── characters.py        # 多角色注册表、角色 prompt 与本地角色存储
+│   ├── group_chat.py        # 群聊房间/消息持久化与 Hermes bridge payload
+│   ├── calendar_context.py  # 周末、节假日、调休日等真实日期约束
+│   ├── text_repair.py       # 常见中文 mojibake 文本修复
 │   ├── zhuzhu/
 │   │   ├── core.py          # 生图底层（GPT Image / Gitee 调用）
 │   │   ├── generate.py      # 生图调度器（主题、风格、发型 LLM）
@@ -259,6 +283,7 @@ curl -X POST http://localhost:18889/api/config/keys \
 | `GPT_IMAGE_BASE_URL` | GPT Image 端点（覆盖 config） |
 | `GITHUB_PROXY` | GitHub 更新检查/在线更新代理（也可在 Web 设置中填写） |
 | `GALLERY_API_KEY` | Web UI 认证密钥（留空则不认证） |
+| `PORTRAIT_GALLERY_IMAGE` | Docker Compose 使用的镜像名/标签，默认 `ikirito9/hermes-portrait-gallery:latest` |
 
 启用 `GALLERY_API_KEY` 后，命令行 API 需要带认证：
 
@@ -286,10 +311,22 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **全部 Tab** — 6 列网格，点击弹窗查看详情（收藏/分享/删除）
 - **收藏 Tab** — 筛选已收藏图片
 - **衣柜 Tab** — 展示收藏穿搭方案和 GPT 生成的衣架参考图，支持编辑、重生和图生图引用
+- **角色 Tab** — 管理本地角色、人设、外貌、绑定模型、单人照、设定图和多角色合照
+- **群聊 Tab** — 创建群聊房间、编辑参与角色、保存消息、触发角色自动回复和群聊图片生成
 - **🎀 穿搭生成** — 自定义 prompt + 参考图 + 尺寸选择
-- **⚙️ 设置** — Web UI 管理 API 密钥
+- **⚙️ 设置** — Web UI 管理 API 密钥、三级 LLM 模型链、Gitee 回退、日程风格和升级选项
 
 ## 🧾 Release Notes
+
+### v1.3.0
+
+- 新增多角色系统：支持从运行时人设、配置和本地 `data/characters.json` 组合角色，Web UI 可新增、编辑、删除角色，并为角色生成单人照、设定图和合照。
+- 新增群聊工作台：支持群聊房间、参与者绑定、消息持久化、角色自动回复、撤回重跑，以及由群聊回复触发图片生成。
+- 设置页改为三级 LLM 模型链管理，主模型、备用模型和第三级模型会统一写入 `llm.models`，日程、caption、群聊、Hermes 描述和“现在在干嘛”都会按链路 fallback。
+- 日程生成加入真实日期上下文，内置 2026 法定节假日和调休上班日，并支持配置自定义假期/调休日，休息日会避免上班、上课、考试等冲突安排。
+- 生图参考链路强化：单人照、合照和群聊图可复用今日日程参考图，图生图提示词明确区分脸部参考和衣柜穿搭参考，并避免照抄参考图表情。
+- 增加中文 mojibake 文本修复、caption 指令泄漏过滤、LLM 请求重试与模型不可用快速切换，减少乱码、空文案和坏模型拖慢整条链路。
+- Docker 镜像布局调整为保留仓库内 `app/` 目录，Compose 可直接指定 `ikirito9/hermes-portrait-gallery:1.3.0` 或 `latest` 镜像发布运行。
 
 ### v1.2.6
 

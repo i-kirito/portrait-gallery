@@ -85,13 +85,23 @@ body {
   gap: 10px;
   justify-content: flex-end;
 }
-.header-gen-btn {
-  min-height: 44px;
-  padding: 0 18px;
-  border-radius: 22px;
+.btn.header-gen-btn {
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 800;
   white-space: nowrap;
   flex-shrink: 0;
 }
+.header-action-icon,
+.header-gen-label {
+  line-height: 1;
+}
+.header-action-icon {
+  flex: 0 0 auto;
+}
+.header-tool-btn,
 .header-log-btn {
   min-height: 40px;
   padding: 0 14px;
@@ -108,10 +118,16 @@ body {
   white-space: nowrap;
   flex-shrink: 0;
 }
+.header-tool-btn:hover,
 .header-log-btn:hover {
   border-color: #c084fc;
   background: #faf5ff;
   transform: translateY(-1px);
+}
+.header-tool-btn i,
+.header-log-btn i {
+  width: 1em;
+  flex: 0 0 auto;
 }
 .btn {
   padding: 10px 24px;
@@ -157,26 +173,27 @@ textarea:focus-visible,
 .tabs {
   grid-area: tabs;
   display: flex;
-  gap: 6px;
+  gap: clamp(3px, 0.4vw, 5px);
   background: #eee9f2;
-  padding: 4px;
+  padding: 3px;
   border: 1px solid rgba(218, 207, 226, 0.9);
-  border-radius: 22px;
+  border-radius: 20px;
   justify-self: center;
   width: fit-content;
   max-width: 100%;
   min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
 .tabs::-webkit-scrollbar { display: none; }
 .tab {
-  min-height: 48px;
-  padding: 10px 22px;
-  border-radius: 18px;
+  min-height: 44px;
+  padding: 8px clamp(8px, 1.15vw, 16px);
+  border-radius: 16px;
   border: none;
   background: transparent;
-  font-size: 16px;
+  font-size: clamp(14px, 1.35vw, 16px);
   color: #817986;
   cursor: pointer;
   transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
@@ -186,17 +203,20 @@ textarea:focus-visible,
   justify-content: center;
   gap: 8px;
   white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 .tab-label {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: clamp(5px, 0.65vw, 8px);
   line-height: 1;
+  min-width: 0;
 }
 .tab-icon {
   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
-  font-size: 20px;
+  font-size: clamp(17px, 1.6vw, 20px);
   line-height: 1;
   filter: drop-shadow(0 1px 0 rgba(60, 42, 72, 0.22));
   transform: translateY(-1px);
@@ -285,6 +305,36 @@ textarea:focus-visible,
   font-weight: 700;
   color: #e91e63;
   margin-bottom: 20px;
+}
+.sk-settings-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: -4px 0 18px;
+}
+.sk-settings-tab {
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid #ece4f0;
+  border-radius: 12px;
+  background: #faf8fc;
+  color: #666;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: border 0.2s, background 0.2s, color 0.2s, box-shadow 0.2s;
+}
+.sk-settings-tab.active {
+  border-color: #e91e63;
+  background: #fff1f7;
+  color: #c2185b;
+  box-shadow: 0 0 0 3px rgba(233,30,99,0.08);
+}
+.sk-panel {
+  display: none;
+}
+.sk-panel.active {
+  display: block;
 }
 .sk-field {
   margin-bottom: 18px;
@@ -513,6 +563,31 @@ textarea:focus-visible,
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-top: 0;
 }
+.egg-forbidden-input {
+  width: 100%;
+  min-height: 116px;
+  resize: vertical;
+  box-sizing: border-box;
+  border: 1px solid #eadcf4;
+  border-radius: 12px;
+  background: #fff;
+  color: #4b4256;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 11px 12px;
+  outline: none;
+}
+.egg-forbidden-input:focus {
+  border-color: #c084fc;
+  box-shadow: 0 0 0 3px rgba(124,58,237,0.08);
+}
+.egg-forbidden-tips {
+  margin-top: 8px;
+  color: #9b8aa7;
+  font-size: 12px;
+  line-height: 1.5;
+}
 .egg-style-status {
   margin-top: 12px;
   color: #777;
@@ -580,6 +655,112 @@ textarea:focus-visible,
 .sk-llm-test-btn:disabled {
   opacity: 0.58;
   cursor: default;
+}
+.sk-llm-chain {
+  margin-top: 8px;
+}
+.sk-llm-chain,
+.sk-llm-chain-editor {
+  border: 1px solid #f0e6f6;
+  border-radius: 8px;
+  background: #fffafd;
+}
+.sk-llm-chain > summary,
+.sk-llm-chain-editor > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 34px;
+  padding: 7px 10px;
+  color: #7c3aed;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  list-style: none;
+}
+.sk-llm-chain > summary::-webkit-details-marker,
+.sk-llm-chain-editor > summary::-webkit-details-marker {
+  display: none;
+}
+.sk-llm-chain-count {
+  flex: 0 0 auto;
+  color: #999;
+  font-size: 11px;
+  font-weight: 700;
+}
+.sk-llm-chain-body,
+.sk-llm-chain-editor-body {
+  display: grid;
+  gap: 7px;
+  padding: 0 9px 9px;
+}
+.sk-llm-chain-preview {
+  overflow: hidden;
+  color: #777;
+  font-size: 11px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sk-llm-chain-editor {
+  background: #fff;
+}
+.sk-llm-chain-list {
+  display: grid;
+  gap: 6px;
+  max-height: 136px;
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: #d8b4fe transparent;
+}
+.sk-llm-chain-list::-webkit-scrollbar {
+  width: 6px;
+}
+.sk-llm-chain-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #d8b4fe;
+}
+.sk-llm-chain-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 6px;
+}
+.sk-llm-chain-index {
+  color: #999;
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+}
+.sk-llm-chain-row select,
+.sk-llm-chain-add select {
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+.sk-llm-chain-btn {
+  min-width: 28px;
+  height: 30px;
+  border: 1px solid #eadcf4;
+  border-radius: 7px;
+  background: #fff;
+  color: #7c3aed;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+.sk-llm-chain-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.sk-llm-chain-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
 }
 .sk-field .sk-status {
   font-size: 11px;
@@ -851,8 +1032,9 @@ textarea:focus-visible,
 }
 .sk-footer-main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto;
   align-items: end;
+  justify-content: end;
   gap: 16px;
   width: 100%;
 }
@@ -886,6 +1068,9 @@ textarea:focus-visible,
   gap: 7px 8px;
   min-width: 0;
   max-width: 100%;
+}
+.sk-panel > .sk-update-row {
+  margin-top: 14px;
 }
 .sk-update-row .btn {
   padding: 9px 12px;
@@ -999,7 +1184,8 @@ textarea:focus-visible,
   }
   .sk-actions .btn { flex: 1; }
   .sk-segmented,
-  .sk-style-grid {
+  .sk-style-grid,
+  .sk-settings-tabs {
     grid-template-columns: 1fr;
   }
   .sk-cleanup-controls {
@@ -1229,9 +1415,18 @@ textarea:focus-visible,
   margin-top: 4px;
 }
 .today-hero-title .subtitle .heart { color: #e91e63; }
-.today-hero-title .gen-today-btn {
+.today-hero-actions {
   align-self: center;
   margin-top: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.today-hero-title .gen-today-btn {
+  align-self: center;
+  margin-top: 0;
   min-width: 170px;
   padding: 12px 32px;
   border-radius: 26px;
@@ -1252,6 +1447,11 @@ textarea:focus-visible,
   opacity: 0.6;
   cursor: not-allowed;
   transform: none;
+}
+.today-hero-title .today-forbidden-btn {
+  min-height: 42px;
+  min-width: 78px;
+  max-width: 104px;
 }
 
 .today-hero { display: none; }
@@ -2352,6 +2552,1134 @@ textarea:focus-visible,
   border: 1px solid #e0e0e0;
 }
 .cg-actions .btn-secondary:hover { background: #eee; }
+
+/* ===== Character & Group Chat Pages ===== */
+.tool-page.hidden { display: none; }
+.tool-page {
+  display: block;
+  padding: 6px 0 34px;
+}
+.tool-page.group-chat-section {
+  min-height: calc(100vh - 180px);
+  padding-bottom: 20px;
+}
+.tool-page .cg-modal {
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  overflow: visible;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  animation: none;
+}
+.tool-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.tool-modal-head h2 {
+  margin-bottom: 0;
+  min-width: 0;
+}
+.group-chat-head {
+  align-items: center;
+}
+.group-chat-title-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.group-character-avatars.character-picker {
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+.group-character-avatars .character-choice {
+  width: 40px;
+  min-width: 40px;
+  max-width: 40px;
+  min-height: 40px;
+  padding: 2px;
+  gap: 0;
+  justify-content: center;
+}
+.group-character-avatars .character-choice-main {
+  display: none;
+}
+.group-character-avatars .character-choice-avatar {
+  width: 34px;
+  height: 34px;
+  flex-basis: 34px;
+}
+.group-character-avatars .character-empty {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+.character-head-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.character-chat-panel {
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid #f0e6f6;
+  border-radius: 14px;
+  background: #fffafd;
+}
+.chat-image-panel {
+  margin: 0;
+  padding: 10px;
+  background: #fff;
+}
+.character-inline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.character-inline-head h3 {
+  margin: 0;
+  color: #4a335f;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+.character-generation-grid {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.48fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+}
+.character-generation-grid.roleless {
+  grid-template-columns: minmax(0, 1fr);
+}
+.character-generation-side {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.character-generation-side .cg-field {
+  margin-bottom: 0;
+}
+.character-generation-side:first-child {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+.character-generation-side:first-child .cg-field {
+  padding: 8px;
+  border: 1px solid #f0e6f6;
+  border-radius: 12px;
+  background: #fff;
+}
+.character-generation-side:first-child .cg-field label,
+.character-generation-side:nth-child(2) > .cg-field > label,
+.character-generation-main > .cg-field > label {
+  margin-bottom: 6px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+.character-generation-side:nth-child(2),
+.character-generation-main {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(340px, 0.9fr);
+  gap: 10px;
+  align-items: end;
+}
+.character-generation-side:nth-child(2) textarea,
+.character-generation-main textarea {
+  min-height: 52px;
+  height: 52px;
+  padding: 10px 12px;
+  font-size: 13px;
+  border-radius: 12px;
+}
+.character-generation-side:nth-child(2) .character-option-grid,
+.character-generation-main .character-option-grid {
+  gap: 7px;
+}
+.character-generation-side:nth-child(2) .character-option-grid label,
+.character-generation-main .character-option-grid label {
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+.character-generation-side:nth-child(2) .character-option-grid input,
+.character-generation-side:nth-child(2) .character-option-grid select,
+.character-generation-main .character-option-grid input,
+.character-generation-main .character-option-grid select {
+  min-height: 36px;
+  padding: 0 9px;
+  font-size: 12px;
+  border-radius: 10px;
+}
+.character-generate-actions {
+  grid-column: 1 / -1;
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.character-generate-actions .btn {
+  min-height: 36px;
+  min-width: 96px;
+  padding: 0 16px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+.chat-image-panel .character-inline-head {
+  margin-bottom: 8px;
+}
+.chat-image-panel .character-generation-grid {
+  display: block;
+}
+.chat-image-panel .character-generation-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+}
+.chat-image-panel .character-generation-main > .cg-field {
+  margin-bottom: 0;
+  padding: 8px;
+  border: 1px solid #f0e6f6;
+  border-radius: 12px;
+  background: #fffafd;
+}
+.chat-image-panel .character-generation-main textarea {
+  min-height: 64px;
+  height: auto;
+  resize: vertical;
+}
+.chat-image-panel .character-option-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+.chat-image-panel .character-generate-actions {
+  justify-content: stretch;
+}
+.chat-image-panel .character-generate-actions .btn {
+  width: 100%;
+}
+.character-add-btn {
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  justify-content: center;
+}
+.tool-status-pill,
+.hermes-status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #eadcf4;
+  background: #faf5ff;
+  color: #7c3aed;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.tool-status-pill.error {
+  border-color: #fecdd3;
+  background: #fff1f2;
+  color: #be123c;
+}
+.tool-status-pill.ok {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
+}
+.hermes-status-pill {
+  border-color: #e5e7eb;
+  background: #f8fafc;
+  color: #64748b;
+}
+.character-page { max-width: none; }
+.group-chat-page {
+  max-width: none;
+  height: calc(100vh - 180px);
+  max-height: calc(100vh - 180px);
+  min-height: calc(100vh - 180px);
+  display: flex;
+  flex-direction: column;
+}
+.character-manual-modal {
+  max-width: 980px;
+  padding: 22px 24px 24px;
+}
+.character-manual-panel {
+  padding: 14px;
+  border: 1px solid #f0e6f6;
+  border-radius: 16px;
+  background: #fffafd;
+}
+.character-panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: #4a335f;
+  font-size: 14px;
+  font-weight: 800;
+}
+.character-manual-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.character-manual-grid .wide { grid-column: span 2; }
+.character-manual-grid .full { grid-column: 1 / -1; }
+.character-manual-grid label {
+  display: block;
+  margin-bottom: 5px;
+  color: #777;
+  font-size: 12px;
+  font-weight: 800;
+}
+.character-manual-grid input,
+.character-manual-grid textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  background: #fff;
+  color: #444;
+  font-family: inherit;
+  outline: none;
+}
+.character-manual-grid input {
+  min-height: 40px;
+  padding: 0 11px;
+  font-size: 13px;
+}
+.character-manual-grid textarea {
+  min-height: 82px;
+  padding: 10px 11px;
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+}
+.character-manual-grid input:focus,
+.character-manual-grid textarea:focus {
+  border-color: #e91e63;
+  box-shadow: 0 0 0 3px rgba(233,30,99,0.08);
+}
+.character-manual-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+.character-manual-actions .btn {
+  min-height: 38px;
+  padding: 0 16px;
+  border-radius: 12px;
+}
+.character-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+}
+.character-picker.compact {
+  gap: 8px;
+}
+.character-choice {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  min-width: 104px;
+  max-width: 168px;
+  min-height: 46px;
+  padding: 6px 10px 6px 7px;
+  border: 1px solid #ece4f0;
+  border-radius: 999px;
+  background: #fff;
+  color: #555;
+  cursor: pointer;
+  transition: border 0.18s, background 0.18s, box-shadow 0.18s;
+}
+.character-picker .character-choice {
+  display: inline-flex;
+  margin-bottom: 0;
+}
+.character-choice:hover {
+  border-color: #e91e63;
+  background: #fffafd;
+  box-shadow: 0 8px 24px rgba(94,60,120,0.08);
+}
+.character-choice input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.character-choice:has(input:checked) {
+  border-color: #e91e63;
+  background: #fff1f7;
+  box-shadow: 0 0 0 3px rgba(233,30,99,0.07);
+}
+.character-choice:has(input:focus-visible) {
+  outline: 2px solid rgba(233,30,99,0.35);
+  outline-offset: 2px;
+}
+.character-choice-avatar {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  flex: 0 0 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid rgba(233,30,99,0.16);
+  background: linear-gradient(135deg, #fff1f7, #f3e8ff);
+  color: #d61f69;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1;
+}
+.character-choice-avatar::before {
+  content: attr(data-initial);
+}
+.character-choice-avatar img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.character-choice-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 100px;
+}
+.character-choice-name {
+  color: #3f3154;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.character-choice-meta {
+  display: none;
+}
+.character-detail-modal {
+  max-width: 780px;
+  padding: 26px 28px 24px;
+}
+.character-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.character-detail-title {
+  min-width: 0;
+}
+.character-detail-title h2 {
+  margin: 0 0 4px;
+}
+.character-detail-subtitle {
+  color: #8b7a99;
+  font-size: 13px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.character-detail-close {
+  width: 36px;
+  height: 36px;
+  border: 1px solid #eadcf4;
+  border-radius: 50%;
+  background: #fff;
+  color: #7c3aed;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.character-detail-close:hover {
+  background: #faf5ff;
+  border-color: #c084fc;
+}
+.character-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(190px, 230px) minmax(0, 1fr);
+  gap: 18px;
+}
+.character-detail-image {
+  min-height: 300px;
+  border-radius: 16px;
+  border: 1px solid #f0e6f6;
+  background: linear-gradient(145deg, #fff1f7, #f7f0ff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.character-detail-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.character-detail-visual {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.character-detail-actions {
+  display: grid;
+  gap: 8px;
+}
+.character-detail-actions .btn {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 12px;
+  justify-content: center;
+}
+.character-detail-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 20px;
+  color: #8b7a99;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+}
+.character-detail-placeholder .avatar {
+  width: 82px;
+  height: 82px;
+  border-radius: 50%;
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 42px;
+  box-shadow: 0 12px 30px rgba(94,60,120,0.12);
+}
+.character-detail-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.character-detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.character-detail-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #f6f2fb;
+  color: #6b5b7a;
+  font-size: 12px;
+  font-weight: 800;
+}
+.character-detail-block {
+  padding: 10px 12px;
+  border: 1px solid #f0e6f6;
+  border-radius: 12px;
+  background: #fffafd;
+}
+.character-detail-block strong {
+  display: block;
+  color: #3f3154;
+  font-size: 13px;
+  margin-bottom: 5px;
+}
+.character-detail-block p {
+  margin: 0;
+  color: #665b70;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.character-detail-block.muted p {
+  color: #aaa0b4;
+}
+.character-detail-field {
+  padding: 10px 12px;
+  border: 1px solid #f0e6f6;
+  border-radius: 12px;
+  background: #fffafd;
+}
+.character-detail-field label {
+  display: block;
+  margin-bottom: 6px;
+  color: #3f3154;
+  font-size: 13px;
+  font-weight: 900;
+}
+.character-detail-field textarea,
+.character-detail-field select {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #e0d7e8;
+  border-radius: 10px;
+  background: #fff;
+  color: #4b4256;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  outline: none;
+}
+.character-detail-field textarea {
+  min-height: 70px;
+  resize: vertical;
+}
+.character-detail-field select {
+  min-height: 40px;
+}
+.character-detail-field textarea:focus,
+.character-detail-field select:focus {
+  border-color: #e91e63;
+  box-shadow: 0 0 0 3px rgba(233,30,99,0.08);
+}
+.character-detail-save-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.character-detail-save-status {
+  min-width: 0;
+  color: #8b7a99;
+  font-size: 12px;
+  font-weight: 800;
+}
+.character-detail-save-row .btn {
+  min-height: 36px;
+  padding: 0 16px;
+  border-radius: 12px;
+}
+.character-gallery-picker-modal {
+  width: min(92vw, 860px);
+  padding: 24px;
+}
+.character-gallery-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.character-gallery-picker-head h2 {
+  margin: 0;
+}
+.character-gallery-picker-status {
+  min-height: 20px;
+  margin-bottom: 12px;
+  color: #8b7a99;
+  font-size: 13px;
+  font-weight: 800;
+}
+.character-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+  max-height: min(62vh, 560px);
+  overflow: auto;
+  padding: 2px 2px 4px;
+}
+.character-gallery-card {
+  min-width: 0;
+  border: 1px solid #f0e6f6;
+  border-radius: 12px;
+  background: #fff;
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+  transition: border 0.18s, box-shadow 0.18s, transform 0.18s;
+}
+.character-gallery-card:hover {
+  border-color: #e91e63;
+  box-shadow: 0 10px 26px rgba(94,60,120,0.12);
+  transform: translateY(-1px);
+}
+.character-gallery-thumb {
+  aspect-ratio: 3 / 4;
+  background: #faf5ff;
+}
+.character-gallery-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.character-gallery-meta {
+  padding: 8px 9px 9px;
+}
+.character-gallery-meta strong,
+.character-gallery-meta span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.character-gallery-meta strong {
+  color: #4a335f;
+  font-size: 12px;
+}
+.character-gallery-meta span {
+  margin-top: 3px;
+  color: #8b7a99;
+  font-size: 11px;
+  font-weight: 700;
+}
+.character-empty,
+.chat-empty {
+  padding: 18px 14px;
+  border: 1px dashed #d9c8e4;
+  border-radius: 14px;
+  background: #fbf8fd;
+  color: #9b8aaa;
+  font-size: 13px;
+  line-height: 1.55;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.character-option-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.character-option-grid .mini-field {
+  min-width: 0;
+}
+.character-option-grid label {
+  font-size: 12px;
+  margin-bottom: 5px;
+  color: #777;
+}
+.character-option-grid input,
+.character-option-grid select,
+.chat-create-row input,
+.chat-composer textarea,
+.chat-sender-row select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  background: #fff;
+  color: #444;
+  font-family: inherit;
+  outline: none;
+}
+.character-option-grid input,
+.character-option-grid select,
+.chat-create-row input,
+.chat-sender-row select {
+  min-height: 40px;
+  padding: 0 11px;
+  font-size: 13px;
+}
+.character-option-grid input:focus,
+.character-option-grid select:focus,
+.chat-create-row input:focus,
+.chat-composer textarea:focus,
+.chat-sender-row select:focus {
+  border-color: #e91e63;
+  box-shadow: 0 0 0 3px rgba(233,30,99,0.08);
+}
+.agent-bind-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid #e7e0ea;
+  border-radius: 14px;
+  background: #fafafa;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.agent-bind-note span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.group-chat-page > .agent-bind-note {
+  display: none;
+}
+.group-chat-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.38fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.chat-side,
+.chat-main {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid #f0e6f6;
+  border-radius: 16px;
+  background: #fffafd;
+}
+.chat-side {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+.chat-side > .cg-field {
+  margin-bottom: 0;
+  padding: 10px;
+  border: 1px solid #f0e6f6;
+  border-radius: 14px;
+  background: #fff;
+}
+.chat-side > .cg-field > label {
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.chat-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.chat-panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 0;
+  color: #4a335f;
+  font-size: 14px;
+  font-weight: 800;
+}
+.chat-create-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-bottom: 0;
+}
+.chat-create-row .btn {
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+.chat-room-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 230px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.chat-room-card {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid #ece4f0;
+  border-radius: 12px;
+  background: #fff;
+  color: #4a335f;
+  text-align: left;
+  cursor: pointer;
+}
+.chat-room-card:hover,
+.chat-room-card.active {
+  border-color: #e91e63;
+  background: #fff1f7;
+}
+.chat-room-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 800;
+}
+.chat-room-meta {
+  display: block;
+  margin-top: 2px;
+  color: #9b8aaa;
+  font-size: 11px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-main-head {
+  padding: 13px 14px;
+  border-bottom: 1px solid #f0e6f6;
+}
+.chat-main-title {
+  color: #4a335f;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-main-subtitle {
+  margin-top: 3px;
+  color: #9b8aaa;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-typing-indicator {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 22px;
+  margin-top: 6px;
+  padding: 3px 10px;
+  border: 1px solid #f5d0e1;
+  border-radius: 999px;
+  background: #fff5fa;
+  color: #d81b60;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-typing-indicator[hidden] {
+  display: none;
+}
+.chat-messages {
+  flex: 1;
+  min-height: 0;
+  padding: 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.chat-message {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 36px;
+  align-items: flex-start;
+  gap: 8px;
+  color: #3f3154;
+}
+.chat-message.user {
+  color: #2f4735;
+}
+.chat-message-avatar {
+  position: relative;
+  grid-column: 1;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  overflow: hidden;
+  border: 1px solid rgba(233,30,99,0.16);
+  background: linear-gradient(135deg, #fff1f7, #f3e8ff);
+  color: #d61f69;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 0 4px 12px rgba(82,45,112,0.08);
+}
+.chat-message-avatar::before {
+  content: attr(data-initial);
+}
+.chat-message-avatar img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.chat-message.user .chat-message-avatar {
+  grid-column: 3;
+  background: linear-gradient(135deg, #dcfce7, #e7f8d6);
+  border-color: rgba(34,197,94,0.18);
+  color: #238447;
+}
+.chat-message-bubble {
+  position: relative;
+  grid-column: 2;
+  justify-self: start;
+  width: fit-content;
+  max-width: min(74%, 620px);
+  min-width: 0;
+  padding: 9px 12px;
+  border: 1px solid #f0e6f6;
+  border-radius: 14px 14px 14px 5px;
+  background: #fff;
+  color: #3f3154;
+  box-shadow: 0 3px 12px rgba(82,45,112,0.05);
+}
+.chat-message-bubble::before {
+  content: "";
+  position: absolute;
+  top: 14px;
+  left: -5px;
+  width: 9px;
+  height: 9px;
+  background: inherit;
+  border-left: 1px solid #f0e6f6;
+  border-bottom: 1px solid #f0e6f6;
+  transform: rotate(45deg);
+}
+.chat-message.user .chat-message-bubble {
+  justify-self: end;
+  border-radius: 14px 14px 5px 14px;
+  border-color: #c9efb9;
+  background: #e8f8d9;
+  color: #2f4735;
+}
+.chat-message.user .chat-message-bubble::before {
+  left: auto;
+  right: -5px;
+  border-left: 0;
+  border-bottom: 0;
+  border-top: 1px solid #c9efb9;
+  border-right: 1px solid #c9efb9;
+}
+.chat-message-meta {
+  margin-bottom: 3px;
+  color: #9b8aaa;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.chat-message.user .chat-message-meta {
+  color: #5a8460;
+  text-align: right;
+}
+.chat-message-text {
+  color: #3f3154;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-message.user .chat-message-text {
+  color: #2f4735;
+}
+.chat-message.image .chat-message-bubble {
+  width: min(320px, 74%);
+  max-width: min(320px, 74%);
+  padding: 7px;
+}
+.chat-image-thumb {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: #f8f1fb;
+  overflow: hidden;
+  cursor: zoom-in;
+  box-shadow: inset 0 0 0 1px rgba(224,215,232,0.8);
+}
+.chat-image-thumb img {
+  display: block;
+  width: 100%;
+  max-height: 360px;
+  aspect-ratio: 4 / 5;
+  object-fit: cover;
+}
+.chat-image-caption {
+  margin-top: 7px;
+  color: #5c496b;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-composer {
+  padding: 12px 14px 14px;
+  border-top: 1px solid #f0e6f6;
+  background: #fff;
+}
+.chat-sender-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.chat-composer textarea {
+  min-height: 76px;
+  padding: 10px 12px;
+  resize: vertical;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.chat-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.chat-composer-actions .btn {
+  min-height: 38px;
+  padding: 0 18px;
+  border-radius: 12px;
+}
 .cg-upload-label { cursor: pointer; display: inline-flex; }
 .cg-ref-item .upload-badge {
   position: absolute; bottom: 0; left: 0; right: 0;
@@ -2460,6 +3788,43 @@ textarea:focus-visible,
 
 /* ===== Responsive ===== */
 @media (max-width: 1200px) {
+  .header {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand actions"
+      "tabs tabs";
+    gap: 12px 14px;
+    padding: 15px 24px 14px;
+  }
+  .header-left h1 { font-size: clamp(22px, 2.35vw, 26px); }
+  .tabs {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    justify-self: center;
+    width: min(560px, 100%);
+    overflow: visible;
+  }
+  .tab {
+    position: relative;
+    width: 100%;
+    min-height: 42px;
+    padding: 8px 6px;
+    gap: 4px;
+    flex: none;
+    overflow: visible;
+  }
+  .tab.has-badge { padding-right: 6px; }
+  .tab-badge {
+    position: static;
+    align-self: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 5px;
+    font-size: 9px;
+    line-height: 16px;
+    margin-left: 1px;
+    transform: none;
+  }
   .gallery-list { gap: 14px; }
   .gallery-grid { gap: 10px; }
   .big-card-image { flex: 0 0 38%; min-height: 280px; }
@@ -2478,12 +3843,12 @@ textarea:focus-visible,
   }
   .tabs {
     justify-self: center;
-    width: min(430px, 100%);
+    width: min(550px, 100%);
   }
   .tab {
-    flex: 1 1 0;
-    padding-inline: 12px;
+    padding-inline: 8px;
   }
+  .character-manual-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .wardrobe-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 700px) {
@@ -2498,9 +3863,11 @@ textarea:focus-visible,
   .header-left h1 { font-size: 24px; }
   .tabs { justify-self: stretch; width: 100%; }
   .tab { flex: 1; padding: 9px 12px; }
-  .header-gen-btn { min-height: 42px; padding: 0 16px; }
+  .header-gen-btn { min-height: 40px; padding: 0 14px; }
   .gallery-list { gap: 12px; }
   .gallery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .character-manual-grid { grid-template-columns: 1fr; }
+  .character-manual-grid .wide { grid-column: auto; }
   .big-card { flex-direction: column; }
   .big-card-image { flex: unset; width: 100%; min-height: 260px; aspect-ratio: 3/4; }
   .big-card-info { padding: 16px 18px; }
@@ -2511,6 +3878,31 @@ textarea:focus-visible,
   .today-hero-title .subtitle { font-size: 13px; }
   .today-hero-title .gen-today-btn { font-size: 14px; padding: 10px 24px; }
   .wardrobe-grid { grid-template-columns: 1fr; }
+  .character-picker,
+  .character-picker.compact,
+  .character-detail-grid,
+  .character-option-grid,
+  .character-generation-grid,
+  .group-chat-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tool-page.group-chat-section,
+  .group-chat-page {
+    height: auto;
+    max-height: none;
+    min-height: auto;
+  }
+  .group-chat-layout {
+    min-height: auto;
+    overflow: visible;
+  }
+  .chat-side {
+    overflow: visible;
+  }
+  .character-detail-image {
+    min-height: 220px;
+  }
+  .chat-main { min-height: 420px; }
 }
 @media (max-width: 560px) {
   .gallery-list { gap: 10px; }
@@ -2523,17 +3915,92 @@ textarea:focus-visible,
   .big-card-info .bc-schedule .sched-row { font-size: 12px; }
   .big-card-info .bc-actions .bc-btn { min-height: 29px; font-size: 12px; padding: 4px 2px; }
   .big-card-info .bc-actions { gap: 6px; padding-top: 6px; margin-top: 3px; }
-  .header { padding: 14px 14px 12px; gap: 10px 8px; }
-  .header-left h1 { font-size: 21px; }
+  .header {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand actions"
+      "tabs tabs";
+    padding: 12px 14px 10px;
+    gap: 10px 8px;
+  }
+  .header-left h1 { font-size: clamp(18px, 5.2vw, 21px); }
   .version-tag { font-size: 11px; }
-  .header-actions { gap: 8px; }
-  .header-gen-btn { min-height: 40px; padding: 0 12px; font-size: 13px; }
-  .settings-btn { width: 38px; height: 38px; }
-  .tabs { padding: 3px; gap: 2px; border-radius: 18px; }
-  .tab { min-height: 40px; padding: 8px 5px; border-radius: 15px; font-size: 13px; gap: 4px; }
-  .tab-label { gap: 4px; }
-  .tab-icon { font-size: 16px; }
-  .tab-badge { min-width: 15px; height: 15px; font-size: 9px; line-height: 15px; padding: 0 4px; }
+  .header-actions {
+    gap: 6px;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+    min-width: 0;
+  }
+  .header-gen-btn,
+  .header-tool-btn,
+  .header-log-btn,
+  .settings-btn {
+    width: 38px;
+    height: 38px;
+    min-height: 38px;
+    border-radius: 50%;
+    padding: 0;
+    justify-content: center;
+  }
+  .header-gen-btn {
+    font-size: 0;
+    box-shadow: 0 5px 16px rgba(233,30,99,0.22);
+  }
+  .header-gen-btn .header-action-icon,
+  .header-tool-btn i,
+  .header-log-btn i,
+  .settings-btn {
+    font-size: 17px;
+  }
+  .header-gen-label,
+  .header-tool-label {
+    display: none;
+  }
+  .character-inline-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .character-head-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .tabs {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    justify-self: stretch;
+    width: 100%;
+    padding: 4px;
+    gap: 3px;
+    border-radius: 20px;
+    overflow: visible;
+  }
+  .tab {
+    position: relative;
+    min-height: 42px;
+    width: 100%;
+    padding: 7px 2px 6px;
+    border-radius: 16px;
+    font-size: 12px;
+    gap: 2px;
+    overflow: visible;
+    flex: none;
+  }
+  .tab.has-badge { padding-right: 2px; }
+  .tab-label { gap: 2px; }
+  .tab-icon { font-size: 15px; }
+  .tab-text {
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: clip;
+  }
+  .tab-badge {
+    min-width: 14px;
+    height: 14px;
+    font-size: 8px;
+    line-height: 14px;
+    padding: 0 3px;
+    margin-left: 0;
+  }
   .container { padding: 16px 14px; }
   .wardrobe-head h2 { font-size: 20px; }
   .wardrobe-card { padding: 12px; }
@@ -2564,6 +4031,27 @@ textarea:focus-visible,
   .cg-upload-btn { width: 100%; justify-content: center; min-height: 38px; }
   .cg-actions { margin-top: 14px; padding-top: 12px; gap: 8px; }
   .cg-actions .btn { flex: 1; min-width: 0; min-height: 42px; padding: 8px 10px; }
+  .tool-modal-head { align-items: flex-start; margin-bottom: 14px; }
+  .agent-bind-note { align-items: flex-start; flex-direction: column; }
+  .chat-create-row,
+  .chat-sender-row { grid-template-columns: minmax(0, 1fr); }
+  .chat-room-list { max-height: 180px; }
+  .chat-message {
+    grid-template-columns: 32px minmax(0, 1fr) 32px;
+    gap: 7px;
+  }
+  .chat-message-avatar {
+    width: 32px;
+    height: 32px;
+    font-size: 13px;
+  }
+  .chat-message-bubble {
+    max-width: 88%;
+  }
+  .chat-message.image .chat-message-bubble {
+    width: min(280px, 88%);
+    max-width: min(280px, 88%);
+  }
   .gallery-list .today-compact .tc-image { height: clamp(190px, 66vw, 320px); }
   .gallery-list .today-compact .tc-info { padding: 12px 14px; gap: 6px; }
   .gallery-list .today-compact .tc-outfit { font-size: 13px; line-height: 1.6; }
@@ -2576,6 +4064,18 @@ textarea:focus-visible,
   .gallery-list .today-compact .tc-style { font-size: 10px; padding: 2px 10px; }
 }
 @media (max-width: 340px) {
+  .header { padding-inline: 10px; gap: 9px 6px; }
+  .header-actions { gap: 5px; }
+  .header-gen-btn,
+  .header-tool-btn,
+  .header-log-btn,
+  .settings-btn {
+    width: 36px;
+    height: 36px;
+    min-height: 36px;
+  }
+  .tab-text { display: none; }
+  .tab-icon { font-size: 17px; }
   .gallery-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
@@ -2827,7 +4327,8 @@ textarea:focus-visible,
 .egg-section-title-main { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .egg-title-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
 .egg-outfit-fav-btn,
-.egg-outfit-dislike-btn {
+.egg-outfit-dislike-btn,
+.egg-forbidden-btn {
   min-height: 36px;
   min-width: 94px;
   max-width: 136px;
@@ -2855,14 +4356,24 @@ textarea:focus-visible,
   color: #64748b;
   box-shadow: 0 6px 14px rgba(100,116,139,0.08);
 }
+.egg-forbidden-btn {
+  min-width: 72px;
+  max-width: 96px;
+  border-color: rgba(124,58,237,0.18);
+  color: #7c3aed;
+  box-shadow: 0 6px 14px rgba(124,58,237,0.08);
+}
 .egg-outfit-fav-btn span,
-.egg-outfit-dislike-btn span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.egg-outfit-dislike-btn span,
+.egg-forbidden-btn span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .egg-outfit-fav-btn:hover { background: #fff7fb; border-color: rgba(233,30,99,0.36); }
 .egg-outfit-fav-btn.active { background: linear-gradient(135deg, #ff2d8d, #c026d3); border-color: transparent; color: #fff; box-shadow: 0 8px 18px rgba(233,30,99,0.22); }
 .egg-outfit-dislike-btn:hover { background: #f8fafc; border-color: rgba(100,116,139,0.38); }
 .egg-outfit-dislike-btn.active { background: linear-gradient(135deg, #64748b, #334155); border-color: transparent; color: #fff; box-shadow: 0 8px 18px rgba(51,65,85,0.18); }
+.egg-forbidden-btn:hover { background: #faf5ff; border-color: rgba(124,58,237,0.34); }
 .egg-outfit-fav-btn:disabled,
-.egg-outfit-dislike-btn:disabled { cursor: default; opacity: 0.58; box-shadow: none; }
+.egg-outfit-dislike-btn:disabled,
+.egg-forbidden-btn:disabled { cursor: default; opacity: 0.58; box-shadow: none; }
 .egg-outfit-grid { display: flex; flex-direction: column; gap: 10px; }
 .egg-outfit-item { background: rgba(255,255,255,0.88); backdrop-filter: none; -webkit-backdrop-filter: none; border: 1px solid rgba(240,226,255,0.9); border-radius: 14px; padding: 12px 14px; width: 100%; box-sizing: border-box; box-shadow: 0 3px 12px rgba(168,85,247,0.05); transition: background 0.16s ease, border-color 0.16s ease; }
 .egg-outfit-item:hover { background: #fff; border-color: rgba(228,202,255,0.95); }
@@ -2940,10 +4451,11 @@ textarea:focus-visible,
 .egg-slot-empty { opacity: 0.5; font-style: italic; }
 @media (max-width: 420px) {
   .egg-section-title.with-action { grid-template-columns: 1fr; align-items: start; }
-  .egg-title-actions { justify-self: end; flex-wrap: wrap; max-width: 100%; }
-  .egg-outfit-fav-btn { min-width: 94px; }
-  .egg-outfit-dislike-btn { min-width: 82px; }
-  .egg-photo-item { grid-template-columns: auto 48px auto minmax(0, 1fr) auto; }
+	  .egg-title-actions { justify-self: end; flex-wrap: wrap; max-width: 100%; }
+	  .egg-outfit-fav-btn { min-width: 94px; }
+	  .egg-outfit-dislike-btn { min-width: 82px; }
+	  .egg-forbidden-btn { min-width: 72px; }
+	  .egg-photo-item { grid-template-columns: auto 48px auto minmax(0, 1fr) auto; }
   .egg-photo-style { grid-column: 5; grid-row: 1; justify-self: end; }
   .egg-photo-actions { grid-column: 1 / -1; grid-row: auto; justify-self: start; }
 }
@@ -3026,6 +4538,7 @@ textarea:focus-visible,
 .sk-endpoint-add-btn { width: 100%; border: 1px dashed #d6c5dd; background: #fbf7fd; color: #7a5b87; }
 .sk-endpoint-add-btn:hover { border-color: #d83b8c; color: #d83b8c; }
 @media (max-width: 720px) {
+  .sk-llm-chain-row { grid-template-columns: 20px minmax(0, 1fr) repeat(3, 28px); gap: 4px; }
   .sk-endpoint-row { grid-template-columns: 1fr; }
   .sk-endpoint-del-btn { width: 100%; }
 }
@@ -3065,6 +4578,20 @@ textarea:focus-visible,
   </div>
 </div>
 
+<div class="egg-style-overlay" id="eggForbiddenOverlay">
+  <div class="egg-style-modal">
+    <h3>🚫 日程禁词</h3>
+    <div class="sk-desc">这些词及相关概念不会用于新的日程、穿搭、道具、场景或生图提示词。</div>
+    <textarea class="egg-forbidden-input" id="eggForbiddenKeywords" placeholder="一行一个，或用逗号分隔&#10;例如：包、奶茶、直播"></textarea>
+    <div class="egg-forbidden-tips">保存后下次刷新/自动生成日程生效；已有日程不会被自动改写。</div>
+    <div class="egg-style-status" id="eggForbiddenStatus">加载中...</div>
+    <div class="egg-style-actions">
+      <button class="egg-style-btn secondary" type="button" data-egg-forbidden-close>取消</button>
+      <button class="egg-style-btn primary" type="button" id="eggForbiddenSaveBtn" data-egg-forbidden-save>保存</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // Scope browser-local preferences by app path so multiple deployments on the
 // same origin do not reuse each other's API key or UI state.
@@ -3090,19 +4617,21 @@ textarea:focus-visible,
     const todaySec = document.getElementById('todaySection');
     const gallerySec = document.getElementById('gallerySection');
     const wardrobeSec = document.getElementById('wardrobeSection');
-    const normalizedTab = ["gallery", "today", "favorites", "wardrobe"].includes(savedTab) ? savedTab : "today";
+    const groupChatSec = document.getElementById('groupChatSection');
+    const savedKnownTab = ["gallery", "today", "favorites", "wardrobe", "character", "group-chat"].includes(savedTab) ? savedTab : "today";
+    const normalizedTab = savedKnownTab === "character" ? "group-chat" : savedKnownTab;
+    if (todaySec) todaySec.classList.remove('visible');
+    if (gallerySec) gallerySec.classList.add('hidden');
+    if (wardrobeSec) wardrobeSec.classList.add('hidden');
+    if (groupChatSec) groupChatSec.classList.add('hidden');
     if (normalizedTab === 'today') {
-      todaySec.classList.add('visible');
-      gallerySec.classList.add('hidden');
-      if (wardrobeSec) wardrobeSec.classList.add('hidden');
+      if (todaySec) todaySec.classList.add('visible');
     } else if (normalizedTab === 'wardrobe') {
-      todaySec.classList.remove('visible');
-      gallerySec.classList.add('hidden');
       if (wardrobeSec) wardrobeSec.classList.remove('hidden');
+    } else if (normalizedTab === 'group-chat') {
+      if (groupChatSec) groupChatSec.classList.remove('hidden');
     } else {
-      todaySec.classList.remove('visible');
-      gallerySec.classList.remove('hidden');
-      if (wardrobeSec) wardrobeSec.classList.add('hidden');
+      if (gallerySec) gallerySec.classList.remove('hidden');
     }
     document.querySelectorAll('.tab').forEach(t => {
       t.classList.toggle('active', t.dataset.tab === normalizedTab);
@@ -3116,15 +4645,20 @@ textarea:focus-visible,
       <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.2.6</span></h1>
   </div>
   <div class="tabs">
-    <button class="tab" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="showUnfavoriteGallery(event)"><span class="tab-label"><span class="tab-icon" aria-hidden="true">✨</span><span class="tab-text">全部</span></span><span class="tab-badge" id="badge-all">0</span></button>
-    <button class="tab" data-tab="today" onclick="switchTab('today')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">🌸</span><span class="tab-text">今日</span></span><span class="tab-badge" id="badge-today">0</span></button>
-    <button class="tab" data-tab="favorites" onclick="switchTab('favorites')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">❤️</span><span class="tab-text">收藏</span></span><span class="tab-badge" id="badge-favorites">0</span></button>
-    <button class="tab" data-tab="wardrobe" onclick="switchTab('wardrobe')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">👗</span><span class="tab-text">衣柜</span></span><span class="tab-badge" id="badge-wardrobe">0</span></button>
+    <button class="tab has-badge" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="showUnfavoriteGallery(event)"><span class="tab-label"><span class="tab-icon" aria-hidden="true">✨</span><span class="tab-text">全部</span></span><span class="tab-badge" id="badge-all">0</span></button>
+    <button class="tab has-badge" data-tab="today" onclick="switchTab('today')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">🌸</span><span class="tab-text">今日</span></span><span class="tab-badge" id="badge-today">0</span></button>
+    <button class="tab has-badge" data-tab="favorites" onclick="switchTab('favorites')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">❤️</span><span class="tab-text">收藏</span></span><span class="tab-badge" id="badge-favorites">0</span></button>
+    <button class="tab has-badge" data-tab="wardrobe" onclick="switchTab('wardrobe')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">👗</span><span class="tab-text">衣柜</span></span><span class="tab-badge" id="badge-wardrobe">0</span></button>
+    <button class="tab" data-tab="group-chat" onclick="switchTab('group-chat')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">💬</span><span class="tab-text">群聊</span></span></button>
   </div>
   <div class="header-actions">
-    <button class="btn btn-primary header-gen-btn" onclick="openCustomGen()">🎀 穿搭生成</button>
-    <button class="header-log-btn" onclick="openLiveLogs()" title="实时运行日志">📜 日志</button>
-    <button class="settings-btn" onclick="openSettings()" title="API 密钥设置">⚙️</button>
+    <button class="btn btn-primary header-gen-btn" onclick="openCustomGen()" title="穿搭生成" aria-label="穿搭生成"><span class="header-action-icon" aria-hidden="true">🎀</span><span class="header-gen-label">穿搭生成</span></button>
+    <button class="header-log-btn" type="button" onclick="openLiveLogs()" title="运行日志" aria-label="运行日志">
+      <i class="fa-regular fa-rectangle-list" aria-hidden="true"></i><span class="header-tool-label">日志</span>
+    </button>
+    <button class="header-tool-btn" type="button" onclick="openSettings()" title="设置" aria-label="设置">
+      <i class="fa-solid fa-gear" aria-hidden="true"></i><span class="header-tool-label">设置</span>
+    </button>
   </div>
 </div>
 
@@ -3135,7 +4669,10 @@ textarea:focus-visible,
     <div class="today-hero-title">
       <h2><span class="pig-emoji">✨</span> <span id="appHeroTitle">每日穿搭画廊</span></h2>
       <div class="subtitle" id="appHeroSubtitle">每一天，都是不一样的角色 <span class="heart">💞</span></div>
-      <button class="gen-today-btn" onclick="triggerGenerate()">💭 现在在干嘛</button>
+      <div class="today-hero-actions">
+        <button class="gen-today-btn" onclick="triggerGenerate()">💭 现在在干嘛</button>
+        <button class="egg-forbidden-btn today-forbidden-btn" type="button" data-action="manage-schedule-forbidden" aria-label="设置日程禁词" title="禁止 LLM 生成相关日程"><i class="fa-solid fa-ban" aria-hidden="true"></i><span>禁词</span></button>
+      </div>
     </div>
     <div class="today-empty" id="todayEmpty" style="display:none;">
       <div class="icon">🌸</div>
@@ -3159,6 +4696,127 @@ textarea:focus-visible,
     </div>
     <div id="wardrobeContent">
       <div class="wardrobe-empty"><div class="icon">👗</div><p>正在打开衣柜...</p></div>
+    </div>
+  </div>
+
+  <!-- Group Chat Page -->
+  <div class="tool-page group-chat-section hidden" id="groupChatSection">
+    <div class="cg-modal group-chat-page">
+      <div class="tool-modal-head group-chat-head">
+        <div class="group-chat-title-line">
+          <h2>群聊</h2>
+          <div class="character-picker compact group-character-avatars" id="characterRoleList" aria-label="角色头像">
+            <div class="character-empty">正在加载角色...</div>
+          </div>
+        </div>
+        <div class="character-head-actions">
+          <button class="btn btn-primary character-add-btn" type="button" onclick="openManualCharacterModal()">新增</button>
+          <span class="tool-status-pill" id="characterStatus">准备加载</span>
+          <span class="tool-status-pill" id="groupChatStatus">准备加载</span>
+        </div>
+      </div>
+      <div class="agent-bind-note">
+        <span>角色-agent 绑定由后端配置；前端只提交参与角色和消息内容。</span>
+        <span class="hermes-status-pill">Hermes 可配置/未启用</span>
+      </div>
+      <div class="group-chat-layout">
+        <section class="chat-side">
+          <div class="cg-field group-participants-field">
+            <label>参与角色</label>
+            <div class="character-picker compact" id="groupRoomParticipantList">
+              <div class="character-empty">角色加载后可选择参与者</div>
+            </div>
+          </div>
+          <section class="character-chat-panel chat-image-panel">
+            <div class="character-inline-head">
+              <h3>生成图片</h3>
+            </div>
+            <div class="character-generation-grid roleless">
+              <div class="character-generation-side character-generation-main">
+                <div class="cg-field">
+                  <label for="characterPrompt">提示词</label>
+                  <textarea id="characterPrompt" rows="3" placeholder="例如：雨后的城市天台，轻松聊天的角色画面，柔和电影感光线"></textarea>
+                </div>
+                <div class="cg-field">
+                  <label>选项</label>
+                  <div class="character-option-grid">
+                    <div class="mini-field">
+                      <label for="characterStyleInput">风格</label>
+                      <input type="text" id="characterStyleInput" placeholder="可选">
+                    </div>
+                    <div class="mini-field">
+                      <label for="characterSizeSelect">尺寸</label>
+                      <select id="characterSizeSelect">
+                        <option value="">可选</option>
+                        <option value="1024x1024">1024x1024</option>
+                        <option value="2048x2048">2048x2048</option>
+                        <option value="4096x4096">4096x4096</option>
+                        <option value="768x1024">768x1024</option>
+                        <option value="1536x2048">1536x2048</option>
+                        <option value="3072x4096">3072x4096</option>
+                        <option value="1024x768">1024x768</option>
+                        <option value="2048x1536">2048x1536</option>
+                        <option value="4096x3072">4096x3072</option>
+                        <option value="1024x1536">1024x1536</option>
+                        <option value="1365x2048">1365x2048</option>
+                        <option value="2731x4096">2731x4096</option>
+                        <option value="768x1366">768x1366</option>
+                        <option value="1152x2048">1152x2048</option>
+                        <option value="2304x4096">2304x4096</option>
+                      </select>
+                    </div>
+                    <div class="mini-field">
+                      <label for="characterShotSelect">视角</label>
+                      <select id="characterShotSelect">
+                        <option value="">可选</option>
+                        <option value="selfie">自拍</option>
+                        <option value="half_body">半身照</option>
+                        <option value="full_body">全身照</option>
+                      </select>
+                    </div>
+                    <div class="mini-field">
+                      <label for="characterImageModelSelect">模型</label>
+                      <select id="characterImageModelSelect">
+                        <option value="">默认模型</option>
+                        <option value="gpt-image-2">gpt-image-2</option>
+                        <option value="agnes-image-2.1-flash">agnes-image-2.1-flash</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+                <div class="cg-actions character-generate-actions">
+                  <button class="btn btn-primary" type="button" id="characterGenerateBtn" data-idle-text="生成图片" onclick="generateSelectedCharacterPortrait()">生成图片</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </section>
+        <section class="chat-main">
+          <div class="chat-main-head">
+            <div class="chat-main-title" id="groupChatActiveTitle">群聊</div>
+            <div class="chat-main-subtitle" id="groupChatActiveMeta">角色加载后自动进入群聊</div>
+            <div class="chat-typing-indicator" id="groupChatTypingIndicator" hidden></div>
+          </div>
+          <div class="chat-messages" id="groupChatMessages">
+            <div class="chat-empty">正在准备群聊...</div>
+          </div>
+          <div class="chat-composer">
+            <div class="chat-sender-row">
+              <select id="chatSenderType" onchange="updateGroupChatSenderControls()">
+                <option value="user">我</option>
+                <option value="character">角色</option>
+              </select>
+              <select id="chatSenderCharacter" onchange="handleGroupChatSenderCharacterChange()">
+                <option value="">选择角色</option>
+              </select>
+            </div>
+            <textarea id="groupChatMessageInput" rows="3" placeholder="输入要发到当前房间的消息"></textarea>
+            <div class="chat-composer-actions">
+              <button class="btn btn-primary" type="button" id="groupChatSendBtn" onclick="sendGroupChatMessage()">发送</button>
+            </div>
+          </div>
+        </section>
+      </div>
     </div>
   </div>
 
@@ -3189,10 +4847,93 @@ textarea:focus-visible,
   </div>
 </div>
 
+<!-- Character Detail Modal -->
+<div class="sk-overlay" id="characterDetailOverlay" onclick="if(event.target===this)closeCharacterDetail()">
+  <div class="sk-modal character-detail-modal" onclick="event.stopPropagation()">
+    <div id="characterDetailBody"></div>
+  </div>
+</div>
+
+<div class="sk-overlay" id="characterGalleryPickOverlay" onclick="if(event.target===this)closeCharacterGalleryPicker()">
+  <div class="sk-modal character-gallery-picker-modal" onclick="event.stopPropagation()">
+    <div class="character-gallery-picker-head">
+      <h2>选择角色图</h2>
+      <button type="button" class="character-detail-close" onclick="closeCharacterGalleryPicker()" aria-label="关闭选择"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+    </div>
+    <div class="character-gallery-picker-status" id="characterGalleryPickStatus">从画廊选择一张图作为角色参考图</div>
+    <div class="character-gallery-grid" id="characterGalleryPickGrid"></div>
+  </div>
+</div>
+
+<!-- Manual Character Modal -->
+<div class="sk-overlay" id="manualCharacterOverlay" onclick="if(event.target===this)closeManualCharacterModal()">
+  <div class="sk-modal character-manual-modal" onclick="event.stopPropagation()">
+    <div class="character-manual-panel">
+      <div class="character-panel-title">
+        <span>手动添加角色</span>
+        <span class="tool-status-pill" id="characterFormStatus">未保存</span>
+      </div>
+      <div class="character-manual-grid">
+        <div>
+          <label for="manualCharacterName">名称</label>
+          <input type="text" id="manualCharacterName" autocomplete="off" placeholder="Hermes/openclaw 之外的新角色">
+        </div>
+        <div>
+          <label for="manualCharacterId">ID</label>
+          <input type="text" id="manualCharacterId" autocomplete="off" placeholder="留空自动生成">
+        </div>
+        <div>
+          <label for="manualCharacterAgent">Agent</label>
+          <input type="text" id="manualCharacterAgent" autocomplete="off" placeholder="可选">
+        </div>
+        <div>
+          <label for="manualCharacterStyle">风格</label>
+          <input type="text" id="manualCharacterStyle" autocomplete="off" list="characterStyleDatalist" placeholder="可选">
+        </div>
+        <div class="wide">
+          <label for="manualCharacterPersona">人设</label>
+          <textarea id="manualCharacterPersona" rows="3" placeholder="性格、身份、关系、行为偏好"></textarea>
+        </div>
+        <div class="wide">
+          <label for="manualCharacterAppearance">外貌</label>
+          <textarea id="manualCharacterAppearance" rows="3" placeholder="脸型、发型、身形、服饰基调、识别特征"></textarea>
+        </div>
+        <div class="wide">
+          <label for="manualCharacterVoice">口吻</label>
+          <input type="text" id="manualCharacterVoice" autocomplete="off" placeholder="可选">
+        </div>
+        <div class="wide">
+          <label for="manualCharacterReferenceImage">参考图</label>
+          <input type="text" id="manualCharacterReferenceImage" autocomplete="off" placeholder="/images/xxx.png 或 /local-refs/xxx.jpg">
+        </div>
+      </div>
+      <datalist id="characterStyleDatalist">
+        <option value="cool"></option>
+        <option value="girly"></option>
+        <option value="sweet"></option>
+        <option value="写实"></option>
+        <option value="动漫"></option>
+        <option value="电影感"></option>
+      </datalist>
+      <div class="character-manual-actions">
+        <button class="btn btn-secondary" type="button" onclick="resetManualCharacterForm()">清空</button>
+        <button class="btn btn-secondary" type="button" onclick="closeManualCharacterModal()">取消</button>
+        <button class="btn btn-primary" type="button" id="manualCharacterSaveBtn" onclick="saveManualCharacter()">保存角色</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Settings Modal -->
 <div class="sk-overlay" id="skOverlay" onclick="if(event.target===this)closeSettings()">
   <div class="sk-modal" onclick="event.stopPropagation()">
     <h2>⚙️ 设置</h2>
+    <div class="sk-settings-tabs" role="tablist" aria-label="设置分类">
+      <button type="button" class="sk-settings-tab active" data-settings-panel="persona" onclick="setSettingsPanel('persona')">人设</button>
+      <button type="button" class="sk-settings-tab" data-settings-panel="model" onclick="setSettingsPanel('model')">模型</button>
+      <button type="button" class="sk-settings-tab" data-settings-panel="maintain" onclick="setSettingsPanel('maintain')">清理/升级</button>
+    </div>
+    <div class="sk-panel active" id="skPanelPersona" data-settings-panel-content="persona">
     <div class="sk-field">
       <label>🎭 人设来源</label>
       <div class="sk-desc">用于日程文案、小心思和脚本口吻；默认使用本机自定义</div>
@@ -3227,17 +4968,6 @@ textarea:focus-visible,
       <div class="sk-status" id="skAppearanceStatus">加载中...</div>
     </div>
     <div class="sk-field">
-      <label for="skLlmModel">🧠 日程生成模型</label>
-      <div class="sk-desc">用于每日日程生成和穿搭翻译的 LLM 模型</div>
-      <div class="sk-llm-row">
-        <select id="skLlmModel">
-          <option value="">加载中...</option>
-        </select>
-        <button type="button" class="sk-llm-test-btn" id="skLlmTestBtn" onclick="testLlmModel()">测试</button>
-      </div>
-      <div class="sk-status" id="skLlmModelStatus">加载中...</div>
-    </div>
-    <div class="sk-field">
       <label>📮 推送渠道</label>
       <div class="sk-desc">生图完成后的发送目标；发送机器人会跟随人设来源自动选择</div>
       <div class="sk-segmented sk-two" id="skPushChannelGroup">
@@ -3267,6 +4997,41 @@ textarea:focus-visible,
       <div class="sk-desc">OpenClaw CLI 可执行文件路径；留空则自动从 PATH 查找</div>
       <input type="text" id="skOpenclawCliPath" placeholder="留空自动查找；例如 /usr/local/bin/openclaw">
       <div class="sk-status" id="skOpenclawCliStatus">加载中...</div>
+    </div>
+    </div>
+    <div class="sk-panel" id="skPanelModel" data-settings-panel-content="model">
+    <div class="sk-field">
+      <label for="skLlmModel">🧠 日程生成模型</label>
+      <div class="sk-desc">用于每日日程生成和穿搭翻译的 LLM 模型</div>
+      <div class="sk-llm-row">
+        <select id="skLlmModel" onchange="syncLlmChainPrimary()">
+          <option value="">加载中...</option>
+        </select>
+        <button type="button" class="sk-llm-test-btn" id="skLlmTestBtn" onclick="testLlmModel()">测试</button>
+      </div>
+      <div class="sk-status" id="skLlmModelStatus">加载中...</div>
+      <details class="sk-llm-chain" id="skLlmChainDetails">
+        <summary>
+          <span>Fallback 链</span>
+          <span class="sk-llm-chain-count" id="skLlmChainCount">0 个备用</span>
+        </summary>
+        <div class="sk-llm-chain-body">
+          <div class="sk-llm-chain-preview" id="skLlmChainPreview">未配置备用模型</div>
+          <details class="sk-llm-chain-editor" id="skLlmChainEditor">
+            <summary>
+              <span>编辑链路</span>
+              <span class="sk-llm-chain-count">第三级</span>
+            </summary>
+            <div class="sk-llm-chain-editor-body">
+              <div class="sk-llm-chain-list" id="skLlmChainList"></div>
+              <div class="sk-llm-chain-add">
+                <select id="skLlmChainAddSelect"></select>
+                <button type="button" class="sk-llm-chain-btn" onclick="addLlmChainModel()" title="添加模型" aria-label="添加模型">+</button>
+              </div>
+            </div>
+          </details>
+        </div>
+      </details>
     </div>
     <div class="sk-field">
       <label for="skGiteeUrl">Gitee API URL</label>
@@ -3326,6 +5091,8 @@ textarea:focus-visible,
       <input type="password" id="skCpaKey" placeholder="输入新密钥（留空则不修改）">
       <div class="sk-status" id="skCpaKeyStatus">加载中...</div>
     </div>
+    </div>
+    <div class="sk-panel" id="skPanelMaintain" data-settings-panel-content="maintain">
     <div class="sk-field">
       <label for="skGithubProxy">GitHub API 代理</label>
       <div class="sk-desc">用于检查更新和在线更新，必须填写本机可用代理 URL</div>
@@ -3367,19 +5134,20 @@ textarea:focus-visible,
         </div>
       </div>
     </div>
+    <div class="sk-update-row">
+      <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
+      <button class="btn btn-secondary" id="restartServiceBtn" onclick="restartService()">🔄 重启服务</button>
+      <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.2.6</span></span>
+    </div>
+    <div class="sk-update-result" id="updateResult"></div>
+    </div>
     <div class="sk-footer-row">
       <div class="sk-footer-main">
-        <div class="sk-update-row">
-          <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
-          <button class="btn btn-secondary" id="restartServiceBtn" onclick="restartService()">🔄 重启服务</button>
-          <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.2.6</span></span>
-        </div>
         <div class="sk-actions">
           <button class="btn btn-secondary" onclick="closeSettings()">关闭</button>
           <button class="btn btn-primary" id="skSaveBtn" onclick="saveSettings()">💾 保存</button>
         </div>
       </div>
-      <div class="sk-update-result" id="updateResult"></div>
     </div>
   </div>
 </div>
@@ -3521,6 +5289,9 @@ let photoRetryPollTimer = null;
 let liveLogTimer = null;
 const favoriteRequests = new Set();
 let settingsSnapshot = null;
+let availableLlmModels = [];
+let llmModelsRequest = null;
+let llmModelChain = [];
 let scheduleEggCache = { html: "", dateText: "", updatedAt: 0 };
 let scheduleEggRequest = null;
 const appDisplay = {
@@ -3528,6 +5299,18 @@ const appDisplay = {
   characterName: "角色",
   shareTitle: "穿搭分享",
 };
+let characterItems = [];
+let defaultCharacterId = "";
+let charactersLoaded = false;
+let characterLoadRequest = null;
+let characterModelsLoaded = false;
+let groupChatRooms = [];
+let groupChatRoomsLoaded = false;
+let groupChatRoomsRequest = null;
+let activeGroupChatRoomId = "";
+const SINGLE_GROUP_CHAT_TITLE = "群聊";
+let groupChatParticipantSyncTimer = null;
+let groupChatTypingState = { roomId: "", names: [] };
 
 function compactDisplayText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -3602,12 +5385,16 @@ function showUnfavoriteGallery(event) {
   const todaySec = document.getElementById("todaySection");
   const gallerySec = document.getElementById("gallerySection");
   const wardrobeSec = document.getElementById("wardrobeSection");
+  const characterSec = document.getElementById("characterSection");
+  const groupChatSec = document.getElementById("groupChatSection");
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
   document.querySelector('.tab[data-tab="gallery"]')?.classList.add("active");
   window.galleryStorageSet('active_tab', 'gallery');
   if (todaySec) todaySec.classList.remove("visible");
   if (gallerySec) gallerySec.classList.remove("hidden");
   if (wardrobeSec) wardrobeSec.classList.add("hidden");
+  if (characterSec) characterSec.classList.add("hidden");
+  if (groupChatSec) groupChatSec.classList.add("hidden");
   showFavoritesOnly = false;
   showUnfavoritesOnly = true;
   showTodayOnly = false;
@@ -3714,6 +5501,23 @@ function displayGenerationTimeMeta(e) {
   return rest ? `⏱ ${minutes}m${rest}s` : `⏱ ${minutes}m`;
 }
 
+function renderScheduleSendControl(imgId) {
+  const id = String(imgId || "").trim();
+  if (!id) return "";
+  return `<button type="button" class="schedule-send-btn" data-send-img="${escapeAttr(id)}" onclick="toggleScheduleSendMenu(event,this)" title="发送图片" aria-label="发送图片"><i class="fa-regular fa-paper-plane" aria-hidden="true"></i></button>`;
+}
+
+function renderScheduleItemHtml(slot, imgId) {
+  const text = String(slot || "").trim();
+  if (!text) return "";
+  const sendControl = renderScheduleSendControl(imgId);
+  const m = text.match(/^(\d{1,2}:\d{2})\s*(.*)/);
+  if (m) {
+    return `<div class="sched-item">${sendControl}<span class="sched-label">${escapeHtml(m[1])}</span><span class="sched-text">${escapeHtml(m[2].trim())}</span></div>`;
+  }
+  return `<div class="sched-item">${sendControl}<span class="sched-text">${escapeHtml(text)}</span></div>`;
+}
+
 function renderRerollButton(entry, options = {}) {
   const imgId = entry && entry.image_filename;
   if (!imgId || !entry.prompt) return "";
@@ -3739,6 +5543,1611 @@ function showToast(msg, d = 3000) {
   t.textContent = msg; t.classList.add("show");
   clearTimeout(t._timer);
   t._timer = setTimeout(() => t.classList.remove("show"), d);
+}
+
+function toolEscapeHtml(value) {
+  const d = document.createElement("div");
+  d.appendChild(document.createTextNode(value == null ? "" : String(value)));
+  return d.innerHTML;
+}
+
+function toolEscapeAttr(value) {
+  return toolEscapeHtml(value).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function setToolStatus(id, text, kind = "") {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = `tool-status-pill${kind ? " " + kind : ""}`;
+}
+
+function characterId(raw, index = 0) {
+  if (typeof raw === "string") return raw;
+  const id = raw && (raw.id || raw.character_id || raw.key || raw.slug || raw.name);
+  return String(id || `character-${index + 1}`);
+}
+
+function characterName(raw, fallback = "角色") {
+  if (typeof raw === "string") return raw;
+  return compactDisplayText(raw && (raw.name || raw.display_name || raw.title || raw.character_name)) || fallback;
+}
+
+function characterMeta(raw, id) {
+  if (!raw || typeof raw === "string") return id ? `ID ${id}` : "Agent 可配置/未启用";
+  const meta = raw.agent_name || raw.agent_id || raw.agent || raw.role || raw.source || raw.description || raw.persona;
+  return compactDisplayText(meta) || "Agent 可配置/未启用";
+}
+
+function characterReferenceImageUrl(raw) {
+  if (!raw || typeof raw === "string") return "";
+  const value = compactDisplayText(raw.reference_image_url || raw.reference_image || raw.avatar || raw.image_url || raw.image);
+  if (!value) return "";
+  if (/^(https?:\/\/|data:image\/|\/refs\/|\/local-refs\/|\/images\/)/i.test(value)) return value;
+  return "";
+}
+
+function characterAvatarInitial(item) {
+  const name = compactDisplayText(item && item.name);
+  return Array.from(name || "角")[0] || "角";
+}
+
+function characterChoiceAvatarHtml(item) {
+  const initial = characterAvatarInitial(item);
+  const src = item.referenceImageUrl || "";
+  const image = src ? `<img src="${toolEscapeAttr(src)}" alt="" loading="lazy" onerror="this.remove()">` : "";
+  return `<span class="character-choice-avatar" data-initial="${toolEscapeAttr(initial)}" aria-hidden="true">${image}</span>`;
+}
+
+function characterDetailBlockHtml(title, value, fallback = "未配置") {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  const empty = !text;
+  return `<div class="character-detail-block${empty ? " muted" : ""}">
+    <strong>${toolEscapeHtml(title)}</strong>
+    <p>${toolEscapeHtml(empty ? fallback : text)}</p>
+  </div>`;
+}
+
+function characterDetailFieldHtml(item, key, title, fallback = "未配置", rows = 3) {
+  if (!item.editable) return characterDetailBlockHtml(title, item[key], fallback);
+  const value = String(item[key] || "").trim();
+  return `<div class="character-detail-field">
+    <label for="characterDetail_${toolEscapeAttr(key)}">${toolEscapeHtml(title)}</label>
+    <textarea id="characterDetail_${toolEscapeAttr(key)}" rows="${rows}" placeholder="${toolEscapeAttr(fallback)}" oninput="markCharacterDetailDirty()">${toolEscapeHtml(value)}</textarea>
+  </div>`;
+}
+
+function characterLlmModelOptions(selected = "") {
+  const models = normalizeLlmModelList([selected, ...availableLlmModels, currentLlmPrimaryModel(), ...llmModelChain]);
+  return [
+    `<option value="">默认 LLM 模型</option>`,
+    ...models.map(model => `<option value="${toolEscapeAttr(model)}"${model === selected ? " selected" : ""}>${toolEscapeHtml(model)}</option>`)
+  ].join("");
+}
+
+function characterDetailModelHtml(item) {
+  const selected = String(item.llmModel || "").trim();
+  if (!item.editable) return characterDetailBlockHtml("回复模型", selected, "默认 LLM 模型");
+  return `<div class="character-detail-field">
+    <label for="characterDetail_llm_model">回复模型</label>
+    <select id="characterDetail_llm_model" onchange="markCharacterDetailDirty()">
+      ${characterLlmModelOptions(selected)}
+    </select>
+  </div>`;
+}
+
+function refreshCharacterDetailLlmSelect(selected = "") {
+  const select = document.getElementById("characterDetail_llm_model");
+  if (!select) return;
+  const current = String(select.value || selected || "").trim();
+  select.innerHTML = characterLlmModelOptions(current);
+  select.value = current;
+}
+
+async function ensureLlmModelsForCharacterDetail(selected = "") {
+  if (availableLlmModels.length) {
+    refreshCharacterDetailLlmSelect(selected);
+    return;
+  }
+  if (!llmModelsRequest) {
+    llmModelsRequest = fetch(`${API}/api/models`)
+      .then(async res => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+        availableLlmModels = normalizeLlmModelList(data.models || []);
+        return availableLlmModels;
+      })
+      .catch(e => {
+        console.warn("LLM model list load failed:", e);
+        return [];
+      })
+      .finally(() => {
+        llmModelsRequest = null;
+      });
+  }
+  await llmModelsRequest;
+  refreshCharacterDetailLlmSelect(selected);
+}
+
+function characterDetailSaveHtml(item) {
+  if (!item.editable) return "";
+  return `<div class="character-detail-save-row">
+    <span class="character-detail-save-status" id="characterDetailSaveStatus">可编辑</span>
+    <button type="button" class="btn btn-primary" id="characterDetailSaveBtn" onclick="saveCharacterDetail(${jsStringArg(item.id)})">保存角色</button>
+  </div>`;
+}
+
+function characterDetailTagsHtml(item) {
+  const tags = [
+    item.agentId ? `Agent: ${item.agentId}` : "",
+    item.source ? `来源: ${item.source}` : "",
+    item.referenceStyle ? `风格: ${item.referenceStyle}` : "",
+    item.referenceImage || item.referenceImageUrl ? "角色图已配置" : "暂无角色图",
+  ].filter(Boolean);
+  return tags.map(tag => `<span class="character-detail-tag">${toolEscapeHtml(tag)}</span>`).join("");
+}
+
+function characterDetailImageHtml(item) {
+  const src = item.referenceImageUrl || "";
+  if (src) {
+    return `<div class="character-detail-image"><img src="${toolEscapeAttr(src)}" alt="${toolEscapeAttr(item.name)} 角色图" loading="lazy" onerror="this.parentElement.innerHTML=characterDetailPlaceholderHtml()"></div>`;
+  }
+  return `<div class="character-detail-image">${characterDetailPlaceholderHtml()}</div>`;
+}
+
+function characterDetailVisualHtml(item) {
+  return `<div class="character-detail-visual">
+    ${characterDetailImageHtml(item)}
+    <div class="character-detail-actions">
+      <button type="button" class="btn btn-secondary" onclick="openCharacterGalleryPicker(${jsStringArg(item.id)})">从画廊选择</button>
+      <button type="button" class="btn btn-primary" id="characterDetailReferenceBtn" onclick="generateCharacterReferenceFromDetail(${jsStringArg(item.id)}, this)">生成设定图</button>
+    </div>
+    ${characterDetailModelHtml(item)}
+  </div>`;
+}
+
+function characterDetailPlaceholderHtml() {
+  return `<div class="character-detail-placeholder"><span class="avatar" aria-hidden="true">🐷</span><span>暂无角色图</span></div>`;
+}
+
+function openCharacterDetail(characterId) {
+  const item = characterItems.find(entry => entry.id === String(characterId));
+  if (!item) return;
+  const body = document.getElementById("characterDetailBody");
+  const overlay = document.getElementById("characterDetailOverlay");
+  if (!body || !overlay) return;
+  body.innerHTML = `
+    <div class="character-detail-head">
+      <div class="character-detail-title">
+        <h2>${toolEscapeHtml(item.name)}</h2>
+        <div class="character-detail-subtitle">${toolEscapeHtml(item.meta || item.id)}</div>
+      </div>
+      <button type="button" class="character-detail-close" onclick="closeCharacterDetail()" aria-label="关闭角色详情"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+    </div>
+    <div class="character-detail-grid">
+      ${characterDetailVisualHtml(item)}
+      <div class="character-detail-info">
+        <div class="character-detail-tags">${characterDetailTagsHtml(item)}</div>
+        ${characterDetailFieldHtml(item, "persona", "具体人设", "性格、身份、关系、行为偏好", 3)}
+        ${characterDetailFieldHtml(item, "appearance", "外貌提示词", "脸型、发型、身形、服饰基调、识别特征", 3)}
+        ${characterDetailFieldHtml(item, "voice", "角色口吻", "说话方式、语气、常用表达", 2)}
+        ${characterDetailSaveHtml(item)}
+      </div>
+    </div>`;
+  overlay.classList.add("open");
+  document.body.style.overflow = "hidden";
+  if (item.editable) ensureLlmModelsForCharacterDetail(item.llmModel || "");
+}
+
+function closeCharacterDetail() {
+  const overlay = document.getElementById("characterDetailOverlay");
+  if (overlay) overlay.classList.remove("open");
+  if (!document.querySelector(".sk-overlay.open, .cg-overlay.open, .modal-overlay.open")) {
+    document.body.style.overflow = "";
+  }
+}
+
+function characterDetailEditValue(key) {
+  return document.getElementById(`characterDetail_${key}`)?.value.trim() || "";
+}
+
+function markCharacterDetailDirty() {
+  const status = document.getElementById("characterDetailSaveStatus");
+  if (status) status.textContent = "未保存";
+}
+
+async function saveCharacterDetail(characterId) {
+  const item = characterItems.find(entry => entry.id === String(characterId));
+  if (!item || !item.editable) {
+    showToast("这个角色不能在这里编辑");
+    return;
+  }
+  const payload = {
+    id: item.id,
+    name: item.name,
+    agent_id: item.agentId || "",
+    reference_style: item.referenceStyle || "",
+    reference_image: item.referenceImage || "",
+    persona: characterDetailEditValue("persona"),
+    appearance: characterDetailEditValue("appearance"),
+    voice: characterDetailEditValue("voice"),
+    llm_model: characterDetailEditValue("llm_model"),
+    enabled: item.raw && typeof item.raw === "object" && "enabled" in item.raw ? !!item.raw.enabled : true
+  };
+  if (!payload.name) {
+    showToast("角色名称不能为空");
+    return;
+  }
+  if (!payload.persona && !payload.appearance) {
+    showToast("请至少保留人设或外貌提示词");
+    return;
+  }
+  const btn = document.getElementById("characterDetailSaveBtn");
+  const status = document.getElementById("characterDetailSaveStatus");
+  if (btn && btn.disabled) return;
+  if (btn) { btn.disabled = true; btn.textContent = "保存中..."; }
+  if (status) status.textContent = "保存中";
+  try {
+    const res = await fetch(`${API}/api/characters/${encodeURIComponent(item.id)}`, {
+      method: "PATCH",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    const savedId = data.character?.id || item.id;
+    charactersLoaded = false;
+    await loadCharacters({ force: true, silent: true });
+    selectCharacterInPickers(savedId);
+    showToast("角色已保存");
+    openCharacterDetail(savedId);
+    const savedStatus = document.getElementById("characterDetailSaveStatus");
+    if (savedStatus) savedStatus.textContent = "已保存";
+  } catch(e) {
+    if (status) status.textContent = "保存失败";
+    showToast("保存角色失败：" + (e && e.message ? e.message : "未知错误"));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "保存角色"; }
+  }
+}
+
+let characterGalleryPickTargetId = "";
+let characterGalleryPickBusy = false;
+
+function galleryPickerEntries() {
+  const seen = new Set();
+  return (Array.isArray(allEntries) ? allEntries : [])
+    .filter(entry => {
+      const filename = String(entry && entry.image_filename || "").trim();
+      if (!filename || seen.has(filename)) return false;
+      seen.add(filename);
+      return true;
+    })
+    .slice(0, 120);
+}
+
+async function ensureCharacterGalleryEntries() {
+  if (galleryPickerEntries().length) return;
+  const res = await fetch(`${API}/api/gallery`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  if (Array.isArray(data)) allEntries = data;
+}
+
+function renderCharacterGalleryPicker() {
+  const grid = document.getElementById("characterGalleryPickGrid");
+  const status = document.getElementById("characterGalleryPickStatus");
+  if (!grid) return;
+  const entries = galleryPickerEntries();
+  if (status) status.textContent = entries.length ? "从画廊选择一张图作为角色参考图" : "画廊里还没有可选图片";
+  if (!entries.length) {
+    grid.innerHTML = `<div class="chat-empty">暂无可选画廊图片</div>`;
+    return;
+  }
+  grid.innerHTML = entries.map(entry => {
+    const filename = String(entry.image_filename || "");
+    const imageArg = jsStringArg(filename);
+    const imageAttr = toolEscapeAttr(filename);
+    const date = formatDate(entry.date || "") || entry.date || "画廊图片";
+    const style = typeof displayOutfitStyle === "function" ? displayOutfitStyle(entry) : (entry.outfit_style || "");
+    return `<button type="button" class="character-gallery-card" onclick="selectCharacterGalleryImage(${imageArg}, this)">
+      <div class="character-gallery-thumb"><img src="/images/${imageAttr}" alt="${toolEscapeAttr(date)}" loading="lazy" decoding="async"></div>
+      <div class="character-gallery-meta"><strong>${toolEscapeHtml(date)}</strong><span>${toolEscapeHtml(style || filename)}</span></div>
+    </button>`;
+  }).join("");
+}
+
+async function openCharacterGalleryPicker(characterId) {
+  characterGalleryPickTargetId = String(characterId || "");
+  if (!characterGalleryPickTargetId) return;
+  const overlay = document.getElementById("characterGalleryPickOverlay");
+  const status = document.getElementById("characterGalleryPickStatus");
+  if (!overlay) return;
+  overlay.classList.add("open");
+  document.body.style.overflow = "hidden";
+  if (status) status.textContent = "正在读取画廊图片...";
+  try {
+    await ensureCharacterGalleryEntries();
+    renderCharacterGalleryPicker();
+  } catch(e) {
+    if (status) status.textContent = "画廊图片加载失败";
+    const grid = document.getElementById("characterGalleryPickGrid");
+    if (grid) grid.innerHTML = `<div class="chat-empty">加载失败：${toolEscapeHtml(e && e.message ? e.message : "未知错误")}</div>`;
+  }
+}
+
+function closeCharacterGalleryPicker() {
+  const overlay = document.getElementById("characterGalleryPickOverlay");
+  if (overlay) overlay.classList.remove("open");
+  characterGalleryPickTargetId = "";
+  if (!document.querySelector(".sk-overlay.open, .cg-overlay.open, .modal-overlay.open")) {
+    document.body.style.overflow = "";
+  }
+}
+
+async function selectCharacterGalleryImage(filename, button) {
+  const characterId = characterGalleryPickTargetId;
+  if (!characterId || !filename || characterGalleryPickBusy) return;
+  characterGalleryPickBusy = true;
+  const status = document.getElementById("characterGalleryPickStatus");
+  if (button) button.disabled = true;
+  if (status) status.textContent = "正在保存角色图...";
+  try {
+    const res = await fetch(`${API}/api/characters/${encodeURIComponent(characterId)}/reference-image`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ image_filename: filename })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    charactersLoaded = false;
+    await loadCharacters({ force: true, silent: true });
+    closeCharacterGalleryPicker();
+    openCharacterDetail(data.character?.id || characterId);
+    showToast("角色图已更新");
+  } catch(e) {
+    if (status) status.textContent = "保存失败：" + (e && e.message ? e.message : "未知错误");
+    showToast("角色图保存失败：" + (e && e.message ? e.message : "未知错误"));
+  } finally {
+    characterGalleryPickBusy = false;
+    if (button) button.disabled = false;
+  }
+}
+
+function handleCharacterChoiceClick(event, characterId) {
+  if (event && event.target && event.target.closest("input")) return;
+  if (event) event.preventDefault();
+  setTimeout(() => openCharacterDetail(characterId), 0);
+}
+
+function normalizeCharacters(data) {
+  const payload = data && typeof data === "object" ? data : {};
+  const list = Array.isArray(data) ? data : (Array.isArray(payload.characters) ? payload.characters : []);
+  defaultCharacterId = String(payload.default_character_id || defaultCharacterId || "");
+  return list.map((item, index) => {
+    const id = characterId(item, index);
+    return {
+      id,
+      name: characterName(item, `角色 ${index + 1}`),
+      meta: characterMeta(item, id),
+      persona: typeof item === "object" ? item.persona || "" : "",
+      appearance: typeof item === "object" ? item.appearance || "" : "",
+      voice: typeof item === "object" ? item.voice || "" : "",
+      llmModel: typeof item === "object" ? item.llm_model || item.llmModel || "" : "",
+      referenceStyle: typeof item === "object" ? item.reference_style || "" : "",
+      referenceImage: typeof item === "object" ? item.reference_image || "" : "",
+      referenceImageUrl: characterReferenceImageUrl(item),
+      agentId: typeof item === "object" ? item.agent_id || item.agent || "" : "",
+      source: typeof item === "object" ? item.source || "" : "",
+      editable: typeof item === "object" ? !!item.editable : false,
+      raw: item
+    };
+  }).filter(item => item.id);
+}
+
+function getCheckedValues(selector) {
+  return Array.from(document.querySelectorAll(selector))
+    .filter(input => input.checked)
+    .map(input => input.value)
+    .filter(Boolean);
+}
+
+function readStoredGroupRoomParticipants() {
+  try {
+    const values = JSON.parse(window.galleryStorageGet("group_room_participants", "[]"));
+    if (!Array.isArray(values)) return [];
+    return values.map(value => String(value || "").trim()).filter(Boolean);
+  } catch(e) {
+    return [];
+  }
+}
+
+function writeStoredGroupRoomParticipants(values) {
+  const knownIds = new Set(characterItems.map(item => item.id));
+  const selected = Array.from(new Set((Array.isArray(values) ? values : [])
+    .map(value => String(value || "").trim())
+    .filter(value => value && (!knownIds.size || knownIds.has(value)))));
+  window.galleryStorageSet("group_room_participants", JSON.stringify(selected));
+  return selected;
+}
+
+function currentGroupRoomParticipantSelection() {
+  const selected = getCheckedValues('#groupRoomParticipantList input[type="checkbox"]');
+  if (selected.length) return writeStoredGroupRoomParticipants(selected);
+  const stored = readStoredGroupRoomParticipants();
+  if (!stored.length) return [];
+  return writeStoredGroupRoomParticipants(stored);
+}
+
+function groupRoomParticipantSelectionForRoom() {
+  let selected = currentGroupRoomParticipantSelection();
+  if (!selected.length && characterItems[0]?.id) {
+    selected = writeStoredGroupRoomParticipants([characterItems[0].id]);
+  }
+  return selected;
+}
+
+function handleGroupRoomParticipantChange() {
+  const selected = writeStoredGroupRoomParticipants(getCheckedValues('#groupRoomParticipantList input[type="checkbox"]'));
+  if (!selected.length && characterItems[0]?.id) {
+    writeStoredGroupRoomParticipants([characterItems[0].id]);
+    renderGroupChatParticipants();
+    showToast("至少保留 1 个参与角色");
+    return;
+  }
+  scheduleSingleGroupChatRoomParticipantSync();
+}
+
+function readStoredGroupChatSenderState() {
+  try {
+    const state = JSON.parse(window.galleryStorageGet("group_chat_sender", "{}"));
+    if (!state || typeof state !== "object") return {};
+    return {
+      sender_type: state.sender_type === "character" ? "character" : "user",
+      sender_id: String(state.sender_id || "").trim()
+    };
+  } catch(e) {
+    return {};
+  }
+}
+
+function writeStoredGroupChatSenderState(senderType, senderId) {
+  const type = senderType === "character" ? "character" : "user";
+  const knownIds = new Set(characterItems.map(item => item.id));
+  let id = type === "character" ? String(senderId || "").trim() : "";
+  if (id && knownIds.size && !knownIds.has(id)) id = "";
+  const state = { sender_type: type, sender_id: id };
+  window.galleryStorageSet("group_chat_sender", JSON.stringify(state));
+  return state;
+}
+
+function selectedCharacterId() {
+  const roleIds = getCheckedValues('#characterRoleList input[type="checkbox"]');
+  return roleIds[0] || document.querySelector('input[name="characterSingle"]:checked')?.value || "";
+}
+
+function selectedGroupCharacterIds() {
+  const roleIds = getCheckedValues('#characterRoleList input[type="checkbox"]');
+  return roleIds.length ? roleIds : getCheckedValues('#characterGroupList input[type="checkbox"]');
+}
+
+function characterChoiceHtml(item, options = {}) {
+  const type = options.type || "radio";
+  const name = options.name || "characterSingle";
+  const checked = options.checked ? " checked" : "";
+  const inputId = `${name}-${String(item.id).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+  const title = `${item.name}${item.meta ? ` · ${item.meta}` : ""}`;
+  const detailOnClick = options.detailOnClick !== false;
+  const clickAttr = detailOnClick ? ` onclick="handleCharacterChoiceClick(event, ${jsStringArg(item.id)})"` : "";
+  const titleSuffix = detailOnClick ? "，点击查看角色详情" : "，点击选择角色";
+  return `<label class="character-choice" for="${toolEscapeAttr(inputId)}"${clickAttr} title="${toolEscapeAttr(`${title}${titleSuffix}`)}">
+    <input type="${type}" id="${toolEscapeAttr(inputId)}" name="${toolEscapeAttr(name)}" value="${toolEscapeAttr(item.id)}"${checked}>
+    ${characterChoiceAvatarHtml(item)}
+    <span class="character-choice-main">
+      <span class="character-choice-name">${toolEscapeHtml(item.name)}</span>
+    </span>
+  </label>`;
+}
+
+function renderCharacterPicker(targetId, options = {}) {
+  const target = document.getElementById(targetId);
+  if (!target) return;
+  if (!characterItems.length) {
+    target.innerHTML = `<div class="character-empty">${toolEscapeHtml(options.emptyText || "角色接口接入后会显示在这里。")}</div>`;
+    return;
+  }
+  const selected = new Set(options.selected || []);
+  target.innerHTML = characterItems.map((item, index) => {
+    const checked = selected.size ? selected.has(item.id) : index === 0;
+    return characterChoiceHtml(item, Object.assign({}, options, { checked }));
+  }).join("");
+}
+
+function renderCharacterPickers() {
+  const firstId = characterItems[0]?.id || "";
+  const singleCurrent = selectedCharacterId() || defaultCharacterId || firstId;
+  const roleCurrent = selectedGroupCharacterIds();
+  const roleSelected = roleCurrent.length ? roleCurrent : (singleCurrent ? [singleCurrent] : []);
+  renderCharacterPicker("characterRoleList", {
+    type: "checkbox",
+    name: "characterRole",
+    selected: roleSelected,
+    emptyText: "暂无角色"
+  });
+  renderGroupChatParticipants();
+}
+
+async function loadCharacters(options = {}) {
+  if (charactersLoaded && !options.force) {
+    renderCharacterPickers();
+    return characterItems;
+  }
+  if (characterLoadRequest) return characterLoadRequest;
+  setToolStatus("characterStatus", "加载角色中");
+  characterLoadRequest = fetch(`${API}/api/characters`)
+    .then(async res => {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+      characterItems = normalizeCharacters(data);
+      charactersLoaded = true;
+      renderCharacterPickers();
+      setToolStatus("characterStatus", characterItems.length ? `${characterItems.length} 个角色` : "暂无角色", characterItems.length ? "ok" : "");
+      return characterItems;
+    })
+    .catch(e => {
+      characterItems = [];
+      charactersLoaded = false;
+      renderCharacterPickers();
+      setToolStatus("characterStatus", "角色 API 未就绪", "error");
+      if (!options.silent) showToast("角色加载失败：" + (e && e.message ? e.message : "未知错误"));
+      return [];
+    })
+    .finally(() => {
+      characterLoadRequest = null;
+    });
+  return characterLoadRequest;
+}
+
+function renderCharacterImageModelOptions(models = [], currentModel = "", defaultModel = "") {
+  const select = document.getElementById("characterImageModelSelect");
+  if (!select) return;
+  const saved = select.value;
+  const ordered = [];
+  [currentModel, defaultModel, "gpt-image-2", "agnes-image-2.1-flash", ...models].forEach(model => {
+    model = normalizeCustomImageModel(model);
+    if (model && !ordered.includes(model)) ordered.push(model);
+  });
+  select.innerHTML = `<option value="">${toolEscapeHtml(defaultModel ? `默认模型（${defaultModel}）` : "默认模型")}</option>`;
+  ordered.forEach(model => {
+    const opt = document.createElement("option");
+    opt.value = model;
+    opt.textContent = model;
+    select.appendChild(opt);
+  });
+  if (saved && ordered.includes(saved)) select.value = saved;
+}
+
+async function loadCharacterImageModels() {
+  if (characterModelsLoaded) return;
+  renderCharacterImageModelOptions();
+  try {
+    const res = await fetch(`${API}/api/image-models`);
+    const data = await res.json();
+    renderCharacterImageModelOptions(data.models || [], data.current_model || "", data.default_model || "");
+    characterModelsLoaded = true;
+  } catch(e) {
+    renderCharacterImageModelOptions();
+  }
+}
+
+function openCharacterPanel() {
+  switchTab("character");
+}
+
+function closeCharacterPanel() {
+  switchTab("today");
+}
+
+function openManualCharacterModal() {
+  resetManualCharacterForm();
+  const overlay = document.getElementById("manualCharacterOverlay");
+  if (!overlay) return;
+  overlay.classList.add("open");
+  document.body.style.overflow = "hidden";
+  window.requestAnimationFrame(() => {
+    document.getElementById("manualCharacterName")?.focus();
+  });
+}
+
+function closeManualCharacterModal() {
+  const overlay = document.getElementById("manualCharacterOverlay");
+  if (overlay) overlay.classList.remove("open");
+  if (!document.querySelector(".sk-overlay.open, .cg-overlay.open, .modal-overlay.open")) {
+    document.body.style.overflow = "";
+  }
+}
+
+function manualCharacterValue(id) {
+  return document.getElementById(id)?.value.trim() || "";
+}
+
+function resetManualCharacterForm() {
+  [
+    "manualCharacterName",
+    "manualCharacterId",
+    "manualCharacterAgent",
+    "manualCharacterStyle",
+    "manualCharacterPersona",
+    "manualCharacterAppearance",
+    "manualCharacterVoice",
+    "manualCharacterReferenceImage"
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+  setToolStatus("characterFormStatus", "未保存");
+}
+
+function manualCharacterPayload() {
+  const payload = {
+    name: manualCharacterValue("manualCharacterName"),
+    id: manualCharacterValue("manualCharacterId"),
+    agent_id: manualCharacterValue("manualCharacterAgent"),
+    reference_style: manualCharacterValue("manualCharacterStyle"),
+    persona: manualCharacterValue("manualCharacterPersona"),
+    appearance: manualCharacterValue("manualCharacterAppearance"),
+    voice: manualCharacterValue("manualCharacterVoice"),
+    reference_image: manualCharacterValue("manualCharacterReferenceImage"),
+    enabled: true
+  };
+  Object.keys(payload).forEach(key => {
+    if (payload[key] === "") delete payload[key];
+  });
+  return payload;
+}
+
+function selectCharacterInPickers(characterId) {
+  const id = String(characterId || "");
+  if (!id) return;
+  Array.from(document.querySelectorAll('#characterRoleList input[type="checkbox"]')).forEach(input => {
+    if (input.value === id) input.checked = true;
+  });
+  Array.from(document.querySelectorAll('#characterSingleList input[type="radio"]')).forEach(input => {
+    input.checked = input.value === id;
+  });
+  Array.from(document.querySelectorAll('#characterGroupList input[type="checkbox"]')).forEach(input => {
+    if (input.value === id) input.checked = true;
+  });
+}
+
+async function saveManualCharacter() {
+  const payload = manualCharacterPayload();
+  if (!payload.name) { showToast("请先填写角色名称"); return; }
+  if (!payload.persona && !payload.appearance) { showToast("请填写人设或外貌"); return; }
+  const btn = document.getElementById("manualCharacterSaveBtn");
+  if (btn && btn.disabled) return;
+  if (btn) { btn.disabled = true; btn.textContent = "保存中..."; }
+  setToolStatus("characterFormStatus", "保存中");
+  try {
+    const res = await fetch(`${API}/api/characters`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    const savedId = data.character && data.character.id;
+    charactersLoaded = false;
+    await loadCharacters({ force: true });
+    selectCharacterInPickers(savedId);
+    setToolStatus("characterFormStatus", "已保存", "ok");
+    showToast("角色已保存");
+    closeManualCharacterModal();
+  } catch(e) {
+    setToolStatus("characterFormStatus", "保存失败", "error");
+    showToast("保存角色失败：" + (e && e.message ? e.message : "未知错误"));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "保存角色"; }
+  }
+}
+
+function characterGenerationControlOptions() {
+  const style = document.getElementById("characterStyleInput")?.value.trim() || "";
+  const size = document.getElementById("characterSizeSelect")?.value || "";
+  const shotType = document.getElementById("characterShotSelect")?.value || "";
+  const imageModel = normalizeCustomImageModel(document.getElementById("characterImageModelSelect")?.value || "");
+  const body = {};
+  if (style) body.style = style;
+  if (size) body.size = size;
+  if (shotType) body.shot_type = shotType;
+  if (imageModel) body.image_model = imageModel;
+  return body;
+}
+
+function characterGenerationOptions() {
+  const prompt = document.getElementById("characterPrompt")?.value.trim() || "";
+  return Object.assign({ prompt }, characterGenerationControlOptions());
+}
+
+async function revealGeneratedGalleryEntry(entry) {
+  const filename = entry && (entry.image_filename || String(entry.image_path || "").split("/").pop());
+  await loadGallery();
+  if (!filename) {
+    switchTab("gallery");
+    return;
+  }
+  switchTab("gallery");
+  window.requestAnimationFrame(() => {
+    const fresh = allEntries.find(item => item && item.image_filename === filename);
+    const card = findGalleryCardByImg(filename);
+    if (card) {
+      card.scrollIntoView({block: "center", behavior: "smooth"});
+    }
+    if (fresh) openModal(fresh);
+  });
+}
+
+function activeTabName() {
+  return document.querySelector(".tab.active")?.dataset.tab || "";
+}
+
+function activeGroupChatGenerationRoomId() {
+  if (activeTabName() !== "group-chat") return "";
+  return activeGroupChatRoom() ? activeGroupChatRoomId : "";
+}
+
+function generatedEntryImageFilename(entry) {
+  if (!entry || typeof entry !== "object") return "";
+  const raw = entry.image_filename || entry.filename || entry.file || entry.image_path || entry.image_url || entry.url || "";
+  if (!raw) return "";
+  const path = String(raw).split("?")[0].split("#")[0];
+  return path.split("/").pop().trim();
+}
+
+function generatedEntryImageUrl(entry) {
+  if (!entry || typeof entry !== "object") return "";
+  const rawUrl = String(entry.image_url || entry.image_path || entry.url || "").trim();
+  if (/^(https?:\/\/|data:image\/|\/images\/)/i.test(rawUrl)) return rawUrl;
+  const filename = generatedEntryImageFilename(entry);
+  return filename ? `/images/${filename}` : "";
+}
+
+function truncateGroupChatMetadataText(value, limit = 900) {
+  const text = compactDisplayText(value);
+  if (!text || text.length <= limit) return text;
+  return text.slice(0, Math.max(0, limit - 1)).trimEnd() + "…";
+}
+
+function upsertGeneratedGalleryEntry(entry) {
+  const filename = generatedEntryImageFilename(entry);
+  if (!filename || !Array.isArray(allEntries)) return;
+  const normalized = Object.assign({}, entry, { image_filename: filename });
+  const index = allEntries.findIndex(item => item && item.image_filename === filename);
+  if (index >= 0) allEntries[index] = Object.assign({}, allEntries[index], normalized);
+  else allEntries.unshift(normalized);
+}
+
+async function appendGeneratedImageToGroupChatRoom(roomIdValue, entry, characterIds = []) {
+  const filename = generatedEntryImageFilename(entry);
+  if (!roomIdValue) throw new Error("请先选择房间");
+  if (!filename) throw new Error("生成结果缺少图片文件名");
+  upsertGeneratedGalleryEntry(entry);
+  const cleanCharacterIds = Array.isArray(characterIds) ? characterIds.filter(Boolean) : [];
+  const payload = {
+    sender_type: "system",
+    sender_id: "",
+    sender_name: "生成图片",
+    type: "image",
+    content: "生成图片",
+    metadata: {
+      image_filename: filename,
+      image_url: generatedEntryImageUrl(entry) || `/images/${filename}`,
+      caption: "",
+      prompt: truncateGroupChatMetadataText(entry?.prompt || "", 1400),
+      style: truncateGroupChatMetadataText((typeof displayOutfitStyle === "function" ? displayOutfitStyle(entry) : entry?.outfit_style) || ""),
+      model_name: truncateGroupChatMetadataText(entry?.model_name || entry?.model || ""),
+      size: truncateGroupChatMetadataText(entry?.size || entry?.image_size || ""),
+      date: truncateGroupChatMetadataText(entry?.date || ""),
+      time: truncateGroupChatMetadataText(entry?.time || ""),
+      character_ids: cleanCharacterIds
+    }
+  };
+  const res = await fetch(`${API}/api/group-chat/rooms/${encodeURIComponent(roomIdValue)}/messages`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+  if (data.room) {
+    mergeGroupChatRoom(data.room);
+  } else if (data.message) {
+    appendGroupChatMessage(roomIdValue, data.message);
+  }
+  renderGroupChatRooms();
+  return data;
+}
+
+function characterGenerateButton(kind = "single") {
+  if (kind === "group") {
+    return document.getElementById("characterGroupBtn") || document.getElementById("characterGenerateBtn");
+  }
+  return document.getElementById("characterSingleBtn") || document.getElementById("characterGenerateBtn");
+}
+
+function characterGenerateIdleText(btn, fallback) {
+  return btn?.dataset?.idleText || fallback || "生成图片";
+}
+
+async function generateSelectedCharacterPortrait() {
+  const characterIds = selectedGroupCharacterIds();
+  if (!characterIds.length) { showToast("请先选择角色"); return; }
+  if (characterIds.length >= 2) {
+    await generateGroupPortrait();
+    return;
+  }
+  await generateCharacterPortrait();
+}
+
+async function generateCharacterPortrait() {
+  const character_id = selectedCharacterId();
+  const body = Object.assign({ character_id }, characterGenerationOptions());
+  const targetRoomId = activeGroupChatGenerationRoomId();
+  if (!character_id) { showToast("请先选择角色"); return; }
+  if (!body.prompt) { showToast("请先输入生成提示词"); return; }
+  if (activeTabName() === "group-chat" && !targetRoomId) { showToast("请先选择房间"); return; }
+  const btn = characterGenerateButton("single");
+  if (btn && btn.disabled) return;
+  if (targetRoomId) body.reference_mode = "today_schedule";
+  if (btn) { btn.disabled = true; btn.textContent = "生成中..."; }
+  setToolStatus("characterStatus", "生成中");
+  try {
+    const res = await fetch(`${API}/api/generate-character`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    setToolStatus("characterStatus", "生成完成", "ok");
+    if (targetRoomId) {
+      try {
+        await appendGeneratedImageToGroupChatRoom(targetRoomId, data, [character_id]);
+        setToolStatus("characterStatus", "已发送到房间", "ok");
+        showToast("图片已发送到房间");
+      } catch(sendError) {
+        setToolStatus("characterStatus", "发送到房间失败", "error");
+        showToast("图片已生成，发送到房间失败：" + (sendError && sendError.message ? sendError.message : "未知错误"));
+      }
+    } else {
+      showToast("生成完成");
+      await revealGeneratedGalleryEntry(data);
+    }
+  } catch(e) {
+    setToolStatus("characterStatus", "生成失败", "error");
+    showToast("生成失败：" + (e && e.message ? e.message : "未知错误"));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = characterGenerateIdleText(btn, "生成图片"); }
+  }
+}
+
+async function generateCharacterReference(characterIdOverride = "", triggerButton = null) {
+  const character_id = String(characterIdOverride || selectedCharacterId() || "");
+  const body = Object.assign({ character_id }, characterGenerationOptions());
+  if (!character_id) { showToast("请先选择角色"); return; }
+  const btn = triggerButton || document.getElementById("characterDetailReferenceBtn");
+  const idleText = btn ? btn.textContent : "";
+  if (btn && btn.disabled) return;
+  if (btn) { btn.disabled = true; btn.textContent = "生成中..."; }
+  setToolStatus("characterStatus", "设定图生成中");
+  try {
+    const res = await fetch(`${API}/api/characters/${encodeURIComponent(character_id)}/generate-reference`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    charactersLoaded = false;
+    await loadCharacters({ force: true, silent: true });
+    selectCharacterInPickers(character_id);
+    setToolStatus("characterStatus", "设定图完成", "ok");
+    showToast("设定图生成完成");
+    closeCharacterDetail();
+    await revealGeneratedGalleryEntry(data);
+  } catch(e) {
+    setToolStatus("characterStatus", "设定图失败", "error");
+    showToast("设定图失败：" + (e && e.message ? e.message : "未知错误"));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = idleText || "设定图"; }
+  }
+}
+
+function generateCharacterReferenceFromDetail(characterId, button) {
+  selectCharacterInPickers(characterId);
+  generateCharacterReference(characterId, button);
+}
+
+async function generateGroupPortrait() {
+  const character_ids = selectedGroupCharacterIds();
+  const body = Object.assign({ character_ids }, characterGenerationOptions());
+  const targetRoomId = activeGroupChatGenerationRoomId();
+  if (character_ids.length < 2) { showToast("请至少选择 2 个角色"); return; }
+  if (!body.prompt) { showToast("请先输入生成提示词"); return; }
+  if (activeTabName() === "group-chat" && !targetRoomId) { showToast("请先选择房间"); return; }
+  const btn = characterGenerateButton("group");
+  if (btn && btn.disabled) return;
+  if (targetRoomId) body.reference_mode = "today_schedule";
+  if (btn) { btn.disabled = true; btn.textContent = "生成中..."; }
+  setToolStatus("characterStatus", "生成中");
+  try {
+    const res = await fetch(`${API}/api/generate-group`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    setToolStatus("characterStatus", "生成完成", "ok");
+    if (targetRoomId) {
+      try {
+        await appendGeneratedImageToGroupChatRoom(targetRoomId, data, character_ids);
+        setToolStatus("characterStatus", "已发送到房间", "ok");
+        showToast("图片已发送到房间");
+      } catch(sendError) {
+        setToolStatus("characterStatus", "发送到房间失败", "error");
+        showToast("图片已生成，发送到房间失败：" + (sendError && sendError.message ? sendError.message : "未知错误"));
+      }
+    } else {
+      showToast("生成完成");
+      await revealGeneratedGalleryEntry(data);
+    }
+  } catch(e) {
+    setToolStatus("characterStatus", "生成失败", "error");
+    showToast("生成失败：" + (e && e.message ? e.message : "未知错误"));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = characterGenerateIdleText(btn, "生成图片"); }
+  }
+}
+
+function roomId(room, index = 0) {
+  const id = room && (room.room_id || room.id || room.key || room.title);
+  return String(id || `room-${index + 1}`);
+}
+
+function roomTitle(room, fallback = "未命名群聊") {
+  return compactDisplayText(room && (room.title || room.name || room.room_name)) || fallback;
+}
+
+function roomParticipants(room) {
+  const list = room && (room.participants || room.character_ids || room.characters);
+  return Array.isArray(list) ? list : [];
+}
+
+function roomMessages(room) {
+  const list = room && (room.messages || room.recent_messages || room.history);
+  if (!Array.isArray(list)) return [];
+  return list;
+}
+
+function characterNameById(id) {
+  const found = characterItems.find(item => item.id === String(id));
+  return found ? found.name : String(id || "");
+}
+
+function participantCharacterId(participant) {
+  if (participant && typeof participant === "object") {
+    return String(participant.character_id || participant.id || "").trim();
+  }
+  return String(participant || "").trim();
+}
+
+function participantDisplayName(participant) {
+  const id = participantCharacterId(participant);
+  if (id) {
+    const knownName = characterNameById(id);
+    if (knownName && knownName !== id) return knownName;
+  }
+  if (participant && typeof participant === "object") {
+    return characterName(participant, id || "角色");
+  }
+  return characterNameById(participant) || String(participant || "");
+}
+
+function participantNames(participants) {
+  return participants.map(participantDisplayName).filter(Boolean);
+}
+
+function renderGroupChatParticipants() {
+  const participantList = document.getElementById("groupRoomParticipantList");
+  if (participantList) {
+    const selected = currentGroupRoomParticipantSelection();
+    renderCharacterPicker("groupRoomParticipantList", {
+      type: "checkbox",
+      name: "groupRoomParticipant",
+      selected,
+      emptyText: "角色接口接入后，可在这里选择群聊参与者。",
+      detailOnClick: false
+    });
+    participantList.querySelectorAll('input[type="checkbox"]').forEach(input => {
+      input.addEventListener("change", handleGroupRoomParticipantChange);
+    });
+  }
+  const senderSelect = document.getElementById("chatSenderCharacter");
+  const senderTypeSelect = document.getElementById("chatSenderType");
+  if (senderSelect) {
+    const storedSender = readStoredGroupChatSenderState();
+    const current = storedSender.sender_id || senderSelect.value;
+    senderSelect.innerHTML = '<option value="">选择角色</option>' + characterItems.map(item =>
+      `<option value="${toolEscapeAttr(item.id)}">${toolEscapeHtml(item.name)}</option>`
+    ).join("");
+    if (current && characterItems.some(item => item.id === current)) {
+      senderSelect.value = current;
+    } else if (storedSender.sender_type === "character" && characterItems[0]?.id) {
+      senderSelect.value = characterItems[0].id;
+    }
+    if (senderTypeSelect) {
+      senderTypeSelect.value = (storedSender.sender_type === "character" && senderSelect.value) ? "character" : "user";
+    }
+  }
+  updateGroupChatSenderControls({ persist: false });
+  if (senderTypeSelect && senderSelect && characterItems.length) {
+    writeStoredGroupChatSenderState(senderTypeSelect.value, senderSelect.value);
+  }
+}
+
+function openGroupChatPanel() {
+  switchTab("group-chat");
+}
+
+function closeGroupChatPanel() {
+  switchTab("today");
+}
+
+function groupChatParticipantIds(room) {
+  return roomParticipants(room).map(participantCharacterId).filter(Boolean);
+}
+
+function sameIdSelection(left, right) {
+  const a = Array.from(new Set((Array.isArray(left) ? left : []).map(item => String(item || "").trim()).filter(Boolean))).sort();
+  const b = Array.from(new Set((Array.isArray(right) ? right : []).map(item => String(item || "").trim()).filter(Boolean))).sort();
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+async function createSingleGroupChatRoom() {
+  const participants = groupRoomParticipantSelectionForRoom();
+  if (!participants.length) return null;
+  const res = await fetch(`${API}/api/group-chat/rooms`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      title: SINGLE_GROUP_CHAT_TITLE,
+      participants,
+      metadata: { single_room: true }
+    })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+  const room = data.room || data;
+  if (!room.room_id && !room.id) room.room_id = `room-${Date.now()}`;
+  if (!room.title && !room.name) room.title = SINGLE_GROUP_CHAT_TITLE;
+  return room;
+}
+
+async function syncSingleGroupChatRoomParticipants(options = {}) {
+  const room = activeGroupChatRoom();
+  if (!room) return null;
+  const roomIdValue = activeGroupChatRoomId || roomId(room);
+  const participants = groupRoomParticipantSelectionForRoom();
+  if (!roomIdValue || !participants.length) return null;
+  if (sameIdSelection(groupChatParticipantIds(room), participants)) return room;
+  if (!options.silent) setToolStatus("groupChatStatus", "更新角色中");
+  const res = await fetch(`${API}/api/group-chat/rooms/${encodeURIComponent(roomIdValue)}`, {
+    method: "PATCH",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      title: roomTitle(room, SINGLE_GROUP_CHAT_TITLE),
+      participants,
+      metadata: { single_room: true }
+    })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+  const updated = data.room || data;
+  if (updated && (updated.id || updated.room_id)) {
+    mergeGroupChatRoom(updated);
+    groupChatRooms = groupChatRooms.slice(0, 1);
+    groupChatRoomsLoaded = true;
+    renderGroupChatRooms();
+  }
+  if (!options.silent) setToolStatus("groupChatStatus", "角色已同步", "ok");
+  return updated;
+}
+
+function scheduleSingleGroupChatRoomParticipantSync() {
+  if (groupChatParticipantSyncTimer) clearTimeout(groupChatParticipantSyncTimer);
+  groupChatParticipantSyncTimer = setTimeout(() => {
+    groupChatParticipantSyncTimer = null;
+    syncSingleGroupChatRoomParticipants().catch(e => {
+      setToolStatus("groupChatStatus", "角色同步失败", "error");
+      showToast("角色同步失败：" + (e && e.message ? e.message : "未知错误"));
+    });
+  }, 180);
+}
+
+async function loadGroupChatRooms(options = {}) {
+  if (groupChatRoomsLoaded && !options.force) {
+    renderGroupChatRooms();
+    return groupChatRooms;
+  }
+  if (groupChatRoomsRequest) return groupChatRoomsRequest;
+  setToolStatus("groupChatStatus", "加载房间中");
+  groupChatRoomsRequest = (async () => {
+      await loadCharacters({ silent: true });
+      const res = await fetch(`${API}/api/group-chat/rooms`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+      let rooms = Array.isArray(data) ? data : (Array.isArray(data.rooms) ? data.rooms : []);
+      if (!rooms.length) {
+        const created = await createSingleGroupChatRoom();
+        rooms = created ? [created] : [];
+      } else {
+        rooms = rooms.slice(0, 1);
+      }
+      groupChatRooms = rooms;
+      if (groupChatRooms[0]) activeGroupChatRoomId = roomId(groupChatRooms[0], 0);
+      groupChatRoomsLoaded = true;
+      renderGroupChatRooms();
+      await syncSingleGroupChatRoomParticipants({ silent: true });
+      setToolStatus("groupChatStatus", groupChatRooms.length ? "1 个房间" : "暂无房间", groupChatRooms.length ? "ok" : "");
+      return groupChatRooms;
+    })()
+    .catch(e => {
+      groupChatRooms = [];
+      groupChatRoomsLoaded = false;
+      renderGroupChatRooms();
+      setToolStatus("groupChatStatus", "群聊 API 未就绪", "error");
+      if (!options.silent) showToast("群聊房间加载失败：" + (e && e.message ? e.message : "未知错误"));
+      return [];
+    })
+    .finally(() => {
+      groupChatRoomsRequest = null;
+    });
+  return groupChatRoomsRequest;
+}
+
+function activeGroupChatRoom() {
+  return groupChatRooms.find((room, index) => roomId(room, index) === activeGroupChatRoomId) || null;
+}
+
+function renderGroupChatRooms() {
+  const list = document.getElementById("groupChatRoomList");
+  if (!groupChatRooms.length) {
+    activeGroupChatRoomId = "";
+    if (list) list.innerHTML = '<div class="chat-empty">正在准备群聊...</div>';
+    renderGroupChatMessages();
+    return;
+  }
+  const hasActive = groupChatRooms.some((room, index) => roomId(room, index) === activeGroupChatRoomId);
+  if (!hasActive) activeGroupChatRoomId = roomId(groupChatRooms[0], 0);
+  if (list) list.innerHTML = "";
+  renderGroupChatMessages();
+}
+
+function selectGroupChatRoom(roomIdValue) {
+  activeGroupChatRoomId = String(roomIdValue || "");
+  renderGroupChatRooms();
+}
+
+function groupChatReplyParticipants(room, senderCharacterId = "") {
+  const senderId = String(senderCharacterId || "").trim();
+  return roomParticipants(room).filter(item => {
+    if (item && typeof item === "object" && item.enabled === false) return false;
+    const id = participantCharacterId(item);
+    return !!id && id !== senderId;
+  });
+}
+
+function typingParticipantLabel(names) {
+  const uniqueNames = Array.from(new Set((Array.isArray(names) ? names : [])
+    .map(name => compactDisplayText(name))
+    .filter(Boolean)));
+  if (uniqueNames.length <= 2) return uniqueNames.join("、");
+  return `${uniqueNames.slice(0, 2).join("、")}等 ${uniqueNames.length} 人`;
+}
+
+function updateGroupChatTypingIndicator() {
+  const indicator = document.getElementById("groupChatTypingIndicator");
+  if (!indicator) return;
+  const activeRoomId = String(activeGroupChatRoomId || "");
+  const names = groupChatTypingState.roomId === activeRoomId ? groupChatTypingState.names : [];
+  const label = typingParticipantLabel(names);
+  if (!label) {
+    indicator.hidden = true;
+    indicator.textContent = "";
+    return;
+  }
+  indicator.textContent = `${label}正在输入中...`;
+  indicator.hidden = false;
+}
+
+function setGroupChatTyping(roomIdValue, names) {
+  groupChatTypingState = {
+    roomId: String(roomIdValue || ""),
+    names: Array.from(new Set((Array.isArray(names) ? names : [])
+      .map(name => compactDisplayText(name))
+      .filter(Boolean)))
+  };
+  updateGroupChatTypingIndicator();
+}
+
+function clearGroupChatTyping(roomIdValue = "") {
+  const id = String(roomIdValue || "");
+  if (!id || groupChatTypingState.roomId === id) {
+    groupChatTypingState = { roomId: "", names: [] };
+  }
+  updateGroupChatTypingIndicator();
+}
+
+function chatSenderName(message) {
+  const senderType = String(message.sender_type || "").toLowerCase();
+  const senderId = message.sender_id || message.character_id || "";
+  if (message.sender_name || message.name) return message.sender_name || message.name;
+  if (senderType === "user") return "我";
+  if (senderId) return characterNameById(senderId) || senderId;
+  return senderType || "消息";
+}
+
+function characterItemById(id) {
+  const normalizedId = String(id || "").trim();
+  if (!normalizedId) return null;
+  return characterItems.find(item => item.id === normalizedId) || null;
+}
+
+function chatMessageId(message) {
+  return String(message?.id || message?.message_id || message?.messageId || "").trim();
+}
+
+function chatMessageSenderCharacterId(message) {
+  const sender = message && typeof message.sender === "object" ? message.sender : {};
+  const senderType = String(message?.sender_type || sender.type || "").toLowerCase();
+  if (senderType !== "character") return "";
+  return String(message?.character_id || message?.sender_id || sender.character_id || sender.id || "").trim();
+}
+
+function chatMessageMetadata(message) {
+  return message && typeof message.metadata === "object" && message.metadata ? message.metadata : {};
+}
+
+function chatMessageAvatarCharacterId(message) {
+  const sender = message && typeof message.sender === "object" ? message.sender : {};
+  const senderType = String(message?.sender_type || sender.type || "").toLowerCase();
+  if (senderType === "user") return "";
+  const direct = chatMessageSenderCharacterId(message);
+  if (direct) return direct;
+  const meta = chatMessageMetadata(message);
+  for (const value of [
+    message?.character_id,
+    message?.sender_id,
+    meta.character_id,
+    meta.sender_character_id
+  ]) {
+    const text = String(value || "").trim();
+    if (text) return text;
+  }
+  const rawIds = Array.isArray(meta.character_ids) ? meta.character_ids : (Array.isArray(message?.character_ids) ? message.character_ids : []);
+  return String(rawIds[0] || "").trim();
+}
+
+function chatMessageAvatarHtml(message, room) {
+  const sender = message && typeof message.sender === "object" ? message.sender : {};
+  const senderType = String(message?.sender_type || sender.type || "").toLowerCase();
+  const characterId = chatMessageAvatarCharacterId(message);
+  const character = characterItemById(characterId);
+  const participant = roomParticipants(room).find(item => participantCharacterId(item) === characterId);
+  const fallbackName = senderType === "user" && !characterId ? "我" : chatSenderName(message);
+  const name = character?.name || (participant ? participantDisplayName(participant) : "") || fallbackName || "消息";
+  const src = character?.referenceImageUrl || characterReferenceImageUrl(participant) || "";
+  const initial = Array.from(name || "我")[0] || "我";
+  const image = src ? `<img src="${toolEscapeAttr(src)}" alt="" loading="lazy" onerror="this.remove()">` : "";
+  return `<span class="chat-message-avatar" data-initial="${toolEscapeAttr(initial)}" title="${toolEscapeAttr(name)}" aria-hidden="true">${image}</span>`;
+}
+
+function isGroupChatOwnMessage(message) {
+  const sender = message && typeof message.sender === "object" ? message.sender : {};
+  const senderType = String(message?.sender_type || sender.type || "").toLowerCase();
+  const meta = chatMessageMetadata(message);
+  if (senderType === "user") return true;
+  if (meta.manual_sender === true || meta.sent_by_user === true) return true;
+  return senderType === "character" && meta.auto_reply !== true;
+}
+
+function chatMessageImageFilename(message) {
+  const meta = chatMessageMetadata(message);
+  const raw = meta.image_filename || meta.filename || meta.file || meta.image || meta.image_path || meta.image_url || "";
+  return generatedEntryImageFilename({ image_filename: raw, image_url: raw, image_path: raw });
+}
+
+function chatMessageImageUrl(message, filename) {
+  const meta = chatMessageMetadata(message);
+  const rawUrl = String(meta.image_url || meta.image_path || "").trim();
+  if (/^(https?:\/\/|data:image\/|\/images\/)/i.test(rawUrl)) return rawUrl;
+  return filename ? `/images/${filename}` : "";
+}
+
+function chatMessageImageCaption(message, content) {
+  return "";
+}
+
+function renderGroupChatImageMessage(message, filename, content) {
+  const imageUrl = chatMessageImageUrl(message, filename);
+  if (!imageUrl) return `<div class="chat-message-text">${toolEscapeHtml(content || "图片")}</div>`;
+  const caption = chatMessageImageCaption(message, content);
+  const openValue = filename || imageUrl;
+  const captionHtml = caption ? `<div class="chat-image-caption">${toolEscapeHtml(caption)}</div>` : "";
+  return `<button class="chat-image-thumb" type="button" onclick="openGroupChatImage(${jsStringArg(openValue)})" aria-label="放大图片">
+    <img src="${toolEscapeAttr(imageUrl)}" alt="${toolEscapeAttr(caption || "群聊图片")}" loading="lazy" decoding="async">
+  </button>${captionHtml}`;
+}
+
+async function openGroupChatImage(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return;
+  const filename = generatedEntryImageFilename({ image_filename: raw, image_url: raw, image_path: raw });
+  let entry = filename ? allEntries.find(item => item && item.image_filename === filename) : null;
+  if (!entry && filename) {
+    try {
+      await ensureCharacterGalleryEntries();
+      entry = allEntries.find(item => item && item.image_filename === filename) || null;
+    } catch(e) {
+      entry = null;
+    }
+  }
+  if (entry && entry.image_filename) {
+    openModal(entry);
+    return;
+  }
+  if (/^(https?:\/\/|data:image\/|\/images\/)/i.test(raw)) {
+    openFullscreenImg(raw);
+    return;
+  }
+  if (filename) openFullscreenImg(`/images/${filename}`);
+}
+
+function chatTimeLabel(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function renderGroupChatMessages() {
+  const titleEl = document.getElementById("groupChatActiveTitle");
+  const metaEl = document.getElementById("groupChatActiveMeta");
+  const messagesEl = document.getElementById("groupChatMessages");
+  if (!messagesEl) return;
+  const room = activeGroupChatRoom();
+  if (!room) {
+    if (titleEl) titleEl.textContent = "选择一个房间";
+    if (metaEl) metaEl.textContent = "创建或选择房间后可以发送消息";
+    updateGroupChatTypingIndicator();
+    messagesEl.innerHTML = '<div class="chat-empty">暂无房间被选中</div>';
+    return;
+  }
+  const participants = participantNames(roomParticipants(room));
+  if (titleEl) titleEl.textContent = roomTitle(room);
+  if (metaEl) metaEl.textContent = participants.length ? `参与者：${participants.join("、")}` : "参与者待配置";
+  updateGroupChatTypingIndicator();
+  const messages = roomMessages(room);
+  if (!messages.length) {
+    messagesEl.innerHTML = '<div class="chat-empty">暂无消息，先发一条吧。</div>';
+    return;
+  }
+  messagesEl.innerHTML = messages.map(message => {
+    const senderType = String(message.sender_type || "").toLowerCase();
+    const messageType = String(message.type || message.message_type || "").toLowerCase();
+    const ownMessage = isGroupChatOwnMessage(message);
+    const time = chatTimeLabel(message.created_at || message.time || message.timestamp);
+    const meta = [chatSenderName(message), time].filter(Boolean).join(" · ");
+    const content = message.content || message.text || message.message || "";
+    const imageFilename = chatMessageImageFilename(message);
+    const isImageMessage = messageType === "image" || !!imageFilename;
+    const cls = `${ownMessage ? " user" : ""}${isImageMessage ? " image" : ""}`;
+    const messageId = chatMessageId(message);
+    const bodyHtml = isImageMessage
+      ? renderGroupChatImageMessage(message, imageFilename, content)
+      : `<div class="chat-message-text">${toolEscapeHtml(content)}</div>`;
+    const avatarHtml = chatMessageAvatarHtml(message, room);
+    return `<div class="chat-message${cls}" data-message-id="${toolEscapeAttr(messageId)}">
+      ${avatarHtml}
+      <div class="chat-message-bubble">
+        <div class="chat-message-meta">${toolEscapeHtml(meta)}</div>
+        ${bodyHtml}
+      </div>
+    </div>`;
+  }).join("");
+  requestAnimationFrame(() => { messagesEl.scrollTop = messagesEl.scrollHeight; });
+}
+
+function mergeGroupChatRoom(room) {
+  const id = roomId(room);
+  const index = groupChatRooms.findIndex((item, idx) => roomId(item, idx) === id);
+  if (index >= 0) groupChatRooms[index] = Object.assign({}, groupChatRooms[index], room);
+  else groupChatRooms.unshift(room);
+  activeGroupChatRoomId = id;
+}
+
+async function createGroupChatRoom() {
+  const participants = groupRoomParticipantSelectionForRoom();
+  if (!participants.length) { showToast("请至少选择一个参与角色"); return; }
+  const btn = document.getElementById("groupRoomCreateBtn");
+  if (btn && btn.disabled) return;
+  if (btn) { btn.disabled = true; btn.textContent = "创建中"; }
+  setToolStatus("groupChatStatus", "创建房间中");
+  try {
+    const room = await createSingleGroupChatRoom();
+    mergeGroupChatRoom(room);
+    groupChatRooms = groupChatRooms.slice(0, 1);
+    groupChatRoomsLoaded = true;
+    renderGroupChatRooms();
+    setToolStatus("groupChatStatus", "1 个房间", "ok");
+    showToast("群聊已创建");
+  } catch(e) {
+    setToolStatus("groupChatStatus", "创建失败", "error");
+    showToast("创建失败：" + (e && e.message ? e.message : "未知错误"));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "创建"; }
+  }
+}
+
+function updateGroupChatSenderControls(options = {}) {
+  const typeEl = document.getElementById("chatSenderType");
+  const characterEl = document.getElementById("chatSenderCharacter");
+  if (!typeEl || !characterEl) return;
+  const isCharacter = typeEl.value === "character";
+  characterEl.disabled = !characterItems.length;
+  if (!isCharacter) characterEl.value = "";
+  if (options.persist !== false) {
+    writeStoredGroupChatSenderState(typeEl.value, characterEl.value);
+  }
+}
+
+function handleGroupChatSenderCharacterChange() {
+  const typeEl = document.getElementById("chatSenderType");
+  const characterEl = document.getElementById("chatSenderCharacter");
+  if (!typeEl || !characterEl) return;
+  if (characterEl.value) {
+    typeEl.value = "character";
+  }
+  updateGroupChatSenderControls();
+}
+
+function appendGroupChatMessage(roomIdValue, message) {
+  const room = groupChatRooms.find((item, index) => roomId(item, index) === roomIdValue);
+  if (!room) return;
+  if (!Array.isArray(room.messages)) room.messages = roomMessages(room).slice();
+  room.messages.push(message);
+}
+
+async function requestGroupChatReplies(roomIdValue, options = {}) {
+  const room = groupChatRooms.find((item, index) => roomId(item, index) === roomIdValue);
+  const isRewind = !!options.rewind_message_id;
+  const replyParticipants = groupChatReplyParticipants(room, options.sender_character_id);
+  if (!room || replyParticipants.length <= 0) {
+    clearGroupChatTyping(roomIdValue);
+    return;
+  }
+  const replyNames = participantNames(replyParticipants);
+  const btn = document.getElementById("groupChatSendBtn");
+  const idleText = btn?.dataset.idleText || "发送";
+  if (btn) { btn.disabled = true; btn.textContent = isRewind ? "回溯中" : "角色回复中"; }
+  setToolStatus("groupChatStatus", isRewind ? "回溯重发中" : "角色回复中");
+  setGroupChatTyping(roomIdValue, replyNames);
+  try {
+    const body = {
+      trigger_message_id: options.trigger_message_id || "",
+      rewind_message_id: options.rewind_message_id || "",
+      sender_character_id: options.sender_character_id || "",
+      sender_type: options.sender_type || "",
+      image_options: characterGenerationControlOptions()
+    };
+    const res = await fetch(`${API}/api/group-chat/rooms/${encodeURIComponent(roomIdValue)}/reply`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    if (data.room) {
+      mergeGroupChatRoom(data.room);
+    } else if (Array.isArray(data.messages)) {
+      data.messages.forEach(message => appendGroupChatMessage(roomIdValue, message));
+    }
+    renderGroupChatRooms();
+    const failureCount = Array.isArray(data.failures) ? data.failures.length : 0;
+    setToolStatus("groupChatStatus", failureCount ? "部分角色未回复" : (isRewind ? "回溯完成" : `${groupChatRooms.length} 个房间`), failureCount ? "error" : "ok");
+    if (isRewind) showToast("已回溯并重新发送");
+    if (failureCount) showToast(`有 ${failureCount} 个角色暂时没回`);
+  } catch(e) {
+    setToolStatus("groupChatStatus", isRewind ? "回溯失败" : "角色回复失败", "error");
+    showToast((isRewind ? "回溯失败：" : "角色回复失败：") + (e && e.message ? e.message : "未知错误"));
+  } finally {
+    clearGroupChatTyping(roomIdValue);
+    if (btn) { btn.disabled = false; btn.textContent = idleText; }
+  }
+}
+
+async function rewindGroupChatMessage(messageId) {
+  const room = activeGroupChatRoom();
+  if (!room) { showToast("请先选择房间"); return; }
+  const id = String(messageId || "").trim();
+  if (!id) return;
+  const target = roomMessages(room).find(message => chatMessageId(message) === id);
+  if (!target) { showToast("找不到要回溯的消息"); return; }
+  const ok = window.confirm("会删除这条消息之后的聊天记录，并重新生成角色回复。继续吗？");
+  if (!ok) return;
+  await requestGroupChatReplies(activeGroupChatRoomId, {
+    trigger_message_id: id,
+    rewind_message_id: id,
+    sender_character_id: chatMessageSenderCharacterId(target),
+    sender_type: String(target.sender_type || target.sender?.type || "")
+  });
+}
+
+async function sendGroupChatMessage() {
+  const room = activeGroupChatRoom();
+  if (!room) { showToast("请先选择房间"); return; }
+  const roomIdValue = activeGroupChatRoomId;
+  const input = document.getElementById("groupChatMessageInput");
+  const content = input ? input.value.trim() : "";
+  if (!content) { showToast("请先输入消息"); return; }
+  const senderType = document.getElementById("chatSenderType")?.value || "user";
+  const senderId = senderType === "character"
+    ? (document.getElementById("chatSenderCharacter")?.value || "")
+    : "user";
+  if (senderType === "character" && !senderId) { showToast("请先选择发送角色"); return; }
+  writeStoredGroupChatSenderState(senderType, senderType === "character" ? senderId : "");
+  const btn = document.getElementById("groupChatSendBtn");
+  if (btn && btn.disabled) return;
+  if (btn) { btn.dataset.idleText = "发送"; btn.disabled = true; btn.textContent = "发送中"; }
+  const payload = {
+    sender_type: senderType,
+    sender_id: senderId,
+    sender_name: senderType === "character" ? characterNameById(senderId) : "user",
+    character_id: senderType === "character" ? senderId : "",
+    content,
+    metadata: senderType === "character" ? { manual_sender: true, sent_by_user: true } : {}
+  };
+  let triggerMessageId = "";
+  try {
+    const res = await fetch(`${API}/api/group-chat/rooms/${encodeURIComponent(roomIdValue)}/messages`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    if (data.room) {
+      mergeGroupChatRoom(data.room);
+    } else if (Array.isArray(data.messages)) {
+      room.messages = data.messages;
+    } else {
+      appendGroupChatMessage(roomIdValue, data.message || Object.assign({ created_at: new Date().toISOString() }, payload));
+    }
+    triggerMessageId = data.message?.id || "";
+    if (input) input.value = "";
+    renderGroupChatRooms();
+    showToast("消息已发送");
+    await requestGroupChatReplies(roomIdValue, {
+      trigger_message_id: triggerMessageId,
+      sender_character_id: senderType === "character" ? senderId : "",
+      sender_type: senderType
+    });
+  } catch(e) {
+    showToast("发送失败：" + (e && e.message ? e.message : "未知错误"));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "发送"; }
+  }
 }
 
 function formatDate(dateStr) {
@@ -3882,44 +7291,57 @@ function restoreGalleryViewportAnchor(anchor) {
 
 // ===== Tab switching =====
 function switchTab(tab) {
+  if (tab === "character") tab = "group-chat";
   const todaySec = document.getElementById("todaySection");
   const gallerySec = document.getElementById("gallerySection");
   const wardrobeSec = document.getElementById("wardrobeSection");
+  const groupChatSec = document.getElementById("groupChatSection");
+  const allowedTabs = new Set(["gallery", "today", "favorites", "wardrobe", "group-chat"]);
+  if (!allowedTabs.has(tab)) tab = "today";
   const targetTab = document.querySelector(`.tab[data-tab="${tab}"]`);
-  if (!targetTab) tab = "today";
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-  document.querySelector(`.tab[data-tab="${tab}"]`)?.classList.add("active");
+  targetTab?.classList.add("active");
   window.galleryStorageSet('active_tab', tab);
-  
+
+  if (todaySec) todaySec.classList.remove("visible");
+  if (gallerySec) gallerySec.classList.add("hidden");
+  if (wardrobeSec) wardrobeSec.classList.add("hidden");
+  if (groupChatSec) groupChatSec.classList.add("hidden");
+
   if (tab === "today") {
-    todaySec.classList.add("visible");
-    gallerySec.classList.add("hidden");
-    if (wardrobeSec) wardrobeSec.classList.add("hidden");
+    if (todaySec) todaySec.classList.add("visible");
     showFavoritesOnly = false;
     showUnfavoritesOnly = false;
     showTodayOnly = true;
     renderToday();
   } else if (tab === "favorites") {
-    todaySec.classList.remove("visible");
-    gallerySec.classList.remove("hidden");
-    if (wardrobeSec) wardrobeSec.classList.add("hidden");
+    if (gallerySec) gallerySec.classList.remove("hidden");
     showFavoritesOnly = true;
     showUnfavoritesOnly = false;
     showTodayOnly = false;
     renderGallery();
   } else if (tab === "wardrobe") {
-    todaySec.classList.remove("visible");
-    gallerySec.classList.add("hidden");
     if (wardrobeSec) wardrobeSec.classList.remove("hidden");
     showFavoritesOnly = false;
     showUnfavoritesOnly = false;
     showTodayOnly = false;
     currentTagFilter = "";
     renderWardrobe();
+  } else if (tab === "group-chat") {
+    if (groupChatSec) groupChatSec.classList.remove("hidden");
+    showFavoritesOnly = false;
+    showUnfavoritesOnly = false;
+    showTodayOnly = false;
+    currentTagFilter = "";
+    renderCharacterPickers();
+    loadCharacters({ silent: true }).then(() => {
+      renderCharacterPickers();
+      renderGroupChatParticipants();
+      loadGroupChatRooms();
+    });
+    loadCharacterImageModels();
   } else {
-    todaySec.classList.remove("visible");
-    gallerySec.classList.remove("hidden");
-    if (wardrobeSec) wardrobeSec.classList.add("hidden");
+    if (gallerySec) gallerySec.classList.remove("hidden");
     showFavoritesOnly = false;
     showUnfavoritesOnly = false;
     showTodayOnly = false;
@@ -3933,6 +7355,7 @@ async function triggerGenerate() {
   btn.disabled = true;
   btn.textContent = "⏳ 正在生成...";
   showToast("💭 正在根据现在的时间段生图～");
+  openLiveLogs({ scrollToBottom: true, status: "生图已开始，日志自动刷新中..." });
   
   try {
     const res = await fetch(`${API}/api/generate-now`, {
@@ -4049,6 +7472,8 @@ function modalSourceLabel(e) {
   if (e && e.metadata_only) return "聊天生图";
   if (source === "chat") return "聊天生图";
   if (source === "custom") return "自定义生图";
+  if (source === "character") return "角色生图";
+  if (source === "group_photo" || source === "group-photo") return "合照生图";
   if (source === "web") return "即时生图";
   if (source === "cron") return "日程生图";
   if (source === "import" || source === "recovered" || source === "file") return "历史导入";
@@ -4082,7 +7507,10 @@ function customShotAngleLabel(e) {
 
 function modalOutfitLabel(e) {
   if (isHermesApiEntry(e)) return "描述";
-  if (String((e && e.source) || "").toLowerCase() !== "custom") return "穿搭";
+  const source = String((e && e.source) || "").toLowerCase();
+  if (source === "character") return "角色";
+  if (source === "group_photo" || source === "group-photo") return "合照";
+  if (source !== "custom") return "穿搭";
   return isPureCustomPrompt(e) ? "描述" : "注入";
 }
 
@@ -4164,9 +7592,7 @@ function renderToday() {
       }
       if (slots.length) {
         schedHtml = slots.map(slot => {
-          const m = slot.match(/^(\d{1,2}:\d{2})\s*(.*)/);
-          if (m) return `<div class="sched-item"><span class="sched-label">${escapeHtml(m[1])}</span><span class="sched-text">${escapeHtml(m[2].trim())}</span></div>`;
-          return `<div class="sched-item"><span class="sched-text">${escapeHtml(slot)}</span></div>`;
+          return renderScheduleItemHtml(slot, todayImageFilename);
         }).join('');
       }
     }
@@ -4554,12 +7980,70 @@ ms.textContent = `
 .modal-content .today-card-info .modal-info-top { margin-bottom:6px; }
 .modal-content .today-card-info .modal-meta { margin:0; }
 .modal-schedule { background:linear-gradient(135deg,#faf5ff,#fce4ec20);border-radius:14px;padding:12px 18px;font-size:15px;line-height:1.8;color:#555;max-height:200px;overflow-y:auto;border:1px solid #f0e8f4; }
-.modal-schedule .sched-item { padding: 5px 0; display: flex; align-items: baseline; gap: 10px; }
+.modal-schedule .sched-item { padding: 5px 0; display: flex; align-items: flex-start; gap: 9px; }
 .modal-schedule .sched-item .sched-label { font-weight: 700; color: #e91e63; white-space: nowrap; font-size: 15px; min-width: 56px; }
 .modal-schedule .sched-item .sched-text { color: #555; }
 .modal-schedule .modal-source-item { align-items:center; }
 .modal-schedule .modal-source-item .sched-label { color:#9c27b0; }
 .modal-schedule .modal-source-item .sched-text { color:#666; font-weight:600; }
+.schedule-send-btn {
+  width: 24px;
+  height: 24px;
+  border: 1.5px solid rgba(233,30,99,0.18);
+  border-radius: 999px;
+  background: #fff;
+  color: #e91e63;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 24px;
+  padding: 0;
+  margin-top: 2px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  box-shadow: 0 2px 8px rgba(233,30,99,0.08);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+.schedule-send-btn:hover,
+.schedule-send-btn.active {
+  border-color: rgba(233,30,99,0.46);
+  background: #fff5f8;
+  transform: translateY(-1px);
+  box-shadow: 0 7px 18px rgba(233,30,99,0.15);
+}
+.schedule-send-btn:disabled { opacity: 0.58; cursor: default; transform:none; }
+.schedule-send-menu {
+  position: fixed;
+  z-index: 10060;
+  min-width: 120px;
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.98);
+  border: 1px solid rgba(233,30,99,0.12);
+  box-shadow: 0 18px 45px rgba(44,18,54,0.18);
+}
+.schedule-send-menu.show { display: flex; }
+.schedule-send-menu button {
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #69445d;
+  min-height: 30px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+}
+.schedule-send-menu button:hover { background: #fff1f6; color: #e91e63; }
+.schedule-send-menu button:disabled { opacity: 0.55; cursor: default; }
 .modal-caption { font-size:15px;color:#d81b60;font-style:italic;padding:12px 0 0;line-height:1.8; }
 .modal-caption.tc-thought { padding:17px 16px;font-style:normal;line-height:1.55;color:#8a245d; }
 .modal-caption .tag-link { color: #7b1fa2; text-decoration: none; font-weight: 600; cursor: pointer; transition:color 0.15s; }
@@ -4794,16 +8278,15 @@ function openModal(e) {
   // Schedule
   const schedEl = document.getElementById("modalSchedule");
   if (e.schedule_time) {
-    schedEl.innerHTML = `<div class="sched-item"><span class="sched-text">${escapeHtml(e.schedule_time)}</span></div>`;
+    schedEl.innerHTML = renderScheduleItemHtml(e.schedule_time, e.image_filename);
     schedEl.style.display = "block";
   } else if (e.schedule) {
     const parsed = parseSchedule(e.schedule);
     if (parsed.items.length) {
       schedEl.innerHTML = parsed.items.map(item => {
         const label = item.time || item.icon;
-        const text = item.text;
-        if (label) return `<div class="sched-item"><span class="sched-label">${escapeHtml(label)}</span><span class="sched-text">${escapeHtml(text)}</span></div>`;
-        return `<div class="sched-item"><span class="sched-text">${escapeHtml(text)}</span></div>`;
+        const text = label ? `${label} ${item.text || ""}` : item.text;
+        return renderScheduleItemHtml(text, e.image_filename);
       }).join('');
       schedEl.style.display = "block";
     } else {
@@ -4835,6 +8318,7 @@ function openModal(e) {
   syncModalDetailHeight();
 }
 function closeModal() {
+  closeScheduleSendMenu();
   modalOverlay.classList.remove("open");
   document.body.style.overflow = "";
   resetModalDetailHeight();
@@ -5045,6 +8529,138 @@ function shareImage(imgId, event) {
     });
   }
 }
+
+let scheduleSendAnchor = null;
+let scheduleSendBusy = false;
+let scheduleSendMenuReadyAt = 0;
+
+function ensureScheduleSendMenu() {
+  let menu = document.getElementById("scheduleSendMenu");
+  if (menu) return menu;
+  menu = document.createElement("div");
+  menu.id = "scheduleSendMenu";
+  menu.className = "schedule-send-menu";
+  menu.innerHTML = `
+    <button type="button" data-channel="wechat"><i class="fa-brands fa-weixin" aria-hidden="true"></i><span>微信</span></button>
+    <button type="button" data-channel="telegram"><i class="fa-brands fa-telegram" aria-hidden="true"></i><span>TG</span></button>
+  `;
+  menu.addEventListener("click", function(event) {
+    const btn = event.target.closest("button[data-channel]");
+    if (!btn) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (Date.now() < scheduleSendMenuReadyAt) return;
+    sendScheduleImage(btn.dataset.channel, btn);
+  });
+  document.body.appendChild(menu);
+  return menu;
+}
+
+function closeScheduleSendMenu() {
+  const menu = document.getElementById("scheduleSendMenu");
+  if (menu) menu.classList.remove("show");
+  if (scheduleSendAnchor) scheduleSendAnchor.classList.remove("active");
+  scheduleSendAnchor = null;
+  scheduleSendMenuReadyAt = 0;
+}
+
+function positionScheduleSendMenu(anchor) {
+  const menu = ensureScheduleSendMenu();
+  const rect = anchor.getBoundingClientRect();
+  const menuWidth = 120;
+  const margin = 10;
+  const left = Math.min(
+    Math.max(margin, rect.left),
+    Math.max(margin, window.innerWidth - menuWidth - margin)
+  );
+  let top = rect.bottom + 7;
+  if (top + 78 > window.innerHeight) top = Math.max(margin, rect.top - 78);
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
+function toggleScheduleSendMenu(event, btn) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  if (!btn || scheduleSendBusy) return;
+  const menu = ensureScheduleSendMenu();
+  if (menu.classList.contains("show") && scheduleSendAnchor === btn) {
+    closeScheduleSendMenu();
+    return;
+  }
+  if (scheduleSendAnchor) scheduleSendAnchor.classList.remove("active");
+  scheduleSendAnchor = btn;
+  btn.classList.add("active");
+  menu.dataset.img = btn.dataset.sendImg || "";
+  positionScheduleSendMenu(btn);
+  menu.classList.add("show");
+  scheduleSendMenuReadyAt = Date.now() + 300;
+}
+
+function setScheduleSendButtonsDisabled(disabled) {
+  document.querySelectorAll(".schedule-send-btn").forEach(btn => { btn.disabled = disabled; });
+  const menu = document.getElementById("scheduleSendMenu");
+  if (menu) menu.querySelectorAll("button").forEach(btn => { btn.disabled = disabled; });
+}
+
+async function sendScheduleImage(channel, btn) {
+  if (scheduleSendBusy) return;
+  const menu = ensureScheduleSendMenu();
+  const imgId = String(menu.dataset.img || scheduleSendAnchor?.dataset.sendImg || "").trim();
+  if (!imgId) {
+    showToast("❌ 找不到要发送的图片");
+    closeScheduleSendMenu();
+    return;
+  }
+  const normalizedChannel = channel === "telegram" ? "telegram" : "wechat";
+  const label = normalizedChannel === "telegram" ? "TG" : "微信";
+  scheduleSendBusy = true;
+  setScheduleSendButtonsDisabled(true);
+  if (btn) btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><span>发送中</span>`;
+  closeScheduleSendMenu();
+  showToast(`📨 正在发送到${label}...`, 4000);
+  openLiveLogs({ scrollToBottom: true, status: `正在发送到${label}，日志自动刷新中...` });
+
+  try {
+    const res = await fetch(appendApiKeyQuery(`${API}/api/images/${encodeURIComponent(imgId)}/send`), {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ channel: normalizedChannel }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) {
+      throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    }
+    showToast(`✅ ${data.message || `已发送到${label}`}`, 4500);
+  } catch(e) {
+    showToast(`❌ ${label}发送失败：${e && e.message ? e.message : "未知错误"}`, 7000);
+  } finally {
+    scheduleSendBusy = false;
+    setScheduleSendButtonsDisabled(false);
+    const nextMenu = document.getElementById("scheduleSendMenu");
+    if (nextMenu) {
+      nextMenu.innerHTML = `
+        <button type="button" data-channel="wechat"><i class="fa-brands fa-weixin" aria-hidden="true"></i><span>微信</span></button>
+        <button type="button" data-channel="telegram"><i class="fa-brands fa-telegram" aria-hidden="true"></i><span>TG</span></button>
+      `;
+    }
+  }
+}
+
+document.addEventListener("click", function(event) {
+  if (event.target.closest(".schedule-send-btn") || event.target.closest("#scheduleSendMenu")) return;
+  closeScheduleSendMenu();
+});
+
+window.addEventListener("resize", function() {
+  if (scheduleSendAnchor) positionScheduleSendMenu(scheduleSendAnchor);
+});
+
+window.addEventListener("scroll", function() {
+  if (scheduleSendAnchor) positionScheduleSendMenu(scheduleSendAnchor);
+}, true);
 
 // ===== Custom Gen Modal =====
 const CG_SIZE_MAP = {
@@ -5562,9 +9178,25 @@ loadDisplayConfig();
 loadGallery();
 
 // ===== Settings Modal =====
+let activeSettingsPanel = "persona";
+
+function setSettingsPanel(panel) {
+  const normalized = ["persona", "model", "maintain"].includes(panel) ? panel : "persona";
+  activeSettingsPanel = normalized;
+  document.querySelectorAll("[data-settings-panel]").forEach(btn => {
+    const isActive = btn.dataset.settingsPanel === normalized;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+  document.querySelectorAll("[data-settings-panel-content]").forEach(section => {
+    section.classList.toggle("active", section.dataset.settingsPanelContent === normalized);
+  });
+}
+
 function openSettings() {
   document.getElementById("skOverlay").classList.add("open");
   document.body.style.overflow = "hidden";
+  setSettingsPanel(activeSettingsPanel || "persona");
   // Clear input fields
   document.getElementById("skGiteeKey").value = "";
   document.getElementById("skGptKey").value = "";
@@ -5576,6 +9208,8 @@ function openSettings() {
   document.getElementById("skAppearance").value = "";
   document.getElementById("skPersona").value = "";
   document.getElementById("skGiteeFallback").checked = false;
+  availableLlmModels = [];
+  setLlmModelChain([]);
   setPushChannel("wechat");
   syncGiteeFallbackVisual(false);
   const cleanupResult = document.getElementById("skCleanupResult");
@@ -5740,6 +9374,41 @@ function closeOutfitStyleDialog() {
   if (overlay) overlay.classList.remove("open");
 }
 
+function normalizeScheduleForbiddenKeywords(value) {
+  const raw = Array.isArray(value) ? value : String(value || "").split(/[\n,，;；、]+/);
+  const result = [];
+  raw.forEach(item => {
+    const text = String(item || "").replace(/\s+/g, " ").trim().replace(/^[，,。.!！?；;、]+|[，,。.!！?；;、]+$/g, "");
+    if (text && !result.includes(text)) result.push(text.slice(0, 40));
+  });
+  return result.slice(0, 30);
+}
+
+function closeScheduleForbiddenDialog() {
+  const overlay = document.getElementById("eggForbiddenOverlay");
+  if (overlay) overlay.classList.remove("open");
+}
+
+async function openScheduleForbiddenDialog() {
+  const overlay = document.getElementById("eggForbiddenOverlay");
+  const input = document.getElementById("eggForbiddenKeywords");
+  const status = document.getElementById("eggForbiddenStatus");
+  if (!overlay || !input) return;
+  overlay.classList.add("open");
+  if (status) status.textContent = "加载中...";
+  try {
+    const res = await fetch(`${API}/api/config/keys`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "加载失败");
+    settingsSnapshot = data;
+    const keywords = normalizeScheduleForbiddenKeywords(data.schedule_forbidden_keywords || []);
+    input.value = keywords.join("\n");
+    if (status) status.textContent = keywords.length ? `已配置 ${keywords.length} 个禁词` : "未配置禁词";
+  } catch(e) {
+    if (status) status.textContent = "加载失败：" + e.message;
+  }
+}
+
 function bindOutfitStyleDialogEvents() {
   const overlay = document.getElementById("eggStyleOverlay");
   if (overlay && overlay.dataset.bound !== "1") {
@@ -5762,10 +9431,40 @@ function bindOutfitStyleDialogEvents() {
     eggBody.dataset.styleManageBound = "1";
     eggBody.addEventListener("click", e => {
       const btn = e.target.closest('[data-action="manage-outfit-styles"]');
-      if (!btn || !eggBody.contains(btn)) return;
+      const forbiddenBtn = e.target.closest('[data-action="manage-schedule-forbidden"]');
+      if (!btn && !forbiddenBtn) return;
       e.preventDefault();
       e.stopPropagation();
-      openOutfitStyleDialog();
+      if (btn) openOutfitStyleDialog();
+      if (forbiddenBtn) openScheduleForbiddenDialog();
+    });
+  }
+
+  const todaySection = document.getElementById("todaySection");
+  if (todaySection && todaySection.dataset.scheduleForbiddenBound !== "1") {
+    todaySection.dataset.scheduleForbiddenBound = "1";
+    todaySection.addEventListener("click", e => {
+      const forbiddenBtn = e.target.closest('[data-action="manage-schedule-forbidden"]');
+      if (!forbiddenBtn || !todaySection.contains(forbiddenBtn)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openScheduleForbiddenDialog();
+    });
+  }
+
+  const forbiddenOverlay = document.getElementById("eggForbiddenOverlay");
+  if (forbiddenOverlay && forbiddenOverlay.dataset.bound !== "1") {
+    forbiddenOverlay.dataset.bound = "1";
+    forbiddenOverlay.addEventListener("click", e => {
+      if (e.target === forbiddenOverlay || e.target.closest("[data-egg-forbidden-close]")) {
+        e.preventDefault();
+        closeScheduleForbiddenDialog();
+        return;
+      }
+      if (e.target.closest("[data-egg-forbidden-save]")) {
+        e.preventDefault();
+        saveScheduleForbiddenDialog();
+      }
     });
   }
 }
@@ -5807,6 +9506,42 @@ async function saveOutfitStyleDialog() {
     renderEggOutfitStylePicker(settingsSnapshot.outfit_styles || selectedStyles, selectedStyles);
     closeOutfitStyleDialog();
     showToast("✅ 风格池已保存");
+  } catch(e) {
+    if (status) status.textContent = "保存失败：" + e.message;
+    showToast("❌ " + e.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "保存";
+    }
+  }
+}
+
+async function saveScheduleForbiddenDialog() {
+  const input = document.getElementById("eggForbiddenKeywords");
+  const status = document.getElementById("eggForbiddenStatus");
+  const btn = document.getElementById("eggForbiddenSaveBtn");
+  const keywords = normalizeScheduleForbiddenKeywords(input ? input.value : "");
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "保存中...";
+  }
+  if (status) status.textContent = "正在保存...";
+
+  try {
+    const res = await fetch(`${API}/api/config/keys`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({schedule_forbidden_keywords: keywords})
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || "保存失败");
+
+    settingsSnapshot = settingsSnapshot || {};
+    settingsSnapshot.schedule_forbidden_keywords = keywords;
+    closeScheduleForbiddenDialog();
+    showToast(keywords.length ? "✅ 日程禁词已保存，刷新日程后生效" : "✅ 日程禁词已清空");
   } catch(e) {
     if (status) status.textContent = "保存失败：" + e.message;
     showToast("❌ " + e.message);
@@ -5957,37 +9692,39 @@ async function loadSettingsStatus() {
     }
     updatePersonaPreview(data);
 
-    // LLM Model: 填充下拉框
+    // LLM Model: 填充下拉框和 fallback 链
     const llmEl = document.getElementById("skLlmModel");
     const llmStatus = document.getElementById("skLlmModelStatus");
-    const configuredModels = [
-      data.llm_model,
-      data.llm_models && data.llm_models.fallback_model
-    ].filter(Boolean);
+    const configuredModels = Array.isArray(data.llm_model_chain) && data.llm_model_chain.length
+      ? data.llm_model_chain
+      : [
+          data.llm_model,
+          data.llm_models && data.llm_models.fallback_model
+        ].filter(Boolean);
     const models = (modelsData.models && modelsData.models.length > 0)
       ? modelsData.models
       : Array.from(new Set(configuredModels));
+    availableLlmModels = normalizeLlmModelList(models);
+    const configuredChain = normalizeLlmModelList(configuredModels);
+    const primaryModel = configuredChain[0] || data.llm_model || "";
 
     // 清空并填充选项
-    llmEl.innerHTML = "";
-    if (models.length > 0) {
-      models.forEach(m => {
-        const opt = document.createElement("option");
-        opt.value = m;
-        opt.textContent = m;
-        llmEl.appendChild(opt);
-      });
+    fillLlmSelect(llmEl, primaryModel, configuredChain);
+    if (primaryModel) {
+      ensureLlmSelectOption(llmEl, primaryModel);
+      llmEl.value = primaryModel;
     }
+    setLlmModelChain(configuredChain.slice(1));
 
     // 设置当前值
-    if (data.llm_model && models.includes(data.llm_model)) {
-      llmEl.value = data.llm_model;
-      llmStatus.textContent = "✓ 当前: " + data.llm_model;
+    if (primaryModel && availableLlmModels.includes(primaryModel)) {
+      llmEl.value = primaryModel;
+      llmStatus.textContent = "✓ 当前: " + primaryModel;
       llmStatus.className = "sk-status set";
-    } else if (data.llm_model) {
+    } else if (primaryModel) {
       // 当前模型不在列表中，仍然选中
-      llmEl.value = data.llm_model;
-      llmStatus.textContent = "⚠️ " + data.llm_model + "（不在可用列表中）";
+      llmEl.value = primaryModel;
+      llmStatus.textContent = "⚠️ " + primaryModel + "（不在可用列表中）";
       llmStatus.className = "sk-status unset";
     } else {
       llmStatus.textContent = "○ 使用默认";
@@ -6110,6 +9847,170 @@ async function runImageCleanup() {
 window.updateCleanupCustomVisibility = updateCleanupCustomVisibility;
 window.previewImageCleanup = previewImageCleanup;
 window.runImageCleanup = runImageCleanup;
+
+function normalizeLlmModelList(values) {
+  const result = [];
+  (Array.isArray(values) ? values : []).forEach(value => {
+    const text = String(value || "").trim();
+    if (text && !result.includes(text)) result.push(text);
+  });
+  return result;
+}
+
+function currentLlmPrimaryModel() {
+  return String(document.getElementById("skLlmModel")?.value || "").trim();
+}
+
+function fullLlmModelChain(extra = []) {
+  return normalizeLlmModelList([currentLlmPrimaryModel(), ...llmModelChain, ...extra]);
+}
+
+function currentLlmModelOptions(extra = []) {
+  return normalizeLlmModelList([...availableLlmModels, currentLlmPrimaryModel(), ...llmModelChain, ...extra]);
+}
+
+function ensureLlmSelectOption(select, model) {
+  if (!select || !model) return;
+  if (Array.from(select.options).some(opt => opt.value === model)) return;
+  const opt = document.createElement("option");
+  opt.value = model;
+  opt.textContent = model;
+  select.appendChild(opt);
+}
+
+function fillLlmSelect(select, selected, extra = []) {
+  if (!select) return;
+  const models = currentLlmModelOptions([selected, ...extra]);
+  select.replaceChildren();
+  models.forEach(model => {
+    const opt = document.createElement("option");
+    opt.value = model;
+    opt.textContent = model;
+    select.appendChild(opt);
+  });
+  if (selected) {
+    ensureLlmSelectOption(select, selected);
+    select.value = selected;
+  }
+}
+
+function setLlmModelChain(models) {
+  const primary = currentLlmPrimaryModel();
+  llmModelChain = normalizeLlmModelList(models).filter(model => model !== primary);
+  renderLlmModelChain();
+}
+
+function renderLlmModelChain() {
+  const list = document.getElementById("skLlmChainList");
+  const count = document.getElementById("skLlmChainCount");
+  const preview = document.getElementById("skLlmChainPreview");
+  const addSelect = document.getElementById("skLlmChainAddSelect");
+  const primary = currentLlmPrimaryModel();
+
+  if (count) count.textContent = `${llmModelChain.length} 个备用`;
+  if (preview) {
+    const chain = fullLlmModelChain();
+    preview.textContent = chain.length > 1 ? chain.join(" -> ") : "未配置备用模型";
+  }
+  if (!list) return;
+  list.replaceChildren();
+
+  llmModelChain.forEach((model, index) => {
+    const row = document.createElement("div");
+    row.className = "sk-llm-chain-row";
+
+    const idx = document.createElement("span");
+    idx.className = "sk-llm-chain-index";
+    idx.textContent = String(index + 1);
+    row.appendChild(idx);
+
+    const select = document.createElement("select");
+    fillLlmSelect(select, model);
+    select.addEventListener("change", () => updateLlmChainModel(index, select.value));
+    row.appendChild(select);
+
+    const up = document.createElement("button");
+    up.type = "button";
+    up.className = "sk-llm-chain-btn";
+    up.textContent = "^";
+    up.title = "上移";
+    up.setAttribute("aria-label", "上移");
+    up.disabled = index === 0;
+    up.addEventListener("click", () => moveLlmChainModel(index, -1));
+    row.appendChild(up);
+
+    const down = document.createElement("button");
+    down.type = "button";
+    down.className = "sk-llm-chain-btn";
+    down.textContent = "v";
+    down.title = "下移";
+    down.setAttribute("aria-label", "下移");
+    down.disabled = index >= llmModelChain.length - 1;
+    down.addEventListener("click", () => moveLlmChainModel(index, 1));
+    row.appendChild(down);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "sk-llm-chain-btn";
+    remove.textContent = "x";
+    remove.title = "删除";
+    remove.setAttribute("aria-label", "删除");
+    remove.addEventListener("click", () => removeLlmChainModel(index));
+    row.appendChild(remove);
+
+    list.appendChild(row);
+  });
+
+  if (addSelect) {
+    const unused = currentLlmModelOptions().filter(model => model !== primary && !llmModelChain.includes(model));
+    addSelect.replaceChildren();
+    unused.forEach(model => {
+      const opt = document.createElement("option");
+      opt.value = model;
+      opt.textContent = model;
+      addSelect.appendChild(opt);
+    });
+    addSelect.disabled = unused.length === 0;
+  }
+}
+
+function syncLlmChainPrimary() {
+  const primary = currentLlmPrimaryModel();
+  if (!primary) return;
+  setLlmModelChain(llmModelChain.filter(model => model !== primary));
+}
+
+function updateLlmChainModel(index, value) {
+  const model = String(value || "").trim();
+  if (!model) return;
+  const next = llmModelChain.slice();
+  next[index] = model;
+  setLlmModelChain(next);
+}
+
+function moveLlmChainModel(index, direction) {
+  const target = index + direction;
+  if (target < 0 || target >= llmModelChain.length) return;
+  const next = llmModelChain.slice();
+  [next[index], next[target]] = [next[target], next[index]];
+  setLlmModelChain(next);
+}
+
+function removeLlmChainModel(index) {
+  const next = llmModelChain.slice();
+  next.splice(index, 1);
+  setLlmModelChain(next);
+}
+
+function addLlmChainModel() {
+  const select = document.getElementById("skLlmChainAddSelect");
+  const model = String(select?.value || "").trim();
+  if (!model) return;
+  setLlmModelChain([...llmModelChain, model]);
+}
+
+window.syncLlmChainPrimary = syncLlmChainPrimary;
+window.addLlmChainModel = addLlmChainModel;
 
 async function testLlmModel() {
   const btn = document.getElementById("skLlmTestBtn");
@@ -6254,6 +10155,7 @@ async function saveSettings() {
   const persona = document.getElementById("skPersona").value.trim();
   const pushChannel = getPushChannel();
   const llmModel = document.getElementById("skLlmModel").value;
+  const llmModels = fullLlmModelChain();
   const giteeFallbackEnabled = document.getElementById("skGiteeFallback").checked;
   const missing = [];
   requireSettingsValue("Gitee API URL", giteeUrl, missing);
@@ -6297,8 +10199,9 @@ async function saveSettings() {
     body.hermes_cli = document.getElementById("skHermesCliPath")?.value.trim() || "";
     body.openclaw_cli = document.getElementById("skOpenclawCliPath")?.value.trim() || "";
     body.gitee_fallback_enabled = giteeFallbackEnabled;
-    // llm_model: always send
+    // llm_model: always send; llm_models keeps the ordered fallback chain
     body.llm_model = llmModel;
+    body.llm_models = llmModels;
 
     const res = await fetch(`${API}/api/config/keys`, {
       method: "POST",
@@ -6496,12 +10399,19 @@ loadVersion();
 // Close settings on Escape key
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
+    closeScheduleSendMenu();
     if (document.getElementById("eggStyleOverlay").classList.contains("open")) {
       closeOutfitStyleDialog();
     } else if (document.getElementById("imgFullscreen").classList.contains("open")) {
       document.getElementById("imgFullscreen").classList.remove("open");
     } else if (modalOverlay.classList.contains("open")) {
       closeModal();
+    } else if (document.getElementById("manualCharacterOverlay").classList.contains("open")) {
+      closeManualCharacterModal();
+    } else if (document.getElementById("characterGalleryPickOverlay").classList.contains("open")) {
+      closeCharacterGalleryPicker();
+    } else if (document.getElementById("characterDetailOverlay").classList.contains("open")) {
+      closeCharacterDetail();
     } else if (document.getElementById("skOverlay").classList.contains("open")) {
       closeSettings();
     }
@@ -7030,6 +10940,7 @@ function loadScheduleEggData(options) {
       html += '<div class="egg-section egg-outfit-section"><div class="egg-section-title with-action"><span class="egg-section-title-main"><span class="icon">👗</span>今日穿搭方案</span><span class="egg-title-actions">';
       html += '<button class="egg-outfit-fav-btn ' + (outfitFavorite ? 'active' : '') + '" type="button" data-payload="' + outfitPayloadAttr + '" onclick="toggleFavoriteOutfitPlan(this)" aria-label="' + (outfitFavorite ? '取消收藏这套穿搭方案' : '收藏这套穿搭方案') + '" title="' + (outfitFavorite ? '取消收藏这套穿搭方案' : '收藏这套穿搭方案') + '"><i class="' + (outfitFavorite ? 'fa-solid' : 'fa-regular') + ' fa-bookmark" aria-hidden="true"></i><span>' + (outfitFavorite ? '已收藏' : '收藏方案') + '</span></button>';
       html += '<button class="egg-outfit-dislike-btn ' + (outfitDisliked ? 'active' : '') + '" type="button" data-payload="' + dislikedPayloadAttr + '" onclick="toggleDislikedOutfitPlan(this)" aria-label="' + (outfitDisliked ? '取消减少这类穿搭' : '减少这类穿搭') + '" title="' + (outfitDisliked ? '取消减少这类穿搭' : '减少这类穿搭') + '"><i class="' + (outfitDisliked ? 'fa-solid' : 'fa-regular') + ' fa-thumbs-down" aria-hidden="true"></i><span>' + (outfitDisliked ? '已减少' : '不喜欢') + '</span></button>';
+      html += '<button class="egg-forbidden-btn" type="button" data-action="manage-schedule-forbidden" aria-label="设置日程禁词" title="禁止 LLM 生成相关日程"><i class="fa-solid fa-ban" aria-hidden="true"></i><span>禁词</span></button>';
       html += '</span></div>';
       html += '<div class="egg-outfit-grid">';
       for (var m = 0; m < outfitKeys.length; m++) {
@@ -8048,7 +11959,7 @@ function renderLiveLogHtml(text) {
       else if (line.startsWith('[INFO]')) cls = 'log-line log-level-info';
       else if (line.startsWith('[WARN]')) cls = 'log-line log-level-warn';
       else if (line.startsWith('[ERROR]')) cls = 'log-line log-level-error';
-      else if (line.startsWith('运行日志') || /^INFO\s+\d+/.test(line)) cls = 'log-line log-summary';
+      else if (line.startsWith('运行日志') || line.startsWith('已隐藏普通') || /^INFO\s+\d+/.test(line)) cls = 'log-line log-summary';
       return '<span class="' + cls + '">' + escapeHtml(line) + '</span>';
     }).join('\n');
   }
@@ -8080,8 +11991,9 @@ function refreshLiveLogs(manual, scrollToBottom) {
       textEl.scrollTop = scrollToBottom ? textEl.scrollHeight : keepScrollTop;
       const time = new Date().toLocaleTimeString();
       const levels = data.level_counts || {};
+      const hiddenAccess = Number(data.hidden_access_count || 0);
       const countText = data.status === 'ok'
-        ? `已更新 ${time} · 最近 ${data.filtered_count || 0} 条 · INFO ${levels.INFO || 0} · DEBUG ${levels.DEBUG || 0} · WARN ${levels.WARN || 0} · ERROR ${levels.ERROR || 0}`
+        ? `已更新 ${time} · 有用 ${data.filtered_count || 0} 条 · 隐藏访问 ${hiddenAccess} 条 · INFO ${levels.INFO || 0} · DEBUG ${levels.DEBUG || 0} · WARN ${levels.WARN || 0} · ERROR ${levels.ERROR || 0}`
         : `未找到日志 ${time}`;
       setLiveLogStatus(countText);
     })
@@ -8107,10 +12019,15 @@ function toggleLiveLogAuto() {
   scheduleLiveLogRefresh();
 }
 
-function openLiveLogs() {
+function openLiveLogs(options) {
+  const opts = options || {};
   const overlay = ensureLiveLogOverlay();
   overlay.classList.add('show');
-  refreshLiveLogs(true, false).then(scheduleLiveLogRefresh);
+  if (opts.status) setLiveLogStatus(opts.status);
+  refreshLiveLogs(true, Boolean(opts.scrollToBottom)).then(() => {
+    if (opts.status) setLiveLogStatus(opts.status);
+    scheduleLiveLogRefresh();
+  });
 }
 
 function closeLiveLogs() {
@@ -8141,7 +12058,7 @@ function copyLiveLogs() {
 }
 
 // ESC 关闭
-document.addEventListener('keydown', function(e) { if (e.key === 'Escape') { closeScheduleEgg(); closePrompt(); closeLiveLogs(); } });
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') { closeScheduleSendMenu(); closeScheduleEgg(); closeCharacterGalleryPicker(); closeCharacterDetail(); closePrompt(); closeLiveLogs(); } });
 </script>
 </body>
 </html>

@@ -320,6 +320,33 @@ def _is_wardrobe_reference(ref_image: Optional[str]) -> bool:
     return "/wardrobe/" in raw or raw.startswith("wardrobe_") or "/references/wardrobe/" in raw
 
 
+def _reference_expression_guard() -> str:
+    return (
+        "\n[IMPORTANT] Facial expression guard: the facial expression must be newly generated "
+        "from the current text description, schedule, action, scene, and emotional tone. "
+        "Do NOT copy the reference image's facial expression, mouth shape, smile, grin, "
+        "tongue, gaze emotion, or facial mood; ignore any strong expression in the reference image."
+    )
+
+
+def _reference_edit_instruction(ref_image: Optional[str]) -> str:
+    if _is_wardrobe_reference(ref_image):
+        return (
+            "\n[IMPORTANT] Use the reference image ONLY as an outfit and styling reference. "
+            "Copy the clothing combination, garment structure, fabric layering, colors, accessories, footwear, displayed wig hairstyle, and overall outfit styling mood from the reference image. "
+            "Do NOT copy any human figure layout from the reference image. The person's face, hairstyle, pose, body posture, hand gestures, gaze direction, camera angle, framing, background, lighting, and expression must follow the text description."
+            + _reference_expression_guard()
+        )
+    return (
+        "\n[IMPORTANT] Use the reference image ONLY as a facial/style reference. "
+        "Focus on matching the face shape, facial structure, and overall facial features to achieve high similarity with the person in the reference image. "
+        "Do NOT copy or reference the hairstyle, hair color, hair accessories, clothing, outfit, pose, body posture, hand gestures, gaze direction, camera angle, framing, background, lighting, or any other non-facial elements from the reference image. "
+        "All non-facial elements must strictly follow the text description. "
+        "If the text says the hair must be a specific color or hairstyle, that text is absolute and overrides the reference image completely, even when the reference image shows pink, red, light, or otherwise different hair."
+        + _reference_expression_guard()
+    )
+
+
 def _generate_via_images_api(prompt: str, ref_image: Optional[str], size: Optional[str], raw_base_url: str) -> Optional[tuple]:
     """Call OpenAI-compatible /v1/images/generations or /v1/images/edits."""
     images_base = _normalize_gpt_images_base_url(raw_base_url)
@@ -337,19 +364,7 @@ def _generate_via_images_api(prompt: str, ref_image: Optional[str], size: Option
 
     edit_prompt = prompt
     if ref_image:
-        if _is_wardrobe_reference(ref_image):
-            edit_prompt += (
-                "\n[IMPORTANT] Use the reference image ONLY as an outfit and styling reference. "
-                "Copy the clothing combination, garment structure, fabric layering, colors, accessories, footwear, displayed wig hairstyle, and overall outfit styling mood from the reference image. "
-                "Do NOT copy any human figure layout from the reference image. The person's face, hairstyle, pose, body posture, hand gestures, gaze direction, camera angle, framing, background, lighting, and expression must follow the text description."
-            )
-        else:
-            edit_prompt += (
-                "\n[IMPORTANT] Use the reference image ONLY as a facial/style reference. "
-                "Do NOT copy the hairstyle, hair color, hair accessories, clothing, pose, body posture, hand gestures, gaze direction, camera angle, framing, background, lighting, or expression "
-                "unless the text description explicitly asks for them. "
-                "If the text says the hair must be a specific color or hairstyle, that text is absolute and overrides the reference image completely, even when the reference image shows pink, red, light, or otherwise different hair."
-            )
+        edit_prompt += _reference_edit_instruction(ref_image)
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -457,10 +472,7 @@ def _generate_via_chat_gpt(prompt: str, ref_image: Optional[str] = None, size: O
     if ref_image:
         try:
             compressed_img = _compress_image_for_img2img(ref_image)
-            if _is_wardrobe_reference(ref_image):
-                face_instruction = "\n[IMPORTANT] Use the reference image ONLY as an outfit reference. Recreate the clothing pieces, layering, silhouette, colors, materials, accessories, footwear, and displayed wig hairstyle from the reference image on the person described in the text. Do NOT treat the reference image as a face reference, and do NOT copy any pose, body posture, gaze direction, camera angle, framing, background, lighting, or expression from it."
-            else:
-                face_instruction = "\n[IMPORTANT] Use the reference image ONLY as a facial reference. Focus on matching the face shape, facial structure, and overall facial features to achieve high similarity with the person in the reference image. Do NOT copy or reference the hairstyle, hair color, hair accessories, clothing, outfit, pose, body posture, hand gestures, gaze direction, camera angle, framing, background, lighting, or any other non-facial elements from the reference image. All of these must strictly follow the text description above. If the text says the hair must be a specific color or hairstyle, that text is absolute and overrides the reference image completely, even when the reference image shows pink, red, light, or otherwise different hair. Do NOT copy the facial expression, mouth shape, tongue, or grin from the reference image — the expression must also strictly follow the text description."
+            face_instruction = _reference_edit_instruction(ref_image)
             content = [
                 {"type": "image_url", "image_url": {"url": compressed_img}},
                 {"type": "text", "text": prompt + face_instruction},

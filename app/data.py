@@ -7,6 +7,7 @@ from typing import Optional
 class DailyEntry:
     """单日数据"""
     date: str  # yyyy-mm-dd
+    time: str = ""  # HH:MM for generated image cards
     outfit_style: str = ""
     base_style: str = ""  # legacy compatibility only; reference images are selected from profiles
     reference_query: str = ""  # natural-language reference-image matching hint from LLM
@@ -27,6 +28,11 @@ class DailyEntry:
     custom_ref_mode: str = ""  # text2img / reference / pure for custom generation
     outfit_keywords: str = ""  # LLM 提取的穿搭关键词（英文，逗号分隔）
     scene_keywords: str = ""   # LLM 提取的场景关键词（英文，逗号分隔）
+    generation_type: str = ""  # character / group_photo / chat 等扩展生图类型
+    character_id: str = ""  # 单角色生图绑定的角色 ID
+    character_ids: list[str] = field(default_factory=list)  # 合照/群聊关联角色
+    character_names: list[str] = field(default_factory=list)
+    chat_room_id: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -40,6 +46,7 @@ class DailyEntry:
             pure_prompt = bool(pure_prompt_raw)
         return cls(
             date=data.get("date", ""),
+            time=data.get("time", ""),
             outfit_style=data.get("outfit_style", ""),
             base_style=data.get("base_style", ""),
             reference_query=data.get("reference_query", ""),
@@ -60,4 +67,9 @@ class DailyEntry:
             custom_ref_mode=data.get("custom_ref_mode", ""),
             outfit_keywords=data.get("outfit_keywords", ""),
             scene_keywords=data.get("scene_keywords", ""),
+            generation_type=data.get("generation_type", ""),
+            character_id=data.get("character_id", ""),
+            character_ids=data.get("character_ids", []) if isinstance(data.get("character_ids"), list) else [],
+            character_names=data.get("character_names", []) if isinstance(data.get("character_names"), list) else [],
+            chat_room_id=data.get("chat_room_id", ""),
         )

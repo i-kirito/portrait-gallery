@@ -379,6 +379,37 @@ def load_enabled_outfit_styles(config: dict, data_dir: str) -> list[str]:
     return configured_styles or list(DEFAULT_OUTFIT_STYLES)
 
 
+def normalize_schedule_forbidden_keywords(value: Any) -> list[str]:
+    """Normalize user-provided schedule ban words while preserving order."""
+    raw_items: list[Any]
+    if isinstance(value, str):
+        raw_items = re.split(r"[\n,，;；、]+", value)
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        raw_items = []
+
+    result: list[str] = []
+    for item in raw_items:
+        text = re.sub(r"\s+", " ", str(item or "")).strip(" ，,。.!！?；;、")
+        if not text or text in result:
+            continue
+        result.append(text[:40])
+        if len(result) >= 30:
+            break
+    return result
+
+
+def load_schedule_forbidden_keywords(config: dict, data_dir: str) -> list[str]:
+    keys = load_json_file(api_keys_path(data_dir))
+    local_keywords = normalize_schedule_forbidden_keywords(keys.get("schedule_forbidden_keywords"))
+    if local_keywords:
+        return local_keywords
+
+    schedule_cfg = config.get("schedule", {}) if isinstance(config.get("schedule"), dict) else {}
+    return normalize_schedule_forbidden_keywords(schedule_cfg.get("forbidden_keywords"))
+
+
 def config_int(config: dict, path: str, default: int, min_value: int | None = None, max_value: int | None = None) -> int:
     try:
         value = int(get_nested(config, path, default))
@@ -465,6 +496,51 @@ def unique_values(*values: Any) -> list[str]:
         if text and text not in result:
             result.append(text)
     return result
+
+
+def normalize_llm_models(*values: Any) -> list[str]:
+    """Return a stable, de-duplicated ordered LLM model chain."""
+    result: list[str] = []
+
+    def add(value: Any):
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                add(item)
+            return
+        if isinstance(value, dict):
+            return
+        text = _non_empty(value)
+        if text and text not in result:
+            result.append(text)
+
+    for value in values:
+        add(value)
+    return result
+
+
+def configured_llm_models(llm_config: Any) -> list[str]:
+    """Resolve the configured LLM chain while keeping legacy scalar edits effective."""
+    if not isinstance(llm_config, dict):
+        return []
+    configured_value = llm_config.get("models", [])
+    configured = (
+        normalize_llm_models(configured_value)
+        if isinstance(configured_value, (list, tuple))
+        else []
+    )
+    legacy = normalize_llm_models(
+        llm_config.get("model", ""),
+        llm_config.get("fallback_model", ""),
+    )
+    if not configured:
+        return legacy
+    if not legacy:
+        return configured
+    if configured[:len(legacy)] == legacy:
+        return configured
+
+    tail_start = 2 if "fallback_model" in llm_config else 1
+    return normalize_llm_models(legacy, configured[tail_start:])
 
 
 def deep_merge(base: dict, override: dict) -> dict:
@@ -1058,10 +1134,7 @@ def llm_request_config(config: dict, data_dir: str) -> dict:
         or _non_empty(os.getenv("CPA_API_KEY"))
         or _non_empty(get_nested(config, "llm.api_key", ""))
     )
-    models = unique_values(
-        get_nested(config, "llm.model", ""),
-        get_nested(config, "llm.fallback_model", ""),
-    )
+    models = configured_llm_models(config.get("llm", {}) if isinstance(config, dict) else {})
     return {"base_url": base_url.rstrip("/"), "chat_url": normalize_chat_url(base_url), "api_key": api_key, "models": models}
 
 

@@ -27,13 +27,20 @@ from pathlib import Path
 import time
 import re
 from typing import Optional
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 import uuid
 
 import aiohttp
 from aiohttp import web
 from PIL import Image
 
+from characters import (
+    LOCAL_CHARACTER_SOURCE,
+    delete_manual_character,
+    load_character_registry,
+    upsert_manual_character,
+)
+from group_chat import GroupChatStore
 from picxazz_sync import PicxazzSyncClient
 from reference_profiles import (
     analyze_reference_image,
@@ -45,11 +52,13 @@ from reference_profiles import (
     upsert_reference_profile,
 )
 from store import ScheduleStore
+from text_repair import repair_mojibake_text
 from settings import (
     DEFAULT_OUTFIT_STYLES,
     auto_push_agent,
     builtin_reference_map,
     build_child_env,
+    configured_llm_models,
     configured_python,
     image_process_timeout,
     llm_choice_text,
@@ -58,7 +67,10 @@ from settings import (
     llm_temperature_param_error,
     load_enabled_outfit_styles,
     load_runtime_persona,
+    load_schedule_forbidden_keywords,
     normalize_chat_url,
+    normalize_schedule_forbidden_keywords,
+    normalize_llm_models,
     normalize_outfit_styles,
     normalize_custom_image_size,
     normalize_custom_shot_type,
@@ -146,9 +158,33 @@ LOG_ERROR_DETAIL_KEYWORDS = (
     "异常",
     "超时",
 )
+SEND_CAPTION_DELAY_SECONDS = 3
+SEND_TIMEOUT_SECONDS = 90
+SEND_RETRY_DELAYS_SECONDS = (60, 180)
+SEND_COOLDOWN_BUFFER_SECONDS = 5
+SEND_RETRYABLE_MARKERS = (
+    "rate limited",
+    "too many requests",
+    "429",
+    "timeout",
+    "timed out",
+    "connection error",
+    "connection reset",
+    "remoteprotocolerror",
+    "server disconnected",
+    "temporarily unavailable",
+)
 DEFAULT_PHOTO_JOB_LIMIT = 6
 MIN_PHOTO_JOB_LIMIT = 3
 MAX_PHOTO_JOB_LIMIT = 6
+MAX_GROUP_CHAT_PARTICIPANTS = 12
+MAX_GROUP_CHAT_MESSAGE_CHARS = 6000
+MAX_GROUP_CHAT_METADATA_BYTES = 8192
+MAX_GROUP_CHAT_REPLY_CONTEXT = 24
+GROUP_CHAT_REPLY_PLACEHOLDERS = {
+    "这个角色要发送到群聊的一条中文消息",
+    "这个角色要发送到群聊的一条中文消息。",
+}
 TODAY_PHOTO_SOURCES = {"cron", "web"}
 FAILED_SCHEDULE_TEXT = "生成失败"
 REFERENCE_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
@@ -182,6 +218,10 @@ READ_ONLY_POST_API_PATHS = {
     "/api/check-update",
     "/api/hermes/check-update",
 }
+PRIVATE_API_PATH_PREFIXES = (
+    "/api/characters",
+    "/api/group-chat",
+)
 MANUAL_UPDATE_COMMAND = (
     "cd /path/to/portrait-gallery && "
     "git fetch origin main && "
@@ -216,7 +256,10 @@ class GalleryServer:
         self.legacy_uploaded_reference_dir = os.path.join(self.app_reference_dir, "uploads")
         self.picxazz_sync = PicxazzSyncClient(config, data_dir)
         self._image_info_cache = {}
+        self.group_chat_store = GroupChatStore(data_dir)
         self._wardrobe_image_locks: dict[str, asyncio.Lock] = {}
+        self._manual_send_lock = asyncio.Lock()
+        self._manual_send_cooldown_until = 0.0
         self._restart_scheduled = False
         os.makedirs(self.default_image_dir, exist_ok=True)
         os.makedirs(self.image_dir, exist_ok=True)
@@ -234,6 +277,9 @@ class GalleryServer:
         # 回调：外部注入
         self.on_generate_today = None
         self.on_generate_custom = None
+        self.on_generate_character = None
+        self.on_generate_character_reference = None
+        self.on_generate_group = None
         self.on_reroll_image = None
         self.on_list_photo_jobs = None
         self.on_refresh_schedule = None
@@ -281,6 +327,8 @@ class GalleryServer:
     def _requires_local_or_key(request: web.Request) -> bool:
         if not request.path.startswith("/api/"):
             return False
+        if any(request.path.startswith(prefix) for prefix in PRIVATE_API_PATH_PREFIXES):
+            return True
         if request.method.upper() in {"GET", "HEAD", "OPTIONS"}:
             return False
         if request.path in READ_ONLY_POST_API_PATHS:
@@ -342,9 +390,27 @@ class GalleryServer:
         self.app.router.add_post("/api/refresh-schedule", self.handle_refresh_schedule)
         self.app.router.add_post("/api/generate-now", self.handle_generate_now)
         self.app.router.add_post("/api/generate-custom", self.handle_generate_custom)
+        self.app.router.add_get("/api/characters", self.handle_characters)
+        self.app.router.add_post("/api/characters", self.handle_characters)
+        self.app.router.add_patch("/api/characters/{character_id}", self.handle_character_item)
+        self.app.router.add_delete("/api/characters/{character_id}", self.handle_character_item)
+        self.app.router.add_post("/api/characters/{character_id}/reference-image", self.handle_character_reference_image)
+        self.app.router.add_post("/api/characters/{character_id}/generate-reference", self.handle_generate_character_reference)
+        self.app.router.add_post("/api/generate-character-reference", self.handle_generate_character_reference)
+        self.app.router.add_post("/api/generate-character", self.handle_generate_character)
+        self.app.router.add_post("/api/generate-group", self.handle_generate_group)
+        self.app.router.add_get("/api/group-chat/rooms", self.handle_group_chat_rooms)
+        self.app.router.add_post("/api/group-chat/rooms", self.handle_group_chat_rooms)
+        self.app.router.add_get("/api/group-chat/rooms/{room_id}", self.handle_group_chat_room)
+        self.app.router.add_patch("/api/group-chat/rooms/{room_id}", self.handle_group_chat_room)
+        self.app.router.add_get("/api/group-chat/rooms/{room_id}/messages", self.handle_group_chat_messages)
+        self.app.router.add_post("/api/group-chat/rooms/{room_id}/messages", self.handle_group_chat_messages)
+        self.app.router.add_post("/api/group-chat/rooms/{room_id}/reply", self.handle_group_chat_reply)
+        self.app.router.add_post("/api/group-chat/rooms/{room_id}/bind-agent", self.handle_group_chat_bind_agent)
         self.app.router.add_post("/api/images/cleanup", self.handle_cleanup_images)
         self.app.router.add_post("/api/images/{img_id}/reroll", self.handle_reroll_image)
         self.app.router.add_post("/api/images/{img_id}/favorite", self.handle_toggle_favorite)
+        self.app.router.add_post("/api/images/{img_id}/send", self.handle_send_image)
         self.app.router.add_post("/api/integrations/picxazz/sync-favorites", self.handle_sync_picxazz_favorites)
         self.app.router.add_delete("/api/images/{img_id}", self.handle_delete_image)
         self.app.router.add_get("/api/health", self.handle_health)
@@ -597,6 +663,21 @@ class GalleryServer:
         method = m.group("method")
         path = m.group("path").split("?", 1)[0]
         return f"接口请求失败：{method} {path} 返回 {status}。"
+
+    @staticmethod
+    def _access_log_parts(message: str) -> Optional[dict]:
+        m = LOG_ACCESS_RE.search(message or "")
+        if not m:
+            return None
+        return {
+            "method": m.group("method"),
+            "path": m.group("path").split("?", 1)[0],
+            "status": int(m.group("status")),
+        }
+
+    @staticmethod
+    def _is_normal_access_status(status: int) -> bool:
+        return 200 <= status < 400
 
     @classmethod
     def _translate_log_message(cls, message: str, level: str = "INFO", logger_name: str = "") -> str:
@@ -979,6 +1060,7 @@ class GalleryServer:
     @classmethod
     def _format_level_logs(cls, text: str, max_items: int = 100) -> dict:
         entries = []
+        hidden_access_count = 0
         display_levels = {
             "DEBUG": "DEBUG",
             "INFO": "INFO",
@@ -1005,14 +1087,16 @@ class GalleryServer:
             display_level = display_levels.get(level, level)
 
             if logger_name == "aiohttp.access":
-                access_match = LOG_ACCESS_RE.search(message or "")
-                if access_match:
-                    method = access_match.group("method")
-                    path = access_match.group("path").split("?", 1)[0]
-                    status = access_match.group("status")
-                    if path == "/api/logs":
+                access = cls._access_log_parts(message)
+                if access:
+                    if cls._is_normal_access_status(access["status"]):
+                        hidden_access_count += 1
                         continue
-                    message_text = f"接口访问：{method} {path} -> {status}"
+                    message_text = f"接口异常：{access['method']} {access['path']} -> {access['status']}"
+                    if access["status"] >= 500:
+                        display_level = "ERROR"
+                    elif access["status"] >= 400:
+                        display_level = "WARN"
                 else:
                     message_text = message.strip()
             else:
@@ -1034,6 +1118,8 @@ class GalleryServer:
             f"运行日志（最近 {len(selected)} 条）",
             f"INFO {counts.get('INFO', 0)} · DEBUG {counts.get('DEBUG', 0)} · WARN {counts.get('WARN', 0)} · ERROR {counts.get('ERROR', 0)}",
         ]
+        if hidden_access_count:
+            output.append(f"已隐藏普通接口访问日志 {hidden_access_count} 条（2xx/3xx）。")
         if selected:
             output.append("")
             for item in selected:
@@ -1048,6 +1134,7 @@ class GalleryServer:
             "total_count": len(entries),
             "raw_error_count": counts.get("ERROR", 0),
             "level_counts": counts,
+            "hidden_access_count": hidden_access_count,
         }
 
     async def handle_logs(self, request: web.Request):
@@ -2257,6 +2344,321 @@ class GalleryServer:
             raise web.HTTPNotFound()
         return web.FileResponse(path)
 
+    def _gallery_entry_for_image(self, img_id: str) -> dict:
+        img_id = str(img_id or "").strip()
+        if not img_id:
+            return {}
+        try:
+            store = ScheduleStore(self.data_dir)
+            all_data = store.load()
+        except Exception as e:
+            logger.error("Load gallery entry for send failed: %s", e)
+            return {}
+        if not isinstance(all_data, dict):
+            return {}
+        entry = all_data.get(img_id)
+        if isinstance(entry, dict):
+            return dict(entry)
+        for value in all_data.values():
+            if not isinstance(value, dict):
+                continue
+            if value.get("image_filename") == img_id or value.get("id") == img_id:
+                return dict(value)
+        return {}
+
+    def _manual_push_delivery_config(self, channel: str) -> dict:
+        keys = self._load_api_keys_config()
+        integrations = self.config.get("integrations", {}) if isinstance(self.config.get("integrations"), dict) else {}
+        persona_source = (
+            keys.get("persona_source")
+            or os.getenv("GALLERY_PERSONA_SOURCE", "")
+            or integrations.get("persona_source", "")
+        )
+        channel = normalize_push_channel(channel)
+        return {
+            "channel": channel,
+            "agent": auto_push_agent(persona_source, channel),
+            "telegram_target": (
+                str(keys.get("telegram_target") or "").strip()
+                or os.getenv("TELEGRAM_CHAT_ID", "").strip()
+                or str(integrations.get("telegram_target") or "").strip()
+            ),
+            "telegram_account": (
+                os.getenv("ZHUZHU_SEND_ACCOUNT", "").strip()
+                or str(integrations.get("telegram_account") or "default").strip()
+            ),
+            "wechat_target": str(integrations.get("wechat_target") or "weixin").strip(),
+        }
+
+    async def handle_send_image(self, request: web.Request):
+        img_id = request.match_info.get("img_id", "")
+        try:
+            body = await request.json() if request.can_read_body else {}
+        except Exception:
+            body = {}
+        body = body if isinstance(body, dict) else {}
+        channel = normalize_push_channel(body.get("channel") or "wechat")
+        entry = self._gallery_entry_for_image(img_id)
+        if not entry:
+            return web.json_response({"error": "image_not_found", "message": "图片记录不存在"}, status=404)
+
+        filename = str(entry.get("image_filename") or img_id or "").strip()
+        image_path = self._image_file_path(filename)
+        if not image_path:
+            return web.json_response({"error": "image_file_missing", "message": "图片文件不存在"}, status=404)
+
+        caption = self._prefer_caption_text(body.get("caption", ""), entry.get("caption", ""))
+        delivery = self._manual_push_delivery_config(channel)
+        ok = await self._send_existing_image(channel, image_path, caption, delivery)
+        label = "TG" if channel == "telegram" else "微信"
+        if ok:
+            return web.json_response({
+                "status": "ok",
+                "channel": channel,
+                "agent": delivery.get("agent", ""),
+                "message": f"已发送到{label}",
+            })
+        return web.json_response({
+            "error": "send_failed",
+            "channel": channel,
+            "agent": delivery.get("agent", ""),
+            "message": f"{label}发送失败，请查看运行日志。",
+        }, status=500)
+
+    async def _send_existing_image(self, channel: str, image_path: str, caption: str, delivery: dict) -> bool:
+        channel = normalize_push_channel(channel)
+        agent = delivery.get("agent", "")
+        logger.info("手动发送图片: channel=%s agent=%s image=%s", channel, agent, os.path.basename(image_path))
+        if agent == "openclaw":
+            openclaw_ok = await self._send_existing_openclaw(channel, image_path, caption, delivery)
+            if openclaw_ok:
+                return True
+            logger.warning("手动 OpenClaw 发送失败，尝试 Hermes fallback: channel=%s", channel)
+        return await self._send_existing_hermes(channel, image_path, caption, delivery)
+
+    async def _send_existing_hermes(self, channel: str, image_path: str, caption: str, delivery: dict) -> bool:
+        integrations = self.config.get("integrations", {}) if isinstance(self.config.get("integrations"), dict) else {}
+        hermes_cmd = integrations.get("hermes_cli", "") or os.getenv("HERMES_CLI", "") or shutil.which("hermes")
+        if not hermes_cmd:
+            venv_subdir = "Scripts" if sys.platform.startswith("win") else "bin"
+            candidate_names = ("hermes.exe", "hermes") if sys.platform.startswith("win") else ("hermes",)
+            for candidate_name in candidate_names:
+                candidate = os.path.join(
+                    os.path.expanduser("~"),
+                    ".hermes",
+                    "hermes-agent",
+                    "venv",
+                    venv_subdir,
+                    candidate_name,
+                )
+                if os.path.exists(candidate):
+                    hermes_cmd = candidate
+                    break
+        if not hermes_cmd:
+            logger.warning("未找到 Hermes CLI，无法手动发送")
+            return False
+
+        channel = normalize_push_channel(channel)
+        target = delivery.get("wechat_target") if channel == "wechat" else (
+            str(delivery.get("telegram_target") or integrations.get("hermes_telegram_target") or "").strip()
+            or "telegram"
+        )
+        label = "微信" if channel == "wechat" else "TG"
+        async with self._manual_send_lock:
+            image_ok = await self._run_manual_hermes_send(
+                hermes_cmd,
+                target,
+                f"MEDIA:{image_path}",
+                f"{label}图片",
+                required=True,
+            )
+            if not image_ok:
+                logger.error("%s手动发送失败: 图片未送达，跳过文案发送", label)
+                return False
+            caption_ok = True
+            if caption:
+                await asyncio.sleep(SEND_CAPTION_DELAY_SECONDS)
+                caption_ok = await self._run_manual_hermes_send(
+                    hermes_cmd,
+                    target,
+                    caption,
+                    f"{label}文案",
+                    required=False,
+                )
+        return image_ok if not caption_ok else True
+
+    async def _send_existing_openclaw(self, channel: str, image_path: str, caption: str, delivery: dict) -> bool:
+        integrations = self.config.get("integrations", {}) if isinstance(self.config.get("integrations"), dict) else {}
+        openclaw_cmd = integrations.get("openclaw_cli", "") or os.getenv("OPENCLAW_CLI", "") or shutil.which("openclaw")
+        if not openclaw_cmd:
+            logger.warning("未找到 OpenClaw CLI，无法手动发送")
+            return False
+
+        channel = normalize_push_channel(channel)
+        if channel == "telegram":
+            openclaw_channel = str(integrations.get("openclaw_telegram_channel") or "telegram").strip()
+            target = delivery.get("telegram_target", "")
+            account = delivery.get("telegram_account", "default") or "default"
+        else:
+            openclaw_channel = str(
+                integrations.get("openclaw_wechat_channel")
+                or os.getenv("OPENCLAW_WECHAT_CHANNEL", "")
+                or "openclaw-weixin"
+            ).strip()
+            target = (
+                os.getenv("OPENCLAW_WECHAT_TARGET", "").strip()
+                or str(integrations.get("openclaw_wechat_target") or "").strip()
+                or delivery.get("wechat_target", "")
+            )
+            account = str(integrations.get("openclaw_wechat_account") or "default").strip()
+        if not target:
+            logger.warning("OpenClaw 手动发送目标未配置: channel=%s", channel)
+            return False
+
+        cmd = [
+            openclaw_cmd,
+            "message",
+            "send",
+            "--channel",
+            openclaw_channel,
+            "--account",
+            account,
+            "--target",
+            target,
+            "--media",
+            image_path,
+            "--message",
+            caption or "",
+            "--json",
+        ]
+        label = "TG" if channel == "telegram" else "微信"
+        try:
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=SEND_TIMEOUT_SECONDS),
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("OpenClaw %s手动发送超时", label)
+            return False
+        except Exception as e:
+            logger.warning("OpenClaw %s手动发送异常: %s", label, e)
+            return False
+
+        output = self._manual_send_output(result.stdout, result.stderr)
+        if result.returncode == 0:
+            logger.info("OpenClaw %s手动发送成功", label)
+            return True
+        logger.warning("OpenClaw %s手动发送失败: exit=%s output=%s", label, result.returncode, output)
+        return False
+
+    async def _run_manual_hermes_send(
+        self,
+        hermes_cmd: str,
+        target: str,
+        message: str,
+        label: str,
+        required: bool = True,
+    ) -> bool:
+        attempts = 1 + len(SEND_RETRY_DELAYS_SECONDS)
+        last_output = ""
+        retry_after = 0.0
+        for attempt_idx in range(attempts):
+            attempt_no = attempt_idx + 1
+            if attempt_idx:
+                delay = retry_after or SEND_RETRY_DELAYS_SECONDS[attempt_idx - 1]
+                logger.info("%s发送重试等待 %ss (%s/%s)", label, delay, attempt_no, attempts)
+                await asyncio.sleep(delay)
+            await self._wait_manual_send_cooldown(label)
+            try:
+                loop = asyncio.get_running_loop()
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: subprocess.run(
+                        [hermes_cmd, "send", "--json", "--to", target, message],
+                        capture_output=True,
+                        text=True,
+                        timeout=SEND_TIMEOUT_SECONDS,
+                    ),
+                )
+            except subprocess.TimeoutExpired:
+                last_output = f"hermes send timed out after {SEND_TIMEOUT_SECONDS}s"
+                logger.warning("%s发送超时: attempt=%s/%s", label, attempt_no, attempts)
+                continue
+            except Exception as e:
+                last_output = str(e)
+                logger.warning("%s发送异常: attempt=%s/%s error=%s", label, attempt_no, attempts, e)
+                continue
+
+            output = self._manual_send_output(result.stdout, result.stderr)
+            if result.returncode == 0:
+                logger.info("%s发送成功", label)
+                return True
+            last_output = output or f"exit code {result.returncode}"
+            retryable = self._is_retryable_send_error(last_output)
+            cooldown_seconds = self._extract_send_cooldown_seconds(last_output)
+            if cooldown_seconds:
+                retry_after = max(1.0, cooldown_seconds + SEND_COOLDOWN_BUFFER_SECONDS)
+                self._mark_manual_send_cooldown(retry_after)
+            elif retryable and attempt_no < attempts:
+                retry_after = float(SEND_RETRY_DELAYS_SECONDS[attempt_idx])
+            log_fn = logger.warning if (retryable and attempt_no < attempts) or not required else logger.error
+            log_fn(
+                "%s发送失败: attempt=%s/%s exit=%s retryable=%s output=%s",
+                label,
+                attempt_no,
+                attempts,
+                result.returncode,
+                retryable,
+                last_output,
+            )
+            if not retryable:
+                break
+        log_fn = logger.error if required else logger.warning
+        log_fn("%s发送最终失败: %s", label, last_output)
+        return False
+
+    async def _wait_manual_send_cooldown(self, label: str):
+        wait_seconds = max(0.0, self._manual_send_cooldown_until - time.monotonic())
+        if wait_seconds > 0:
+            logger.info("%s等待发送冷却 %.1fs", label, wait_seconds)
+            await asyncio.sleep(wait_seconds)
+
+    def _mark_manual_send_cooldown(self, seconds: float):
+        if seconds <= 0:
+            return
+        self._manual_send_cooldown_until = max(
+            self._manual_send_cooldown_until,
+            time.monotonic() + seconds,
+        )
+
+    @staticmethod
+    def _manual_send_output(stdout: str, stderr: str) -> str:
+        parts = [part.strip() for part in (stdout, stderr) if part and part.strip()]
+        output = "\n".join(parts)
+        return ("..." + output[-1500:]) if len(output) > 1500 else output
+
+    @staticmethod
+    def _is_retryable_send_error(output: str) -> bool:
+        text = (output or "").lower()
+        return any(marker in text for marker in SEND_RETRYABLE_MARKERS)
+
+    @staticmethod
+    def _extract_send_cooldown_seconds(output: str) -> float:
+        patterns = (
+            r"cooldown active for\s+([0-9]+(?:\.[0-9]+)?)\s*s",
+            r"retry(?:\s|-)?after[:=]?\s*([0-9]+(?:\.[0-9]+)?)\s*s",
+            r"冷却\s*([0-9]+(?:\.[0-9]+)?)\s*秒",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, output or "", re.IGNORECASE)
+            if match:
+                try:
+                    return max(0.0, float(match.group(1)))
+                except ValueError:
+                    return 0.0
+        return 0.0
+
     def _github_proxy(self) -> str:
         """Return the effective GitHub-only proxy URL, if configured."""
         keys = self._load_api_keys_config()
@@ -2654,14 +3056,17 @@ class GalleryServer:
             except Exception as e:
                 logger.error(f"Load plugin config error: {e}")
 
-        # 读取 config.yaml 的 llm.model
+        # 读取 config.yaml 的 LLM 模型链
         llm_model = ""
+        llm_model_chain = []
         if self.config_path and os.path.exists(self.config_path):
             try:
                 import yaml
-                with open(self.config_path, 'r') as f:
+                with open(self.config_path, 'r', encoding='utf-8') as f:
                     full_config = yaml.safe_load(f) or {}
-                llm_model = full_config.get("llm", {}).get("model", "")
+                full_llm_config = full_config.get("llm", {}) if isinstance(full_config.get("llm"), dict) else {}
+                llm_model_chain = configured_llm_models(full_llm_config)
+                llm_model = llm_model_chain[0] if llm_model_chain else full_llm_config.get("model", "")
             except Exception as e:
                 logger.error(f"Load config.yaml error: {e}")
 
@@ -2740,6 +3145,7 @@ class GalleryServer:
             },
             "outfit_styles": DEFAULT_OUTFIT_STYLES,
             "enabled_outfit_styles": load_enabled_outfit_styles(self.config, self.data_dir),
+            "schedule_forbidden_keywords": load_schedule_forbidden_keywords(self.config, self.data_dir),
             "github_proxy": self._github_proxy(),
             "github_api": default_github_api,
             "github_api_local": "",
@@ -2750,6 +3156,7 @@ class GalleryServer:
             "image_dir_exists": os.path.isdir(effective_image_dir),
             "llm_model": llm_model,
             "llm_models": self.config.get("llm", {}),
+            "llm_model_chain": llm_model_chain,
             "gitee_fallback_enabled": gitee_fallback_enabled,
             "push_channel": push_channel,
             "push_channel_local": normalize_push_channel(local_push_channel_raw) if local_push_channel_raw else "",
@@ -3196,6 +3603,9 @@ class GalleryServer:
             normalized.setdefault("outfit_full", normalized.get("outfit", ""))
             normalized["outfit"] = outfit_for_display
 
+        if normalized.get("caption"):
+            normalized["caption"] = self._clean_caption_text(normalized.get("caption", ""))
+
         self._ensure_entry_reference_label(normalized)
         return normalized
 
@@ -3637,6 +4047,10 @@ class GalleryServer:
                         if not styles:
                             return web.json_response({"error": "至少保留一个穿搭风格"}, status=400)
                         keys_config["enabled_outfit_styles"] = styles
+                    if "schedule_forbidden_keywords" in body:
+                        keys_config["schedule_forbidden_keywords"] = normalize_schedule_forbidden_keywords(
+                            body.get("schedule_forbidden_keywords")
+                        )
                     # GitHub proxy is local-only and may be cleared with an empty string.
                     if "github_proxy" in body:
                         keys_config["github_proxy"] = str(body["github_proxy"] or "").strip()
@@ -3707,22 +4121,39 @@ class GalleryServer:
                 finally:
                     fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
-            # 保存 llm_model 到 config.yaml
-            if "llm_model" in body and self.config_path and os.path.exists(self.config_path):
+            # 保存 LLM 模型链到 config.yaml
+            if (
+                ("llm_model" in body or "llm_models" in body)
+                and self.config_path
+                and os.path.exists(self.config_path)
+            ):
                 try:
                     import yaml
-                    with open(self.config_path, 'r') as f:
+                    with open(self.config_path, 'r', encoding='utf-8') as f:
                         full_config = yaml.safe_load(f) or {}
-                    if "llm" not in full_config:
+                    if "llm" not in full_config or not isinstance(full_config.get("llm"), dict):
                         full_config["llm"] = {}
-                    full_config["llm"]["model"] = body["llm_model"]
+                    raw_llm_models = body.get("llm_models", [])
+                    if isinstance(raw_llm_models, dict):
+                        requested_models = configured_llm_models(raw_llm_models)
+                    elif isinstance(raw_llm_models, (list, tuple)):
+                        requested_models = raw_llm_models
+                    else:
+                        requested_models = []
+                    requested_chain = normalize_llm_models(
+                        body.get("llm_model", ""),
+                        requested_models,
+                    )
+                    full_config["llm"]["models"] = requested_chain
+                    full_config["llm"]["model"] = requested_chain[0] if requested_chain else ""
+                    full_config["llm"]["fallback_model"] = requested_chain[1] if len(requested_chain) > 1 else ""
                     with open(self.config_path, 'w', encoding='utf-8') as f:
                         yaml.dump(full_config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
                     # 更新内存中的 config
                     self.config["llm"] = full_config["llm"]
-                    logger.info(f"LLM model updated to: {body['llm_model']}")
+                    logger.info("LLM model chain updated to: %s", ", ".join(requested_chain) or "(empty)")
                 except Exception as e:
-                    logger.error(f"Save llm_model error: {e}")
+                    logger.error(f"Save llm models error: {e}")
 
             hermes_or_openclaw_keys = [key for key in ("hermes_cli", "openclaw_cli") if key in body]
             if hermes_or_openclaw_keys and self.config_path and os.path.exists(self.config_path):
@@ -4650,18 +5081,50 @@ class GalleryServer:
         return ""
 
     @staticmethod
+    def _caption_has_instruction_leak(text: str) -> bool:
+        compact = re.sub(r"\s+", "", str(text or ""))
+        if not compact:
+            return False
+        markers = (
+            "我们被要求",
+            "被要求以",
+            "口吻写一句",
+            "照片的配文",
+            "内容要像",
+            "真实想法",
+            "具体到正在做的事",
+            "下一步安排",
+            "当前日程",
+            "请写一条",
+            "直接输出",
+            "不要加引号",
+            "不要写长段落",
+            "禁止使用",
+            "输出1-2句",
+            "小心思要像",
+            "下面的口吻",
+            "读者称呼",
+            "这是一条",
+        )
+        return any(marker in compact for marker in markers)
+
+    @staticmethod
     def _clean_caption_text(text: str, limit: int = 180) -> str:
+        text = repair_mojibake_text(text)
         text = re.sub(r"\r\n?", "\n", str(text or "")).strip()
         text = re.sub(r"^```(?:json|text|markdown)?\s*|\s*```$", "", text, flags=re.IGNORECASE).strip()
         text = text.strip(" \t\n\r\"'“”‘’")
+        if GalleryServer._caption_has_instruction_leak(text):
+            return ""
         if len(text) > limit:
             text = text[:limit].rstrip(" \t\n\r，,。.!！?；;、") + "…"
         return text
 
     @staticmethod
     def _caption_text_usable(text: str) -> bool:
+        text = repair_mojibake_text(text)
         text = re.sub(r"\s+", "", str(text or "")).strip("，,。.!！?；;、")
-        return len(text) >= 4
+        return len(text) >= 4 and not GalleryServer._caption_has_instruction_leak(text)
 
     @classmethod
     def _prefer_caption_text(cls, candidate: str = "", current: str = "") -> str:
@@ -4892,23 +5355,82 @@ class GalleryServer:
             return resp
 
         loop = asyncio.get_running_loop()
-        for model in models[:1]:
+        retryable_statuses = {429, 500, 502, 503, 504}
+        direct_fallback_statuses = {401, 403}
+        per_model_attempts = 2
+
+        def _response_detail(resp) -> str:
+            if resp is None:
+                return "no response"
             try:
-                resp = await loop.run_in_executor(None, lambda m=model: _post_llm(m))
-                if resp is None or resp.status_code != 200:
-                    status = resp.status_code if resp is not None else "no response"
-                    logger.warning("Hermes display description translation failed: model=%s status=%s", model, status)
-                    continue
-                data = resp.json()
-                choices = data.get("choices") if isinstance(data, dict) else None
-                if not choices:
-                    logger.warning("Hermes display description translation invalid response: model=%s", model)
-                    continue
-                content = self._clean_display_description(llm_choice_text(choices[0]))
-                if self._is_usable_hermes_display_description(content):
-                    return content
-            except Exception as e:
-                logger.warning("Hermes display description translation error: model=%s err=%s", model, e)
+                body = resp.json()
+                error = body.get("error") if isinstance(body, dict) else None
+                if isinstance(error, dict):
+                    return str(error.get("message") or error.get("code") or "")[:240]
+                if isinstance(body, dict):
+                    return str(body.get("msg") or body.get("status") or body.get("message") or "")[:240]
+            except Exception:
+                return (resp.text or "")[:240]
+            return ""
+
+        def _model_unavailable(detail: str) -> bool:
+            lower = str(detail or "").lower()
+            return any(
+                marker in lower
+                for marker in (
+                    "model not found",
+                    "model_not_found",
+                    "does not exist",
+                    "not exist",
+                    "no permission",
+                    "permission denied",
+                    "unauthorized",
+                    "forbidden",
+                )
+            )
+
+        for model in models:
+            for attempt in range(1, per_model_attempts + 1):
+                try:
+                    resp = await loop.run_in_executor(None, lambda m=model: _post_llm(m))
+                    if resp is None or resp.status_code != 200:
+                        status = resp.status_code if resp is not None else "no response"
+                        detail = _response_detail(resp)
+                        logger.warning(
+                            "Hermes display description translation failed: model=%s status=%s attempt=%s/%s detail=%s",
+                            model,
+                            status,
+                            attempt,
+                            per_model_attempts,
+                            detail,
+                        )
+                        if status in direct_fallback_statuses or _model_unavailable(detail):
+                            break
+                        if attempt < per_model_attempts and (resp is None or status in retryable_statuses):
+                            await asyncio.sleep(1)
+                            continue
+                        break
+                    data = resp.json()
+                    choices = data.get("choices") if isinstance(data, dict) else None
+                    if not choices:
+                        logger.warning("Hermes display description translation invalid response: model=%s", model)
+                        break
+                    content = self._clean_display_description(llm_choice_text(choices[0]))
+                    if self._is_usable_hermes_display_description(content):
+                        return content
+                    break
+                except Exception as e:
+                    logger.warning(
+                        "Hermes display description translation error: model=%s attempt=%s/%s err=%s",
+                        model,
+                        attempt,
+                        per_model_attempts,
+                        e,
+                    )
+                    if attempt < per_model_attempts:
+                        await asyncio.sleep(1)
+                        continue
+                    break
         return ""
 
     async def _normalize_hermes_display_description(self, description: str, prompt: str, mode_label: str = "") -> str:
@@ -4966,6 +5488,1428 @@ class GalleryServer:
                 logger.error(f"Generate error: {e}")
                 return web.json_response({"error": str(e)}, status=500)
         return web.json_response({"error": "no_generator"}, status=500)
+
+    def _character_reference_image_url(self, ref_image: str) -> str:
+        raw = str(ref_image or "").strip()
+        if not raw:
+            return ""
+        if raw.startswith(("http://", "https://", "data:", "/refs/", "/local-refs/", "/images/")):
+            return raw
+        resolved = self._resolve_reference_image(raw, allow_any_path=True)
+        if not resolved:
+            return ""
+        try:
+            candidate = Path(resolved).resolve()
+            for base_dir, prefix in (
+                (self.reference_dir, "/local-refs"),
+                (self.app_reference_dir, "/refs"),
+                (self.image_dir, "/images"),
+                (self.default_image_dir, "/images"),
+            ):
+                if not base_dir:
+                    continue
+                try:
+                    rel = candidate.relative_to(Path(base_dir).resolve()).as_posix()
+                    return f"{prefix}/{quote(rel)}"
+                except ValueError:
+                    continue
+        except Exception:
+            return ""
+        return ""
+
+    def _public_character_payload(self, character: dict) -> dict:
+        if not isinstance(character, dict):
+            return {}
+        reference_image = character.get("reference_image", "")
+        return {
+            "id": character.get("id", ""),
+            "name": character.get("name", ""),
+            "persona": character.get("persona", ""),
+            "appearance": character.get("appearance", ""),
+            "reference_style": character.get("reference_style", ""),
+            "reference_image": reference_image,
+            "reference_image_url": self._character_reference_image_url(reference_image),
+            "voice": character.get("voice", ""),
+            "llm_model": character.get("llm_model", ""),
+            "agent_id": character.get("agent_id", ""),
+            "enabled": bool(character.get("enabled", True)),
+            "source": character.get("source", ""),
+            "editable": character.get("source") == LOCAL_CHARACTER_SOURCE,
+        }
+
+    def _character_registry(self):
+        return load_character_registry(
+            self.config,
+            load_runtime_persona(self.config, self.data_dir),
+            self.data_dir,
+        )
+
+    def _reserved_character_ids(self) -> set[str]:
+        try:
+            registry = self._character_registry()
+        except Exception:
+            return set()
+        return {
+            str(character.get("id") or "")
+            for character in registry.characters
+            if character.get("source") != LOCAL_CHARACTER_SOURCE and character.get("id")
+        }
+
+    @staticmethod
+    def _character_body(body: dict, character_id: str = "") -> dict:
+        payload = body if isinstance(body, dict) else {}
+        result = {
+            "id": str(payload.get("id") or payload.get("character_id") or character_id or "").strip(),
+            "name": payload.get("name") or payload.get("character_name") or "",
+            "persona": payload.get("persona") or payload.get("description") or "",
+            "appearance": payload.get("appearance") or payload.get("visual_prompt") or "",
+            "voice": payload.get("voice") or payload.get("tone") or "",
+            "llm_model": payload.get("llm_model") or payload.get("llmModel") or payload.get("chat_model") or "",
+            "reference_style": payload.get("reference_style") or payload.get("style") or "",
+            "reference_image": payload.get("reference_image") or payload.get("image") or "",
+            "prompt_prefix": payload.get("prompt_prefix") or "",
+            "agent_id": payload.get("agent_id") or payload.get("agent") or "",
+            "enabled": payload.get("enabled", True),
+        }
+        for key in (
+            "relationship",
+            "relationship_prompt",
+            "relation",
+            "group_role",
+            "position",
+            "placement",
+            "standing",
+            "composition",
+        ):
+            if key in payload:
+                result[key] = payload.get(key)
+        return result
+
+    async def handle_characters(self, request: web.Request):
+        """List or create local gallery characters without mutating config."""
+        try:
+            if request.method == "POST":
+                body = await request.json()
+                character = upsert_manual_character(
+                    self.data_dir,
+                    self._character_body(body),
+                    reserved_ids=self._reserved_character_ids(),
+                )
+                registry = self._character_registry()
+                return web.json_response({
+                    "character": self._public_character_payload(character),
+                    "default_character_id": registry.default_id,
+                }, status=201)
+
+            registry = self._character_registry()
+            all_characters = [
+                self._public_character_payload(character)
+                for character in registry.characters
+            ]
+            enabled = [
+                character
+                for character in all_characters
+                if character.get("enabled", True)
+            ]
+            return web.json_response({
+                "default_character_id": registry.default_id,
+                "characters": enabled,
+                "all_characters": all_characters,
+            })
+        except Exception as e:
+            logger.error("Characters API error: %s", e)
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_character_item(self, request: web.Request):
+        """Update or delete one local gallery character."""
+        character_id = str(request.match_info.get("character_id") or "").strip()
+        if not character_id:
+            return web.json_response({"error": "character_id_required"}, status=400)
+        registry = self._character_registry()
+        character = registry.get_character(character_id, fallback=False)
+        if not character:
+            return web.json_response({"error": "character_not_found"}, status=404)
+        if character.get("source") != LOCAL_CHARACTER_SOURCE:
+            return web.json_response({"error": "character_not_editable"}, status=403)
+
+        try:
+            if request.method == "DELETE":
+                deleted = delete_manual_character(self.data_dir, character.get("id", ""))
+                if not deleted:
+                    return web.json_response({"error": "character_not_found"}, status=404)
+                return web.json_response({"deleted": True, "character": self._public_character_payload(deleted)})
+
+            body = await request.json()
+            payload = self._character_body(body, str(character.get("id") or character_id))
+            if not payload.get("id"):
+                payload["id"] = character.get("id", "")
+            updated = upsert_manual_character(
+                self.data_dir,
+                payload,
+                reserved_ids=self._reserved_character_ids(),
+            )
+            return web.json_response({"character": self._public_character_payload(updated)})
+        except Exception as e:
+            logger.error("Character item API error: %s", e)
+            return web.json_response({"error": str(e)}, status=500)
+
+    def _gallery_reference_image_from_body(self, body: dict) -> tuple[str, str]:
+        payload = body if isinstance(body, dict) else {}
+        raw = str(
+            payload.get("image_filename")
+            or payload.get("filename")
+            or payload.get("image_path")
+            or payload.get("reference_image")
+            or ""
+        ).strip()
+        if not raw:
+            return "", "image_required"
+
+        raw = unquote(raw.split("?", 1)[0].split("#", 1)[0]).strip()
+        if raw.startswith("/images/"):
+            filename = raw.removeprefix("/images/")
+        else:
+            filename = raw
+
+        if not filename or not self._image_file_path(filename):
+            return "", "image_not_found"
+        if not self._is_reference_image_file(filename):
+            return "", "invalid_image"
+        return f"/images/{quote(filename, safe='/')}", ""
+
+    async def handle_character_reference_image(self, request: web.Request):
+        """Use an existing gallery image as the selected character reference image."""
+        character_id = str(request.match_info.get("character_id") or "").strip()
+        if not character_id:
+            return web.json_response({"error": "character_id_required"}, status=400)
+        registry = self._character_registry()
+        character = registry.get_character(character_id, fallback=False)
+        if not character:
+            return web.json_response({"error": "character_not_found"}, status=404)
+
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid_json"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "invalid_json"}, status=400)
+
+        reference_image, error = self._gallery_reference_image_from_body(body)
+        if error:
+            status = 404 if error == "image_not_found" else 400
+            return web.json_response({"error": error}, status=status)
+
+        try:
+            payload = dict(character)
+            payload["id"] = str(character.get("id") or character_id)
+            payload["reference_image"] = reference_image
+            reserved_ids = self._reserved_character_ids()
+            reserved_ids.discard(payload["id"])
+            upsert_manual_character(self.data_dir, payload, reserved_ids=reserved_ids)
+            updated_registry = self._character_registry()
+            updated = updated_registry.get_character(payload["id"], fallback=False) or payload
+            return web.json_response({
+                "success": True,
+                "character": self._public_character_payload(updated),
+                "reference_image": reference_image,
+            })
+        except Exception as e:
+            logger.error("Character reference image update error: %s", e)
+            return web.json_response({"error": "save_failed", "detail": str(e)}, status=500)
+
+    @staticmethod
+    def _character_ids_from_body(body: dict) -> list[str]:
+        raw = body.get("character_ids")
+        if raw is None:
+            raw = body.get("characters")
+        if raw is None:
+            raw = body.get("ids")
+        if isinstance(raw, str):
+            parts = re.split(r"[\s,，、|/]+", raw)
+        elif isinstance(raw, list):
+            parts = raw
+        else:
+            parts = []
+        result = []
+        for item in parts:
+            if isinstance(item, dict):
+                item = item.get("id") or item.get("character_id")
+            text = str(item or "").strip()
+            if text and text not in result:
+                result.append(text)
+        return result
+
+    def _validate_image_model_from_body(self, body: dict) -> tuple[str, Optional[web.Response]]:
+        image_model = self._normalize_image_model_id(body.get("model") or body.get("image_model") or body.get("gpt_model"))
+        raw_image_model = str(body.get("model") or body.get("image_model") or body.get("gpt_model") or "").strip()
+        if raw_image_model and not image_model and raw_image_model.lower() not in {"default", "auto", "current"}:
+            return "", web.json_response({"error": "invalid_image_model"}, status=400)
+        return image_model, None
+
+    @staticmethod
+    def _optional_character_image_size(body: dict) -> str:
+        if not any(str(body.get(key) or "").strip() for key in ("size", "aspect", "resolution")):
+            return ""
+        return normalize_custom_image_size(
+            body.get("size", ""),
+            body.get("aspect", ""),
+            body.get("resolution", ""),
+        )
+
+    @staticmethod
+    def _optional_character_shot_type(body: dict) -> str:
+        raw = str(body.get("shot_type") or body.get("shot") or "").strip()
+        return normalize_custom_shot_type(raw) if raw else ""
+
+    @staticmethod
+    def _optional_character_reference_mode(body: dict) -> str:
+        raw = str(body.get("reference_mode") or body.get("referenceMode") or "").strip().lower()
+        raw = raw.replace("-", "_")
+        if raw in {"today_schedule", "schedule"}:
+            return "today_schedule"
+        return ""
+
+    async def handle_generate_character(self, request: web.Request):
+        """Generate one image for a selected character without changing the legacy generator."""
+        if not self.on_generate_character:
+            return web.json_response({"error": "no_generator"}, status=500)
+        try:
+            body = await request.json()
+            prompt = str(body.get("prompt", "") or "").strip()
+            if not prompt:
+                return web.json_response({"error": "prompt_required"}, status=400)
+
+            registry = self._character_registry()
+            character_id = str(body.get("character_id") or body.get("id") or registry.default_id or "").strip()
+            character = registry.get_character(character_id, fallback=False)
+            if not character or not character.get("enabled", True):
+                return web.json_response({"error": "character_not_found"}, status=404)
+
+            size = self._optional_character_image_size(body)
+            shot_type = self._optional_character_shot_type(body)
+            image_model, model_error = self._validate_image_model_from_body(body)
+            if model_error is not None:
+                return model_error
+            style_hint = str(body.get("style") or body.get("style_hint") or "").strip()
+            reference_mode = self._optional_character_reference_mode(body)
+
+            entry = await self.on_generate_character(
+                character.get("id", ""),
+                prompt,
+                size,
+                shot_type,
+                image_model,
+                style_hint,
+                reference_mode=reference_mode,
+            )
+            if entry and entry.status == "ok":
+                payload = entry.to_dict()
+                try:
+                    payload = self._normalize_entry_display(payload, self._load_image_metadata())
+                except Exception as e:
+                    logger.warning("Normalize character generate response failed: %s", e)
+                return web.json_response(payload)
+            return web.json_response({"error": "generate_failed"}, status=500)
+        except Exception as e:
+            logger.error("Character generate error: %s", e)
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_generate_character_reference(self, request: web.Request):
+        """Generate a character reference sheet for one configured character."""
+        if not self.on_generate_character_reference:
+            return web.json_response({"error": "no_generator"}, status=500)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+
+        try:
+            registry = self._character_registry()
+            path_character_id = str(request.match_info.get("character_id") or "").strip()
+            character_id = str(
+                path_character_id
+                or body.get("character_id")
+                or body.get("id")
+                or registry.default_id
+                or ""
+            ).strip()
+            character = registry.get_character(character_id, fallback=False)
+            if not character or not character.get("enabled", True):
+                return web.json_response({"error": "character_not_found"}, status=404)
+
+            prompt = str(body.get("prompt", "") or "").strip()
+            size = self._optional_character_image_size(body)
+            shot_type = self._optional_character_shot_type(body)
+            image_model, model_error = self._validate_image_model_from_body(body)
+            if model_error is not None:
+                return model_error
+            style_hint = str(body.get("style") or body.get("style_hint") or "").strip()
+
+            entry = await self.on_generate_character_reference(
+                character.get("id", ""),
+                prompt,
+                size,
+                shot_type,
+                image_model,
+                style_hint,
+            )
+            if entry and entry.status == "ok":
+                payload = entry.to_dict()
+                try:
+                    payload = self._normalize_entry_display(payload, self._load_image_metadata())
+                except Exception as e:
+                    logger.warning("Normalize character reference response failed: %s", e)
+                return web.json_response(payload)
+            return web.json_response({"error": "generate_failed"}, status=500)
+        except Exception as e:
+            logger.error("Character reference generate error: %s", e)
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_generate_group(self, request: web.Request):
+        """Generate a group photo for multiple configured characters."""
+        if not self.on_generate_group:
+            return web.json_response({"error": "no_generator"}, status=500)
+        try:
+            body = await request.json()
+            prompt = str(body.get("prompt", "") or "").strip()
+            if not prompt:
+                return web.json_response({"error": "prompt_required"}, status=400)
+
+            registry = self._character_registry()
+            requested_ids = self._character_ids_from_body(body)
+            characters = []
+            seen_character_ids = set()
+            for character_id in requested_ids:
+                character = registry.get_character(character_id, fallback=False)
+                resolved_id = str((character or {}).get("id") or "").strip()
+                if character and character.get("enabled", True) and resolved_id and resolved_id not in seen_character_ids:
+                    characters.append(character)
+                    seen_character_ids.add(resolved_id)
+            if len(characters) < 2:
+                return web.json_response({"error": "at_least_two_characters_required"}, status=400)
+
+            size = self._optional_character_image_size(body)
+            shot_type = self._optional_character_shot_type(body)
+            image_model, model_error = self._validate_image_model_from_body(body)
+            if model_error is not None:
+                return model_error
+            style_hint = str(body.get("style") or body.get("style_hint") or "").strip()
+            reference_mode = self._optional_character_reference_mode(body)
+
+            entry = await self.on_generate_group(
+                [character.get("id", "") for character in characters],
+                prompt,
+                size,
+                shot_type,
+                image_model,
+                style_hint,
+                reference_mode=reference_mode,
+            )
+            if entry and entry.status == "ok":
+                payload = entry.to_dict()
+                try:
+                    payload = self._normalize_entry_display(payload, self._load_image_metadata())
+                except Exception as e:
+                    logger.warning("Normalize group generate response failed: %s", e)
+                return web.json_response(payload)
+            return web.json_response({"error": "generate_failed"}, status=500)
+        except Exception as e:
+            logger.error("Group generate error: %s", e)
+            return web.json_response({"error": str(e)}, status=500)
+
+    @staticmethod
+    def _limit_from_query(request: web.Request, default: int = 50, maximum: int = 200) -> int:
+        try:
+            raw = int(str(request.query.get("limit", default) or default))
+        except ValueError:
+            raw = default
+        return max(1, min(raw, maximum))
+
+    @staticmethod
+    def _json_payload_size(value) -> int:
+        try:
+            return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
+        except Exception:
+            return len(str(value or "").encode("utf-8"))
+
+    @classmethod
+    def _group_chat_payload_size_error(cls, value, field: str = "metadata") -> Optional[web.Response]:
+        if cls._json_payload_size(value or {}) > MAX_GROUP_CHAT_METADATA_BYTES:
+            return web.json_response({"error": f"{field}_too_large"}, status=400)
+        return None
+
+    @staticmethod
+    def _should_disable_llm_thinking(model: str) -> bool:
+        return "deepseek" in str(model or "").lower()
+
+    @staticmethod
+    def _group_chat_llm_error_detail(data) -> str:
+        if isinstance(data, dict):
+            error = data.get("error")
+            if isinstance(error, dict):
+                message = error.get("message") or error.get("code") or error.get("type")
+                if message:
+                    return str(message)[:300]
+            for key in ("message", "msg", "detail"):
+                if data.get(key):
+                    return str(data.get(key))[:300]
+        return llm_response_excerpt(data, limit=300) or "empty response"
+
+    @staticmethod
+    def _group_chat_model_unavailable(detail: str) -> bool:
+        lower = str(detail or "").lower()
+        return any(
+            marker in lower
+            for marker in (
+                "model not found",
+                "model_not_found",
+                "does not exist",
+                "not exist",
+                "no permission",
+                "permission denied",
+                "unauthorized",
+                "forbidden",
+            )
+        )
+
+    @staticmethod
+    def _group_chat_text(value, limit: int = 1200) -> str:
+        if isinstance(value, str):
+            text = value
+        else:
+            try:
+                text = json.dumps(value, ensure_ascii=False)
+            except Exception:
+                text = str(value or "")
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:limit].rstrip()
+
+    @staticmethod
+    def _group_chat_normalized_placeholder_text(value: str) -> str:
+        return re.sub(r"[\s\"'“”‘’`，,。.!！?？:：]+", "", str(value or "")).strip()
+
+    @classmethod
+    def _is_group_chat_placeholder_reply(cls, value: str) -> bool:
+        normalized = cls._group_chat_normalized_placeholder_text(value)
+        if not normalized:
+            return False
+        return any(
+            normalized == cls._group_chat_normalized_placeholder_text(placeholder)
+            for placeholder in GROUP_CHAT_REPLY_PLACEHOLDERS
+        )
+
+    @staticmethod
+    def _group_chat_message_sender_name(message: dict) -> str:
+        if not isinstance(message, dict):
+            return "消息"
+        sender = message.get("sender") if isinstance(message.get("sender"), dict) else {}
+        return (
+            str(message.get("sender_name") or "").strip()
+            or str(sender.get("display_name") or "").strip()
+            or str(message.get("sender_id") or message.get("character_id") or "").strip()
+            or str(sender.get("id") or sender.get("character_id") or "").strip()
+            or str(message.get("sender_type") or sender.get("type") or "消息").strip()
+        )
+
+    def _group_chat_history_text(self, messages: list[dict]) -> str:
+        lines = []
+        for message in messages[-MAX_GROUP_CHAT_REPLY_CONTEXT:]:
+            if not isinstance(message, dict):
+                continue
+            name = self._group_chat_message_sender_name(message)
+            content = self._group_chat_text(message.get("content", ""), limit=600)
+            if content:
+                lines.append(f"{name}: {content}")
+        return "\n".join(lines[-MAX_GROUP_CHAT_REPLY_CONTEXT:])
+
+    def _group_chat_reply_prompt(self, room: dict, character: dict, participants: list[dict], messages: list[dict]) -> str:
+        name = str(character.get("name") or character.get("display_name") or character.get("id") or "角色").strip()
+        participant_names = [
+            str(item.get("display_name") or item.get("name") or item.get("character_id") or "").strip()
+            for item in participants
+            if isinstance(item, dict)
+        ]
+        room_name = str((room or {}).get("name") or (room or {}).get("title") or "群聊").strip()
+        history = self._group_chat_history_text(messages) or "暂无历史消息"
+        persona = self._group_chat_text(character.get("persona", ""), limit=900)
+        appearance = self._group_chat_text(character.get("appearance", ""), limit=700)
+        voice = self._group_chat_text(character.get("voice", ""), limit=500)
+        return (
+            f"你正在扮演群聊《{room_name}》里的角色「{name}」。\n"
+            "只输出 JSON，不要 Markdown，不要代码块，不要额外解释。\n"
+            "JSON 必须包含两个字段：message 和 image_request。\n"
+            "message 必须填写这个角色真实要发送到当前对话里的中文聊天内容，禁止填写字段说明、模板文案或占位句。\n"
+            "image_request 默认为 null。\n"
+            "如果你决定当前角色要发照片、自拍、图片或合照，image_request 必须是对象，字段可包含："
+            "prompt（给画图工具的具体画面描述）、shot_type（selfie/half_body/full_body）、"
+            "style、size、character_ids（合照时填写参与角色 id）。\n"
+            "当用户明确要求看照片/图片/自拍/合照，或角色自己说要拍照、发照片、给大家看时，必须使用 image_request；不要只口头说会去拍。\n"
+            "image_request.prompt 要描述可直接生成的画面：场景、动作、表情、穿搭、氛围和构图，不要写成聊天句子。\n"
+            "如果只是普通聊天，image_request 必须为 null。\n"
+            "回复要自然、像即时聊天，通常 1 到 3 句；可以接住最近一条消息，也可以主动延展话题。\n"
+            f"群聊参与者：{('、'.join(participant_names) or '未配置')}\n"
+            f"当前角色 id：{character.get('id') or ''}\n"
+            f"角色人设：{persona or '未配置'}\n"
+            f"外貌提示词：{appearance or '未配置'}\n"
+            f"角色口吻：{voice or '自然、简短、有角色感'}\n"
+            "最近聊天记录：\n"
+            f"{history}\n"
+            f"现在请以「{name}」的口吻回复下一条群聊消息，并在需要时调用画图工具。"
+        )
+
+    def _group_chat_reply_targets(self, room: dict, body: dict) -> list[dict]:
+        participants = [
+            item for item in (room or {}).get("participants", [])
+            if isinstance(item, dict) and item.get("enabled", True)
+        ]
+        raw_ids = body.get("character_ids") or body.get("characterIds") or body.get("character_id") or body.get("characterId")
+        if isinstance(raw_ids, str):
+            requested_ids = {raw_ids.strip()} if raw_ids.strip() else set()
+        elif isinstance(raw_ids, list):
+            requested_ids = {str(item or "").strip() for item in raw_ids if str(item or "").strip()}
+        else:
+            requested_ids = set()
+        excluded = {
+            str(body.get("exclude_character_id") or body.get("sender_character_id") or "").strip(),
+        }
+        excluded.discard("")
+
+        registry = self._character_registry()
+        targets = []
+        seen = set()
+        for participant in participants:
+            character_id = str(participant.get("character_id") or "").strip()
+            if not character_id or character_id in seen:
+                continue
+            if requested_ids and character_id not in requested_ids:
+                continue
+            if character_id in excluded:
+                continue
+            character = registry.get_character(character_id, fallback=False) or {}
+            target = dict(character)
+            target.setdefault("id", character_id)
+            target.setdefault("name", participant.get("display_name") or character_id)
+            target.setdefault("agent_id", participant.get("agent_id", ""))
+            if not target.get("agent_id"):
+                target["agent_id"] = participant.get("agent_id", "")
+            targets.append(target)
+            seen.add(character_id)
+        return targets
+
+    @staticmethod
+    def _extract_json_object(value: str) -> Optional[dict]:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE).strip()
+            text = re.sub(r"\s*```$", "", text).strip()
+        try:
+            data = json.loads(text)
+            return data if isinstance(data, dict) else None
+        except Exception:
+            pass
+
+        decoder = json.JSONDecoder()
+        for match in re.finditer(r"\{", text):
+            try:
+                data, _ = decoder.raw_decode(text[match.start():])
+            except Exception:
+                continue
+            if isinstance(data, dict):
+                return data
+        return None
+
+    @staticmethod
+    def _group_chat_tool_args(value) -> dict:
+        if isinstance(value, dict):
+            return dict(value)
+        if isinstance(value, str):
+            parsed = GalleryServer._extract_json_object(value)
+            return parsed if isinstance(parsed, dict) else {}
+        return {}
+
+    def _group_chat_parse_reply_output(self, raw_content: str, character_name: str = "") -> tuple[str, Optional[dict]]:
+        raw_text = str(raw_content or "").strip()
+        data = self._extract_json_object(raw_text)
+        if not data:
+            if self._is_group_chat_placeholder_reply(raw_text):
+                return "", None
+            inferred = self._group_chat_infer_image_request(raw_text, character_name)
+            return raw_text, inferred
+
+        message = self._group_chat_text(
+            data.get("message")
+            or data.get("reply")
+            or data.get("content")
+            or data.get("text")
+            or "",
+            limit=MAX_GROUP_CHAT_MESSAGE_CHARS,
+        )
+        if self._is_group_chat_placeholder_reply(message):
+            message = ""
+        image_request = data.get("image_request")
+        if image_request is None:
+            image_request = data.get("image")
+        if not image_request:
+            tool_calls = data.get("tool_calls") or data.get("tools")
+            if isinstance(tool_calls, list):
+                for call in tool_calls:
+                    if not isinstance(call, dict):
+                        continue
+                    name = str(call.get("name") or call.get("tool") or call.get("function") or "").lower()
+                    function_payload = call.get("function") if isinstance(call.get("function"), dict) else {}
+                    function_name = str(function_payload.get("name") or "").lower()
+                    if "image" in name or "image" in function_name or "画图" in name:
+                        image_request = call.get("arguments") or call.get("args") or function_payload.get("arguments") or {}
+                        break
+
+        image_payload = self._group_chat_tool_args(image_request)
+        if not image_payload:
+            image_payload = self._group_chat_infer_image_request(message or raw_text, character_name)
+        return message or raw_text, image_payload or None
+
+    @staticmethod
+    def _group_chat_infer_image_request(message: str, character_name: str = "") -> Optional[dict]:
+        text = re.sub(r"\s+", "", str(message or ""))
+        if not text:
+            return None
+        name = re.escape(str(character_name or "").strip())
+        first_person = r"(我|人家|咱|本姑娘|本小姐|这就|马上|等一下|待会儿|现在)"
+        name_pattern = f"({name})" if name else r"($a)"
+        subject = f"({first_person}|{name_pattern})"
+        photo = r"(照片|图片|自拍|合照|照)"
+        action = r"(拍|发|传|晒|寄|弄)"
+        patterns = [
+            rf"{subject}.{{0,20}}{action}.{{0,20}}{photo}",
+            rf"{subject}.{{0,20}}{photo}.{{0,20}}(给你|发过来|发给你|给大家|让你看|看看)",
+            rf"(拍一张|拍张).{{0,18}}(给你|发过来|发给你|给大家|让你看)",
+        ]
+        if any(re.search(pattern, text) for pattern in patterns):
+            return {
+                "prompt": str(message or "").strip(),
+                "shot_type": "selfie" if any(word in text for word in ("自拍", "对镜", "手机")) else "",
+            }
+        return None
+
+    @staticmethod
+    def _entry_image_filename(entry: dict) -> str:
+        raw = str(
+            (entry or {}).get("image_filename")
+            or (entry or {}).get("filename")
+            or (entry or {}).get("file")
+            or (entry or {}).get("image_path")
+            or (entry or {}).get("image_url")
+            or (entry or {}).get("url")
+            or ""
+        ).strip()
+        if not raw:
+            return ""
+        raw = unquote(raw.split("?", 1)[0].split("#", 1)[0]).replace("\\", "/")
+        return raw.rsplit("/", 1)[-1].strip()
+
+    @classmethod
+    def _entry_image_url(cls, entry: dict, filename: str = "") -> str:
+        raw_url = str((entry or {}).get("image_url") or (entry or {}).get("image_path") or (entry or {}).get("url") or "").strip()
+        if re.match(r"^(https?://|data:image/|/images/)", raw_url, flags=re.IGNORECASE):
+            return raw_url
+        image_filename = filename or cls._entry_image_filename(entry)
+        return f"/images/{quote(image_filename)}" if image_filename else ""
+
+    @staticmethod
+    def _group_chat_image_body_options(body: dict) -> dict:
+        options = body.get("image_options") if isinstance(body.get("image_options"), dict) else {}
+        result = {}
+        for key in ("style", "size", "shot_type", "image_model"):
+            value = options.get(key)
+            if value is None:
+                value = body.get(key)
+            if value is None and key == "image_model":
+                value = body.get("model") or body.get("gpt_model")
+            text = str(value or "").strip()
+            if text:
+                result[key] = text
+        return result
+
+    def _group_chat_image_request_options(self, body: dict, image_request: dict) -> dict:
+        merged = self._group_chat_image_body_options(body)
+        for target, aliases in {
+            "prompt": ("prompt", "description", "image_prompt", "scene"),
+            "style": ("style", "style_hint"),
+            "size": ("size", "aspect", "resolution"),
+            "shot_type": ("shot_type", "shot", "camera"),
+            "image_model": ("image_model", "model", "gpt_model"),
+        }.items():
+            for alias in aliases:
+                value = image_request.get(alias)
+                if str(value or "").strip():
+                    merged[target] = str(value or "").strip()
+                    break
+        prompt = self._group_chat_text(merged.get("prompt", ""), limit=1400)
+        size = ""
+        if str(merged.get("size") or "").strip():
+            size = normalize_custom_image_size(merged.get("size", ""))
+        shot_type = ""
+        if str(merged.get("shot_type") or "").strip():
+            shot_type = normalize_custom_shot_type(merged.get("shot_type", ""))
+        return {
+            "prompt": prompt,
+            "style": self._group_chat_text(merged.get("style", ""), limit=160),
+            "size": size,
+            "shot_type": shot_type,
+            "image_model": self._normalize_image_model_id(merged.get("image_model", "")),
+        }
+
+    def _group_chat_image_character_ids(self, room: dict, character: dict, image_request: dict) -> list[str]:
+        registry = self._character_registry()
+        room_ids = {
+            str(item.get("character_id") or item.get("id") or "").strip()
+            for item in (room or {}).get("participants", [])
+            if isinstance(item, dict) and item.get("enabled", True)
+        }
+        requested = image_request.get("character_ids") or image_request.get("characters") or []
+        if isinstance(requested, str):
+            requested = re.split(r"[\s,，、|/]+", requested)
+        ids = []
+        if isinstance(requested, list):
+            for item in requested:
+                if isinstance(item, dict):
+                    item = item.get("id") or item.get("character_id")
+                text = str(item or "").strip()
+                if text and text in room_ids and registry.get_character(text, fallback=False) and text not in ids:
+                    ids.append(text)
+        current_id = str(character.get("id") or "").strip()
+        if not ids and current_id:
+            ids.append(current_id)
+        return ids
+
+    async def _generate_group_chat_image_message(
+        self,
+        room_id: str,
+        room: dict,
+        character: dict,
+        body: dict,
+        image_request: dict,
+        reply_text: str,
+        used_model: str,
+        preferred_model: str,
+        trigger_message_id: str,
+        rewind_message_id: str,
+        parent_message_id: str = "",
+    ) -> tuple[dict, dict]:
+        if not self.on_generate_character:
+            raise RuntimeError("image_generator_unavailable")
+
+        character_id = str(character.get("id") or "").strip()
+        character_name = str(character.get("name") or character_id or "角色").strip()
+        options = self._group_chat_image_request_options(body, image_request)
+        prompt = options.get("prompt") or self._group_chat_text(reply_text, limit=900)
+        if not prompt:
+            raise RuntimeError("image_prompt_required")
+
+        character_ids = self._group_chat_image_character_ids(room, character, image_request)
+        if len(character_ids) >= 2 and self.on_generate_group:
+            entry = await self.on_generate_group(
+                character_ids,
+                prompt,
+                options.get("size", ""),
+                options.get("shot_type", ""),
+                options.get("image_model", ""),
+                options.get("style", ""),
+                reference_mode="today_schedule",
+            )
+        else:
+            entry = await self.on_generate_character(
+                character_id,
+                prompt,
+                options.get("size", ""),
+                options.get("shot_type", ""),
+                options.get("image_model", ""),
+                options.get("style", ""),
+                reference_mode="today_schedule",
+            )
+
+        if not entry or getattr(entry, "status", "") != "ok":
+            raise RuntimeError("image_generation_failed")
+
+        entry_payload = entry.to_dict() if hasattr(entry, "to_dict") else dict(entry or {})
+        try:
+            entry_payload = self._normalize_entry_display(entry_payload, self._load_image_metadata())
+        except Exception as e:
+            logger.warning("Normalize group chat image response failed: %s", e)
+
+        filename = self._entry_image_filename(entry_payload)
+        if not filename:
+            raise RuntimeError("image_filename_missing")
+
+        image_url = self._entry_image_url(entry_payload, filename)
+        message = self.group_chat_store.add_message(
+            room_id,
+            {
+                "content": "生成图片",
+                "type": "image",
+                "role": "assistant",
+                "sender": {
+                    "type": "character",
+                    "id": character_id,
+                    "display_name": character_name,
+                    "character_id": character_id,
+                    "agent_id": character.get("agent_id", ""),
+                },
+                "metadata": {
+                    "auto_reply": True,
+                    "image_tool_call": True,
+                    "rewind_reply": bool(rewind_message_id),
+                    "model": used_model,
+                    "bound_model": preferred_model,
+                    "trigger_message_id": trigger_message_id,
+                    "parent_message_id": parent_message_id,
+                    "image_filename": filename,
+                    "image_url": image_url,
+                    "caption": "",
+                    "prompt": prompt,
+                    "style": options.get("style", ""),
+                    "size": options.get("size", "") or entry_payload.get("size", "") or entry_payload.get("image_size", ""),
+                    "shot_type": options.get("shot_type", "") or entry_payload.get("shot_type", ""),
+                    "model_name": entry_payload.get("model_name", "") or entry_payload.get("model", ""),
+                    "character_ids": character_ids or [character_id],
+                    "entry_source": entry_payload.get("source", ""),
+                },
+            },
+            message_type="image",
+        )
+        return self._public_group_message(message), message
+
+    async def _call_group_chat_llm(
+        self,
+        prompt: str,
+        preferred_model: str = "",
+        timeout_seconds: int = 45,
+    ) -> tuple[str, str]:
+        request_config = llm_request_config(self.config, self.data_dir)
+        chat_url = request_config.get("chat_url", "")
+        api_key = request_config.get("api_key", "")
+        models = normalize_llm_models(preferred_model, request_config.get("models") or [])
+        if not chat_url or not models:
+            raise RuntimeError("llm_config_missing")
+
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        retryable_statuses = {429, 500, 502, 503, 504}
+        direct_fallback_statuses = {401, 403}
+        last_error = ""
+
+        async def post_payload(session: aiohttp.ClientSession, payload: dict) -> tuple[int, object]:
+            async with session.post(chat_url, headers=headers, json=payload) as resp:
+                try:
+                    data = await resp.json()
+                except Exception:
+                    data = await resp.text()
+                return resp.status, data
+
+        timeout = aiohttp.ClientTimeout(total=max(8, min(int(timeout_seconds or 45), 90)))
+        async with aiohttp.ClientSession(trust_env=True, timeout=timeout) as session:
+            for model in models:
+                payload = {
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 700,
+                    "temperature": 0.72,
+                    "stream": False,
+                }
+                if self._should_disable_llm_thinking(model):
+                    payload["thinking"] = {"type": "disabled"}
+
+                for attempt in range(1, 3):
+                    try:
+                        status, data = await post_payload(session, payload)
+                        if status == 400:
+                            retry_payload = dict(payload)
+                            changed = False
+                            if "temperature" in retry_payload and llm_temperature_param_error(data):
+                                retry_payload.pop("temperature", None)
+                                changed = True
+                            if "thinking" in retry_payload and "thinking" in llm_response_excerpt(data, 500).lower():
+                                retry_payload.pop("thinking", None)
+                                changed = True
+                            if changed:
+                                status, data = await post_payload(session, retry_payload)
+                                payload = retry_payload
+
+                        if status == 200:
+                            choices = data.get("choices") if isinstance(data, dict) else None
+                            if choices:
+                                content = llm_choice_text(choices[0]).strip()
+                                if content:
+                                    return content, model
+                            last_error = self._group_chat_llm_error_detail(data)
+                            break
+
+                        detail = self._group_chat_llm_error_detail(data)
+                        last_error = f"HTTP {status}: {detail}"
+                        logger.warning(
+                            "Group chat LLM reply failed: model=%s status=%s attempt=%s detail=%s",
+                            model,
+                            status,
+                            attempt,
+                            detail,
+                        )
+                        if status in direct_fallback_statuses or self._group_chat_model_unavailable(detail):
+                            break
+                        if attempt < 2 and status in retryable_statuses:
+                            await asyncio.sleep(0.8)
+                            continue
+                        break
+                    except Exception as e:
+                        last_error = str(e)
+                        logger.warning(
+                            "Group chat LLM reply error: model=%s attempt=%s err=%s",
+                            model,
+                            attempt,
+                            e,
+                        )
+                        if attempt < 2:
+                            await asyncio.sleep(0.8)
+                            continue
+                        break
+
+        raise RuntimeError(last_error or "llm_empty_response")
+
+    def _participants_from_room_body(self, body: dict) -> list[dict]:
+        raw = body.get("participants")
+        participants = []
+        if isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, dict):
+                    participants.append(item)
+                elif str(item or "").strip():
+                    participants.append({"character_id": str(item or "").strip()})
+        if participants:
+            registry = self._character_registry()
+            normalized = []
+            for item in participants:
+                character_id = str(item.get("character_id") or item.get("id") or "").strip()
+                character = registry.get_character(character_id, fallback=False) if character_id else None
+                display_name = (
+                    str(item.get("display_name") or item.get("displayName") or "").strip()
+                    or (character or {}).get("name", "")
+                    or character_id
+                )
+                normalized.append({
+                    "character_id": (character or {}).get("id", character_id),
+                    "display_name": display_name,
+                    "agent_id": str(item.get("agent_id") or item.get("agentId") or (character or {}).get("agent_id", "") or "").strip(),
+                    "provider": str(item.get("provider") or "hermes").strip(),
+                    "enabled": item.get("enabled", True),
+                    "metadata": item.get("metadata") if isinstance(item.get("metadata"), dict) else {"character_name": display_name},
+                })
+            if len(normalized) > MAX_GROUP_CHAT_PARTICIPANTS:
+                raise ValueError("too_many_participants")
+            return normalized
+
+        registry = self._character_registry()
+        for character_id in self._character_ids_from_body(body):
+            character = registry.get_character(character_id, fallback=False)
+            if not character:
+                continue
+            participants.append({
+                "character_id": character.get("id", ""),
+                "display_name": character.get("name", "") or character.get("id", ""),
+                "agent_id": character.get("agent_id", ""),
+                "provider": "hermes",
+                "enabled": True,
+                "metadata": {"character_name": character.get("name", "")},
+            })
+        if len(participants) > MAX_GROUP_CHAT_PARTICIPANTS:
+            raise ValueError("too_many_participants")
+        return participants
+
+    @staticmethod
+    def _public_group_message(message: dict) -> dict:
+        if not isinstance(message, dict):
+            return {}
+        item = dict(message)
+        sender = item.get("sender") if isinstance(item.get("sender"), dict) else {}
+        item.setdefault("sender_type", sender.get("type", ""))
+        item.setdefault("sender_id", sender.get("id", ""))
+        item.setdefault("sender_name", sender.get("display_name", ""))
+        item.setdefault("character_id", sender.get("character_id", ""))
+        item.setdefault("agent_id", sender.get("agent_id", ""))
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        is_image = (
+            str(item.get("type") or item.get("message_type") or "").strip().lower() == "image"
+            or bool(metadata.get("image_filename") or metadata.get("image_url"))
+        )
+        if is_image:
+            clean_metadata = dict(metadata)
+            clean_metadata["caption"] = ""
+            item["type"] = "image"
+            item["content"] = "生成图片"
+            item["metadata"] = clean_metadata
+        return item
+
+    @classmethod
+    def _should_hide_public_group_message(cls, message: dict) -> bool:
+        if not isinstance(message, dict):
+            return True
+        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        if metadata.get("auto_reply") and cls._is_group_chat_placeholder_reply(message.get("content", "")):
+            return True
+        return False
+
+    def _public_group_messages(self, messages: list[dict]) -> list[dict]:
+        result = []
+        for message in messages if isinstance(messages, list) else []:
+            public_message = self._public_group_message(message)
+            if self._should_hide_public_group_message(public_message):
+                continue
+            result.append(public_message)
+        return result
+
+    def _public_group_room_payload(self, room: dict, message_limit: int = 30) -> dict:
+        room_id = str((room or {}).get("id") or "").strip()
+        payload = self.group_chat_store.room_payload(room_id, message_limit=message_limit) if room_id else None
+        if not payload:
+            return dict(room or {})
+        public_room = dict(payload.get("room") or {})
+        messages = self._public_group_messages(payload.get("messages", []))
+        public_room["messages"] = messages
+        public_room["recent_messages"] = messages
+        public_room["message_count"] = len(messages)
+        public_room["hermes_bridge"] = payload.get("hermes_bridge", {})
+        public_room["title"] = public_room.get("name", "")
+        return public_room
+
+    async def handle_group_chat_rooms(self, request: web.Request):
+        """List or create local group-chat rooms."""
+        try:
+            if request.method.upper() == "GET":
+                rooms = [
+                    self._public_group_room_payload(room, message_limit=30)
+                    for room in self.group_chat_store.list_rooms()
+                ]
+                return web.json_response({"rooms": rooms})
+
+            body = await request.json()
+            if not isinstance(body, dict):
+                return web.json_response({"error": "invalid_payload"}, status=400)
+            size_error = self._group_chat_payload_size_error(body.get("metadata"))
+            if size_error is not None:
+                return size_error
+            participants = self._participants_from_room_body(body)
+            if not participants:
+                return web.json_response({"error": "participants_required"}, status=400)
+            for participant in participants:
+                size_error = self._group_chat_payload_size_error(participant.get("metadata"), "participant_metadata")
+                if size_error is not None:
+                    return size_error
+            room = self.group_chat_store.create_room(
+                name=str(body.get("title") or body.get("name") or "").strip(),
+                description=str(body.get("description") or "").strip(),
+                participants=participants,
+                metadata=body.get("metadata") if isinstance(body.get("metadata"), dict) else None,
+            )
+            payload = self.group_chat_store.room_payload(room.get("id", ""), message_limit=50)
+            if payload:
+                public_room = self._public_group_room_payload(payload.get("room") or room, message_limit=50)
+                payload["room"] = public_room
+                payload["messages"] = self._public_group_messages(payload.get("messages", []))
+            return web.json_response(payload or {"room": room}, status=201)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        except Exception as e:
+            logger.error("Group chat rooms API error: %s", e)
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_group_chat_room(self, request: web.Request):
+        """Return one room, messages, participants, and Hermes bridge readiness."""
+        room_id = request.match_info.get("room_id", "")
+        try:
+            if request.method.upper() == "PATCH":
+                body = await request.json()
+                if not isinstance(body, dict):
+                    return web.json_response({"error": "invalid_payload"}, status=400)
+                participants = self._participants_from_room_body(body)
+                if not participants:
+                    return web.json_response({"error": "participants_required"}, status=400)
+                for participant in participants:
+                    size_error = self._group_chat_payload_size_error(participant.get("metadata"), "participant_metadata")
+                    if size_error is not None:
+                        return size_error
+                size_error = self._group_chat_payload_size_error(body.get("metadata"))
+                if size_error is not None:
+                    return size_error
+                room = self.group_chat_store.update_room(
+                    room_id,
+                    name=str(body.get("title") or body.get("name") or "").strip() or None,
+                    description=str(body.get("description") or "").strip() if "description" in body else None,
+                    participants=participants,
+                    metadata=body.get("metadata") if isinstance(body.get("metadata"), dict) else None,
+                )
+                payload = self.group_chat_store.room_payload(room.get("id", ""), message_limit=50)
+                if payload:
+                    public_room = self._public_group_room_payload(payload.get("room") or room, message_limit=50)
+                    payload["room"] = public_room
+                    payload["messages"] = self._public_group_messages(payload.get("messages", []))
+                return web.json_response(payload or {"room": room})
+
+            payload = self.group_chat_store.room_payload(
+                room_id,
+                message_limit=self._limit_from_query(request),
+            )
+            if not payload:
+                return web.json_response({"error": "room_not_found"}, status=404)
+            payload["room"] = self._public_group_room_payload(payload.get("room") or {}, message_limit=self._limit_from_query(request))
+            payload["messages"] = self._public_group_messages(payload.get("messages", []))
+            return web.json_response(payload)
+        except Exception as e:
+            logger.error("Group chat room API error: %s", e)
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_group_chat_messages(self, request: web.Request):
+        """List or append messages for a local group-chat room."""
+        room_id = request.match_info.get("room_id", "")
+        try:
+            if request.method.upper() == "GET":
+                if not self.group_chat_store.get_room(room_id):
+                    return web.json_response({"error": "room_not_found"}, status=404)
+                messages = self.group_chat_store.list_messages(
+                    room_id,
+                    limit=self._limit_from_query(request),
+                    after_id=str(request.query.get("after_id", "") or ""),
+                    before_id=str(request.query.get("before_id", "") or ""),
+                )
+                return web.json_response({"messages": self._public_group_messages(messages)})
+
+            body = await request.json()
+            if not isinstance(body, dict):
+                return web.json_response({"error": "invalid_payload"}, status=400)
+            content = body.get("content", "")
+            if isinstance(content, str) and not content.strip():
+                return web.json_response({"error": "content_required"}, status=400)
+            if self._json_payload_size(content) > MAX_GROUP_CHAT_MESSAGE_CHARS:
+                return web.json_response({"error": "content_too_large"}, status=400)
+            size_error = self._group_chat_payload_size_error(body.get("metadata"))
+            if size_error is not None:
+                return size_error
+            message = self.group_chat_store.add_message(
+                room_id,
+                {
+                    "content": content,
+                    "type": body.get("type") or body.get("message_type") or "text",
+                    "role": body.get("role") or "",
+                    "sender": {
+                        "type": body.get("sender_type") or "user",
+                        "id": body.get("sender_id") or "",
+                        "display_name": body.get("sender_name") or "",
+                        "character_id": body.get("character_id") or "",
+                        "agent_id": body.get("agent_id") or "",
+                    },
+                    "metadata": body.get("metadata") if isinstance(body.get("metadata"), dict) else {},
+                },
+            )
+            payload = self.group_chat_store.room_payload(room_id, message_limit=50)
+            public_message = self._public_group_message(message)
+            public_room = self._public_group_room_payload((payload or {}).get("room") or {}, message_limit=50) if payload else None
+            return web.json_response({"message": public_message, "room": public_room, "room_payload": payload}, status=201)
+        except KeyError:
+            return web.json_response({"error": "room_not_found"}, status=404)
+        except Exception as e:
+            logger.error("Group chat messages API error: %s", e)
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_group_chat_reply(self, request: web.Request):
+        """Generate LLM-backed replies for enabled participants in a room."""
+        room_id = request.match_info.get("room_id", "")
+        try:
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            if not isinstance(body, dict):
+                body = {}
+            room = self.group_chat_store.get_room(room_id)
+            if not room:
+                return web.json_response({"error": "room_not_found"}, status=404)
+
+            rewind_message_id = str(body.get("rewind_message_id") or body.get("rewindMessageId") or "").strip()
+            rewind_result = None
+            if rewind_message_id:
+                try:
+                    rewind_result = self.group_chat_store.truncate_after_message(room_id, rewind_message_id)
+                except ValueError as e:
+                    error = str(e) or "message_not_found"
+                    status = 404 if error == "message_not_found" else 400
+                    return web.json_response({"error": error}, status=status)
+                room = self.group_chat_store.get_room(room_id) or room
+                body["trigger_message_id"] = rewind_message_id
+
+            targets = self._group_chat_reply_targets(room, body)
+            if not targets:
+                return web.json_response({"error": "no_reply_participants"}, status=400)
+
+            try:
+                timeout_seconds = int(body.get("timeout_seconds") or 45)
+            except (TypeError, ValueError):
+                timeout_seconds = 45
+            timeout_seconds = max(8, min(timeout_seconds, 90))
+
+            messages = self.group_chat_store.list_messages(
+                room_id,
+                limit=MAX_GROUP_CHAT_REPLY_CONTEXT,
+            )
+            participants = room.get("participants", []) if isinstance(room.get("participants"), list) else []
+            generated = []
+            failures = []
+            for character in targets:
+                character_id = str(character.get("id") or "").strip()
+                character_name = str(character.get("name") or character_id or "角色").strip()
+                preferred_model = str(character.get("llm_model") or "").strip()
+                prompt = self._group_chat_reply_prompt(room, character, participants, messages + generated)
+                try:
+                    raw_content, used_model = await self._call_group_chat_llm(
+                        prompt,
+                        preferred_model=preferred_model,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    content, image_request = self._group_chat_parse_reply_output(raw_content, character_name)
+                    content = self._group_chat_text(content, limit=MAX_GROUP_CHAT_MESSAGE_CHARS)
+                    if not content and not image_request:
+                        raise RuntimeError("llm_empty_response")
+
+                    trigger_message_id = body.get("trigger_message_id") or body.get("message_id") or ""
+                    parent_message_id = ""
+                    if content:
+                        message = self.group_chat_store.add_message(
+                            room_id,
+                            {
+                                "content": content,
+                                "type": "text",
+                                "role": "assistant",
+                                "sender": {
+                                    "type": "character",
+                                    "id": character_id,
+                                    "display_name": character_name,
+                                    "character_id": character_id,
+                                    "agent_id": character.get("agent_id", ""),
+                                },
+                                "metadata": {
+                                    "auto_reply": True,
+                                    "rewind_reply": bool(rewind_message_id),
+                                    "model": used_model,
+                                    "bound_model": preferred_model,
+                                    "trigger_message_id": trigger_message_id,
+                                    "llm_image_request": bool(image_request),
+                                },
+                            },
+                        )
+                        parent_message_id = str(message.get("id") or "")
+                        public_message = self._public_group_message(message)
+                        generated.append(public_message)
+                        messages.append(message)
+
+                    if image_request:
+                        try:
+                            public_image, image_message = await self._generate_group_chat_image_message(
+                                room_id,
+                                room,
+                                character,
+                                body,
+                                image_request,
+                                content,
+                                used_model,
+                                preferred_model,
+                                trigger_message_id,
+                                rewind_message_id,
+                                parent_message_id,
+                            )
+                            generated.append(public_image)
+                            messages.append(image_message)
+                        except Exception as image_error:
+                            logger.warning(
+                                "Group chat image tool call failed: room=%s character=%s err=%s",
+                                room_id,
+                                character_id,
+                                image_error,
+                            )
+                            failures.append({
+                                "character_id": character_id,
+                                "character_name": character_name,
+                                "phase": "image_tool",
+                                "error": str(image_error),
+                            })
+                except Exception as e:
+                    logger.warning(
+                        "Group chat character reply failed: room=%s character=%s err=%s",
+                        room_id,
+                        character_id,
+                        e,
+                    )
+                    failures.append({
+                        "character_id": character_id,
+                        "character_name": character_name,
+                        "error": str(e),
+                    })
+
+            payload = self.group_chat_store.room_payload(room_id, message_limit=50)
+            public_room = self._public_group_room_payload((payload or {}).get("room") or room, message_limit=50) if payload else None
+            if not generated:
+                return web.json_response({
+                    "error": "reply_generation_failed",
+                    "failures": failures,
+                }, status=502)
+            return web.json_response({
+                "messages": generated,
+                "failures": failures,
+                "rewind": {
+                    "message_id": rewind_message_id,
+                    "removed_count": (rewind_result or {}).get("removed_count", 0),
+                } if rewind_message_id else None,
+                "room": public_room,
+                "room_payload": payload,
+            })
+        except Exception as e:
+            logger.error("Group chat reply API error: %s", e)
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_group_chat_bind_agent(self, request: web.Request):
+        """Bind a Hermes/OpenClaw/etc agent id to a room participant."""
+        room_id = request.match_info.get("room_id", "")
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                return web.json_response({"error": "invalid_payload"}, status=400)
+            size_error = self._group_chat_payload_size_error(body.get("metadata"))
+            if size_error is not None:
+                return size_error
+            character_id = str(body.get("character_id") or "").strip()
+            if not character_id:
+                return web.json_response({"error": "character_id_required"}, status=400)
+            participant = self.group_chat_store.bind_agent(
+                room_id,
+                {
+                    "character_id": character_id,
+                    "agent_id": body.get("agent_id") or "",
+                    "display_name": body.get("display_name") or body.get("sender_name") or character_id,
+                    "provider": body.get("provider") or "hermes",
+                    "enabled": body.get("enabled", True),
+                    "metadata": body.get("metadata") if isinstance(body.get("metadata"), dict) else {},
+                },
+            )
+            payload = self.group_chat_store.room_payload(room_id, message_limit=50)
+            public_room = self._public_group_room_payload((payload or {}).get("room") or {}, message_limit=50) if payload else None
+            return web.json_response({"participant": participant, "room": public_room, "room_payload": payload})
+        except KeyError:
+            return web.json_response({"error": "room_not_found"}, status=404)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        except Exception as e:
+            logger.error("Group chat bind-agent API error: %s", e)
+            return web.json_response({"error": str(e)}, status=500)
 
     @staticmethod
     def _has_cjk(value: str) -> bool:
@@ -5254,8 +7198,43 @@ class GalleryServer:
         now_str = now.strftime("%H:%M")
         target = now.hour * 60 + now.minute
         items = self._schedule_items_for_inference(daily.get("schedule", "") if daily else "")
+        raw_details = daily.get("schedule_details") if isinstance(daily, dict) else []
+        schedule_details = raw_details if isinstance(raw_details, list) else []
+        detail_by_time = {}
+        for detail in schedule_details:
+            if not isinstance(detail, dict):
+                continue
+            detail_time, _ = self._parse_time_activity(detail.get("time", ""))
+            if detail_time:
+                detail_by_time[detail_time] = detail
+
+        def detail_for_item(item: dict | None) -> dict:
+            if not item:
+                return {}
+            detail = detail_by_time.get(item.get("time", ""))
+            return detail if isinstance(detail, dict) else {}
+
+        def nearest_detail() -> dict:
+            best_detail = {}
+            best_distance = 24 * 60
+            for detail in schedule_details:
+                if not isinstance(detail, dict):
+                    continue
+                detail_time, _ = self._parse_time_activity(detail.get("time", ""))
+                if not detail_time:
+                    continue
+                distance = abs(self._time_sort_value(detail_time) - target)
+                if distance < best_distance:
+                    best_detail = detail
+                    best_distance = distance
+            return best_detail
+
+        def detail_field(detail: dict, field: str, limit: int = 260) -> str:
+            return self._clean_generate_now_en(detail.get(field, ""), limit=limit) if detail else ""
+
         prev_item = None
         next_item = None
+        anchor_item = None
         for item in items:
             if item["minutes"] <= target:
                 prev_item = item
@@ -5272,39 +7251,93 @@ class GalleryServer:
                     activity = f"收起手头的事，开始{next_text}"
                 else:
                     activity = f"收起手头的事，为接下来的{next_text}做准备"
+                anchor_item = next_item
             elif prev_delta <= 45:
                 activity = f"继续{prev_text}"
+                anchor_item = prev_item
             else:
                 activity = f"把{prev_text}收尾，准备接下来的{next_text}"
+                anchor_item = next_item if next_delta <= prev_delta else prev_item
             activity_en = "transitioning naturally between the previous schedule item and the upcoming schedule item"
         elif next_item:
             next_text = self._compact_schedule_phrase(next_item["activity"])
             activity = f"提前为{next_text}做准备"
             activity_en = "preparing for the upcoming schedule item"
+            anchor_item = next_item
         elif prev_item:
             prev_text = self._compact_schedule_phrase(prev_item["activity"])
             activity = f"完成{prev_text}后放慢节奏整理收尾"
             activity_en = "winding down after the final schedule item"
+            anchor_item = prev_item
         else:
             activity = "根据今日日程整理当下要做的事"
             activity_en = "organizing the current moment according to today's schedule"
 
-        return {
+        anchor_detail = detail_for_item(anchor_item) or nearest_detail()
+        visual_scene, visual_outfit = self._fallback_visual_for_activity(activity, now.hour)
+        outfit_en = (
+            detail_field(anchor_detail, "outfit_en", 360)
+            or self._clean_generate_now_en(daily.get("outfit_keywords", "") if isinstance(daily, dict) else "", limit=260)
+            or visual_outfit
+        )
+        hair_en = detail_field(anchor_detail, "hair_en", 220)
+        scene_en = (
+            detail_field(anchor_detail, "scene_en", 300)
+            or self._clean_generate_now_en(daily.get("scene_keywords", "") if isinstance(daily, dict) else "", limit=260)
+            or visual_scene
+        )
+        props_en = detail_field(anchor_detail, "props_en", 220)
+        lighting_en = detail_field(anchor_detail, "lighting_en", 220) or "realistic lighting matching the current time of day"
+        action_en = detail_field(anchor_detail, "action_en", 260) or activity_en
+        activity_en = detail_field(anchor_detail, "activity_en", 260) or activity_en
+
+        detail = {
             "time": now_str,
             "activity_zh": activity,
             "activity_en": activity_en,
-            "action_en": "a natural candid action derived from the current point in today's schedule",
-            "scene_en": "the realistic setting implied by the surrounding schedule items at the current time",
-            "props_en": "only props that fit the inferred current activity and today's schedule",
-            "outfit_en": "the outfit from today's schedule plan",
-            "hair_en": "the hairstyle from today's schedule plan",
-            "lighting_en": "realistic lighting matching the current time of day",
+            "action_en": action_en,
+            "scene_en": scene_en,
+            "lighting_en": lighting_en,
         }
+        if props_en:
+            detail["props_en"] = props_en
+        if outfit_en:
+            detail["outfit_en"] = outfit_en
+        if hair_en:
+            detail["hair_en"] = hair_en
+        return detail
+
+    @staticmethod
+    def _is_generic_generate_now_detail(value: str) -> bool:
+        text = re.sub(r"\s+", " ", str(value or "")).strip().lower()
+        if not text:
+            return False
+        generic_exact = {
+            "today's outfit",
+            "today's hairstyle",
+            "today's outfit in concise english",
+            "today's hairstyle in concise english",
+            "the outfit from today's schedule plan",
+            "the hairstyle from today's schedule plan",
+            "realistic lighting for this time",
+            "realistic lighting matching the current time of day",
+        }
+        if text in generic_exact:
+            return True
+        generic_phrases = (
+            "from today's schedule plan",
+            "implied by the surrounding schedule items",
+            "derived from the current point in today's schedule",
+            "only props that fit the inferred current activity",
+        )
+        return any(phrase in text for phrase in generic_phrases)
 
     @staticmethod
     def _clean_generate_now_en(value: str, limit: int = 220) -> str:
         text = re.sub(r"\s+", " ", str(value or "")).strip().strip('"').strip("'")
         if not text or GalleryServer._has_cjk(text):
+            return ""
+        if GalleryServer._is_generic_generate_now_detail(text):
             return ""
         if len(text) > limit:
             text = text[:limit].rstrip(" ,.;:")
@@ -5425,43 +7458,82 @@ JSON 格式：
             return resp
 
         loop = asyncio.get_running_loop()
+        retryable_statuses = {429, 500, 502, 503, 504}
+        direct_fallback_statuses = {401, 403}
+        per_model_attempts = 2
+
+        def _model_unavailable(detail: str) -> bool:
+            lower = str(detail or "").lower()
+            return any(
+                marker in lower
+                for marker in (
+                    "model not found",
+                    "model_not_found",
+                    "does not exist",
+                    "not exist",
+                    "no permission",
+                    "permission denied",
+                    "unauthorized",
+                    "forbidden",
+                )
+            )
+
         for model in models:
-            try:
-                resp = await loop.run_in_executor(None, lambda m=model: _post_llm(m))
-                if resp is None or resp.status_code != 200:
-                    status = resp.status_code if resp is not None else "no response"
-                    detail = ""
-                    if resp is not None:
-                        try:
-                            body = resp.json()
-                            error = body.get("error") if isinstance(body, dict) else None
-                            if isinstance(error, dict):
-                                detail = str(error.get("message") or error.get("code") or "")[:240]
-                            elif isinstance(body, dict):
-                                detail = str(body.get("msg") or body.get("status") or "")[:240]
-                        except Exception:
-                            detail = (resp.text or "")[:240]
+            for attempt in range(1, per_model_attempts + 1):
+                try:
+                    resp = await loop.run_in_executor(None, lambda m=model: _post_llm(m))
+                    if resp is None or resp.status_code != 200:
+                        status = resp.status_code if resp is not None else "no response"
+                        detail = ""
+                        if resp is not None:
+                            try:
+                                body = resp.json()
+                                error = body.get("error") if isinstance(body, dict) else None
+                                if isinstance(error, dict):
+                                    detail = str(error.get("message") or error.get("code") or "")[:240]
+                                elif isinstance(body, dict):
+                                    detail = str(body.get("msg") or body.get("status") or body.get("message") or "")[:240]
+                            except Exception:
+                                detail = (resp.text or "")[:240]
+                        logger.warning(
+                            "Generate-now LLM inference failed: model=%s status=%s attempt=%s/%s detail=%s",
+                            model,
+                            status,
+                            attempt,
+                            per_model_attempts,
+                            detail,
+                        )
+                        if status in direct_fallback_statuses or _model_unavailable(detail):
+                            break
+                        if attempt < per_model_attempts and (resp is None or status in retryable_statuses):
+                            await asyncio.sleep(1)
+                            continue
+                        break
+                    data = resp.json()
+                    choices = data.get("choices") if isinstance(data, dict) else None
+                    if not choices:
+                        logger.warning("Generate-now LLM inference invalid response: model=%s", model)
+                        break
+                    content = llm_choice_text(choices[0])
+                    parsed = self._parse_generate_now_detail(content, now_str)
+                    if parsed:
+                        merged = dict(fallback)
+                        merged.update(parsed)
+                        merged["time"] = now_str
+                        return merged
+                    break
+                except Exception as e:
                     logger.warning(
-                        "Generate-now LLM inference failed: model=%s status=%s detail=%s",
+                        "Generate-now LLM inference error: model=%s attempt=%s/%s err=%s",
                         model,
-                        status,
-                        detail,
+                        attempt,
+                        per_model_attempts,
+                        e,
                     )
-                    continue
-                data = resp.json()
-                choices = data.get("choices") if isinstance(data, dict) else None
-                if not choices:
-                    logger.warning("Generate-now LLM inference invalid response: model=%s", model)
-                    continue
-                content = llm_choice_text(choices[0])
-                parsed = self._parse_generate_now_detail(content, now_str)
-                if parsed:
-                    merged = dict(fallback)
-                    merged.update(parsed)
-                    merged["time"] = now_str
-                    return merged
-            except Exception as e:
-                logger.warning("Generate-now LLM inference error: model=%s err=%s", model, e)
+                    if attempt < per_model_attempts:
+                        await asyncio.sleep(1)
+                        continue
+                    break
         return fallback
 
     @staticmethod

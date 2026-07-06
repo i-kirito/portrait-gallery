@@ -1,5 +1,6 @@
 services:
   portrait-gallery:
+    image: ${PORTRAIT_GALLERY_IMAGE:-ikirito9/hermes-portrait-gallery:latest}
     build: .
     container_name: hermes-portrait-gallery
     restart: unless-stopped
@@ -8,6 +9,6 @@ services:
       - ./data:/app/data
       - ./config:/app/config:ro
       - ./logs:/app/logs
-      - ./app/web:/app/web
+      - ./app/web:/app/app/web
     environment:
       - TZ=Asia/Shanghai
