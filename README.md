@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.3.1**
+当前版本：**v1.3.2**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -15,6 +15,7 @@
 - ☁️ **关键词偏好云** — 从自定义生图输入与收藏衣柜中提取偏好词，作为每日穿搭日程的柔性参考
 - 🗓️ **真实日期约束** — 日程生成会识别周末、法定节假日、调休上班日和自定义假期，减少休息日写上班/上课的冲突
 - 🔁 **日程去重约束** — 结合近期日程历史，减少连续出现赖床、刷手机、做饭等重复模板
+- ✏️ **今日计划微调** — 今日生图计划支持双击编辑活动内容，并同步保存到当天日程和待执行任务
 - 🖼️ **Web 画廊** — 今日/全部/收藏/衣柜四 Tab，横版大卡 + 网格双布局
 - 🎀 **穿搭生成** — 自定义 prompt + 参考图 + 尺寸选择
 - ⏰ **动态调度** — LLM 日程驱动，根据 HH:mm 时间动态创建一次性生图任务
@@ -101,7 +102,7 @@ curl http://localhost:18889/api/health
 如果要使用已经发布到 Docker Hub/GHCR 的镜像，通过 `PORTRAIT_GALLERY_IMAGE` 指定：
 
 ```bash
-PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.1 docker compose up -d
+PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.2 docker compose up -d
 curl http://localhost:18889/api/health
 ```
 
@@ -311,7 +312,7 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 
 ## 🖥️ 前端功能
 
-- **今日 Tab** — 横版大卡片，直接展示穿搭/日程/caption，点击图片全屏查看
+- **今日 Tab** — 横版大卡片，直接展示穿搭/日程/caption，今日生图计划可双击编辑活动内容
 - **全部 Tab** — 6 列网格，点击弹窗查看详情（收藏/分享/删除）
 - **收藏 Tab** — 筛选已收藏图片
 - **衣柜 Tab** — 展示收藏穿搭方案和 GPT 生成的衣架参考图，支持编辑、重生和图生图引用
@@ -321,6 +322,14 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥、三级 LLM 模型链、Gitee 回退、日程风格和升级选项
 
 ## 🧾 Release Notes
+
+### v1.3.2
+
+- 今日生图计划支持在 Web UI 中双击活动内容直接编辑，回车或失焦保存，Esc 取消。
+- 新增 `/api/photo-jobs/plan` 接口，用于安全更新当天指定 `HH:mm` 计划项，并校验时间、空内容和长度。
+- 计划编辑会同步写回当天 `schedule`、`schedule_prompt`、`schedule_details`，并更新仍未执行的 APScheduler 生图任务参数。
+- 生图计划列表优先展示已保存日程里的活动内容，让手动调整在“已完成/待执行/失败重试”状态间保持一致。
+- 增加计划编辑 helper 单元测试，覆盖日程文本替换和 stale `schedule_details` 字段清理。
 
 ### v1.3.1
 
