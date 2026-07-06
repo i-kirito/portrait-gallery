@@ -9,7 +9,7 @@ description: >
 metadata:
   short-description: Run and operate the AI outfit portrait gallery
   openclaw:
-    homepage: https://github.com/i-kirito/portrait-gallery
+    homepage: https://github.com/OWNER/REPO
 ---
 
 # Portrait Gallery Skill
@@ -25,15 +25,15 @@ Gallery service.
 Ask Codex to install the skill from GitHub:
 
 ```text
-Use $skill-installer to install https://github.com/i-kirito/portrait-gallery as a skill.
-Use repo i-kirito/portrait-gallery, path ., and name portrait-gallery.
+Use $skill-installer to install https://github.com/OWNER/REPO as a skill.
+Use repo OWNER/REPO, path ., and name portrait-gallery.
 ```
 
 If running the installer script manually:
 
 ```bash
 python ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
-  --repo i-kirito/portrait-gallery \
+  --repo OWNER/REPO \
   --path . \
   --name portrait-gallery
 ```
@@ -45,7 +45,7 @@ Restart the agent after installation so it can discover the new skill.
 Install this repository URL as a skill source:
 
 ```text
-https://github.com/i-kirito/portrait-gallery
+https://github.com/OWNER/REPO
 ```
 
 If the agent asks for a skill path, use `.`. If it asks for a skill name, use
@@ -79,6 +79,7 @@ Portrait Gallery is a local AI outfit portrait system:
 - Manages multiple local/runtime characters for single portraits, reference sheets, and group photos.
 - Provides a group-chat workspace with persistent rooms, participant bindings, LLM-backed character replies, and optional image tool calls.
 - Uses a multi-model LLM chain (`llm.models`) for schedule generation, captions, group chat, and fallback inference.
+- Extracts a keyword cloud from user prompts and favorite wardrobe items, then uses it as a soft daily schedule reference.
 - Injects real date context for weekends, public holidays, make-up workdays, and configured calendar overrides.
 - Serves a local Web gallery for today/all/favorites/custom generation.
 - Stores runtime data in `data/schedule_data.json` and images in `data/images/`.
@@ -91,7 +92,7 @@ Portrait Gallery is a local AI outfit portrait system:
 If the user already has a checkout, work there. Otherwise clone it:
 
 ```bash
-git clone https://github.com/i-kirito/portrait-gallery.git
+git clone https://github.com/OWNER/REPO.git
 cd portrait-gallery
 ```
 
@@ -121,7 +122,7 @@ docker compose up -d
 Published image run:
 
 ```bash
-PORTRAIT_GALLERY_IMAGE=ikirito9/hermes-portrait-gallery:1.3.0 docker compose up -d
+PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.1 docker compose up -d
 ```
 
 ### 3. Configure Keys
