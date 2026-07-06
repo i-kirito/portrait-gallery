@@ -286,6 +286,92 @@ class GroupChatStore:
 
         return self.update(_truncate)
 
+    def truncate_from_message(self, room_id: str, message_id: str) -> dict:
+        """Remove message_id and all messages after it, returning the removed target."""
+        clean_room_id = _clean_text(room_id)
+        clean_message_id = _clean_text(message_id)
+        if not clean_message_id:
+            raise ValueError("message_id_required")
+
+        def _truncate(data: dict) -> dict:
+            room = data.get("rooms", {}).get(clean_room_id)
+            if not room:
+                raise KeyError(f"group chat room not found: {clean_room_id}")
+
+            messages = data.setdefault("messages", {}).setdefault(clean_room_id, [])
+            index = _message_index(messages, clean_message_id)
+            if index < 0:
+                raise ValueError("message_not_found")
+
+            now = _now_iso()
+            target = messages[index]
+            removed = messages[index:]
+            data["messages"][clean_room_id] = messages[:index]
+            room["message_count"] = len(data["messages"][clean_room_id])
+            room["updated_at"] = now
+            data["updated_at"] = now
+            return {
+                "message": copy.deepcopy(target),
+                "removed_count": len(removed),
+                "messages": copy.deepcopy(data["messages"][clean_room_id]),
+            }
+
+        return self.update(_truncate)
+
+    def delete_message(self, room_id: str, message_id: str) -> dict:
+        """Remove one message from a room and return the deleted item."""
+        clean_room_id = _clean_text(room_id)
+        clean_message_id = _clean_text(message_id)
+        if not clean_message_id:
+            raise ValueError("message_id_required")
+
+        def _delete(data: dict) -> dict:
+            room = data.get("rooms", {}).get(clean_room_id)
+            if not room:
+                raise KeyError(f"group chat room not found: {clean_room_id}")
+
+            messages = data.setdefault("messages", {}).setdefault(clean_room_id, [])
+            index = _message_index(messages, clean_message_id)
+            if index < 0:
+                raise ValueError("message_not_found")
+
+            now = _now_iso()
+            deleted = messages[index]
+            data["messages"][clean_room_id] = messages[:index] + messages[index + 1:]
+            room["message_count"] = len(data["messages"][clean_room_id])
+            room["updated_at"] = now
+            data["updated_at"] = now
+            return {
+                "message": copy.deepcopy(deleted),
+                "removed_count": 1,
+                "messages": copy.deepcopy(data["messages"][clean_room_id]),
+            }
+
+        return self.update(_delete)
+
+    def clear_messages(self, room_id: str) -> dict:
+        """Remove all messages from a room and return the removed count."""
+        clean_room_id = _clean_text(room_id)
+
+        def _clear(data: dict) -> dict:
+            room = data.get("rooms", {}).get(clean_room_id)
+            if not room:
+                raise KeyError(f"group chat room not found: {clean_room_id}")
+
+            messages = data.setdefault("messages", {}).setdefault(clean_room_id, [])
+            removed = len(messages)
+            now = _now_iso()
+            data["messages"][clean_room_id] = []
+            room["message_count"] = 0
+            room["updated_at"] = now
+            data["updated_at"] = now
+            return {
+                "removed_count": removed,
+                "messages": [],
+            }
+
+        return self.update(_clear)
+
     def bind_agent(
         self,
         room_id: str,

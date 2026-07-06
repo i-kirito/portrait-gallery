@@ -1,6 +1,6 @@
 services:
   portrait-gallery:
-    image: ${PORTRAIT_GALLERY_IMAGE:-ikirito9/hermes-portrait-gallery:latest}
+    image: ${PORTRAIT_GALLERY_IMAGE:-hermes-portrait-gallery:latest}
     build: .
     container_name: hermes-portrait-gallery
     restart: unless-stopped

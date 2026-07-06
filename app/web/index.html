@@ -563,6 +563,111 @@ textarea:focus-visible,
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-top: 0;
 }
+.keyword-cloud-modal {
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(84vh, 760px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.keyword-cloud-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.keyword-cloud-head h3 { margin: 0; }
+.keyword-cloud-actions { display: inline-flex; align-items: center; gap: 8px; }
+.keyword-cloud-icon-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(139,92,246,0.2);
+  border-radius: 10px;
+  background: #fff;
+  color: #7c3aed;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.keyword-cloud-icon-btn:hover { background: #f7f2ff; border-color: rgba(139,92,246,0.36); }
+.keyword-cloud-canvas-wrap {
+  position: relative;
+  height: clamp(320px, 50vh, 460px);
+  border: 1px solid rgba(221,214,254,0.72);
+  border-radius: 18px;
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, rgba(255,255,255,0.96), rgba(250,245,255,0.94)),
+    repeating-linear-gradient(135deg, rgba(216,180,254,0.12) 0 1px, transparent 1px 18px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.88), 0 12px 28px rgba(124,58,237,0.08);
+}
+.keyword-cloud-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.keyword-cloud-loading,
+.keyword-cloud-empty {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(310px, calc(100% - 42px));
+  min-height: 116px;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid rgba(221,214,254,0.74);
+  border-radius: 18px;
+  background: rgba(255,255,255,0.76);
+  color: #826c8c;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.5;
+  text-align: center;
+  padding: 20px 22px;
+  box-shadow: 0 14px 32px rgba(124,58,237,0.12);
+  box-sizing: border-box;
+}
+.keyword-cloud-loading::before,
+.keyword-cloud-empty::before {
+  content: "☁️";
+  width: 38px;
+  height: 38px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #fff7fb, #f3e8ff);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 8px 18px rgba(216,180,254,0.2);
+  font-size: 18px;
+}
+.keyword-cloud-loading::before {
+  animation: keywordCloudFloat 1.4s ease-in-out infinite;
+}
+.keyword-cloud-empty::before {
+  content: "⌁";
+  color: #a855f7;
+  font-size: 22px;
+}
+.keyword-cloud-empty { display: none; }
+.keyword-cloud-status {
+  min-height: 18px;
+  color: #8a728f;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 0 2px;
+}
+@keyframes keywordCloudFloat {
+  0%, 100% { transform: translateY(0); opacity: 0.9; }
+  50% { transform: translateY(-4px); opacity: 1; }
+}
 .egg-forbidden-input {
   width: 100%;
   min-height: 116px;
@@ -1581,6 +1686,16 @@ textarea:focus-visible,
 .wardrobe-line strong {
   color: #8e24aa;
 }
+.wardrobe-copy {
+  flex: 1 1 auto;
+  min-height: 118px;
+  max-height: 230px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.wardrobe-copy::-webkit-scrollbar { display: none; }
 .wardrobe-actions {
   display: flex;
   flex-wrap: nowrap;
@@ -3457,6 +3572,45 @@ textarea:focus-visible,
 .chat-main-head {
   padding: 13px 14px;
   border-bottom: 1px solid #f0e6f6;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+}
+.chat-main-title-wrap {
+  min-width: 0;
+}
+.chat-main-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: end;
+}
+.chat-main-tool-btn {
+  min-height: 28px;
+  border: 1px solid #f0d7e6;
+  border-radius: 999px;
+  background: #fff;
+  color: #9d5a7b;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 0 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chat-main-tool-btn:hover {
+  background: #fff5fa;
+  border-color: #ef9fc5;
+  color: #d81b60;
+}
+.chat-main-tool-btn.danger {
+  border-color: #ffd1dc;
+  color: #d81b60;
+}
+.chat-main-tool-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 .chat-main-title {
   color: #4a335f;
@@ -3596,6 +3750,46 @@ textarea:focus-visible,
   border-bottom: 0;
   border-top: 1px solid #c9efb9;
   border-right: 1px solid #c9efb9;
+}
+.chat-message-actions {
+  grid-column: 2;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: -4px;
+  padding-left: 4px;
+}
+.chat-message.user .chat-message-actions {
+  justify-self: end;
+  padding-left: 0;
+  padding-right: 4px;
+}
+.chat-message-action {
+  border: 0;
+  background: transparent;
+  color: #a47aa7;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.chat-message-action:hover {
+  background: rgba(233,30,99,0.08);
+  color: #c2185b;
+}
+.chat-message-action.danger {
+  color: #d81b60;
+}
+.chat-message-action.danger:hover {
+  background: rgba(216,27,96,0.1);
+  color: #ad1457;
+}
+.chat-message-action:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 .chat-message-meta {
   margin-bottom: 3px;
@@ -4414,7 +4608,10 @@ textarea:focus-visible,
 .egg-sched-theme.evening { background: linear-gradient(135deg, #fce7f3, #fbcfe8); color: #9f1239; }
 .egg-sched-theme.bedtime { background: linear-gradient(135deg, #e0e7ff, #c7d2fe); color: #3730a3; }
 .egg-photo-status { margin-top: 18px; padding: 14px 16px; background: linear-gradient(135deg, #fff7fb, #f7f4ff); border: 1px solid rgba(240,226,255,0.9); border-radius: 14px; box-shadow: 0 10px 22px rgba(168,85,247,0.06); }
-.egg-photo-status-title { font-size: 14px; font-weight: 700; color: #8b5cf6; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+.egg-photo-status-title { font-size: 14px; font-weight: 700; color: #8b5cf6; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.egg-photo-status-title-main { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.egg-cloud-open-btn { width: 30px; height: 30px; border: 1px solid rgba(139,92,246,0.22); border-radius: 10px; background: rgba(255,255,255,0.86); color: #7c3aed; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; line-height: 1; box-shadow: 0 6px 14px rgba(124,58,237,0.08); transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease; flex: 0 0 auto; }
+.egg-cloud-open-btn:hover { background: #fff; border-color: rgba(124,58,237,0.36); transform: translateY(-1px); }
 .egg-limit-control { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: -2px 0 11px; padding: 9px 10px; border: 1px solid rgba(244,232,255,0.9); border-radius: 10px; background: rgba(255,255,255,0.72); font-size: 12px; color: #666; }
 .egg-limit-input { width: 52px; height: 28px; border: 1px solid rgba(216,180,254,0.9); border-radius: 8px; text-align: center; color: #7c3aed; font-weight: 700; background: #fff; box-sizing: border-box; }
 .egg-limit-btn { height: 28px; border: 0; border-radius: 8px; padding: 0 12px; background: #8b5cf6; color: #fff; font-size: 12px; font-weight: 700; cursor: pointer; }
@@ -4592,6 +4789,27 @@ textarea:focus-visible,
   </div>
 </div>
 
+<div class="egg-style-overlay" id="keywordCloudOverlay">
+  <div class="egg-style-modal keyword-cloud-modal">
+    <div class="keyword-cloud-head">
+      <div>
+        <h3>☁️ 词云系统</h3>
+        <div class="sk-desc">提取历史用户输入和收藏衣柜里的高频穿搭、发型与场景词，作为日程生成的软参考。</div>
+      </div>
+      <div class="keyword-cloud-actions">
+        <button class="keyword-cloud-icon-btn" type="button" data-keyword-cloud-refresh title="刷新词云" aria-label="刷新词云">↻</button>
+        <button class="keyword-cloud-icon-btn" type="button" data-keyword-cloud-close title="关闭词云" aria-label="关闭词云">×</button>
+      </div>
+    </div>
+    <div class="keyword-cloud-canvas-wrap">
+      <canvas class="keyword-cloud-canvas" id="keywordCloudCanvas"></canvas>
+      <div class="keyword-cloud-loading" id="keywordCloudLoading">正在整理词云</div>
+      <div class="keyword-cloud-empty" id="keywordCloudEmpty">还没有可绘制的偏好关键词</div>
+    </div>
+    <div class="keyword-cloud-status" id="keywordCloudStatus"></div>
+  </div>
+</div>
+
 <script>
 // Scope browser-local preferences by app path so multiple deployments on the
 // same origin do not reuse each other's API key or UI state.
@@ -4642,7 +4860,7 @@ textarea:focus-visible,
 
 <div class="header">
   <div class="header-left">
-      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.2.6</span></h1>
+      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.3.0</span></h1>
   </div>
   <div class="tabs">
     <button class="tab has-badge" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="showUnfavoriteGallery(event)"><span class="tab-label"><span class="tab-icon" aria-hidden="true">✨</span><span class="tab-text">全部</span></span><span class="tab-badge" id="badge-all">0</span></button>
@@ -4793,9 +5011,14 @@ textarea:focus-visible,
         </section>
         <section class="chat-main">
           <div class="chat-main-head">
-            <div class="chat-main-title" id="groupChatActiveTitle">群聊</div>
-            <div class="chat-main-subtitle" id="groupChatActiveMeta">角色加载后自动进入群聊</div>
-            <div class="chat-typing-indicator" id="groupChatTypingIndicator" hidden></div>
+            <div class="chat-main-title-wrap">
+              <div class="chat-main-title" id="groupChatActiveTitle">群聊</div>
+              <div class="chat-main-subtitle" id="groupChatActiveMeta">角色加载后自动进入群聊</div>
+              <div class="chat-typing-indicator" id="groupChatTypingIndicator" hidden></div>
+            </div>
+            <div class="chat-main-tools">
+              <button class="chat-main-tool-btn danger" type="button" id="groupChatClearContextBtn" onclick="clearGroupChatContext()">清空上下文</button>
+            </div>
           </div>
           <div class="chat-messages" id="groupChatMessages">
             <div class="chat-empty">正在准备群聊...</div>
@@ -5137,7 +5360,7 @@ textarea:focus-visible,
     <div class="sk-update-row">
       <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
       <button class="btn btn-secondary" id="restartServiceBtn" onclick="restartService()">🔄 重启服务</button>
-      <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.2.6</span></span>
+      <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.3.0</span></span>
     </div>
     <div class="sk-update-result" id="updateResult"></div>
     </div>
@@ -5294,6 +5517,7 @@ let llmModelsRequest = null;
 let llmModelChain = [];
 let scheduleEggCache = { html: "", dateText: "", updatedAt: 0 };
 let scheduleEggRequest = null;
+let keywordCloudCache = { payload: null, updatedAt: 0 };
 const appDisplay = {
   title: "每日穿搭画廊",
   characterName: "角色",
@@ -6739,11 +6963,15 @@ function selectGroupChatRoom(roomIdValue) {
   renderGroupChatRooms();
 }
 
-function groupChatReplyParticipants(room, senderCharacterId = "") {
+function groupChatReplyParticipants(room, senderCharacterId = "", targetCharacterIds = []) {
   const senderId = String(senderCharacterId || "").trim();
+  const targetIds = new Set((Array.isArray(targetCharacterIds) ? targetCharacterIds : [])
+    .map(id => String(id || "").trim())
+    .filter(Boolean));
   return roomParticipants(room).filter(item => {
     if (item && typeof item === "object" && item.enabled === false) return false;
     const id = participantCharacterId(item);
+    if (targetIds.size && !targetIds.has(id)) return false;
     return !!id && id !== senderId;
   });
 }
@@ -6817,6 +7045,13 @@ function chatMessageSenderCharacterId(message) {
 
 function chatMessageMetadata(message) {
   return message && typeof message.metadata === "object" && message.metadata ? message.metadata : {};
+}
+
+function chatMessageIsGenerated(message) {
+  const sender = message && typeof message.sender === "object" ? message.sender : {};
+  const senderType = String(message?.sender_type || sender.type || "").toLowerCase();
+  const meta = chatMessageMetadata(message);
+  return senderType === "character" && (meta.auto_reply === true || meta.image_tool_call === true) && meta.manual_sender !== true && meta.sent_by_user !== true;
 }
 
 function chatMessageAvatarCharacterId(message) {
@@ -6925,11 +7160,13 @@ function renderGroupChatMessages() {
   const titleEl = document.getElementById("groupChatActiveTitle");
   const metaEl = document.getElementById("groupChatActiveMeta");
   const messagesEl = document.getElementById("groupChatMessages");
+  const clearBtn = document.getElementById("groupChatClearContextBtn");
   if (!messagesEl) return;
   const room = activeGroupChatRoom();
   if (!room) {
     if (titleEl) titleEl.textContent = "选择一个房间";
     if (metaEl) metaEl.textContent = "创建或选择房间后可以发送消息";
+    if (clearBtn) clearBtn.disabled = true;
     updateGroupChatTypingIndicator();
     messagesEl.innerHTML = '<div class="chat-empty">暂无房间被选中</div>';
     return;
@@ -6939,6 +7176,7 @@ function renderGroupChatMessages() {
   if (metaEl) metaEl.textContent = participants.length ? `参与者：${participants.join("、")}` : "参与者待配置";
   updateGroupChatTypingIndicator();
   const messages = roomMessages(room);
+  if (clearBtn) clearBtn.disabled = !messages.length;
   if (!messages.length) {
     messagesEl.innerHTML = '<div class="chat-empty">暂无消息，先发一条吧。</div>';
     return;
@@ -6958,12 +7196,19 @@ function renderGroupChatMessages() {
       ? renderGroupChatImageMessage(message, imageFilename, content)
       : `<div class="chat-message-text">${toolEscapeHtml(content)}</div>`;
     const avatarHtml = chatMessageAvatarHtml(message, room);
+    const actionsHtml = messageId
+      ? `<div class="chat-message-actions">
+          <button class="chat-message-action" type="button" onclick="event.stopPropagation();rewindGroupChatMessage(${jsStringArg(messageId)})" title="回到这条消息生成前并重新生成">回溯重发</button>
+          <button class="chat-message-action danger" type="button" onclick="event.stopPropagation();deleteGroupChatMessage(${jsStringArg(messageId)})" title="删除这条消息">删除</button>
+        </div>`
+      : "";
     return `<div class="chat-message${cls}" data-message-id="${toolEscapeAttr(messageId)}">
       ${avatarHtml}
       <div class="chat-message-bubble">
         <div class="chat-message-meta">${toolEscapeHtml(meta)}</div>
         ${bodyHtml}
       </div>
+      ${actionsHtml}
     </div>`;
   }).join("");
   requestAnimationFrame(() => { messagesEl.scrollTop = messagesEl.scrollHeight; });
@@ -7029,10 +7274,76 @@ function appendGroupChatMessage(roomIdValue, message) {
   room.messages.push(message);
 }
 
+function mergeGroupChatReplyData(roomIdValue, data) {
+  if (!data || typeof data !== "object") return false;
+  if (data.room) {
+    mergeGroupChatRoom(data.room);
+    return true;
+  }
+  if (Array.isArray(data.messages)) {
+    data.messages.forEach(message => appendGroupChatMessage(roomIdValue, message));
+    return data.messages.length > 0;
+  }
+  return false;
+}
+
+async function deleteGroupChatMessage(messageId) {
+  const room = activeGroupChatRoom();
+  if (!room) { showToast("请先选择房间"); return; }
+  const id = String(messageId || "").trim();
+  if (!id) return;
+  const target = roomMessages(room).find(message => chatMessageId(message) === id);
+  if (!target) { showToast("找不到要删除的消息"); return; }
+  const ok = window.confirm("删除这条消息后，它不会再进入当前房间上下文。继续吗？");
+  if (!ok) return;
+  setToolStatus("groupChatStatus", "删除消息中");
+  try {
+    const res = await fetch(`${API}/api/group-chat/rooms/${encodeURIComponent(activeGroupChatRoomId)}/messages/${encodeURIComponent(id)}`, {
+      method: "DELETE"
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    if (data.room) mergeGroupChatRoom(data.room);
+    renderGroupChatRooms();
+    setToolStatus("groupChatStatus", "消息已删除", "ok");
+    showToast("已删除这条消息");
+  } catch(e) {
+    setToolStatus("groupChatStatus", "删除失败", "error");
+    showToast("删除失败：" + (e && e.message ? e.message : "未知错误"));
+  }
+}
+
+async function clearGroupChatContext() {
+  const room = activeGroupChatRoom();
+  if (!room) { showToast("请先选择房间"); return; }
+  const count = roomMessages(room).length;
+  if (!count) { showToast("当前房间没有上下文记录"); return; }
+  const ok = window.confirm(`会清空当前房间 ${count} 条上下文记录，之后角色不会再参考这些聊天。继续吗？`);
+  if (!ok) return;
+  const btn = document.getElementById("groupChatClearContextBtn");
+  if (btn) btn.disabled = true;
+  setToolStatus("groupChatStatus", "清空上下文中");
+  try {
+    const res = await fetch(`${API}/api/group-chat/rooms/${encodeURIComponent(activeGroupChatRoomId)}/messages`, {
+      method: "DELETE"
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    if (data.room) mergeGroupChatRoom(data.room);
+    renderGroupChatRooms();
+    setToolStatus("groupChatStatus", "上下文已清空", "ok");
+    showToast(`已清空 ${data.removed_count || count} 条上下文记录`);
+  } catch(e) {
+    if (btn) btn.disabled = false;
+    setToolStatus("groupChatStatus", "清空失败", "error");
+    showToast("清空失败：" + (e && e.message ? e.message : "未知错误"));
+  }
+}
+
 async function requestGroupChatReplies(roomIdValue, options = {}) {
   const room = groupChatRooms.find((item, index) => roomId(item, index) === roomIdValue);
   const isRewind = !!options.rewind_message_id;
-  const replyParticipants = groupChatReplyParticipants(room, options.sender_character_id);
+  const replyParticipants = groupChatReplyParticipants(room, options.sender_character_id, options.character_ids);
   if (!room || replyParticipants.length <= 0) {
     clearGroupChatTyping(roomIdValue);
     return;
@@ -7047,6 +7358,8 @@ async function requestGroupChatReplies(roomIdValue, options = {}) {
     const body = {
       trigger_message_id: options.trigger_message_id || "",
       rewind_message_id: options.rewind_message_id || "",
+      regenerate_message_id: options.regenerate_message_id || "",
+      character_ids: Array.isArray(options.character_ids) ? options.character_ids : [],
       sender_character_id: options.sender_character_id || "",
       sender_type: options.sender_type || "",
       image_options: characterGenerationControlOptions()
@@ -7057,11 +7370,10 @@ async function requestGroupChatReplies(roomIdValue, options = {}) {
       body: JSON.stringify(body)
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
-    if (data.room) {
-      mergeGroupChatRoom(data.room);
-    } else if (Array.isArray(data.messages)) {
-      data.messages.forEach(message => appendGroupChatMessage(roomIdValue, message));
+    const merged = mergeGroupChatReplyData(roomIdValue, data);
+    if (!res.ok || data.error) {
+      if (merged) renderGroupChatRooms();
+      throw new Error(data.message || data.error || `HTTP ${res.status}`);
     }
     renderGroupChatRooms();
     const failureCount = Array.isArray(data.failures) ? data.failures.length : 0;
@@ -7084,12 +7396,18 @@ async function rewindGroupChatMessage(messageId) {
   if (!id) return;
   const target = roomMessages(room).find(message => chatMessageId(message) === id);
   if (!target) { showToast("找不到要回溯的消息"); return; }
-  const ok = window.confirm("会删除这条消息之后的聊天记录，并重新生成角色回复。继续吗？");
+  const generated = chatMessageIsGenerated(target);
+  const senderCharacterId = chatMessageSenderCharacterId(target);
+  const ok = window.confirm(generated
+    ? "会删除这条消息及之后的聊天记录，并由同一个角色重新生成这条消息。继续吗？"
+    : "会删除这条消息之后的聊天记录，并重新生成角色回复。继续吗？");
   if (!ok) return;
   await requestGroupChatReplies(activeGroupChatRoomId, {
     trigger_message_id: id,
-    rewind_message_id: id,
-    sender_character_id: chatMessageSenderCharacterId(target),
+    rewind_message_id: generated ? "" : id,
+    regenerate_message_id: generated ? id : "",
+    character_ids: generated && senderCharacterId ? [senderCharacterId] : [],
+    sender_character_id: generated ? "" : senderCharacterId,
     sender_type: String(target.sender_type || target.sender?.type || "")
   });
 }
@@ -8051,6 +8369,8 @@ ms.textContent = `
 .modal-actions { display: flex; gap: 10px; margin-top: auto; padding-top: 16px; }
 .modal-actions .mbtn { flex: 1; min-height: 36px; padding: 7px 2px; border-radius: 12px; border: 1.5px solid #ede5f0; background: #fff; font-size: 15px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 5px; color: #777; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.02); line-height: 1.15; white-space: nowrap; }
 .modal-actions .mbtn:hover { border-color: #e91e63; color: #e91e63; background: #fce4ec; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(233,30,99,0.15); }
+.modal-actions .mbtn:disabled { cursor: default; opacity: 0.58; transform: none; box-shadow: none; }
+.modal-actions .mbtn.active:disabled { opacity: 1; }
 .today-compact .modal-actions {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -8062,6 +8382,8 @@ ms.textContent = `
   align-items: stretch;
 }
 .modal-content .today-card-info .modal-actions {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   margin-top: auto;
   padding-top: 10px;
   gap: 7px;
@@ -8134,12 +8456,12 @@ ms.textContent = `
   .modal-image { flex:0 0 auto;width:100%;height:clamp(330px,74vw,500px);min-height:0;max-height:none;border-radius:20px 20px 0 0; }
   .modal-info { padding:22px 20px 18px; }
   .modal-content .today-card-info { flex:1 1 auto;min-height:0;gap:16px; }
-  .modal-content .today-card-info .modal-schedule { margin-top:6px; }
-  .modal-content .today-card-info .modal-caption.tc-thought { margin-top:8px;padding:17px 16px; }
-  .modal-content .today-card-info .modal-actions { margin-top:auto; }
-  .modal-content.modal-fit-detail { height:auto; }
-}
-}`;
+	  .modal-content .today-card-info .modal-schedule { margin-top:6px; }
+	  .modal-content .today-card-info .modal-caption.tc-thought { margin-top:8px;padding:17px 16px; }
+	  .modal-content .today-card-info .modal-actions { margin-top:auto; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+	  .modal-content.modal-fit-detail { height:auto; }
+	}
+	}`;
 document.head.appendChild(ms);
 
 // ===== Modal =====
@@ -8159,11 +8481,12 @@ modalOverlay.innerHTML = `
       <div class="modal-outfit" id="modalOutfit"></div>
       <div class="modal-schedule" id="modalSchedule"></div>
       <div class="modal-caption tc-thought" id="modalCaption"></div>
-      <div class="modal-actions">
-        <button class="mbtn" id="modalFav" onclick="modalToggleFav()"><i class="fa-regular fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
-        <button class="mbtn" onclick="modalShare()"><i class="fa-solid fa-share-nodes btn-icon" aria-hidden="true"></i> 分享</button>
-        <button class="mbtn" id="modalPromptBtn" onclick="showPrompt(this)"><i class="fa-regular fa-pen-to-square btn-icon" aria-hidden="true"></i> 提示词</button>
-        <button class="mbtn danger" onclick="modalDelete()"><i class="fa-regular fa-trash-can btn-icon" aria-hidden="true"></i> 删除</button>
+	      <div class="modal-actions">
+	        <button class="mbtn" id="modalFav" onclick="modalToggleFav()"><i class="fa-regular fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
+	        <button class="mbtn" id="modalWardrobe" onclick="modalAddToWardrobe()" title="收藏到衣柜"><i class="fa-solid fa-shirt btn-icon" aria-hidden="true"></i> 入衣柜</button>
+	        <button class="mbtn" onclick="modalShare()"><i class="fa-solid fa-share-nodes btn-icon" aria-hidden="true"></i> 分享</button>
+	        <button class="mbtn" id="modalPromptBtn" onclick="showPrompt(this)"><i class="fa-regular fa-pen-to-square btn-icon" aria-hidden="true"></i> 提示词</button>
+	        <button class="mbtn danger" onclick="modalDelete()"><i class="fa-regular fa-trash-can btn-icon" aria-hidden="true"></i> 删除</button>
       </div>
     </div>
   </div>`;
@@ -8309,11 +8632,17 @@ function openModal(e) {
     capEl.innerHTML = '<span class="tc-thought-label" title="思考" aria-label="思考">💭</span><span class="tc-thought-text">' + renderCaptionLinks(e.caption) + '</span>';
     capEl.style.display = "flex";
   } else { capEl.style.display = "none"; }
-  // Fav button state
-  updateModalFavBtn(e.favorite === true);
-  // Prompt button data
-  document.getElementById("modalPromptBtn").setAttribute("data-prompt", encodeURIComponent(e.prompt || ""));
-  modalOverlay.classList.add("open");
+	  // Fav button state
+	  updateModalFavBtn(e.favorite === true);
+	  updateModalWardrobeBtn(e);
+	  if (!wardrobeLoaded) {
+	    loadWardrobe({ render: false, silent: true }).then(function() {
+	      if (currentModalImg === e.image_filename) updateModalWardrobeBtn(e);
+	    }).catch(function() {});
+	  }
+	  // Prompt button data
+	  document.getElementById("modalPromptBtn").setAttribute("data-prompt", encodeURIComponent(e.prompt || ""));
+	  modalOverlay.classList.add("open");
   document.body.style.overflow = "hidden";
   syncModalDetailHeight();
 }
@@ -8331,16 +8660,162 @@ window.addEventListener("resize", () => {
     syncModalDetailHeight();
   });
 });
-function updateModalFavBtn(isFav) {
-  const btn = document.getElementById("modalFav");
-  if (isFav) { btn.innerHTML = '<i class="fa-solid fa-heart btn-icon" aria-hidden="true"></i> 已收藏'; btn.classList.add("active"); }
-  else { btn.innerHTML = '<i class="fa-regular fa-heart btn-icon" aria-hidden="true"></i> 收藏'; btn.classList.remove("active"); }
-}
-async function modalToggleFav() {
-  if (!currentModalImg) return;
-  return toggleFavorite(currentModalImg);
-}
-function modalShare() { if (currentModalImg) shareImage(currentModalImg); }
+	function updateModalFavBtn(isFav) {
+	  const btn = document.getElementById("modalFav");
+	  if (isFav) { btn.innerHTML = '<i class="fa-solid fa-heart btn-icon" aria-hidden="true"></i> 已收藏'; btn.classList.add("active"); }
+	  else { btn.innerHTML = '<i class="fa-regular fa-heart btn-icon" aria-hidden="true"></i> 收藏'; btn.classList.remove("active"); }
+	}
+	function currentModalEntry() {
+	  if (!currentModalImg) return null;
+	  return allEntries.find(x => x && x.image_filename === currentModalImg)
+	    || (todayData && Array.isArray(todayData.photos) ? todayData.photos.find(x => x && x.image_filename === currentModalImg) : null)
+	    || null;
+	}
+	function wardrobeEscapeRegExp(value) {
+	  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	}
+	function normalizeWardrobeText(value, maxLength) {
+	  const text = String(value || "").replace(/\s+/g, " ").trim();
+	  if (!text) return "";
+	  const limit = Math.max(20, Number(maxLength) || 420);
+	  return text.length > limit ? text.slice(0, limit).trim() : text;
+	}
+	function pickLabeledWardrobeValue(text, label, stopLabels) {
+	  text = String(text || "");
+	  if (!text) return "";
+	  const stops = (stopLabels || []).filter(x => x !== label).map(wardrobeEscapeRegExp).join("|");
+	  const stopPattern = stops ? `(?=\\s*(?:${stops})\\s*[：:]|$)` : "$";
+	  const re = new RegExp(`${wardrobeEscapeRegExp(label)}\\s*[：:]\\s*([\\s\\S]*?)${stopPattern}`, "i");
+	  const match = text.match(re);
+	  return normalizeWardrobeText(match ? match[1] : "");
+	}
+	function parseWardrobeOutfitSections(entry) {
+	  entry = entry || {};
+	  const result = {};
+	  if (entry.outfit && typeof entry.outfit === "object") {
+	    ["风格", "发型", "穿搭"].forEach(function(key) {
+	      const value = normalizeWardrobeText(entry.outfit[key]);
+	      if (value) result[key] = value;
+	    });
+	  }
+	  const zhLabels = ["风格", "发型", "穿搭", "动作", "场景", "视角", "道具", "光线"];
+	  const enLabels = ["Style", "Hair", "Outfit", "Action", "Scene", "Props", "Lighting", "Background", "Time"];
+	  [entry.outfit_full, entry.outfit, entry.prompt].forEach(function(sourceText) {
+	    if (!sourceText || typeof sourceText === "object") return;
+	    if (!result["风格"]) result["风格"] = pickLabeledWardrobeValue(sourceText, "风格", zhLabels);
+	    if (!result["发型"]) result["发型"] = pickLabeledWardrobeValue(sourceText, "发型", zhLabels);
+	    if (!result["穿搭"]) result["穿搭"] = pickLabeledWardrobeValue(sourceText, "穿搭", zhLabels);
+	    if (!result["风格"]) result["风格"] = pickLabeledWardrobeValue(sourceText, "Style", enLabels);
+	    if (!result["发型"]) result["发型"] = pickLabeledWardrobeValue(sourceText, "Hair", enLabels);
+	    if (!result["穿搭"]) result["穿搭"] = pickLabeledWardrobeValue(sourceText, "Outfit", enLabels);
+	  });
+	  const style = result["风格"] || displayOutfitStyle(entry) || String(entry.outfit_style || "").trim();
+	  if (style) result["风格"] = normalizeWardrobeText(style, 80);
+	  if (!result["穿搭"] && typeof entry.outfit === "string") {
+	    result["穿搭"] = normalizeWardrobeText(extractOutfitText(entry.outfit));
+	  }
+	  return result;
+	}
+	function favoriteOutfitPayloadFromGalleryEntry(entry, favorite) {
+	  entry = entry || {};
+	  const outfit = parseWardrobeOutfitSections(entry);
+	  const payloadOutfit = {};
+	  ["风格", "发型", "穿搭"].forEach(function(key) {
+	    if (outfit[key]) payloadOutfit[key] = outfit[key];
+	  });
+	  if (!payloadOutfit["发型"] && !payloadOutfit["穿搭"]) return null;
+	  if (!payloadOutfit["风格"]) payloadOutfit["风格"] = displayOutfitStyle(entry) || "收藏穿搭";
+	  return {
+	    date: entry.date || "",
+	    outfit_style: payloadOutfit["风格"] || displayOutfitStyle(entry) || "",
+	    base_style: entry.base_style || "",
+	    outfit: payloadOutfit,
+	    outfit_keywords: entry.outfit_keywords || "",
+	    favorite: favorite !== false
+	  };
+	}
+	function sameWardrobeOutfitValue(a, b) {
+	  return normalizeWardrobeText(a).toLowerCase() === normalizeWardrobeText(b).toLowerCase();
+	}
+	function isGalleryEntryInWardrobe(entry) {
+	  const payload = favoriteOutfitPayloadFromGalleryEntry(entry, true);
+	  if (!payload || !Array.isArray(wardrobeItems)) return false;
+	  return wardrobeItems.some(function(item) {
+	    if (!item || !item.outfit) return false;
+	    const outfit = item.outfit || {};
+	    return sameWardrobeOutfitValue(item.date || "", payload.date || "")
+	      && sameWardrobeOutfitValue(item.outfit_style || outfit["风格"] || "", payload.outfit_style || payload.outfit["风格"] || "")
+	      && sameWardrobeOutfitValue(outfit["发型"] || "", payload.outfit["发型"] || "")
+	      && sameWardrobeOutfitValue(outfit["穿搭"] || "", payload.outfit["穿搭"] || "");
+	  });
+	}
+	function setModalWardrobeBtnState(state, text) {
+	  const btn = document.getElementById("modalWardrobe");
+	  if (!btn) return;
+	  const active = state === "active";
+	  const disabled = state === "disabled" || state === "busy" || active;
+	  btn.disabled = disabled;
+	  btn.classList.toggle("active", active);
+	  if (state === "busy") {
+	    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin btn-icon" aria-hidden="true"></i> 保存中';
+	  } else if (active) {
+	    btn.innerHTML = '<i class="fa-solid fa-shirt btn-icon" aria-hidden="true"></i> 已入柜';
+	  } else if (disabled) {
+	    btn.innerHTML = '<i class="fa-solid fa-shirt btn-icon" aria-hidden="true"></i> 无穿搭';
+	  } else {
+	    btn.innerHTML = '<i class="fa-solid fa-shirt btn-icon" aria-hidden="true"></i> ' + escapeHtml(text || "入衣柜");
+	  }
+	  btn.setAttribute("title", active ? "已收藏到衣柜" : "收藏到衣柜");
+	}
+	function updateModalWardrobeBtn(entry) {
+	  const payload = favoriteOutfitPayloadFromGalleryEntry(entry, true);
+	  if (!payload) {
+	    setModalWardrobeBtnState("disabled");
+	    return;
+	  }
+	  setModalWardrobeBtnState(isGalleryEntryInWardrobe(entry) ? "active" : "idle");
+	}
+	async function modalToggleFav() {
+	  if (!currentModalImg) return;
+	  return toggleFavorite(currentModalImg);
+	}
+	async function modalAddToWardrobe() {
+	  const entry = currentModalEntry();
+	  const payload = favoriteOutfitPayloadFromGalleryEntry(entry, true);
+	  const btn = document.getElementById("modalWardrobe");
+	  if (!payload) {
+	    showToast("这张图缺少可收藏到衣柜的穿搭数据");
+	    return;
+	  }
+	  if (btn && btn.disabled) return;
+	  setModalWardrobeBtnState("busy");
+	  try {
+	    const res = await fetch('/api/favorite-outfits' + apiKeyQuery(), {
+	      method: 'POST',
+	      headers: { 'Content-Type': 'application/json' },
+	      body: JSON.stringify(payload)
+	    });
+	    const data = await res.json().catch(function() { return {}; });
+	    if (!res.ok || data.error) throw new Error(data.message || data.error || ('HTTP ' + res.status));
+	    if (typeof data.count === "number") setWardrobeCount(data.count);
+	    if (data.wardrobe_auto_generation === "queued") {
+	      showToast("已收藏到衣柜，衣架图自动生成中");
+	      scheduleWardrobeAutoRefresh();
+	    } else if (data.wardrobe_auto_generation === "running") {
+	      showToast("已收藏到衣柜，衣架图正在生成中");
+	      scheduleWardrobeAutoRefresh();
+	    } else {
+	      showToast("已收藏到衣柜");
+	    }
+	    if (typeof keywordCloudCache !== "undefined") keywordCloudCache = { payload: null, updatedAt: 0 };
+	    await refreshWardrobeAfterFavoriteChange({ silent: true, softRender: true });
+	    updateModalWardrobeBtn(entry);
+	  } catch(e) {
+	    updateModalWardrobeBtn(entry);
+	    showToast("收藏到衣柜失败：" + (e && e.message ? e.message : "未知错误"));
+	  }
+	}
+	function modalShare() { if (currentModalImg) shareImage(currentModalImg); }
 function modalDelete() {
   if (!currentModalImg) return;
   deleteImage(currentModalImg);
@@ -9409,6 +9884,209 @@ async function openScheduleForbiddenDialog() {
   }
 }
 
+function keywordCloudHash(text) {
+  let hash = 2166136261;
+  const value = String(text || "");
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function keywordCloudRng(seed) {
+  let state = seed >>> 0;
+  return function() {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+function keywordCloudPalette(index) {
+  const colors = ["#7c3aed", "#c026d3", "#2563eb", "#0f766e", "#db2777", "#b45309", "#0891b2", "#be123c"];
+  return colors[index % colors.length];
+}
+
+function keywordCloudIntersects(box, placed) {
+  for (let i = 0; i < placed.length; i++) {
+    const other = placed[i];
+    if (
+      box.left < other.right &&
+      box.right > other.left &&
+      box.top < other.bottom &&
+      box.bottom > other.top
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function drawKeywordCloud(payload) {
+  const canvas = document.getElementById("keywordCloudCanvas");
+  const loading = document.getElementById("keywordCloudLoading");
+  const empty = document.getElementById("keywordCloudEmpty");
+  const status = document.getElementById("keywordCloudStatus");
+  if (!canvas) return;
+  const wrap = canvas.parentElement;
+  const rect = wrap ? wrap.getBoundingClientRect() : { width: 620, height: 420 };
+  const width = Math.max(320, Math.floor(rect.width || 620));
+  const height = Math.max(260, Math.floor(rect.height || 420));
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.floor(width * dpr);
+  canvas.height = Math.floor(height * dpr);
+  canvas.style.width = width + "px";
+  canvas.style.height = height + "px";
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  const keywords = Array.isArray(payload && payload.keywords) ? payload.keywords.slice(0, 48) : [];
+  if (!keywords.length) {
+    if (loading) loading.style.display = "none";
+    if (empty) {
+      empty.textContent = "还没有可绘制的偏好关键词";
+      empty.style.display = "flex";
+    }
+    if (status) status.textContent = "等待更多用户输入或收藏衣柜记录。";
+    return;
+  }
+  if (loading) loading.style.display = "none";
+  if (empty) empty.style.display = "none";
+
+  const bg = ctx.createLinearGradient(0, 0, width, height);
+  bg.addColorStop(0, "rgba(255,255,255,0.92)");
+  bg.addColorStop(0.48, "rgba(253,242,248,0.74)");
+  bg.addColorStop(1, "rgba(245,243,255,0.88)");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, width, height);
+  ctx.save();
+  ctx.globalAlpha = 0.22;
+  ctx.strokeStyle = "rgba(196,181,253,0.28)";
+  ctx.lineWidth = 1;
+  for (let x = -height; x < width; x += 30) {
+    ctx.beginPath();
+    ctx.moveTo(x, height);
+    ctx.lineTo(x + height, 0);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  const maxCount = Math.max(1, ...keywords.map(item => parseInt(item.count || 0, 10) || 0));
+  const placed = [];
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const seedBase = keywordCloudHash(keywords.map(item => item.text).join("|"));
+  let drawn = 0;
+
+  keywords.forEach(function(item, index) {
+    const text = String(item.text || "").trim();
+    if (!text) return;
+    const count = Math.max(1, parseInt(item.count || 1, 10) || 1);
+    const weight = Math.max(0.22, Math.min(1, count / maxCount));
+    let fontSize = Math.round(12 + Math.pow(weight, 0.72) * 24);
+    if (text.length > 18) fontSize = Math.round(fontSize * 0.76);
+    else if (text.length > 12) fontSize = Math.round(fontSize * 0.86);
+    const rng = keywordCloudRng(seedBase ^ keywordCloudHash(text));
+    const isWide = text.length > 12;
+    const rotateChoices = isWide ? [0, 0, -0.08, 0.08] : [0, 0, -0.18, 0.18, -0.55, 0.55];
+    const rotation = rotateChoices[Math.floor(rng() * rotateChoices.length)] || 0;
+    ctx.font = `800 ${fontSize}px Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif`;
+    const metrics = ctx.measureText(text);
+    const rawW = metrics.width + 10;
+    const rawH = fontSize * 1.16 + 6;
+    const boxW = Math.abs(Math.cos(rotation)) * rawW + Math.abs(Math.sin(rotation)) * rawH;
+    const boxH = Math.abs(Math.sin(rotation)) * rawW + Math.abs(Math.cos(rotation)) * rawH;
+    let target = null;
+    for (let step = 0; step < 760; step++) {
+      const angle = step * 0.42 + rng() * 0.32;
+      const radius = 1.38 * step;
+      const driftX = (rng() - 0.5) * 18;
+      const driftY = (rng() - 0.5) * 14;
+      const x = centerX + Math.cos(angle) * radius + driftX;
+      const y = centerY + Math.sin(angle) * radius * 0.62 + driftY;
+      const box = {
+        left: x - boxW / 2,
+        right: x + boxW / 2,
+        top: y - boxH / 2,
+        bottom: y + boxH / 2,
+      };
+      if (box.left < 12 || box.right > width - 12 || box.top < 12 || box.bottom > height - 12) continue;
+      if (keywordCloudIntersects(box, placed)) continue;
+      target = { x, y, box };
+      break;
+    }
+    if (!target) return;
+    placed.push(target.box);
+    ctx.save();
+    ctx.translate(target.x, target.y);
+    ctx.rotate(rotation);
+    ctx.globalAlpha = 0.56 + weight * 0.42;
+    ctx.fillStyle = keywordCloudPalette(index);
+    ctx.shadowColor = "rgba(124,58,237,0.12)";
+    ctx.shadowBlur = 8;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, 0, 0);
+    ctx.restore();
+    drawn += 1;
+  });
+
+  if (status) {
+    const total = Math.max(0, parseInt(payload.total || keywords.length, 10) || keywords.length);
+    const entryCount = Math.max(0, parseInt(payload.entry_count || 0, 10) || 0);
+    status.textContent = `已绘制 ${drawn} 个高频词 · 偏好记录 ${entryCount} 条 · 候选词 ${total} 个`;
+  }
+}
+
+async function loadKeywordCloudPayload(force) {
+  if (!force && keywordCloudCache.payload && Date.now() - keywordCloudCache.updatedAt < 60000) {
+    return keywordCloudCache.payload;
+  }
+  const res = await fetch(appendApiKeyQuery("/api/keyword-cloud?limit=64"));
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "词云加载失败");
+  keywordCloudCache = { payload: data, updatedAt: Date.now() };
+  return data;
+}
+
+async function openKeywordCloudDialog(force) {
+  const overlay = document.getElementById("keywordCloudOverlay");
+  const loading = document.getElementById("keywordCloudLoading");
+  const empty = document.getElementById("keywordCloudEmpty");
+  const status = document.getElementById("keywordCloudStatus");
+  if (!overlay) return;
+  overlay.classList.add("open");
+  if (loading) {
+    loading.style.display = "flex";
+    loading.textContent = "正在整理词云";
+  }
+  if (empty) {
+    empty.style.display = "none";
+    empty.textContent = "还没有可绘制的偏好关键词";
+  }
+  if (status) status.textContent = "正在读取用户输入与收藏衣柜关键词...";
+  try {
+    const payload = await loadKeywordCloudPayload(force);
+    requestAnimationFrame(function() {
+      drawKeywordCloud(payload);
+    });
+  } catch(e) {
+    if (loading) loading.style.display = "none";
+    if (empty) {
+      empty.style.display = "flex";
+      empty.textContent = "词云加载失败，请稍后重试";
+    }
+    if (status) status.textContent = e && e.message ? e.message : "词云加载失败";
+  }
+}
+
+function closeKeywordCloudDialog() {
+  const overlay = document.getElementById("keywordCloudOverlay");
+  if (overlay) overlay.classList.remove("open");
+}
+
 function bindOutfitStyleDialogEvents() {
   const overlay = document.getElementById("eggStyleOverlay");
   if (overlay && overlay.dataset.bound !== "1") {
@@ -9432,11 +10110,13 @@ function bindOutfitStyleDialogEvents() {
     eggBody.addEventListener("click", e => {
       const btn = e.target.closest('[data-action="manage-outfit-styles"]');
       const forbiddenBtn = e.target.closest('[data-action="manage-schedule-forbidden"]');
-      if (!btn && !forbiddenBtn) return;
+      const cloudBtn = e.target.closest('[data-action="open-keyword-cloud"]');
+      if (!btn && !forbiddenBtn && !cloudBtn) return;
       e.preventDefault();
       e.stopPropagation();
       if (btn) openOutfitStyleDialog();
       if (forbiddenBtn) openScheduleForbiddenDialog();
+      if (cloudBtn) openKeywordCloudDialog(false);
     });
   }
 
@@ -9464,6 +10144,22 @@ function bindOutfitStyleDialogEvents() {
       if (e.target.closest("[data-egg-forbidden-save]")) {
         e.preventDefault();
         saveScheduleForbiddenDialog();
+      }
+    });
+  }
+
+  const keywordOverlay = document.getElementById("keywordCloudOverlay");
+  if (keywordOverlay && keywordOverlay.dataset.bound !== "1") {
+    keywordOverlay.dataset.bound = "1";
+    keywordOverlay.addEventListener("click", e => {
+      if (e.target === keywordOverlay || e.target.closest("[data-keyword-cloud-close]")) {
+        e.preventDefault();
+        closeKeywordCloudDialog();
+        return;
+      }
+      if (e.target.closest("[data-keyword-cloud-refresh]")) {
+        e.preventDefault();
+        openKeywordCloudDialog(true);
       }
     });
   }
@@ -10853,7 +11549,7 @@ function loadScheduleEggData(options) {
 
     // 显示今日真实生图计划
     html += '<div class="egg-photo-status">';
-    html += '<div class="egg-photo-status-title"><span class="icon">📸</span>今日生图计划</div>';
+    html += '<div class="egg-photo-status-title"><span class="egg-photo-status-title-main"><span class="icon">📸</span>今日生图计划</span><button class="egg-cloud-open-btn" type="button" data-action="open-keyword-cloud" aria-label="打开词云系统" title="打开词云系统">☁️</button></div>';
     var retryableToday = Math.max(0, jobs.length - activeToday);
     var usageText = '已创建 ' + plannedToday + '/' + maxDaily + ' · 已完成 ' + completedToday;
     if (activeToday > 0) usageText += ' · 待执行 ' + activeToday;
@@ -11165,9 +11861,11 @@ function renderWardrobeItem(item) {
     ? '<div class="wardrobe-thumb"><img src="' + escapeAttr(wardrobeImageSrc) + '" alt="' + escapeAttr(style + ' 衣架图') + '" loading="lazy" decoding="async"></div>'
     : '<div class="wardrobe-thumb"><div class="wardrobe-thumb-empty"><i class="fa-solid fa-shirt" aria-hidden="true"></i><span>' + emptyText + '</span></div></div>';
   html += '<div class="wardrobe-meta"><span class="wardrobe-style">' + escapeHtml(style) + '</span><span class="wardrobe-date">' + escapeHtml(dateText) + '</span></div>';
+  html += '<div class="wardrobe-copy">';
   if (hair) html += '<div class="wardrobe-line"><strong>发型：</strong>' + escapeHtml(hair) + '</div>';
   if (wear) html += '<div class="wardrobe-line"><strong>穿搭：</strong>' + escapeHtml(wear) + '</div>';
   if (!hair && !wear) html += '<div class="wardrobe-line">这套方案没有可展示的发型/穿搭内容</div>';
+  html += '</div>';
   html += '<div class="wardrobe-actions">';
   html += '<button class="wardrobe-action-btn wardrobe-generate-btn" type="button" data-wardrobe-action="generate" data-outfit-id="' + escapeAttr(outfitId) + '"' + (wardrobeGenerating ? ' disabled' : '') + '>' + (wardrobeGenerating ? '生成中' : (hasWardrobeImage ? '重生衣架图' : '生成衣架图')) + '</button>';
   html += '<button class="wardrobe-action-btn" type="button" data-wardrobe-action="edit" data-outfit-id="' + escapeAttr(outfitId) + '">编辑</button>';
@@ -11550,6 +12248,8 @@ window.openCustomGenFromWardrobe = openCustomGenFromWardrobe;
 window.openWardrobeEdit = openWardrobeEdit;
 window.closeWardrobeEdit = closeWardrobeEdit;
 window.saveWardrobeEdit = saveWardrobeEdit;
+window.deleteGroupChatMessage = deleteGroupChatMessage;
+window.clearGroupChatContext = clearGroupChatContext;
 
 function setFavoriteOutfitButtonState(btn, isFavorite, favoriteId) {
   if (!btn) return;
@@ -11825,6 +12525,7 @@ function refreshScheduleEgg() {
 function closeScheduleEgg() {
   document.getElementById('eggOverlay').classList.remove('show');
   closeOutfitStyleDialog();
+  closeKeywordCloudDialog();
 }
 
 function bindScheduleEggEvents() {

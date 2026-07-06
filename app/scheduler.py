@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from calendar_context import build_day_context
 from data import DailyEntry
+from keyword_cloud import build_schedule_keyword_prompt_block
 from settings import (
     DEFAULT_OUTFIT_STYLES,
     llm_choice_text,
@@ -39,6 +40,57 @@ SCHEDULE_TYPES = [
     "工作日", "约会日", "宅家日", "购物日", "运动日",
     "学习日", "社交日", "旅行日", "创作日", "放松日",
 ]
+
+BED_IDLE_TERMS = (
+    "赖床",
+    "床上",
+    "被窝",
+    "躺床",
+    "躺在床",
+    "窝在床",
+    "翻手机",
+    "刷手机",
+    "玩手机",
+)
+
+COOKING_TERMS = (
+    "做饭",
+    "做早餐",
+    "做午餐",
+    "做晚餐",
+    "准备早餐",
+    "准备午餐",
+    "准备晚餐",
+    "下厨",
+    "料理",
+    "煮饭",
+    "煮面",
+    "煮一",
+    "煮碗",
+    "炒菜",
+    "烤饼",
+    "烤蛋糕",
+    "烤吐司",
+    "厨房为自己做",
+    "厨房里做",
+)
+
+LOW_ENERGY_HOME_TERMS = (
+    "窝在沙发",
+    "窝在客厅",
+    "抱着抱枕",
+    "追番",
+    "看动漫",
+    "看电影",
+    "刷剧",
+    "发呆",
+)
+
+SCHEDULE_DIVERSITY_IDEAS = (
+    "晨间：花市买一小束花、楼下取咖啡、整理书桌、去便利店补生活用品、做拉伸、给植物换水、图书馆还书、短途散步。",
+    "中午/下午：去咖啡馆写计划、逛文创店、看展、修照片、整理灵感板、练琴/练舞、去书店、做手作、和朋友吃轻食。",
+    "傍晚/晚上：城市散步、听播客收拾房间、整理明天穿搭、写观影笔记、夜间阅读、做香薰放松、复盘直播/创作素材。",
+)
 
 BASE_STYLE_OPTIONS = {"cool", "girly", "sweet"}
 SCHEDULE_DETAIL_REQUIRED_FIELDS = (
@@ -98,6 +150,111 @@ class DailyScheduler:
             f"不应出现休息日工作/上学安排: {', '.join(conflicts)}"
         )
 
+    @staticmethod
+    def _activity_has(activity: str, terms: tuple[str, ...]) -> bool:
+        compact = re.sub(r"\s+", "", str(activity or ""))
+        return any(term in compact for term in terms)
+
+    @staticmethod
+    def _activity_signature(activity: str) -> str:
+        text = re.sub(r"\s+", "", str(activity or ""))
+        text = re.sub(r"[，,。.!！?？；;、：:（）()《》“”\"'‘’]", "", text)
+        for filler in ("今天的", "今日的", "一份", "简单的", "精致的", "舒服的", "轻松的"):
+            text = text.replace(filler, "")
+        return text[:18]
+
+    def _schedule_diversity_prompt_block(self, schedule_history: str) -> str:
+        ideas = "\n".join(f"- {item}" for item in SCHEDULE_DIVERSITY_IDEAS)
+        history_text = schedule_history or "（无近期日程）"
+        return f"""近 3 天日程避重参考（不要复刻这些活动组合或场景顺序）：
+{history_text}
+
+多样化要求：
+- 今天必须像真实新的一天，不要回到“早上赖床/床上刷手机，中午做饭，晚上做饭/准备晚餐”的模板。
+- schedule 第一条不要写赖床、躺床、床上翻手机、被窝里刷手机；可以写起床后的具体行动，如取咖啡、整理书桌、晨间拉伸、出门办小事。
+- 一天最多 1 条下厨/做饭/准备饭菜/厨房烹饪活动；午餐和晚餐不要都写成做饭。另一餐可以写外食、轻食、便当、咖啡馆、餐厅、朋友聚餐或简单用餐。
+- 至少 3 条活动要脱离“床/沙发/厨房”的低变化场景，给出明确地点、道具或兴趣任务。
+- 不要连续多天复用同一套活动骨架；从下面灵感里挑新的生活片段，但不要逐字照抄：
+{ideas}"""
+
+    def _load_schedule_data(self) -> dict:
+        path = os.path.join(self.data_dir, "schedule_data.json")
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _get_schedule_history(self, today: date, days: int = 3) -> str:
+        all_data = self._load_schedule_data()
+        lines = []
+        for i in range(1, days + 1):
+            date_str = (today - timedelta(days=i)).isoformat()
+            entry = all_data.get(date_str)
+            if not isinstance(entry, dict) or entry.get("status") != "ok":
+                continue
+            activities = [activity for _time_text, activity in self._schedule_plan_items(entry.get("schedule", ""))]
+            if not activities:
+                continue
+            summary = " / ".join(activity[:24] for activity in activities[:6])
+            lines.append(f"[{date_str}] {summary}")
+        return "\n".join(lines) if lines else "（无近期日程）"
+
+    def _recent_schedule_category_counts(self, today: date, days: int = 3) -> dict[str, int]:
+        all_data = self._load_schedule_data()
+        counts = {"cooking_days": 0, "bed_idle_start_days": 0, "low_energy_home_days": 0}
+        for i in range(1, days + 1):
+            date_str = (today - timedelta(days=i)).isoformat()
+            entry = all_data.get(date_str)
+            if not isinstance(entry, dict) or entry.get("status") != "ok":
+                continue
+            items = self._schedule_plan_items(entry.get("schedule", ""))
+            activities = [activity for _time_text, activity in items]
+            if any(self._activity_has(activity, COOKING_TERMS) for activity in activities):
+                counts["cooking_days"] += 1
+            if activities and self._activity_has(activities[0], BED_IDLE_TERMS):
+                counts["bed_idle_start_days"] += 1
+            if any(self._activity_has(activity, LOW_ENERGY_HOME_TERMS) for activity in activities):
+                counts["low_energy_home_days"] += 1
+        return counts
+
+    def _schedule_diversity_error(
+        self,
+        display_items: list[tuple[str, str]],
+        recent_counts: Optional[dict[str, int]] = None,
+    ) -> str:
+        if not display_items:
+            return ""
+        recent_counts = recent_counts or {}
+        first_activity = display_items[0][1]
+        if self._activity_has(first_activity, BED_IDLE_TERMS):
+            return "schedule 第一条是赖床/床上刷手机模板，请换成起床后的具体行动"
+
+        cooking_items = [
+            f"{time_text} {activity}"
+            for time_text, activity in display_items
+            if self._activity_has(activity, COOKING_TERMS)
+        ]
+        if len(cooking_items) > 1:
+            return "一天最多 1 条下厨/做饭/准备饭菜活动，当前重复: " + "；".join(cooking_items[:3])
+        if cooking_items and recent_counts.get("cooking_days", 0) >= 2:
+            return "最近 3 天已有多天下厨/做饭，今天请改成外食、轻食、咖啡馆、便当或非餐饮活动"
+
+        low_energy_items = [
+            f"{time_text} {activity}"
+            for time_text, activity in display_items
+            if self._activity_has(activity, LOW_ENERGY_HOME_TERMS)
+        ]
+        if len(low_energy_items) > 2:
+            return "床/沙发/追番/发呆类低变化活动过多，请增加外出、兴趣、整理、创作或社交任务"
+
+        signatures = [self._activity_signature(activity) for _time_text, activity in display_items]
+        duplicates = sorted({item for item in signatures if item and signatures.count(item) > 1})
+        if duplicates:
+            return "schedule 内部活动过于重复: " + "、".join(duplicates[:3])
+        return ""
+
     def _runtime_persona(self) -> dict:
         return load_runtime_persona(self.config, self.data_dir)
 
@@ -115,6 +272,9 @@ class DailyScheduler:
             "outfit_keywords、scene_keywords 都不能出现这些关键词，也不要安排相关活动、道具、场景或配饰。"
             "如果禁词是中文，也要避开对应英文同义词；例如“包”要同时避开 bag、handbag、purse、tote、package、packing 等相关内容。"
         )
+
+    def _schedule_keyword_cloud_prompt_block(self, limit: int = 18) -> str:
+        return build_schedule_keyword_prompt_block(self.data_dir, limit=limit)
 
     @staticmethod
     def _schedule_forbidden_variants(keyword: str) -> set[str]:
@@ -450,7 +610,7 @@ class DailyScheduler:
                     break
         return None
 
-    def _build_schedule_prompt(self, today: date, history: str) -> str:
+    def _build_schedule_prompt(self, today: date, history: str, schedule_history: str) -> str:
         """构建日程生成 prompt"""
         weekday = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"][today.weekday()]
         day_context = self._day_context(today)
@@ -495,6 +655,12 @@ class DailyScheduler:
 
 【历史穿搭参考（不要重复以下穿搭）】
 {history}
+
+【日程避重与多样化要求】
+{self._schedule_diversity_prompt_block(schedule_history)}
+
+【历史生图词云参考（软偏好，不是硬约束）】
+{self._schedule_keyword_cloud_prompt_block(limit=18)}
 
 【收藏穿搭偏好（用户主动收藏的审美方向；只作为发型/穿搭参考，不是日程、动作或场景参考）】
 {favorite_outfits}
@@ -604,7 +770,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
     "scene_keywords": "coffee shop, cafe counter, warm ambient light"
 }}"""
 
-    def _build_compact_schedule_prompt(self, today: date, history: str) -> str:
+    def _build_compact_schedule_prompt(self, today: date, history: str, schedule_history: str) -> str:
         """Build a shorter schedule prompt for providers that choke on the full context."""
         weekday = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"][today.weekday()]
         day_context = self._day_context(today)
@@ -633,12 +799,15 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 角色外貌：{str(appearance)[:700]}
 小心思口吻：{str(caption_voice)[:220]}
 历史参考（避免重复）：{str(history)[:700]}
+近期日程避重（不要复刻）：{str(schedule_history)[:900]}
+历史生图词云（软参考）：{self._schedule_keyword_cloud_prompt_block(limit=12)[:700]}
 收藏偏好（只参考穿搭/发型气质）：{self._favorite_outfit_context(limit=2)[:700]}
 不喜欢反馈（减少相似穿搭/发型）：{self._disliked_outfit_context(limit=2)[:500]}
 日程禁词（最高优先级，相关活动/道具/场景/配饰都不要生成）：{self._schedule_forbidden_prompt_block()}
 
 硬性要求：
 0. 严格服从真实日历；休息日/节假日禁止写上班、上学、通勤、办公室会议、考试、作业或加班，调休上班日除外。
+0.1. 日程要避开模板化重复：第一条不要赖床/床上刷手机；一天最多 1 条下厨/做饭/准备饭菜；至少 3 条活动离开床/沙发/厨房场景。
 1. outfit_style 必须从可选穿搭风格中选一个。
 2. outfit 必须是中文，包含「风格：」「发型：」「穿搭：」「动作：」「场景：」五段；穿搭写清上装、下装/裙装、鞋子、配饰、颜色、材质/版型。
 3. schedule 必须是 6-8 行中文，每行「HH:mm 中文活动」，用 \\n 分隔，覆盖 06:00-11:59、12:00-17:59、18:00-23:59；分钟不能是 00，不要安排 03:00-05:59，时间要像 08:12、10:27、13:18、15:42、18:36 这样自然浮动。
@@ -674,7 +843,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
   "scene_keywords": "English scene keywords"
 }}"""
 
-    def _build_emergency_schedule_prompt(self, today: date) -> str:
+    def _build_emergency_schedule_prompt(self, today: date, schedule_history: str = "") -> str:
         """Smallest strict prompt used when an upstream model times out on rich context."""
         weekday = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"][today.weekday()]
         day_context = self._day_context(today)
@@ -695,10 +864,13 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 {calendar_guidance}
 外貌约束：{str(appearance)[:320]}
 禁词约束：{self._schedule_forbidden_prompt_block()}
+近期日程避重：{str(schedule_history)[:500]}
+词云软参考：{self._schedule_keyword_cloud_prompt_block(limit=8)[:360]}
 
 只输出 minified JSON，不要换成数组，不要代码块。
 要求：
 - 严格服从真实日历；休息日/节假日禁止写上班、上学、通勤、办公室会议、考试、作业或加班，调休上班日除外。
+- 避免重复模板：第一条不要赖床/床上刷手机；一天最多 1 条下厨/做饭/准备饭菜；午餐和晚餐不要都写做饭；多安排具体地点、道具或兴趣任务。
 - outfit_style 从可选风格中选。
 - schedule 固定 6 行，时间用 08:12、10:27、13:18、15:42、18:36、22:11，每行中文活动，覆盖早中晚；不要用整点或 03:00-05:59。
 - schedule_prompt 与 schedule 时间一致，纯英文。
@@ -1307,9 +1479,11 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
         logger.info("正在生成 %s 的日程... date_context=%s", date_str, day_context.day_type_label)
 
         history = self._get_history(today)
-        prompt = self._build_schedule_prompt(today, history)
-        compact_prompt = self._build_compact_schedule_prompt(today, history)
-        emergency_prompt = self._build_emergency_schedule_prompt(today)
+        schedule_history = self._get_schedule_history(today)
+        recent_counts = self._recent_schedule_category_counts(today)
+        prompt = self._build_schedule_prompt(today, history, schedule_history)
+        compact_prompt = self._build_compact_schedule_prompt(today, history, schedule_history)
+        emergency_prompt = self._build_emergency_schedule_prompt(today, schedule_history)
         prompt_sequence = [prompt, compact_prompt, emergency_prompt]
 
         # 最多重试 3 次
@@ -1364,6 +1538,10 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             )
             if alignment_error:
                 logger.warning(f"日程/生图日程结构不合格 (attempt {attempt+1}): {alignment_error}")
+                continue
+            diversity_error = self._schedule_diversity_error(display_items, recent_counts)
+            if diversity_error:
+                logger.warning("日程重复性过高 (attempt %s): %s", attempt + 1, diversity_error)
                 continue
             missing_display = self._missing_required_periods(schedule_display)
             missing_prompt = self._missing_required_periods(schedule_prompt)

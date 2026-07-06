@@ -41,6 +41,7 @@ from characters import (
     upsert_manual_character,
 )
 from group_chat import GroupChatStore
+from keyword_cloud import build_keyword_cloud_payload
 from picxazz_sync import PicxazzSyncClient
 from reference_profiles import (
     analyze_reference_image,
@@ -86,8 +87,6 @@ from settings import (
 )
 
 logger = logging.getLogger(__name__)
-
-GITHUB_RELEASE_API_URL = "https://api.github.com/repos/i-kirito/portrait-gallery/releases/latest"
 
 # 日期 key 正则：匹配 YYYY-MM-DD 格式
 DATE_KEY_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
@@ -221,6 +220,7 @@ READ_ONLY_POST_API_PATHS = {
 PRIVATE_API_PATH_PREFIXES = (
     "/api/characters",
     "/api/group-chat",
+    "/api/keyword-cloud",
 )
 MANUAL_UPDATE_COMMAND = (
     "cd /path/to/portrait-gallery && "
@@ -405,6 +405,8 @@ class GalleryServer:
         self.app.router.add_patch("/api/group-chat/rooms/{room_id}", self.handle_group_chat_room)
         self.app.router.add_get("/api/group-chat/rooms/{room_id}/messages", self.handle_group_chat_messages)
         self.app.router.add_post("/api/group-chat/rooms/{room_id}/messages", self.handle_group_chat_messages)
+        self.app.router.add_delete("/api/group-chat/rooms/{room_id}/messages", self.handle_group_chat_messages)
+        self.app.router.add_delete("/api/group-chat/rooms/{room_id}/messages/{message_id}", self.handle_group_chat_message)
         self.app.router.add_post("/api/group-chat/rooms/{room_id}/reply", self.handle_group_chat_reply)
         self.app.router.add_post("/api/group-chat/rooms/{room_id}/bind-agent", self.handle_group_chat_bind_agent)
         self.app.router.add_post("/api/images/cleanup", self.handle_cleanup_images)
@@ -437,6 +439,7 @@ class GalleryServer:
         # 日程彩蛋
         self.app.router.add_get("/api/schedule-detail", self.handle_schedule_detail)
         self.app.router.add_get("/api/photo-jobs", self.handle_photo_jobs)
+        self.app.router.add_get("/api/keyword-cloud", self.handle_keyword_cloud)
         self.app.router.add_post("/api/photo-jobs/retry", self.handle_retry_photo_job)
         self.app.router.add_get("/api/photo-job-limit", self.handle_photo_job_limit)
         self.app.router.add_post("/api/photo-job-limit", self.handle_photo_job_limit)
@@ -2674,16 +2677,37 @@ class GalleryServer:
         return ""
 
     def _github_api_url(self) -> str:
-        """Return the fixed update-check GitHub API URL."""
+        """Return the configured update-check GitHub API URL."""
         update_config = self.config.get("update", {}) if isinstance(self.config.get("update"), dict) else {}
         for value in (
             os.getenv("GITHUB_RELEASE_API"),
             update_config.get("github_api"),
-            GITHUB_RELEASE_API_URL,
         ):
             url = str(value or "").strip()
             if url:
                 return self._normalize_github_release_api_url(url)
+
+        for value in (
+            os.getenv("GITHUB_REPOSITORY"),
+            update_config.get("github_repo"),
+            update_config.get("repository"),
+        ):
+            url = self._github_release_api_url_from_repo(value)
+            if url:
+                return url
+        return ""
+
+    @staticmethod
+    def _github_release_api_url_from_repo(value: str) -> str:
+        repo = str(value or "").strip()
+        if not repo:
+            return ""
+        if "://" in repo:
+            return GalleryServer._normalize_github_release_api_url(repo)
+        repo = repo.removeprefix("git@github.com:").removesuffix(".git").strip("/")
+        parts = [part for part in repo.split("/") if part]
+        if len(parts) >= 2:
+            return f"https://api.github.com/repos/{parts[0]}/{parts[1]}/releases/latest"
         return ""
 
     @staticmethod
@@ -4078,7 +4102,6 @@ class GalleryServer:
                             ("GPT Image Key", body.get("gpt_key") or keys_config.get("gpt_key")),
                             ("CPA Base URL", keys_config.get("cpa_url")),
                             ("CPA API Key", body.get("cpa_key") or keys_config.get("cpa_key")),
-                            ("GitHub Release API URL", default_github_api),
                             ("GitHub API 代理", keys_config.get("github_proxy")),
                         ]
                         missing = [label for label, value in required_fields if not str(value or "").strip()]
@@ -5453,6 +5476,18 @@ class GalleryServer:
         entries.sort(key=lambda e: self._entry_sort_key(e), reverse=True)
         return web.json_response(entries)
 
+    async def handle_keyword_cloud(self, request: web.Request):
+        """Return high-frequency keywords from historical image-generation calls."""
+        try:
+            limit = int(request.query.get("limit", "48"))
+        except (TypeError, ValueError):
+            limit = 48
+        try:
+            return web.json_response(build_keyword_cloud_payload(self.data_dir, limit=limit))
+        except Exception as e:
+            logger.error("Keyword cloud error: %s", e)
+            return web.json_response({"error": "keyword_cloud_failed", "keywords": []}, status=500)
+
     async def handle_entry(self, request: web.Request):
         """获取指定日期的条目"""
         date_str = request.match_info.get("date")
@@ -6024,7 +6059,14 @@ class GalleryServer:
                 lines.append(f"{name}: {content}")
         return "\n".join(lines[-MAX_GROUP_CHAT_REPLY_CONTEXT:])
 
-    def _group_chat_reply_prompt(self, room: dict, character: dict, participants: list[dict], messages: list[dict]) -> str:
+    def _group_chat_reply_prompt(
+        self,
+        room: dict,
+        character: dict,
+        participants: list[dict],
+        messages: list[dict],
+        regenerate_hint: str = "",
+    ) -> str:
         name = str(character.get("name") or character.get("display_name") or character.get("id") or "角色").strip()
         participant_names = [
             str(item.get("display_name") or item.get("name") or item.get("character_id") or "").strip()
@@ -6036,6 +6078,7 @@ class GalleryServer:
         persona = self._group_chat_text(character.get("persona", ""), limit=900)
         appearance = self._group_chat_text(character.get("appearance", ""), limit=700)
         voice = self._group_chat_text(character.get("voice", ""), limit=500)
+        regenerate_block = f"回溯重发要求：{regenerate_hint}\n" if regenerate_hint else ""
         return (
             f"你正在扮演群聊《{room_name}》里的角色「{name}」。\n"
             "只输出 JSON，不要 Markdown，不要代码块，不要额外解释。\n"
@@ -6054,10 +6097,94 @@ class GalleryServer:
             f"角色人设：{persona or '未配置'}\n"
             f"外貌提示词：{appearance or '未配置'}\n"
             f"角色口吻：{voice or '自然、简短、有角色感'}\n"
+            f"{regenerate_block}"
             "最近聊天记录：\n"
             f"{history}\n"
             f"现在请以「{name}」的口吻回复下一条群聊消息，并在需要时调用画图工具。"
         )
+
+    @staticmethod
+    def _group_chat_message_metadata(message: dict) -> dict:
+        if not isinstance(message, dict):
+            return {}
+        metadata = message.get("metadata")
+        return metadata if isinstance(metadata, dict) else {}
+
+    @staticmethod
+    def _group_chat_message_character_id(message: dict) -> str:
+        if not isinstance(message, dict):
+            return ""
+        sender = message.get("sender") if isinstance(message.get("sender"), dict) else {}
+        return str(
+            message.get("character_id")
+            or message.get("sender_id")
+            or sender.get("character_id")
+            or sender.get("id")
+            or ""
+        ).strip()
+
+    def _group_chat_regenerate_plan(self, room_id: str, message_id: str) -> dict:
+        messages = self.group_chat_store.list_messages(room_id)
+        target = None
+        target_index = -1
+        for index, message in enumerate(messages):
+            if str(message.get("id") or message.get("message_id") or "").strip() == message_id:
+                target = message
+                target_index = index
+                break
+        if not target:
+            raise ValueError("message_not_found")
+
+        metadata = self._group_chat_message_metadata(target)
+        target_type = str(target.get("type") or target.get("message_type") or "").strip().lower()
+        parent_message_id = str(metadata.get("parent_message_id") or "").strip()
+        base_message = target
+        base_message_id = message_id
+        if (target_type == "image" or metadata.get("image_tool_call")) and parent_message_id:
+            for message in messages:
+                if str(message.get("id") or message.get("message_id") or "").strip() == parent_message_id:
+                    base_message = message
+                    base_message_id = parent_message_id
+                    break
+
+        target_character_id = self._group_chat_message_character_id(target) or self._group_chat_message_character_id(base_message)
+        if not target_character_id:
+            raise ValueError("message_sender_required")
+
+        trigger_message_id = (
+            str(metadata.get("trigger_message_id") or "").strip()
+            or str(self._group_chat_message_metadata(base_message).get("trigger_message_id") or "").strip()
+        )
+        if not trigger_message_id and target_index > 0:
+            trigger_message_id = str(messages[target_index - 1].get("id") or "").strip()
+
+        force_image_request = {}
+        if target_type == "image" or metadata.get("image_tool_call"):
+            for key in ("prompt", "style", "size", "shot_type", "image_model"):
+                value = metadata.get(key)
+                if str(value or "").strip():
+                    force_image_request[key] = str(value).strip()
+            character_ids = metadata.get("character_ids")
+            if isinstance(character_ids, list):
+                force_image_request["character_ids"] = [
+                    str(item or "").strip()
+                    for item in character_ids
+                    if str(item or "").strip()
+                ]
+            if not force_image_request.get("prompt"):
+                force_image_request["prompt"] = self._group_chat_text(
+                    base_message.get("content") or target.get("content") or "",
+                    limit=900,
+                )
+
+        return {
+            "selected_message": target,
+            "base_message": base_message,
+            "base_message_id": base_message_id,
+            "target_character_id": target_character_id,
+            "trigger_message_id": trigger_message_id,
+            "force_image_request": force_image_request,
+        }
 
     def _group_chat_reply_targets(self, room: dict, body: dict) -> list[dict]:
         participants = [
@@ -6685,6 +6812,19 @@ class GalleryServer:
                 )
                 return web.json_response({"messages": self._public_group_messages(messages)})
 
+            if request.method.upper() == "DELETE":
+                if not self.group_chat_store.get_room(room_id):
+                    return web.json_response({"error": "room_not_found"}, status=404)
+                result = self.group_chat_store.clear_messages(room_id)
+                payload = self.group_chat_store.room_payload(room_id, message_limit=50)
+                public_room = self._public_group_room_payload((payload or {}).get("room") or {}, message_limit=50) if payload else None
+                return web.json_response({
+                    "success": True,
+                    "removed_count": result.get("removed_count", 0),
+                    "room": public_room,
+                    "room_payload": payload,
+                })
+
             body = await request.json()
             if not isinstance(body, dict):
                 return web.json_response({"error": "invalid_payload"}, status=400)
@@ -6722,6 +6862,33 @@ class GalleryServer:
             logger.error("Group chat messages API error: %s", e)
             return web.json_response({"error": str(e)}, status=500)
 
+    async def handle_group_chat_message(self, request: web.Request):
+        """Delete one message from a local group-chat room."""
+        room_id = request.match_info.get("room_id", "")
+        message_id = request.match_info.get("message_id", "")
+        try:
+            if request.method.upper() != "DELETE":
+                return web.json_response({"error": "method_not_allowed"}, status=405)
+            result = self.group_chat_store.delete_message(room_id, message_id)
+            payload = self.group_chat_store.room_payload(room_id, message_limit=50)
+            public_room = self._public_group_room_payload((payload or {}).get("room") or {}, message_limit=50) if payload else None
+            return web.json_response({
+                "success": True,
+                "message": self._public_group_message(result.get("message", {})),
+                "removed_count": result.get("removed_count", 0),
+                "room": public_room,
+                "room_payload": payload,
+            })
+        except KeyError:
+            return web.json_response({"error": "room_not_found"}, status=404)
+        except ValueError as e:
+            error = str(e) or "message_not_found"
+            status = 404 if error == "message_not_found" else 400
+            return web.json_response({"error": error}, status=status)
+        except Exception as e:
+            logger.error("Group chat message API error: %s", e)
+            return web.json_response({"error": str(e)}, status=500)
+
     async def handle_group_chat_reply(self, request: web.Request):
         """Generate LLM-backed replies for enabled participants in a room."""
         room_id = request.match_info.get("room_id", "")
@@ -6736,9 +6903,47 @@ class GalleryServer:
             if not room:
                 return web.json_response({"error": "room_not_found"}, status=404)
 
+            regenerate_message_id = str(
+                body.get("regenerate_message_id")
+                or body.get("regenerateMessageId")
+                or body.get("reroll_message_id")
+                or body.get("rerollMessageId")
+                or ""
+            ).strip()
             rewind_message_id = str(body.get("rewind_message_id") or body.get("rewindMessageId") or "").strip()
             rewind_result = None
-            if rewind_message_id:
+            regenerate_plan = {}
+            if regenerate_message_id:
+                try:
+                    regenerate_plan = self._group_chat_regenerate_plan(room_id, regenerate_message_id)
+                    rewind_result = self.group_chat_store.truncate_from_message(
+                        room_id,
+                        str(regenerate_plan.get("base_message_id") or regenerate_message_id),
+                    )
+                except ValueError as e:
+                    error = str(e) or "message_not_found"
+                    status = 404 if error == "message_not_found" else 400
+                    return web.json_response({"error": error}, status=status)
+                room = self.group_chat_store.get_room(room_id) or room
+                rewind_message_id = regenerate_message_id
+                body["trigger_message_id"] = regenerate_plan.get("trigger_message_id") or regenerate_message_id
+                body["character_ids"] = [regenerate_plan.get("target_character_id", "")]
+                body["sender_character_id"] = ""
+                body["exclude_character_id"] = ""
+                force_image_request = regenerate_plan.get("force_image_request")
+                if isinstance(force_image_request, dict) and force_image_request:
+                    body["_force_image_request"] = force_image_request
+                    body["_regenerate_hint"] = (
+                        "这是回溯重发：请重新生成被点击的这条消息本身。"
+                        "原消息包含图片，本次必须重新写一条聊天文字，并提供 image_request 对象重新生成图片。"
+                        "不要让其他角色接着回复。"
+                    )
+                else:
+                    body["_regenerate_hint"] = (
+                        "这是回溯重发：请重新生成被点击的这条消息本身，保持同一角色发言，"
+                        "不要让其他角色接着回复。"
+                    )
+            elif rewind_message_id:
                 try:
                     rewind_result = self.group_chat_store.truncate_after_message(room_id, rewind_message_id)
                 except ValueError as e:
@@ -6750,7 +6955,19 @@ class GalleryServer:
 
             targets = self._group_chat_reply_targets(room, body)
             if not targets:
-                return web.json_response({"error": "no_reply_participants"}, status=400)
+                response = {"error": "no_reply_participants"}
+                if rewind_message_id:
+                    payload = self.group_chat_store.room_payload(room_id, message_limit=50)
+                    response.update({
+                        "messages": [],
+                        "rewind": {
+                            "message_id": rewind_message_id,
+                            "removed_count": (rewind_result or {}).get("removed_count", 0),
+                        },
+                        "room": self._public_group_room_payload((payload or {}).get("room") or room, message_limit=50) if payload else None,
+                        "room_payload": payload,
+                    })
+                return web.json_response(response, status=400)
 
             try:
                 timeout_seconds = int(body.get("timeout_seconds") or 45)
@@ -6769,7 +6986,13 @@ class GalleryServer:
                 character_id = str(character.get("id") or "").strip()
                 character_name = str(character.get("name") or character_id or "角色").strip()
                 preferred_model = str(character.get("llm_model") or "").strip()
-                prompt = self._group_chat_reply_prompt(room, character, participants, messages + generated)
+                prompt = self._group_chat_reply_prompt(
+                    room,
+                    character,
+                    participants,
+                    messages + generated,
+                    regenerate_hint=str(body.get("_regenerate_hint") or ""),
+                )
                 try:
                     raw_content, used_model = await self._call_group_chat_llm(
                         prompt,
@@ -6777,6 +7000,14 @@ class GalleryServer:
                         timeout_seconds=timeout_seconds,
                     )
                     content, image_request = self._group_chat_parse_reply_output(raw_content, character_name)
+                    force_image_request = body.get("_force_image_request") if isinstance(body.get("_force_image_request"), dict) else {}
+                    if force_image_request:
+                        if not isinstance(image_request, dict):
+                            image_request = {}
+                        image_request = dict(image_request)
+                        for key, value in force_image_request.items():
+                            if value and not image_request.get(key):
+                                image_request[key] = value
                     content = self._group_chat_text(content, limit=MAX_GROUP_CHAT_MESSAGE_CHARS)
                     if not content and not image_request:
                         raise RuntimeError("llm_empty_response")
@@ -6858,10 +7089,21 @@ class GalleryServer:
             payload = self.group_chat_store.room_payload(room_id, message_limit=50)
             public_room = self._public_group_room_payload((payload or {}).get("room") or room, message_limit=50) if payload else None
             if not generated:
-                return web.json_response({
+                response = {
                     "error": "reply_generation_failed",
                     "failures": failures,
-                }, status=502)
+                }
+                if rewind_message_id:
+                    response.update({
+                        "messages": [],
+                        "rewind": {
+                            "message_id": rewind_message_id,
+                            "removed_count": (rewind_result or {}).get("removed_count", 0),
+                        },
+                        "room": public_room,
+                        "room_payload": payload,
+                    })
+                return web.json_response(response, status=502)
             return web.json_response({
                 "messages": generated,
                 "failures": failures,
@@ -8259,7 +8501,7 @@ JSON 格式：
                         return {
                             "error": (
                                 "GitHub 更新地址返回的不是 JSON。请清空旧的 GitHub Release API URL，"
-                                "或改为 https://api.github.com/repos/i-kirito/portrait-gallery/releases/latest"
+                                "或改为 https://api.github.com/repos/OWNER/REPO/releases/latest"
                             ),
                             "github_api": github_api,
                         }, 500
@@ -8529,6 +8771,8 @@ JSON 格式：
         meta_entry = {
             "category": category,
             "prompt": prompt,
+            "custom_prompt": prompt,
+            "user_prompt": prompt,
             "model": model_name,
             "model_name": self._display_model_name(model_name),
             "base_style": base_style,
@@ -8581,6 +8825,8 @@ JSON 格式：
             "caption": caption,
             "display_outfit": display_outfit,
             "outfit_description": display_outfit,
+            "custom_prompt": prompt,
+            "user_prompt": prompt,
             "prompt_mode": "pure",
             "pure_prompt": True,
             "custom_ref_mode": "reference" if ref_image else "text2img",

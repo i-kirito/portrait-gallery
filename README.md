@@ -23,7 +23,7 @@
 ### 1. 克隆
 
 ```bash
-git clone https://github.com/i-kirito/portrait-gallery.git
+git clone https://github.com/OWNER/REPO.git
 cd portrait-gallery
 ```
 
@@ -95,11 +95,11 @@ curl http://localhost:18889/api/health
 
 #### 方式三：Docker Hub 镜像
 
-`docker-compose.yaml` 默认使用 `ikirito9/hermes-portrait-gallery:latest`，
-也可以通过 `PORTRAIT_GALLERY_IMAGE` 固定到发布版本：
+`docker-compose.yaml` 默认构建并使用本地镜像 `hermes-portrait-gallery:latest`。
+如果要使用已经发布到 Docker Hub/GHCR 的镜像，通过 `PORTRAIT_GALLERY_IMAGE` 指定：
 
 ```bash
-PORTRAIT_GALLERY_IMAGE=ikirito9/hermes-portrait-gallery:1.3.0 docker compose up -d
+PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.0 docker compose up -d
 curl http://localhost:18889/api/health
 ```
 
@@ -243,11 +243,11 @@ Docker 部署可将最后一行换成：
 docker compose up -d --build
 ```
 
-如果检查更新报 `Attempt to decode JSON with unexpected mimetype: text/html`，通常是旧本地配置把 GitHub 更新地址写成了仓库网页 `https://github.com/i-kirito/portrait-gallery`。升级到 `v1.2.6` 后会自动兼容；旧版本可先把 `config/config.yaml` 里的 `update.github_api` 清空，或改成：
+如果检查更新报 `Attempt to decode JSON with unexpected mimetype: text/html`，通常是旧本地配置把 GitHub 更新地址写成了仓库网页。升级到 `v1.2.6` 后会自动兼容；旧版本可先把 `config/config.yaml` 里的 `update.github_api` 清空，或改成：
 
 ```yaml
 update:
-  github_api: https://api.github.com/repos/i-kirito/portrait-gallery/releases/latest
+  github_api: https://api.github.com/repos/OWNER/REPO/releases/latest
 ```
 
 受保护路径包括：`.env`、`config/config.yaml`、`config/local.yaml`、`docker-compose.override.yml`、`data/`、`app/data/`、`logs/`、`app/references/uploads/`。
@@ -282,8 +282,10 @@ curl -X POST http://localhost:18889/api/config/keys \
 | `GPT_IMAGE_API_KEY` | GPT Image API Key（覆盖 config） |
 | `GPT_IMAGE_BASE_URL` | GPT Image 端点（覆盖 config） |
 | `GITHUB_PROXY` | GitHub 更新检查/在线更新代理（也可在 Web 设置中填写） |
+| `GITHUB_REPOSITORY` | GitHub Release 检查仓库，格式 `OWNER/REPO` |
+| `GITHUB_RELEASE_API` | GitHub Release API 完整地址，优先级高于 `GITHUB_REPOSITORY` |
 | `GALLERY_API_KEY` | Web UI 认证密钥（留空则不认证） |
-| `PORTRAIT_GALLERY_IMAGE` | Docker Compose 使用的镜像名/标签，默认 `ikirito9/hermes-portrait-gallery:latest` |
+| `PORTRAIT_GALLERY_IMAGE` | Docker Compose 使用的镜像名/标签，默认 `hermes-portrait-gallery:latest` |
 
 启用 `GALLERY_API_KEY` 后，命令行 API 需要带认证：
 
@@ -326,7 +328,7 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - 日程生成加入真实日期上下文，内置 2026 法定节假日和调休上班日，并支持配置自定义假期/调休日，休息日会避免上班、上课、考试等冲突安排。
 - 生图参考链路强化：单人照、合照和群聊图可复用今日日程参考图，图生图提示词明确区分脸部参考和衣柜穿搭参考，并避免照抄参考图表情。
 - 增加中文 mojibake 文本修复、caption 指令泄漏过滤、LLM 请求重试与模型不可用快速切换，减少乱码、空文案和坏模型拖慢整条链路。
-- Docker 镜像布局调整为保留仓库内 `app/` 目录，Compose 可直接指定 `ikirito9/hermes-portrait-gallery:1.3.0` 或 `latest` 镜像发布运行。
+- Docker 镜像布局调整为保留仓库内 `app/` 目录，Compose 默认使用本地镜像名，并可通过 `PORTRAIT_GALLERY_IMAGE` 指定任意发布镜像。
 
 ### v1.2.6
 
@@ -343,12 +345,12 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 
 - 每日日程生成改为凌晨 `03:00-06:00` 随机窗口执行；窗口内生成失败会自动重试，过了窗口不再白天补跑。
 - `03:00-05:59` 作为日程生成静默时段，不安排也不执行自动生图；日程生图时间会避开整点并自然上下浮动。
-- 设置页移除固定的 GitHub Release API URL 输入项，检查更新仍由后端使用当前仓库固定地址。
+- 设置页移除固定的 GitHub Release API URL 输入项，检查更新由后端根据配置或环境变量解析当前仓库。
 
 ### v1.2.3
 
 - 设置页的 GitHub Release API URL 改为当前仓库固定值，不再要求用户手动填写，旧本地覆盖会在保存设置时自动清理。
-- 检查更新默认使用 `https://api.github.com/repos/i-kirito/portrait-gallery/releases/latest`，仍保留环境变量或配置覆盖能力，便于特殊部署。
+- 检查更新支持 `GITHUB_REPOSITORY` / `GITHUB_RELEASE_API` 或 `update.github_repo` / `update.github_api` 配置，便于特殊部署和 fork。
 - 默认画质提示词改为更自然的手机随拍风格，减少过度精修、塑料皮肤和 AI 感。
 
 ### v1.2.2
