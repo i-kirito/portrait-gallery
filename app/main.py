@@ -37,9 +37,10 @@ from store import ScheduleStore
 from text_repair import repair_mojibake_text
 from characters import (
     LOCAL_CHARACTER_SOURCE,
-    build_character_prompt,
-    build_group_prompt,
+    build_character_image_prompt,
+    build_group_image_prompt,
     load_character_registry,
+    sanitize_image_prompt,
     upsert_manual_character,
 )
 from settings import (
@@ -66,11 +67,12 @@ from settings import (
 
 TODAY_PHOTO_SOURCES = {"cron", "web"}
 FAILED_SCHEDULE_TEXT = "生成失败"
-WECHAT_CAPTION_DELAY_SECONDS = 3
+CAPTION_DELAY_SECONDS = 3
+WECHAT_CAPTION_DELAY_SECONDS = 45
 WECHAT_SEND_TIMEOUT_SECONDS = 90
 PHOTO_JOB_INFLIGHT_STALE_GRACE_SECONDS = 120
 WECHAT_RETRY_DELAYS_SECONDS = (60, 180)
-WECHAT_COOLDOWN_BUFFER_SECONDS = 5
+WECHAT_COOLDOWN_BUFFER_SECONDS = 15
 PHOTO_JOB_MISFIRE_GRACE_SECONDS = 10 * 60
 SCHEDULE_GENERATION_DEFAULT_START_MINUTE = 3 * 60
 SCHEDULE_GENERATION_DEFAULT_END_MINUTE = 6 * 60
@@ -89,11 +91,44 @@ WECHAT_RETRYABLE_MARKERS = (
     "server disconnected",
     "temporarily unavailable",
 )
+WECHAT_CONTEXT_ERROR_MARKERS = (
+    "requires a fresh wechat conversation context",
+    "send the bot a wechat message first",
+)
 REFERENCE_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
 REFERENCE_METADATA_KEYS = ("id", "filename", "url", "label", "prompt", "source", "selection_mode", "selection_reason")
 TODAY_SCHEDULE_REFERENCE_MODE = "today_schedule"
 LOG_RETENTION_DAYS = 3
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+ACCESS_LOG_RE = re.compile(
+    r'"(?P<method>[A-Z]+)\s+(?P<path>\S+)\s+HTTP/[^"]+"\s+(?P<status>\d{3})'
+)
+ICON_PROBE_BASENAME_RE = re.compile(
+    r'^(?:favicon(?:-\d+x\d+)?\.(?:ico|png|svg)|'
+    r'apple-touch-icon(?:-\d+x\d+)?\.png|'
+    r'icon-maskable(?:-\d+(?:x\d+)?)?\.png)$',
+    re.IGNORECASE,
+)
+
+
+def _is_icon_probe_path(path: str) -> bool:
+    clean_path = str(path or "").split("?", 1)[0].rstrip("/")
+    basename = clean_path.rsplit("/", 1)[-1]
+    return bool(ICON_PROBE_BASENAME_RE.fullmatch(basename))
+
+
+class _UsefulAccessLogFilter(logging.Filter):
+    """Keep real HTTP failures while dropping routine and icon-probe noise."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name != "aiohttp.access":
+            return True
+        match = ACCESS_LOG_RE.search(record.getMessage())
+        if not match:
+            return True
+        if _is_icon_probe_path(match.group("path")):
+            return False
+        return int(match.group("status")) >= 400
 
 
 def _persistent_log_path() -> str:
@@ -140,6 +175,9 @@ def configure_logging() -> str:
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
     formatter = logging.Formatter(LOG_FORMAT)
+    access_logger = logging.getLogger("aiohttp.access")
+    if not any(isinstance(item, _UsefulAccessLogFilter) for item in access_logger.filters):
+        access_logger.addFilter(_UsefulAccessLogFilter())
 
     existing_files = {
         os.path.abspath(getattr(handler, "baseFilename", ""))
@@ -752,6 +790,7 @@ class PortraitGalleryApp:
         api_caption: str = "",
         image_model: str = "",
         api_description: str = "",
+        selected_reference: Optional[dict] = None,
     ) -> DailyEntry:
         """自定义 prompt 生图"""
         today_str = datetime.now().strftime("%Y-%m-%d")
@@ -762,6 +801,7 @@ class PortraitGalleryApp:
         generation_prompt = f"{user_prompt}. {shot_prompt}"
         normalized_api_source = re.sub(r"[\s_-]+", "", str(api_source or "").strip().lower())
         entry_source = "hermes_api" if normalized_api_source in {"hermes", "hermesapi"} else "custom"
+        selected_reference = selected_reference if isinstance(selected_reference, dict) else {}
 
         style = None
         ref_path = ref_image if ref_image else ""
@@ -841,6 +881,13 @@ class PortraitGalleryApp:
         )
         save_schedule_entry(self.data_dir, entry)
         self._update_image_metadata_caption(filename, caption, display_prompt)
+        if ref_path or selected_reference:
+            self._save_generation_reference_metadata(
+                filename,
+                ref_path,
+                selected_reference,
+                reference_mode=str(selected_reference.get("selection_mode") or "custom_reference"),
+            )
         logger.info(f"自定义生图成功: {filename}")
         return entry
 
@@ -926,9 +973,10 @@ class PortraitGalleryApp:
         scene_prompt = str(user_prompt or "").strip()
         display_scene_prompt = scene_prompt
         style_hint = re.sub(r"\s+", " ", str(style_hint or "")).strip()
-        scene_request = scene_prompt
+        scene_request = sanitize_image_prompt(scene_prompt)
         if style_hint:
-            scene_request = f"{scene_request}. Requested visual style: {style_hint}"
+            safe_style_hint = sanitize_image_prompt(style_hint, limit=240)
+            scene_request = f"{scene_request}. Requested visual style: {safe_style_hint}"
         reference_mode = str(reference_mode or "").strip().lower()
         selected_reference = {}
         if reference_mode == TODAY_SCHEDULE_REFERENCE_MODE:
@@ -954,7 +1002,7 @@ class PortraitGalleryApp:
             part
             for part in (
                 self._character_generation_prefix(),
-                build_character_prompt(character),
+                build_character_image_prompt(character),
                 f"Scene request: {scene_request}.",
                 shot_prompt,
                 reference_style_guard,
@@ -1053,7 +1101,7 @@ class PortraitGalleryApp:
         shot_label = custom_shot_label(shot_type) if shot_type else ""
         shot_prompt = custom_shot_prompt(shot_type, size) if shot_type else ""
         style_hint = re.sub(r"\s+", " ", str(style_hint or "")).strip()
-        extra_request = str(user_prompt or "").strip()
+        extra_request = sanitize_image_prompt(user_prompt)
         reference_request = (
             "Character design reference sheet for image generation, clean neutral background, "
             "clear readable silhouette, consistent face and body identity, detailed hairstyle, "
@@ -1063,13 +1111,14 @@ class PortraitGalleryApp:
         if extra_request:
             reference_request = f"{reference_request} Extra request: {extra_request}."
         if style_hint:
-            reference_request = f"{reference_request} Requested visual style: {style_hint}."
+            safe_style_hint = sanitize_image_prompt(style_hint, limit=240)
+            reference_request = f"{reference_request} Requested visual style: {safe_style_hint}."
 
         final_prompt = " ".join(
             part
             for part in (
                 self._character_generation_prefix(),
-                build_character_prompt(character),
+                build_character_image_prompt(character),
                 reference_request,
                 shot_prompt,
             )
@@ -1200,9 +1249,12 @@ class PortraitGalleryApp:
         shot_prompt = custom_shot_prompt(shot_type, size) if shot_type else ""
         scene_prompt = str(user_prompt or "").strip()
         display_scene_prompt = scene_prompt
+        safe_scene_prompt = sanitize_image_prompt(scene_prompt)
         style_hint = re.sub(r"\s+", " ", str(style_hint or "")).strip()
         if style_hint:
             scene_prompt = f"{scene_prompt}. Requested visual style: {style_hint}"
+            safe_style_hint = sanitize_image_prompt(style_hint, limit=240)
+            safe_scene_prompt = f"{safe_scene_prompt}. Requested visual style: {safe_style_hint}"
         reference_mode = str(reference_mode or "").strip().lower()
         selected_reference = {}
         if reference_mode == TODAY_SCHEDULE_REFERENCE_MODE:
@@ -1212,11 +1264,11 @@ class PortraitGalleryApp:
                 "group_photo",
             )
             if selected_reference.get("path"):
-                scene_prompt = (
-                    f"{scene_prompt}. Use the attached reference image from today's schedule "
+                safe_scene_prompt = (
+                    f"{safe_scene_prompt}. Use the attached reference image from today's schedule "
                     "for the current outfit, scene mood, and visual continuity; do not use character avatar images as references."
                 )
-        group_scene = " ".join(part for part in (scene_prompt, shot_prompt) if part)
+        group_scene = " ".join(part for part in (safe_scene_prompt, shot_prompt) if part)
         reference_style_guard = (
             self._today_schedule_reference_style_guard(
                 has_reference=bool(selected_reference.get("path")),
@@ -1229,7 +1281,7 @@ class PortraitGalleryApp:
             part
             for part in (
                 self._character_generation_prefix(),
-                build_group_prompt(characters, group_scene),
+                build_group_image_prompt(characters, group_scene),
                 reference_style_guard,
             )
             if part
@@ -2631,6 +2683,7 @@ class PortraitGalleryApp:
         text = detail or ""
         lower = text.lower()
         reasons = []
+        chat_fallback_disabled = "chat-compatible gpt image fallback is disabled" in lower
 
         endpoint_match = re.search(r'\[(https?://[^/\]]+|[\w.-]+:\d+)\]', text)
         endpoint = endpoint_match.group(1) if endpoint_match else ""
@@ -2672,7 +2725,10 @@ class PortraitGalleryApp:
         elif "direct gpt api error 504" in lower:
             reasons.append("GPT Image 上游 504")
         elif "path not found" in lower or "images api error 404" in lower:
-            reasons.append("当前中转不支持 Images API，已尝试 chat 兼容生图")
+            if chat_fallback_disabled:
+                reasons.append("当前中转不支持 Images API")
+            else:
+                reasons.append("当前中转不支持 Images API，已尝试 Chat 兼容生图")
 
         if (
             "no base64 image in response" in lower
@@ -2696,6 +2752,8 @@ class PortraitGalleryApp:
 
         if "gitee fallback is disabled" in lower:
             reasons.append("当时 Gitee 回退未启用，无法自动换线路")
+        if chat_fallback_disabled:
+            reasons.append("当时 Chat 端点回退未启用，未改走 /chat/completions")
 
         if reasons:
             unique = "；".join(dict.fromkeys(reasons))
@@ -3098,8 +3156,9 @@ class PortraitGalleryApp:
 
             caption_ok = True
             if caption:
-                logger.info(f"{label}图片发送成功，等待 {WECHAT_CAPTION_DELAY_SECONDS}s 后发送文案以降低限流概率")
-                await asyncio.sleep(WECHAT_CAPTION_DELAY_SECONDS)
+                caption_delay = WECHAT_CAPTION_DELAY_SECONDS if channel == "wechat" else CAPTION_DELAY_SECONDS
+                logger.info(f"{label}图片发送成功，等待 {caption_delay}s 后发送文案以降低限流概率")
+                await asyncio.sleep(caption_delay)
                 caption_ok = await self._run_hermes_send(
                     hermes_cmd,
                     target,
@@ -3234,6 +3293,14 @@ class PortraitGalleryApp:
                 return True
 
             last_output = output or f"exit code {result.returncode}"
+            if self._is_wechat_context_error(last_output):
+                log_fn = logger.error if required else logger.warning
+                log_fn(
+                    f"{label}发送停止重试: 微信会话上下文已失效；"
+                    f"请先在微信里给 Hermes 发任意一条消息，收到回复后再重试。"
+                    f" output={last_output}"
+                )
+                return False
             retryable = self._is_retryable_wechat_error(last_output)
             cooldown_seconds = self._extract_wechat_cooldown_seconds(last_output)
             if cooldown_seconds:
@@ -3276,7 +3343,19 @@ class PortraitGalleryApp:
         return output
 
     @staticmethod
-    def _is_retryable_wechat_error(output: str) -> bool:
+    def _is_wechat_context_error(output: str) -> bool:
+        text = (output or "").lower()
+        if any(marker in text for marker in WECHAT_CONTEXT_ERROR_MARKERS):
+            return True
+        has_minus_two = bool(
+            re.search(r'\b(?:ret|errcode)\b["\']?\s*(?:=|:)\s*-2\b', text)
+        )
+        return has_minus_two and "unknown error" in text
+
+    @classmethod
+    def _is_retryable_wechat_error(cls, output: str) -> bool:
+        if cls._is_wechat_context_error(output):
+            return False
         text = (output or "").lower()
         return any(marker in text for marker in WECHAT_RETRYABLE_MARKERS)
 

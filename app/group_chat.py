@@ -318,6 +318,65 @@ class GroupChatStore:
 
         return self.update(_truncate)
 
+    def restore_messages(
+        self,
+        room_id: str,
+        messages: list[dict],
+        discard_message_ids: list[str] | set[str] | tuple[str, ...] | None = None,
+    ) -> dict:
+        """Restore a room snapshot while preserving unrelated concurrent messages."""
+        clean_room_id = _clean_text(room_id)
+        snapshot = [
+            copy.deepcopy(item)
+            for item in (messages or [])
+            if isinstance(item, Mapping)
+        ]
+        snapshot_ids = {
+            _clean_text(item.get("id") or item.get("message_id"))
+            for item in snapshot
+        }
+        snapshot_ids.discard("")
+        discard_ids = {
+            _clean_text(item)
+            for item in (discard_message_ids or [])
+            if _clean_text(item)
+        }
+
+        def _restore(data: dict) -> dict:
+            room = data.get("rooms", {}).get(clean_room_id)
+            if not room:
+                raise KeyError(f"group chat room not found: {clean_room_id}")
+
+            current = data.setdefault("messages", {}).setdefault(clean_room_id, [])
+            concurrent = []
+            for item in current:
+                message_id = _clean_text(item.get("id") or item.get("message_id"))
+                if message_id in snapshot_ids or message_id in discard_ids:
+                    continue
+                concurrent.append(item)
+
+            now = _now_iso()
+            restored = [
+                _normalize_message(
+                    clean_room_id,
+                    item,
+                    _clean_text(item.get("created_at")) or now,
+                )
+                for item in snapshot
+            ]
+            restored.extend(concurrent)
+            data["messages"][clean_room_id] = restored
+            room["message_count"] = len(restored)
+            room["updated_at"] = now
+            data["updated_at"] = now
+            return {
+                "restored_count": len(snapshot),
+                "preserved_count": len(concurrent),
+                "messages": copy.deepcopy(restored),
+            }
+
+        return self.update(_restore)
+
     def delete_message(self, room_id: str, message_id: str) -> dict:
         """Remove one message from a room and return the deleted item."""
         clean_room_id = _clean_text(room_id)

@@ -86,6 +86,73 @@ LOW_ENERGY_HOME_TERMS = (
     "发呆",
 )
 
+ACCESSORY_CATEGORY_ALIASES = {
+    "necklace": ("锁骨链", "项链", "吊坠", "necklace", "pendant", "choker"),
+    "earrings": ("耳钉", "耳环", "耳饰", "earrings", "earring", "ear studs", "stud earrings"),
+    "bracelet": ("手链", "手镯", "bracelet", "bangle"),
+    "ring": ("戒指", "ring"),
+    "watch": ("手表", "腕表", "watch"),
+    "hair_clip": ("发夹", "发簪", "hair clip", "hairpin", "barrette"),
+    "hair_ribbon": ("发带", "发绳", "头绳", "hair ribbon", "hair tie", "scrunchie"),
+    "bag": ("斜挎包", "手提包", "单肩包", "腋下包", "邮差包", "背包", "crossbody bag", "handbag", "shoulder bag", "messenger bag", "backpack"),
+    "glasses": ("墨镜", "眼镜", "sunglasses", "glasses"),
+    "belt": ("腰带", "皮带", "belt"),
+}
+ACCESSORY_CATEGORY_LABELS = {
+    "necklace": "项链",
+    "earrings": "耳饰",
+    "bracelet": "手链",
+    "ring": "戒指",
+    "watch": "手表",
+    "hair_clip": "发夹",
+    "hair_ribbon": "发带/发绳",
+    "bag": "包",
+    "glasses": "眼镜",
+    "belt": "腰带",
+}
+ACCESSORY_COLOR_ALIASES = {
+    "silver": ("银色", "银白", "silver"),
+    "gold": ("金色", "香槟金", "gold", "golden"),
+    "black": ("黑色", "black"),
+    "white": ("白色", "米白", "奶白", "white", "ivory"),
+    "pink": ("粉色", "浅粉", "pink"),
+    "red": ("红色", "酒红", "red", "burgundy"),
+    "blue": ("蓝色", "浅蓝", "blue"),
+    "green": ("绿色", "green"),
+    "purple": ("紫色", "purple", "lavender"),
+    "beige": ("米色", "杏色", "裸色", "beige", "nude"),
+}
+ACCESSORY_COLOR_LABELS = {
+    "silver": "银色",
+    "gold": "金色",
+    "black": "黑色",
+    "white": "白色",
+    "pink": "粉色",
+    "red": "红色",
+    "blue": "蓝色",
+    "green": "绿色",
+    "purple": "紫色",
+    "beige": "米杏色",
+}
+ACCESSORY_MOTIF_ALIASES = {
+    "star": ("十字星", "星星", "星形", "星状", "star"),
+    "heart": ("爱心", "心形", "heart"),
+    "pearl": ("珍珠", "pearl"),
+    "flower": ("花朵", "花形", "雏菊", "玫瑰", "flower", "floral", "daisy", "rose"),
+    "bow": ("蝴蝶结", "bow"),
+    "crystal": ("水晶", "crystal"),
+    "gem": ("宝石", "红宝石", "蓝宝石", "gem", "ruby", "sapphire"),
+}
+ACCESSORY_MOTIF_LABELS = {
+    "star": "星形",
+    "heart": "爱心",
+    "pearl": "珍珠",
+    "flower": "花朵",
+    "bow": "蝴蝶结",
+    "crystal": "水晶",
+    "gem": "宝石",
+}
+
 SCHEDULE_DIVERSITY_IDEAS = (
     "晨间：花市买一小束花、楼下取咖啡、整理书桌、去便利店补生活用品、做拉伸、给植物换水、图书馆还书、短途散步。",
     "中午/下午：去咖啡馆写计划、逛文创店、看展、修照片、整理灵感板、练琴/练舞、去书店、做手作、和朋友吃轻食。",
@@ -186,13 +253,120 @@ class DailyScheduler:
         except Exception:
             return {}
 
+    @staticmethod
+    def _daily_schedule_entry(all_data: dict, date_str: str) -> dict:
+        direct = all_data.get(date_str)
+        if isinstance(direct, dict) and direct.get("status") == "ok":
+            return direct
+        for entry in all_data.values():
+            if (
+                isinstance(entry, dict)
+                and entry.get("status") == "ok"
+                and str(entry.get("date") or "") == date_str
+                and entry.get("schedule")
+            ):
+                return entry
+        return {}
+
+    @staticmethod
+    def _entry_outfit_text(entry: dict) -> str:
+        if not isinstance(entry, dict):
+            return ""
+        parts = [
+            str(entry.get(field) or "")
+            for field in ("outfit", "prompt", "outfit_keywords", "reference_query")
+        ]
+        details = entry.get("schedule_details")
+        if isinstance(details, list):
+            for detail in details:
+                if not isinstance(detail, dict):
+                    continue
+                parts.extend(
+                    str(detail.get(field) or "")
+                    for field in ("outfit_en", "hair_en")
+                )
+        return "\n".join(part for part in parts if part.strip())
+
+    @staticmethod
+    def _text_has_alias(text: str, alias: str) -> bool:
+        if not alias:
+            return False
+        if re.fullmatch(r"[a-z ]+", alias):
+            return bool(re.search(rf"(?<![a-z]){re.escape(alias)}(?![a-z])", text))
+        return alias in text
+
+    @classmethod
+    def _accessory_features(cls, text: str) -> dict[str, str]:
+        lowered = str(text or "").lower()
+        features = {}
+        if not lowered:
+            return features
+
+        for category, aliases in ACCESSORY_CATEGORY_ALIASES.items():
+            for alias in sorted(aliases, key=len, reverse=True):
+                pattern = (
+                    rf"(?<![a-z]){re.escape(alias)}(?![a-z])"
+                    if re.fullmatch(r"[a-z ]+", alias)
+                    else re.escape(alias)
+                )
+                for match in re.finditer(pattern, lowered):
+                    prefix = lowered[max(0, match.start() - 48):match.start()]
+                    prefix = re.split(r"[\n,，。；;|]", prefix)[-1]
+                    prefix = re.split(r"(?:和|与|以及|\band\b)", prefix)[-1]
+                    colors = sorted(
+                        color
+                        for color, color_aliases in ACCESSORY_COLOR_ALIASES.items()
+                        if any(cls._text_has_alias(prefix, item) for item in color_aliases)
+                    )
+                    motifs = sorted(
+                        motif
+                        for motif, motif_aliases in ACCESSORY_MOTIF_ALIASES.items()
+                        if any(cls._text_has_alias(prefix, item) for item in motif_aliases)
+                    )
+                    if not colors and not motifs:
+                        continue
+                    key = "|".join((category, ",".join(colors), ",".join(motifs)))
+                    label = "".join(ACCESSORY_COLOR_LABELS[item] for item in colors)
+                    label += "".join(ACCESSORY_MOTIF_LABELS[item] for item in motifs)
+                    label += ACCESSORY_CATEGORY_LABELS.get(category, category)
+                    features[key] = label
+        return features
+
+    def _recent_outfit_accessories(self, today: date, days: int = 3) -> dict[str, dict]:
+        all_data = self._load_schedule_data()
+        recent = {}
+        for i in range(1, days + 1):
+            date_str = (today - timedelta(days=i)).isoformat()
+            entry = self._daily_schedule_entry(all_data, date_str)
+            for key, label in self._accessory_features(self._entry_outfit_text(entry)).items():
+                item = recent.setdefault(key, {"label": label, "dates": []})
+                item["dates"].append(date_str)
+        return recent
+
+    def _outfit_accessory_repeat_error(self, candidate: dict, recent: dict[str, dict]) -> str:
+        if not recent:
+            return ""
+        features = self._accessory_features(self._entry_outfit_text(candidate))
+        repeated = []
+        for key in sorted(set(features) & set(recent)):
+            item = recent[key]
+            dates = "、".join(item.get("dates") or [])
+            repeated.append(f"{features[key]}（{dates}）")
+        if not repeated:
+            return ""
+        return (
+            "近 3 天已出现相同配饰: "
+            + "；".join(repeated[:4])
+            + "。请更换配饰类别、颜色或图案，不能只换同义说法"
+        )
+
     def _get_schedule_history(self, today: date, days: int = 3) -> str:
         all_data = self._load_schedule_data()
         lines = []
         for i in range(1, days + 1):
             date_str = (today - timedelta(days=i)).isoformat()
-            entry = all_data.get(date_str)
-            if not isinstance(entry, dict) or entry.get("status") != "ok":
+            entry = self._daily_schedule_entry(all_data, date_str)
+            if not entry:
                 continue
             activities = [activity for _time_text, activity in self._schedule_plan_items(entry.get("schedule", ""))]
             if not activities:
@@ -655,6 +829,8 @@ class DailyScheduler:
 
 【历史穿搭参考（不要重复以下穿搭）】
 {history}
+- 近 3 天出现过的具体配饰禁止再次出现；颜色、图案和类别相同但换了同义说法仍算重复。
+- 例如“银色十字星锁骨链”改写成“银色星形项链”仍然重复，必须换颜色、换图案、换配饰类别，或取消项链。
 
 【日程避重与多样化要求】
 {self._schedule_diversity_prompt_block(schedule_history)}
@@ -798,7 +974,8 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 {calendar_guidance}
 角色外貌：{str(appearance)[:700]}
 小心思口吻：{str(caption_voice)[:220]}
-历史参考（避免重复）：{str(history)[:700]}
+近 3 天穿搭参考（服装、发型、鞋包和首饰都避免重复）：{str(history)[:1200]}
+具体配饰的颜色+图案+类别不能复用；同义改写仍算重复，例如银色十字星锁骨链与银色星形项链视为同一件配饰。
 近期日程避重（不要复刻）：{str(schedule_history)[:900]}
 历史生图词云（软参考）：{self._schedule_keyword_cloud_prompt_block(limit=12)[:700]}
 收藏偏好（只参考穿搭/发型气质）：{self._favorite_outfit_context(limit=2)[:700]}
@@ -843,7 +1020,12 @@ JSON 格式（字段名固定，value 替换为实际内容）：
   "scene_keywords": "English scene keywords"
 }}"""
 
-    def _build_emergency_schedule_prompt(self, today: date, schedule_history: str = "") -> str:
+    def _build_emergency_schedule_prompt(
+        self,
+        today: date,
+        schedule_history: str = "",
+        outfit_history: str = "",
+    ) -> str:
         """Smallest strict prompt used when an upstream model times out on rich context."""
         weekday = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"][today.weekday()]
         day_context = self._day_context(today)
@@ -864,6 +1046,8 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 {calendar_guidance}
 外貌约束：{str(appearance)[:320]}
 禁词约束：{self._schedule_forbidden_prompt_block()}
+近 3 天穿搭避重：{str(outfit_history)[:800]}
+配饰的颜色+图案+类别不得与近 3 天相同，同义改写也算重复。
 近期日程避重：{str(schedule_history)[:500]}
 词云软参考：{self._schedule_keyword_cloud_prompt_block(limit=8)[:360]}
 
@@ -1330,23 +1514,22 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
         time_markers = ("一整天", "早上", "上午", "午后", "下午", "晚上")
         return any(marker in text for marker in intent_markers) and any(marker in text for marker in time_markers)
 
-    def _get_history(self, today: date, days: int = 7) -> str:
-        """获取最近几天的历史日程"""
+    def _get_history(self, today: date, days: int = 3) -> str:
+        """获取近几天的完整穿搭历史，保留鞋包和配饰信息。"""
+        all_data = self._load_schedule_data()
         items = []
         for i in range(1, days + 1):
             d = today - timedelta(days=i)
             date_str = d.isoformat()
-            # 尝试从持久化数据读取
-            try:
-                import json as j
-                path = f"{self.data_dir}/schedule_data.json"
-                with open(path) as f:
-                    all_data = j.load(f)
-                entry = all_data.get(date_str)
-                if entry and entry.get("status") == "ok":
-                    items.append(f"[{date_str}] 风格：{entry.get('outfit_style','')} 穿搭：{entry.get('outfit','')[:60]}")
-            except Exception:
-                pass
+            entry = self._daily_schedule_entry(all_data, date_str)
+            if not entry:
+                continue
+            outfit = re.sub(r"\s+", " ", str(entry.get("outfit") or "")).strip()
+            accessories = "、".join(self._accessory_features(self._entry_outfit_text(entry)).values())
+            line = f"[{date_str}] 风格：{entry.get('outfit_style', '')}；穿搭：{outfit[:520]}"
+            if accessories:
+                line += f"；配饰特征：{accessories}"
+            items.append(line)
         return "\n".join(items) if items else "（无历史记录）"
 
     def _favorite_outfit_context(self, limit: int = 5) -> str:
@@ -1481,9 +1664,10 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
         history = self._get_history(today)
         schedule_history = self._get_schedule_history(today)
         recent_counts = self._recent_schedule_category_counts(today)
+        recent_accessories = self._recent_outfit_accessories(today)
         prompt = self._build_schedule_prompt(today, history, schedule_history)
         compact_prompt = self._build_compact_schedule_prompt(today, history, schedule_history)
-        emergency_prompt = self._build_emergency_schedule_prompt(today, schedule_history)
+        emergency_prompt = self._build_emergency_schedule_prompt(today, schedule_history, history)
         prompt_sequence = [prompt, compact_prompt, emergency_prompt]
 
         # 最多重试 3 次
@@ -1553,6 +1737,21 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
                 continue
             if not self._valid_display_outfit(outfit_display):
                 logger.warning(f"outfit 展示字段不完整或非中文 (attempt {attempt+1})")
+                continue
+            candidate_outfit = dict(data)
+            candidate_outfit["outfit"] = outfit_display
+            candidate_outfit["prompt"] = llm_prompt
+            candidate_outfit["outfit_keywords"] = outfit_kw
+            accessory_repeat_error = self._outfit_accessory_repeat_error(
+                candidate_outfit,
+                recent_accessories,
+            )
+            if accessory_repeat_error:
+                logger.warning(
+                    "穿搭配饰触发近 3 天避重 (attempt %s): %s",
+                    attempt + 1,
+                    accessory_repeat_error,
+                )
                 continue
             schedule_details, detail_error = self._normalize_schedule_details(
                 data.get("schedule_details"),

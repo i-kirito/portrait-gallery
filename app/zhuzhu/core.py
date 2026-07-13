@@ -1089,14 +1089,31 @@ def _fit_image_bytes(img_data: bytes, target_size: Optional[str]) -> bytes:
         return img_data
 
 
+def _safe_filename_label(value: str, fallback: str = "image") -> str:
+    label = re.sub(r"[^A-Za-z0-9_-]+", "_", str(value or "").strip()).strip("_")
+    return label or fallback
+
+
+def schedule_filename_theme(theme: str, schedule_time: str = "") -> str:
+    match = re.match(r"\s*(\d{1,2}):(\d{2})", str(schedule_time or ""))
+    if match:
+        hour = int(match.group(1))
+        minute = int(match.group(2))
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return f"schedule_{hour:02d}{minute:02d}"
+    return _safe_filename_label(theme)
+
+
 def save_image(img_data: bytes, theme: str, model_name: str, style: Optional[str] = None,
-               target_size: Optional[str] = None):
+               target_size: Optional[str] = None, filename_theme: Optional[str] = None):
     os.makedirs(WORKSPACE_MEDIA, exist_ok=True)
     img_data = _fit_image_bytes(img_data, target_size)
     ts = int(time.time())
     ext = detect_extension(img_data)
-    style_part = f"_{style}" if style else ""
-    filename = f"zhuzhu_{theme}{style_part}_{time.time_ns()}_{uuid.uuid4().hex[:8]}_{ts}.{ext}"
+    label = _safe_filename_label(filename_theme or theme)
+    style_label = _safe_filename_label(style, "") if style else ""
+    style_part = f"_{style_label}" if style_label else ""
+    filename = f"zhuzhu_{label}{style_part}_{time.time_ns()}_{uuid.uuid4().hex[:8]}_{ts}.{ext}"
     path = os.path.join(WORKSPACE_MEDIA, filename)
 
     with open(path, "wb") as f:

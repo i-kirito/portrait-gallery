@@ -261,13 +261,20 @@ def resolve_prompt(
     return build_prompt(theme, prompt_override)
 
 
-def _generate_with_gemini_cpa(theme: str, prompt: str):
+def _generate_with_gemini_cpa(theme: str, prompt: str, schedule_time: str = ""):
     """Call CPA gemini-3.1-flash-image model, return image path or None."""
     import base64
     import re
     import time
     import requests
-    from core import get_cpa_chat_url, get_cpa_key, save_image, update_metadata, sync_to_gallery
+    from core import (
+        get_cpa_chat_url,
+        get_cpa_key,
+        save_image,
+        schedule_filename_theme,
+        sync_to_gallery,
+        update_metadata,
+    )
 
     api_key = get_cpa_key()
     headers = {"Content-Type": "application/json"}
@@ -313,7 +320,13 @@ def _generate_with_gemini_cpa(theme: str, prompt: str):
             return None
 
         elapsed = round(time.time() - start, 2)
-        path, filename, ts = save_image(img_data, theme, _GEMINI_CPA_MODEL)
+        filename_theme = schedule_filename_theme(theme, schedule_time)
+        path, filename, ts = save_image(
+            img_data,
+            theme,
+            _GEMINI_CPA_MODEL,
+            filename_theme=filename_theme,
+        )
         update_metadata(filename, theme, prompt, _GEMINI_CPA_MODEL, ts, elapsed)
         # sync_to_gallery 由 generate.py 统一处理，此处不重复
         return path
@@ -949,7 +962,7 @@ def generate(
             else:
                 print("GPT Image failed; Gitee fallback is disabled", file=sys.stderr)
     elif engine == "gemini":
-        path = _generate_with_gemini_cpa(theme, resolved_prompt)
+        path = _generate_with_gemini_cpa(theme, resolved_prompt, schedule_time=schedule_raw)
         if path:
             used_model = _GEMINI_CPA_MODEL
         if not path:

@@ -285,6 +285,102 @@ textarea:focus-visible,
   padding: 24px;
 }
 .sk-overlay.open { display: flex; }
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10080;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(24,12,30,0.58);
+  backdrop-filter: blur(14px);
+}
+.auth-overlay[hidden] { display: none; }
+.auth-modal {
+  width: min(420px, calc(100vw - 32px));
+  background: #fff;
+  border-radius: 20px;
+  padding: 30px 32px;
+  box-shadow: 0 24px 80px rgba(35,16,45,0.32);
+  animation: slideUp 0.25s ease;
+}
+.auth-lock {
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #c2185b;
+  background: #fff1f7;
+  margin-bottom: 16px;
+  font-size: 18px;
+}
+.auth-modal h2 {
+  margin: 0 0 8px;
+  color: #2f2434;
+  font-size: 22px;
+  line-height: 1.25;
+}
+.auth-modal p {
+  margin: 0 0 20px;
+  color: #7c6a82;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.auth-field { margin-bottom: 14px; }
+.auth-field label {
+  display: block;
+  margin-bottom: 7px;
+  color: #59475f;
+  font-size: 13px;
+  font-weight: 800;
+}
+.auth-field input {
+  width: 100%;
+  height: 44px;
+  padding: 0 13px;
+  border-radius: 12px;
+  border: 1.5px solid #eadfea;
+  background: #faf8fc;
+  color: #2f2434;
+  font-size: 16px;
+  outline: none;
+}
+.auth-field input:focus {
+  border-color: #e91e63;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(233,30,99,0.09);
+}
+.auth-submit {
+  width: 100%;
+  min-height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: linear-gradient(135deg,#e91e63,#c2185b);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 900;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: 0 10px 24px rgba(233,30,99,0.22);
+}
+.auth-submit:disabled {
+  opacity: 0.62;
+  cursor: default;
+  box-shadow: none;
+}
+.auth-status {
+  min-height: 18px;
+  margin-top: 12px;
+  color: #d32f2f;
+  font-size: 12px;
+  line-height: 1.5;
+}
 .sk-modal {
   background: #fff;
   border-radius: 24px;
@@ -874,6 +970,7 @@ textarea:focus-visible,
 }
 .sk-field .sk-status.set { color: #4caf50; }
 .sk-field .sk-status.unset { color: #ff9800; }
+.sk-field .sk-status.optional { color: #64748b; }
 .sk-inline-status {
   display: flex;
   align-items: center;
@@ -1162,41 +1259,81 @@ textarea:focus-visible,
   border: 1px solid #e0e0e0;
 }
 .sk-actions .btn-secondary:hover { background: #eee; }
+.sk-update-panel {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid #f0e6f6;
+  border-radius: 8px;
+  background: #fffafd;
+}
+.sk-update-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.sk-update-heading {
+  min-width: 0;
+}
+.sk-update-title {
+  display: block;
+  color: #555;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.sk-update-desc {
+  display: block;
+  margin-top: 2px;
+  color: #999;
+  font-size: 12px;
+  line-height: 1.4;
+}
 .sk-update-row {
   display: grid;
-  grid-template-columns: repeat(2, max-content);
-  grid-template-areas:
-    "version version"
-    "check restart";
-  align-items: center;
-  justify-content: start;
-  gap: 7px 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
   min-width: 0;
-  max-width: 100%;
-}
-.sk-panel > .sk-update-row {
-  margin-top: 14px;
 }
 .sk-update-row .btn {
-  padding: 9px 12px;
-  min-width: 100px;
-  min-height: 36px;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 9px 10px;
+  justify-content: center;
   font-size: 13px;
-  border-radius: 999px;
+  border-radius: 8px;
+  white-space: nowrap;
 }
-#checkUpdateBtn { grid-area: check; }
-#restartServiceBtn { grid-area: restart; }
 .sk-update-row .btn-secondary {
-  background: #eef7ff;
-  border-color: #d7e9f8;
-  color: #486274;
+  background: #fff;
+  border-color: #e5dcea;
+  color: #62576a;
+}
+.sk-update-row .btn-secondary:hover {
+  background: #f8f5fa;
+  border-color: #d9cce0;
 }
 .sk-version-text {
-  grid-area: version;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid #eadfea;
+  border-radius: 6px;
+  background: #fff;
   font-size: 12px;
-  line-height: 1.2;
-  color: #8b94a3;
+  line-height: 1;
+  color: #786b80;
   white-space: nowrap;
+}
+.sk-version-text strong {
+  margin-left: 4px;
+  color: #4f4455;
+  font-weight: 700;
 }
 .sk-update-result {
   display: flex;
@@ -1204,6 +1341,7 @@ textarea:focus-visible,
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  margin-top: 8px;
 }
 .sk-update-result:empty {
   display: none;
@@ -1211,12 +1349,14 @@ textarea:focus-visible,
 .sk-update-pill {
   display: inline-flex;
   align-items: center;
+  width: 100%;
   max-width: 100%;
-  padding: 5px 10px;
-  border-radius: 999px;
-  font-size: 13px;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  border-radius: 6px;
+  font-size: 12px;
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 1.35;
   white-space: normal;
 }
 .sk-update-pill.ok { color: #2e7d32; background: #e8f5e9; }
@@ -1224,9 +1364,8 @@ textarea:focus-visible,
 .sk-update-card {
   width: 100%;
   box-sizing: border-box;
-  background: #e8f5e9;
-  padding: 12px;
-  border-radius: 8px;
+  padding: 10px 0 0;
+  border-top: 1px solid #e7efe8;
 }
 .sk-update-safe-note {
   font-size: 12px;
@@ -1553,12 +1692,6 @@ textarea:focus-visible,
   cursor: not-allowed;
   transform: none;
 }
-.today-hero-title .today-forbidden-btn {
-  min-height: 42px;
-  min-width: 78px;
-  max-width: 104px;
-}
-
 .today-hero { display: none; }
 .today-hero.visible { display: block; }
 
@@ -1610,7 +1743,7 @@ textarea:focus-visible,
 }
 .wardrobe-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
 }
 .wardrobe-card {
@@ -1632,12 +1765,25 @@ textarea:focus-visible,
   background: linear-gradient(180deg, #f7f3fb, #efe8f9);
   border: 1px solid rgba(231,221,242,0.9);
 }
+.wardrobe-thumb-btn {
+  display: block;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: zoom-in;
+}
+.wardrobe-thumb-btn:focus-visible {
+  outline: 3px solid rgba(233,30,99,0.28);
+  outline-offset: 3px;
+}
 .wardrobe-thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+  transition: transform 0.18s ease;
 }
+.wardrobe-thumb-btn:hover img { transform: scale(1.025); }
 .wardrobe-thumb-empty {
   width: 100%;
   height: 100%;
@@ -1697,10 +1843,9 @@ textarea:focus-visible,
 }
 .wardrobe-copy::-webkit-scrollbar { display: none; }
 .wardrobe-actions {
-  display: flex;
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
-  justify-content: stretch;
   margin-top: auto;
   padding-top: 3px;
 }
@@ -1737,6 +1882,7 @@ textarea:focus-visible,
 .wardrobe-remove-btn:hover { background: #ffeaf3; border-color: rgba(233,30,99,0.34); }
 .wardrobe-remove-btn:disabled { cursor: default; opacity: 0.58; }
 .wardrobe-status {
+  grid-column: 1 / -1;
   flex: 1 1 100%;
   min-height: 18px;
   color: #7c3aed;
@@ -1764,6 +1910,36 @@ textarea:focus-visible,
   font-size: 13px;
 }
 .wardrobe-empty .icon { font-size: 38px; line-height: 1; margin-bottom: 8px; }
+
+@media (min-width: 1400px) {
+  .wardrobe-section {
+    width: min(1880px, calc(100vw - 64px));
+    max-width: none;
+    margin-left: 50%;
+    margin-right: 0;
+    transform: translateX(-50%);
+  }
+  .wardrobe-grid { gap: 16px; }
+  .wardrobe-card {
+    gap: 10px;
+    padding: 15px 16px;
+  }
+  .wardrobe-copy {
+    min-height: 190px;
+    max-height: 190px;
+  }
+  .wardrobe-actions {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+  .wardrobe-action-btn,
+  .wardrobe-remove-btn {
+    min-height: 32px;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+}
 
 .gallery-list {
   display: flex;
@@ -2646,11 +2822,63 @@ textarea:focus-visible,
 }
 .cg-ref-item:hover { border-color: rgba(233,30,99,0.4); }
 .cg-ref-item.active { border-color: #e91e63; }
+.cg-ref-item[role="button"]:focus-visible {
+  outline: 3px solid rgba(233,30,99,0.2);
+  outline-offset: 2px;
+}
 .cg-ref-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .cg-ref-item .cg-ref-none {
   width: 100%; height: 100%;
   display: flex; align-items: center; justify-content: center;
   background: #f5f5f5; color: #ccc; font-size: 24px;
+}
+.cg-ref-item.default-style.missing {
+  border: 1px dashed #d8c7d1;
+  background: #fbf8fa;
+}
+.cg-ref-item.default-style.missing:hover {
+  border-color: #e91e63;
+  background: #fff4f8;
+}
+.cg-ref-upload-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 6px;
+  box-sizing: border-box;
+  color: #8b7280;
+  text-align: center;
+}
+.cg-ref-upload-empty i { color: #e91e63; font-size: 19px; }
+.cg-ref-upload-empty strong { color: #5f4b56; font-size: 11px; }
+.cg-ref-upload-empty span { font-size: 10px; }
+.cg-ref-replace {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255,255,255,0.7);
+  border-radius: 6px;
+  background: rgba(26,20,24,0.68);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.18s, background 0.18s;
+}
+.cg-ref-item:hover .cg-ref-replace,
+.cg-ref-replace:focus-visible { opacity: 1; }
+.cg-ref-replace:hover { background: #e91e63; }
+@media (hover: none) {
+  .cg-ref-replace { opacity: 1; }
 }
 .cg-actions {
   display: flex;
@@ -2709,6 +2937,9 @@ textarea:focus-visible,
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+.group-chat-mobile-tabs {
+  display: none;
 }
 .group-character-avatars.character-picker {
   min-width: 0;
@@ -3580,6 +3811,13 @@ textarea:focus-visible,
 .chat-main-title-wrap {
   min-width: 0;
 }
+.chat-main-title-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .chat-main-tools {
   display: inline-flex;
   align-items: center;
@@ -3613,6 +3851,7 @@ textarea:focus-visible,
   opacity: 0.5;
 }
 .chat-main-title {
+  min-width: 0;
   color: #4a335f;
   font-size: 15px;
   font-weight: 800;
@@ -3634,9 +3873,10 @@ textarea:focus-visible,
 .chat-typing-indicator {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
   max-width: 100%;
   min-height: 22px;
-  margin-top: 6px;
   padding: 3px 10px;
   border: 1px solid #f5d0e1;
   border-radius: 999px;
@@ -3649,8 +3889,26 @@ textarea:focus-visible,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.chat-typing-indicator::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: chat-status-pulse 1.1s ease-in-out infinite;
+}
+.chat-typing-indicator[data-phase="image"] {
+  border-color: #f7d79a;
+  background: #fff9ea;
+  color: #a86400;
+}
 .chat-typing-indicator[hidden] {
   display: none;
+}
+@keyframes chat-status-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.78); }
+  50% { opacity: 1; transform: scale(1); }
 }
 .chat-messages {
   flex: 1;
@@ -4043,7 +4301,7 @@ textarea:focus-visible,
     padding-inline: 8px;
   }
   .character-manual-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .wardrobe-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .wardrobe-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 700px) {
   .header {
@@ -4071,7 +4329,7 @@ textarea:focus-visible,
   .today-hero-title h2 { font-size: 22px; }
   .today-hero-title .subtitle { font-size: 13px; }
   .today-hero-title .gen-today-btn { font-size: 14px; padding: 10px 24px; }
-  .wardrobe-grid { grid-template-columns: 1fr; }
+  .wardrobe-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .character-picker,
   .character-picker.compact,
   .character-detail-grid,
@@ -4097,6 +4355,9 @@ textarea:focus-visible,
     min-height: 220px;
   }
   .chat-main { min-height: 420px; }
+}
+@media (max-width: 520px) {
+  .wardrobe-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
   .gallery-list { gap: 10px; }
@@ -4256,6 +4517,237 @@ textarea:focus-visible,
   .gallery-list .today-compact .tc-date { font-size: 12px; }
   .gallery-list .today-compact .tc-meta-row .tc-meta-tag { font-size: 10px; }
   .gallery-list .today-compact .tc-style { font-size: 10px; padding: 2px 10px; }
+}
+@media (max-width: 700px) {
+  .tool-page.group-chat-section {
+    padding-top: 0;
+    padding-bottom: 8px;
+  }
+  .group-chat-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    padding: 2px 0;
+  }
+  .group-chat-title-line {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    width: auto;
+  }
+  .group-chat-title-line h2 {
+    font-size: 18px;
+    white-space: nowrap;
+  }
+  .group-character-avatars.character-picker {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    padding: 2px 1px;
+  }
+  .group-character-avatars.character-picker::-webkit-scrollbar {
+    display: none;
+  }
+  .group-character-avatars .character-choice {
+    width: 40px;
+    min-width: 40px;
+    max-width: 40px;
+    min-height: 40px;
+  }
+  .group-character-avatars .character-choice-avatar {
+    width: 34px;
+    height: 34px;
+    flex-basis: 34px;
+  }
+  .character-head-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: auto;
+    flex-wrap: nowrap;
+  }
+  .character-add-btn {
+    width: 38px;
+    min-width: 38px;
+    min-height: 38px;
+    padding: 0;
+    border-radius: 50%;
+  }
+  .character-add-btn span {
+    display: none;
+  }
+  .character-add-btn i {
+    font-size: 14px;
+  }
+  #characterStatus {
+    display: none;
+  }
+  #characterStatus.error {
+    display: inline-flex;
+  }
+  .character-head-actions .tool-status-pill {
+    min-width: 0;
+    width: auto;
+    max-width: 96px;
+    min-height: 28px;
+    padding-inline: 8px;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .group-chat-mobile-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3px;
+    margin-bottom: 8px;
+    padding: 3px;
+    border: 1px solid #eadfea;
+    border-radius: 12px;
+    background: #f7f3f9;
+  }
+  .group-chat-mobile-tab {
+    min-height: 40px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: #786b80;
+    font-size: 12px;
+    font-weight: 800;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  .group-chat-mobile-tab.active {
+    background: #fff;
+    color: #c2185b;
+    box-shadow: 0 2px 8px rgba(82,45,112,0.08);
+  }
+  .group-chat-layout {
+    display: block;
+  }
+  .group-chat-layout[data-mobile-view="chat"] .chat-side {
+    display: none;
+  }
+  .group-chat-layout[data-mobile-view="tools"] .chat-main {
+    display: none;
+  }
+  .chat-side,
+  .chat-main {
+    border-radius: 14px;
+  }
+  .chat-side {
+    padding: 8px;
+    gap: 8px;
+  }
+  .chat-side > .cg-field,
+  .chat-image-panel .character-generation-main > .cg-field {
+    padding: 8px;
+    border-radius: 8px;
+  }
+  .chat-image-panel {
+    padding: 8px;
+    border-radius: 8px;
+  }
+  .chat-image-panel .character-inline-head {
+    margin-bottom: 6px;
+  }
+  .chat-image-panel .character-inline-head h3 {
+    font-size: 14px;
+  }
+  .chat-image-panel .character-generate-actions .btn {
+    min-height: 46px;
+    border-radius: 8px;
+  }
+  .group-chat-layout[data-mobile-view="chat"] .chat-main {
+    height: max(440px, calc(100svh - 300px));
+    min-height: 0;
+    max-height: none;
+    box-shadow: 0 8px 24px rgba(82,45,112,0.06);
+  }
+  .chat-main-head {
+    min-height: 52px;
+    padding: 8px 10px;
+    align-items: center;
+    gap: 8px;
+  }
+  .chat-main-title {
+    font-size: 15px;
+  }
+  .chat-main-subtitle {
+    font-size: 11px;
+  }
+  .chat-main-tool-btn {
+    width: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 0;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .chat-main-tool-btn span {
+    display: none;
+  }
+  .chat-main-tool-btn i {
+    font-size: 13px;
+  }
+  .chat-messages {
+    padding: 12px 10px 14px;
+    gap: 10px;
+    background: #fcf9fd;
+    overscroll-behavior: contain;
+  }
+  .chat-composer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 8px 9px 10px;
+    box-shadow: 0 -8px 22px rgba(82,45,112,0.05);
+  }
+  .group-chat-page .chat-sender-row {
+    grid-column: 1 / -1;
+    grid-template-columns: 84px minmax(0, 1fr);
+    gap: 6px;
+    margin-bottom: 0;
+  }
+  .chat-sender-row select {
+    min-height: 38px;
+    border-radius: 10px;
+    background: #faf8fb;
+  }
+  .chat-composer textarea {
+    grid-column: 1;
+    min-height: 54px;
+    height: 54px;
+    padding: 9px 11px;
+    border-radius: 12px;
+    resize: none;
+  }
+  .chat-composer-actions {
+    grid-column: 2;
+    align-items: stretch;
+    margin-top: 0;
+  }
+  .chat-composer-actions .btn {
+    min-width: 64px;
+    min-height: 54px;
+    height: 54px;
+    padding: 0 14px;
+    border-radius: 12px;
+  }
+}
+@media (max-width: 560px) {
+  .group-chat-layout[data-mobile-view="chat"] .chat-main {
+    height: max(440px, calc(100svh - 280px));
+  }
 }
 @media (max-width: 340px) {
   .header { padding-inline: 10px; gap: 9px 6px; }
@@ -4699,18 +5191,45 @@ textarea:focus-visible,
 .prompt-footer { padding: 12px 20px; border-top: 1px solid #f0e4f4; display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
 .prompt-copy-btn { background: linear-gradient(135deg, #c084fc, #818cf8); color: #fff; border: none; border-radius: 10px; padding: 8px 20px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 12px rgba(192,132,252,0.3); }
 .prompt-copy-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(192,132,252,0.4); }
-.log-card { width: min(980px, calc(100vw - 32px)); max-height: min(84vh, 860px); }
-.log-body { padding-bottom: 10px; }
-.log-body pre { min-height: clamp(320px, 56vh, 680px); max-height: min(64vh, 680px); overflow: auto; white-space: pre-wrap; word-break: break-word; background: #111827; color: #d1fae5; border: 1px solid #263244; }
-.log-body pre .log-diagnostic { color: #d1fae5; }
-.log-body pre .log-line { display: block; min-height: 1.5em; }
-.log-body pre .log-level-debug { color: #c4b5fd; }
-.log-body pre .log-level-info { color: #bfdbfe; }
-.log-body pre .log-level-warn { color: #fde68a; }
-.log-body pre .log-level-error { color: #fecaca; }
-.log-body pre .log-summary { color: #d1fae5; font-weight: 700; }
-.log-body pre .log-raw-title { color: #fbbf24; font-weight: 800; }
-.log-body pre .log-raw-block { color: #fecaca; }
+.log-card { width: min(940px, calc(100vw - 32px)); max-height: min(88vh, 900px); }
+.log-header-title { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.log-header-title > i { color: #2563eb; font-size: 17px; }
+.log-header-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.log-header-copy strong { color: #253046; font-size: 15px; }
+.log-header-copy small { color: #7b8495; font-size: 11px; font-weight: 600; }
+.log-toolbar { display: flex; align-items: center; gap: 6px; padding: 10px 18px; border-bottom: 1px solid #e6eaf0; overflow-x: auto; background: #f8fafc; scrollbar-width: none; }
+.log-toolbar::-webkit-scrollbar { display: none; }
+.log-filter-btn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 1px solid #d9dee8; border-radius: 7px; background: #fff; color: #5b6475; font-size: 12px; font-weight: 750; cursor: pointer; }
+.log-filter-btn:hover { border-color: #94a3b8; color: #243047; }
+.log-filter-btn.active { border-color: #2563eb; background: #eaf2ff; color: #1d4ed8; }
+.log-filter-count { min-width: 18px; height: 18px; padding: 0 5px; display: inline-flex; align-items: center; justify-content: center; border-radius: 9px; background: #e8ecf2; color: #536075; font-size: 10px; line-height: 1; }
+.log-filter-btn.active .log-filter-count { background: #2563eb; color: #fff; }
+.log-body { padding: 12px 18px 10px; overflow: hidden; }
+.log-list { min-height: clamp(320px, 56vh, 680px); max-height: min(64vh, 680px); overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 8px; background: #f4f6f9; border: 1px solid #e1e6ee; border-radius: 8px; box-sizing: border-box; }
+.log-entry { position: relative; display: grid; grid-template-columns: 4px minmax(0, 1fr); gap: 10px; padding: 10px 12px 10px 10px; background: #fff; border: 1px solid #e2e7ef; border-radius: 7px; }
+.log-entry-bar { width: 4px; height: 100%; min-height: 42px; border-radius: 2px; background: #60a5fa; }
+.log-entry[data-level="DEBUG"] .log-entry-bar { background: #8b5cf6; }
+.log-entry[data-level="WARN"] .log-entry-bar { background: #f59e0b; }
+.log-entry[data-level="ERROR"] .log-entry-bar { background: #ef4444; }
+.log-entry > div { min-width: 0; }
+.log-entry-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 5px; color: #7a8496; font-size: 11px; line-height: 1.2; }
+.log-level-badge, .log-category-badge, .log-repeat { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 5px; font-size: 10px; font-weight: 800; }
+.log-level-badge { background: #eaf2ff; color: #1d4ed8; }
+.log-entry[data-level="DEBUG"] .log-level-badge { background: #f1eafe; color: #6d28d9; }
+.log-entry[data-level="WARN"] .log-level-badge { background: #fff3d6; color: #a16207; }
+.log-entry[data-level="ERROR"] .log-level-badge { background: #fee9e8; color: #b42318; }
+.log-category-badge { background: #edf7f2; color: #16794d; }
+.log-repeat { background: #eef1f5; color: #5e6878; }
+.log-entry-time { font-variant-numeric: tabular-nums; }
+.log-entry-source { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-entry-message { color: #253046; font-size: 13px; line-height: 1.55; word-break: break-word; }
+.log-entry details { min-width: 0; max-width: 100%; margin-top: 7px; color: #7b8495; font-size: 11px; }
+.log-entry summary { width: max-content; cursor: pointer; color: #64748b; font-weight: 700; }
+.log-entry details pre { max-width: 100%; margin: 6px 0 0; padding: 8px; overflow-x: hidden; border-radius: 6px; box-sizing: border-box; background: #111827; color: #d5dbea; font-family: 'SF Mono', 'Menlo', monospace; font-size: 10px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.log-empty { min-height: 280px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #778196; text-align: center; }
+.log-empty i { color: #94a3b8; font-size: 26px; }
+.log-empty strong { color: #475569; font-size: 14px; }
+.log-empty span { font-size: 12px; }
 .log-footer { justify-content: space-between; gap: 14px; padding-top: 10px; padding-bottom: 14px; }
 .log-status { flex: 1 1 360px; min-width: 0; color: #8b5cf6; font-size: 12px; font-weight: 700; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .log-controls { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex: 0 0 auto; margin-left: auto; }
@@ -4723,7 +5242,12 @@ textarea:focus-visible,
   .log-card { width: calc(100vw - 28px); max-height: calc(100vh - 28px); }
   .prompt-header { padding: 12px 14px; }
   .prompt-body { padding: 12px 14px; }
-  .log-body pre { min-height: 48vh; max-height: 58vh; }
+  .log-toolbar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 9px 12px; overflow: visible; }
+  .log-filter-btn { width: 100%; min-width: 0; justify-content: space-between; padding: 0 8px; }
+  .log-body { padding: 10px 12px; }
+  .log-list { min-height: 48vh; max-height: 58vh; padding: 6px; }
+  .log-entry { padding: 9px 9px 9px 7px; gap: 8px; }
+  .log-entry-message { font-size: 12px; }
   .log-footer { align-items: stretch; flex-direction: column; padding: 10px 14px 14px; }
   .log-status { flex-basis: auto; white-space: normal; }
   .log-controls { width: 100%; margin-left: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -4748,6 +5272,21 @@ textarea:focus-visible,
 </style>
 </head>
 <body>
+<div class="auth-overlay" id="authOverlay" hidden>
+  <form class="auth-modal" id="authForm" autocomplete="off">
+    <div class="auth-lock" aria-hidden="true"><i class="fa-solid fa-lock"></i></div>
+    <h2 id="authTitle">访问密码</h2>
+    <p id="authMessage">请输入访问密码。</p>
+    <div class="auth-field" id="authPasswordField">
+      <label for="authPassword">密码</label>
+      <input type="password" id="authPassword" autocomplete="current-password" minlength="6" required>
+    </div>
+    <button class="auth-submit" id="authSubmitBtn" type="submit">
+      <i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i><span id="authSubmitText">进入</span>
+    </button>
+    <div class="auth-status" id="authStatus"></div>
+  </form>
+</div>
 <!-- 🐷 日程彩蛋弹窗 -->
 <div class="egg-overlay" id="eggOverlay">
   <div class="egg-card">
@@ -4865,7 +5404,7 @@ textarea:focus-visible,
 
 <div class="header">
   <div class="header-left">
-      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.3.2</span></h1>
+      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.3.3</span></h1>
   </div>
   <div class="tabs">
     <button class="tab has-badge" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="showUnfavoriteGallery(event)"><span class="tab-label"><span class="tab-icon" aria-hidden="true">✨</span><span class="tab-text">全部</span></span><span class="tab-badge" id="badge-all">0</span></button>
@@ -4894,7 +5433,6 @@ textarea:focus-visible,
       <div class="subtitle" id="appHeroSubtitle">每一天，都是不一样的角色 <span class="heart">💞</span></div>
       <div class="today-hero-actions">
         <button class="gen-today-btn" onclick="triggerGenerate()">💭 现在在干嘛</button>
-        <button class="egg-forbidden-btn today-forbidden-btn" type="button" data-action="manage-schedule-forbidden" aria-label="设置日程禁词" title="禁止 LLM 生成相关日程"><i class="fa-solid fa-ban" aria-hidden="true"></i><span>禁词</span></button>
       </div>
     </div>
     <div class="today-empty" id="todayEmpty" style="display:none;">
@@ -4933,17 +5471,27 @@ textarea:focus-visible,
           </div>
         </div>
         <div class="character-head-actions">
-          <button class="btn btn-primary character-add-btn" type="button" onclick="openManualCharacterModal()">新增</button>
+          <button class="btn btn-primary character-add-btn" type="button" onclick="openManualCharacterModal()" title="新增角色">
+            <i class="fa-solid fa-user-plus" aria-hidden="true"></i><span>新增</span>
+          </button>
           <span class="tool-status-pill" id="characterStatus">准备加载</span>
           <span class="tool-status-pill" id="groupChatStatus">准备加载</span>
         </div>
+      </div>
+      <div class="group-chat-mobile-tabs" role="tablist" aria-label="群聊视图">
+        <button class="group-chat-mobile-tab active" type="button" role="tab" aria-selected="true" data-group-chat-mobile-view="chat" onclick="setGroupChatMobileView('chat')">
+          <i class="fa-solid fa-comments" aria-hidden="true"></i><span>聊天</span>
+        </button>
+        <button class="group-chat-mobile-tab" type="button" role="tab" aria-selected="false" data-group-chat-mobile-view="tools" onclick="setGroupChatMobileView('tools')">
+          <i class="fa-solid fa-image" aria-hidden="true"></i><span>生图</span>
+        </button>
       </div>
       <div class="agent-bind-note">
         <span>角色-agent 绑定由后端配置；前端只提交参与角色和消息内容。</span>
         <span class="hermes-status-pill">Hermes 可配置/未启用</span>
       </div>
-      <div class="group-chat-layout">
-        <section class="chat-side">
+      <div class="group-chat-layout" data-mobile-view="chat">
+        <section class="chat-side" id="groupChatToolPanel">
           <div class="cg-field group-participants-field">
             <label>参与角色</label>
             <div class="character-picker compact" id="groupRoomParticipantList">
@@ -5014,15 +5562,19 @@ textarea:focus-visible,
             </div>
           </section>
         </section>
-        <section class="chat-main">
+        <section class="chat-main" id="groupChatMainPanel">
           <div class="chat-main-head">
             <div class="chat-main-title-wrap">
-              <div class="chat-main-title" id="groupChatActiveTitle">群聊</div>
+              <div class="chat-main-title-line">
+                <div class="chat-main-title" id="groupChatActiveTitle">群聊</div>
+                <div class="chat-typing-indicator" id="groupChatTypingIndicator" hidden></div>
+              </div>
               <div class="chat-main-subtitle" id="groupChatActiveMeta">角色加载后自动进入群聊</div>
-              <div class="chat-typing-indicator" id="groupChatTypingIndicator" hidden></div>
             </div>
             <div class="chat-main-tools">
-              <button class="chat-main-tool-btn danger" type="button" id="groupChatClearContextBtn" onclick="clearGroupChatContext()">清空上下文</button>
+              <button class="chat-main-tool-btn danger" type="button" id="groupChatClearContextBtn" onclick="clearGroupChatContext()" title="清空上下文">
+                <i class="fa-solid fa-eraser" aria-hidden="true"></i><span>清空上下文</span>
+              </button>
             </div>
           </div>
           <div class="chat-messages" id="groupChatMessages">
@@ -5038,7 +5590,7 @@ textarea:focus-visible,
                 <option value="">选择角色</option>
               </select>
             </div>
-            <textarea id="groupChatMessageInput" rows="3" placeholder="输入要发到当前房间的消息"></textarea>
+            <textarea id="groupChatMessageInput" rows="3" placeholder="输入要发到当前房间的消息" onkeydown="handleGroupChatComposerKeydown(event)"></textarea>
             <div class="chat-composer-actions">
               <button class="btn btn-primary" type="button" id="groupChatSendBtn" onclick="sendGroupChatMessage()">发送</button>
             </div>
@@ -5261,12 +5813,7 @@ textarea:focus-visible,
         </div>
       </details>
     </div>
-    <div class="sk-field">
-      <label for="skGiteeUrl">Gitee API URL</label>
-      <div class="sk-desc">Gitee 生图接口地址，必须填写完整接口地址</div>
-      <input type="text" id="skGiteeUrl" placeholder="必填：填写你的 Gitee 生图接口地址">
-      <div class="sk-status" id="skGiteeUrlStatus">加载中...</div>
-    </div>
+    <input type="hidden" id="skGiteeUrl">
     <div class="sk-field">
       <label for="skGiteeKey">Gitee API Key</label>
       <div class="sk-desc">Gitee 生图密钥，必须填写</div>
@@ -5292,7 +5839,22 @@ textarea:focus-visible,
       <label for="skGptBaseUrl">GPT Image Base URL</label>
       <div class="sk-desc">OpenAI 兼容生图基础地址；必须填写，填到 /v1 即可</div>
       <input type="text" id="skGptBaseUrl" placeholder="必填：填写你的 GPT Image /v1 地址">
-      <div class="sk-status" id="skGptBaseUrlStatus">加载中...</div>
+      <div class="sk-inline-status sk-gitee-status-row">
+        <div class="sk-gitee-status-main">
+          <div class="sk-status" id="skGptBaseUrlStatus">加载中...</div>
+          <div class="sk-status" id="skGptChatFallbackStatus">加载中...</div>
+        </div>
+      </div>
+      <div class="sk-gitee-fallback-inline" id="skGptChatFallbackRow">
+        <div class="sk-gitee-fallback-copy">
+          <span class="sk-gitee-fallback-title">Chat 端点回退</span>
+          <span class="sk-gitee-fallback-hint">Images API 失败后改用 /chat/completions</span>
+        </div>
+        <label class="sk-switch" for="skGptChatFallback" aria-label="允许 Images API 失败后回退到 Chat 端点">
+          <input type="checkbox" id="skGptChatFallback" onchange="syncGptChatFallbackVisual(this.checked)">
+          <span class="sk-switch-knob"></span>
+        </label>
+      </div>
     </div>
     <div class="sk-field">
       <label for="skGptKey">GPT Image Key</label>
@@ -5308,23 +5870,23 @@ textarea:focus-visible,
       <div class="sk-status" id="skGptEndpointsStatus">加载中...</div>
     </div>
     <div class="sk-field">
-      <label for="skCpaUrl">CPA Base URL</label>
-      <div class="sk-desc">Gemini 生图和 LLM 调度使用，必须填写 CPA 的 /v1 地址</div>
-      <input type="text" id="skCpaUrl" placeholder="必填：填写你的 CPA /v1 地址">
+      <label for="skCpaUrl">LLM Base URL</label>
+      <div class="sk-desc">LLM 调度使用，必须填写兼容 OpenAI API 的 /v1 地址</div>
+      <input type="text" id="skCpaUrl" placeholder="必填：填写 LLM /v1 地址">
       <div class="sk-status" id="skCpaUrlStatus">加载中...</div>
     </div>
     <div class="sk-field">
-      <label for="skCpaKey">CPA API Key</label>
-      <div class="sk-desc">CPA 认证密钥，必须填写</div>
+      <label for="skCpaKey">LLM API Key</label>
+      <div class="sk-desc">LLM 接口认证密钥，必须填写</div>
       <input type="password" id="skCpaKey" placeholder="输入新密钥（留空则不修改）">
       <div class="sk-status" id="skCpaKeyStatus">加载中...</div>
     </div>
     </div>
     <div class="sk-panel" id="skPanelMaintain" data-settings-panel-content="maintain">
     <div class="sk-field">
-      <label for="skGithubProxy">GitHub API 代理</label>
-      <div class="sk-desc">用于检查更新和在线更新，必须填写本机可用代理 URL</div>
-      <input type="text" id="skGithubProxy" placeholder="必填：填写你的 GitHub API 代理地址">
+      <label for="skGithubProxy">GitHub API 代理（可选）</label>
+      <div class="sk-desc">留空时直接连接 GitHub；网络无法访问 GitHub 时再填写代理 URL</div>
+      <input type="text" id="skGithubProxy" placeholder="可选，例如：http://127.0.0.1:7890">
       <div class="sk-status" id="skGithubProxyStatus">加载中...</div>
     </div>
     <div class="sk-field sk-storage-field">
@@ -5362,12 +5924,20 @@ textarea:focus-visible,
         </div>
       </div>
     </div>
-    <div class="sk-update-row">
-      <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
-      <button class="btn btn-secondary" id="restartServiceBtn" onclick="restartService()">🔄 重启服务</button>
-      <span class="sk-version-text">当前版本 <span id="settingsVersion">v1.3.2</span></span>
+    <div class="sk-update-panel">
+      <div class="sk-update-head">
+        <div class="sk-update-heading">
+          <span class="sk-update-title">版本与服务</span>
+          <span class="sk-update-desc">检查代码更新，或重新加载当前服务</span>
+        </div>
+        <span class="sk-version-text">当前 <strong id="settingsVersion">v1.3.3</strong></span>
+      </div>
+      <div class="sk-update-row">
+        <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
+        <button class="btn btn-secondary" id="restartServiceBtn" onclick="restartService()">🔄 重启服务</button>
+      </div>
+      <div class="sk-update-result" id="updateResult"></div>
     </div>
-    <div class="sk-update-result" id="updateResult"></div>
     </div>
     <div class="sk-footer-row">
       <div class="sk-footer-main">
@@ -5441,11 +6011,12 @@ textarea:focus-visible,
         </div>
       </div>
       <div class="hint cg-upload-hint" style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-        <span style="color:#999">选择上传的参考图（脸型/穿搭风格），或上传新图</span>
+        <span style="color:#999">选择默认风格或手动/API 上传的参考图，或上传新图</span>
         <label class="cg-upload-label">
           <input type="file" id="cgRefUpload" accept="image/*" style="display:none" onchange="uploadRefImage(event)">
           <span class="cg-upload-btn">📤 上传参考图</span>
         </label>
+        <input type="file" id="cgStyleRefUpload" accept="image/*" style="display:none" onchange="uploadDefaultStyleRef(event)">
       </div>
     </div>
     <div class="cg-actions">
@@ -5457,49 +6028,173 @@ textarea:focus-visible,
 
 <script>
 const API = "";
+const galleryNativeFetch = window.fetch.bind(window);
+let galleryAuthMode = "login";
+let galleryAppBooted = false;
 
-function initApiKey() {
-  const params = new URLSearchParams(window.location.search);
-  const keyFromUrl = params.get("key") || params.get("api_key") || "";
-  if (keyFromUrl) {
-    window.galleryStorageSet("gallery_api_key", keyFromUrl);
+function galleryApiUrl(input) {
+  try {
+    const inputUrl = typeof input === "string" ? input : input.url;
+    return new URL(inputUrl, window.location.href);
+  } catch(e) {
+    return null;
   }
-  window.__API_KEY = keyFromUrl || window.galleryStorageGet("gallery_api_key", "");
 }
 
-function apiKeyQuery() {
-  return window.__API_KEY ? "?key=" + encodeURIComponent(window.__API_KEY) : "";
+function isGalleryAuthEndpoint(url) {
+  return url && url.origin === window.location.origin && url.pathname.startsWith("/api/auth/");
 }
 
-function appendApiKeyQuery(url) {
-  const suffix = apiKeyQuery();
-  if (!suffix) return url;
-  return url + (url.includes('?') ? '&' : '?') + suffix.slice(1);
+function isGalleryApiEndpoint(url) {
+  return url && url.origin === window.location.origin && url.pathname.startsWith("/api/");
 }
 
-initApiKey();
+function isGalleryAuthRequiredPayload(data) {
+  const error = data && data.error;
+  return error === "password_required" || error === "password_setup_required";
+}
 
-(function installApiKeyFetchWrapper() {
-  const nativeFetch = window.fetch.bind(window);
-  window.fetch = function(input, init) {
-    const apiKey = window.__API_KEY || "";
-    if (!apiKey) return nativeFetch(input, init);
+function setGalleryAuthBusy(busy) {
+  const btn = document.getElementById("authSubmitBtn");
+  const input = document.getElementById("authPassword");
+  if (btn) btn.disabled = busy;
+  if (input) input.disabled = busy;
+}
 
+function setGalleryAuthStatus(text) {
+  const status = document.getElementById("authStatus");
+  if (status) status.textContent = text || "";
+}
+
+function showGalleryAuthOverlay(data = {}) {
+  const overlay = document.getElementById("authOverlay");
+  const title = document.getElementById("authTitle");
+  const message = document.getElementById("authMessage");
+  const field = document.getElementById("authPasswordField");
+  const input = document.getElementById("authPassword");
+  const btn = document.getElementById("authSubmitBtn");
+  const submitText = document.getElementById("authSubmitText");
+  if (!overlay || !title || !message || !field || !btn || !submitText) return;
+
+  const needsSetup = data.needs_setup === true || data.error === "password_setup_required";
+  const setupAllowed = data.setup_allowed === true;
+  const blocked = needsSetup && !setupAllowed;
+  galleryAuthMode = needsSetup && setupAllowed ? "setup" : "login";
+
+  title.textContent = blocked ? "需要先设置密码" : (galleryAuthMode === "setup" ? "设置访问密码" : "访问密码");
+  message.textContent = blocked
+    ? "请在部署机器本机打开页面完成首次设置。"
+    : (data.message || (galleryAuthMode === "setup" ? "首次部署需要设置访问密码。" : "请输入访问密码。"));
+  field.hidden = blocked;
+  btn.hidden = blocked;
+  submitText.textContent = galleryAuthMode === "setup" ? "保存并进入" : "进入";
+  setGalleryAuthBusy(false);
+  setGalleryAuthStatus(blocked ? (data.client_ip ? `当前访问地址：${data.client_ip}` : "") : "");
+  overlay.hidden = false;
+  document.body.style.overflow = "hidden";
+  if (!blocked && input) {
+    input.value = "";
+    setTimeout(() => input.focus(), 50);
+  }
+}
+
+function hideGalleryAuthOverlay() {
+  const overlay = document.getElementById("authOverlay");
+  if (overlay) overlay.hidden = true;
+  setGalleryAuthStatus("");
+  setGalleryAuthBusy(false);
+  if (!document.querySelector(".sk-overlay.open, .cg-overlay.open, .modal-overlay.open")) {
+    document.body.style.overflow = "";
+  }
+}
+
+async function readGalleryAuthStatus() {
+  const res = await galleryNativeFetch(`${API}/api/auth/status`, { cache: "no-store" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || data.error || "auth_status_failed");
+  return data;
+}
+
+async function ensureGalleryAccess() {
+  try {
+    const status = await readGalleryAuthStatus();
+    if (status.needs_setup || !status.authorized) {
+      showGalleryAuthOverlay(status);
+      return false;
+    }
+    hideGalleryAuthOverlay();
+    return true;
+  } catch(e) {
+    showGalleryAuthOverlay({ message: "无法读取访问状态，请稍后刷新。", setup_allowed: false });
+    return false;
+  }
+}
+
+async function bootGalleryApp() {
+  if (galleryAppBooted) return;
+  const ok = await ensureGalleryAccess();
+  if (!ok) return;
+  galleryAppBooted = true;
+  loadDisplayConfig();
+  loadGallery();
+}
+
+function bindGalleryAuthForm() {
+  const form = document.getElementById("authForm");
+  if (!form || form.dataset.bound === "1") return;
+  form.dataset.bound = "1";
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const input = document.getElementById("authPassword");
+    const password = input ? input.value : "";
+    if (galleryAuthMode === "setup" && password.trim().length < 6) {
+      setGalleryAuthStatus("访问密码至少需要 6 个字符。");
+      return;
+    }
+    if (!password) {
+      setGalleryAuthStatus("请输入访问密码。");
+      return;
+    }
+    setGalleryAuthBusy(true);
+    setGalleryAuthStatus("");
     try {
-      const inputUrl = typeof input === "string" ? input : input.url;
-      const url = new URL(inputUrl, window.location.href);
-      if (url.origin === window.location.origin && url.pathname.startsWith("/api/")) {
-        const nextInit = Object.assign({}, init || {});
-        const inputHeaders = typeof input === "string" ? null : input.headers;
-        const headers = new Headers(nextInit.headers || inputHeaders || undefined);
-        if (!headers.has("X-API-Key")) headers.set("X-API-Key", apiKey);
-        nextInit.headers = headers;
-        return nativeFetch(input, nextInit);
+      const endpoint = galleryAuthMode === "setup" ? "/api/auth/setup" : "/api/auth/login";
+      const res = await galleryNativeFetch(`${API}${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.message || data.error || "auth_failed");
+      hideGalleryAuthOverlay();
+      if (!galleryAppBooted) {
+        await bootGalleryApp();
       }
     } catch(e) {
-      console.warn("api key wrapper skipped:", e);
+      setGalleryAuthStatus(e && e.message ? e.message : "访问密码验证失败。");
+    } finally {
+      setGalleryAuthBusy(false);
     }
-    return nativeFetch(input, init);
+  });
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", bindGalleryAuthForm);
+} else {
+  bindGalleryAuthForm();
+}
+
+(function installGalleryAuthFetchHandler() {
+  window.fetch = function(input, init) {
+    const url = galleryApiUrl(input);
+    return galleryNativeFetch(input, init).then(response => {
+      if (response.status === 401 && isGalleryApiEndpoint(url) && !isGalleryAuthEndpoint(url)) {
+        response.clone().json().then(data => {
+          if (isGalleryAuthRequiredPayload(data)) showGalleryAuthOverlay(data);
+        }).catch(() => null);
+      }
+      return response;
+    });
   };
 })();
 
@@ -5515,6 +6210,16 @@ let wardrobeRequest = null;
 let wardrobeAutoRefreshTimer = null;
 let photoRetryPollTimer = null;
 let liveLogTimer = null;
+let liveLogEntries = [];
+let liveLogFilter = 'important';
+let liveLogFallbackText = '';
+let liveLogLastSignature = '';
+let liveLogFollowLatest = true;
+let liveLogScrollResumeTimer = null;
+let liveLogProgrammaticScroll = false;
+let liveLogStatusText = '';
+const liveLogOpenDetailKeys = new Set();
+const LIVE_LOG_SCROLL_RESUME_MS = 6000;
 const favoriteRequests = new Set();
 let settingsSnapshot = null;
 let availableLlmModels = [];
@@ -5539,7 +6244,11 @@ let groupChatRoomsRequest = null;
 let activeGroupChatRoomId = "";
 const SINGLE_GROUP_CHAT_TITLE = "群聊";
 let groupChatParticipantSyncTimer = null;
-let groupChatTypingState = { roomId: "", names: [] };
+const GROUP_CHAT_REPLY_POLL_INTERVAL_MS = 1200;
+const groupChatPendingReplyRooms = new Set();
+let groupChatReplyPollTimer = null;
+let groupChatReplyPollRequest = null;
+let groupChatTypingState = { roomId: "", names: [], phase: "typing" };
 
 function compactDisplayText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -5789,6 +6498,25 @@ function setToolStatus(id, text, kind = "") {
   if (!el) return;
   el.textContent = text || "";
   el.className = `tool-status-pill${kind ? " " + kind : ""}`;
+}
+
+function setGroupChatMobileView(view) {
+  const normalized = view === "tools" ? "tools" : "chat";
+  const section = document.getElementById("groupChatSection");
+  const layout = section?.querySelector(".group-chat-layout");
+  if (!section || !layout) return;
+  layout.dataset.mobileView = normalized;
+  section.querySelectorAll("[data-group-chat-mobile-view]").forEach(button => {
+    const active = button.dataset.groupChatMobileView === normalized;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  if (normalized === "chat") {
+    const messages = document.getElementById("groupChatMessages");
+    requestAnimationFrame(() => {
+      if (messages) messages.scrollTop = messages.scrollHeight;
+    });
+  }
 }
 
 function characterId(raw, index = 0) {
@@ -6642,6 +7370,7 @@ async function generateCharacterPortrait() {
     if (targetRoomId) {
       try {
         await appendGeneratedImageToGroupChatRoom(targetRoomId, data, [character_id]);
+        setGroupChatMobileView("chat");
         setToolStatus("characterStatus", "已发送到房间", "ok");
         showToast("图片已发送到房间");
       } catch(sendError) {
@@ -6721,6 +7450,7 @@ async function generateGroupPortrait() {
     if (targetRoomId) {
       try {
         await appendGeneratedImageToGroupChatRoom(targetRoomId, data, character_ids);
+        setGroupChatMobileView("chat");
         setToolStatus("characterStatus", "已发送到房间", "ok");
         showToast("图片已发送到房间");
       } catch(sendError) {
@@ -6907,6 +7637,7 @@ function scheduleSingleGroupChatRoomParticipantSync() {
 async function loadGroupChatRooms(options = {}) {
   if (groupChatRoomsLoaded && !options.force) {
     renderGroupChatRooms();
+    scheduleGroupChatReplyPoll(0);
     return groupChatRooms;
   }
   if (groupChatRoomsRequest) return groupChatRoomsRequest;
@@ -6927,6 +7658,7 @@ async function loadGroupChatRooms(options = {}) {
       if (groupChatRooms[0]) activeGroupChatRoomId = roomId(groupChatRooms[0], 0);
       groupChatRoomsLoaded = true;
       renderGroupChatRooms();
+      scheduleGroupChatReplyPoll(0);
       await syncSingleGroupChatRoomParticipants({ silent: true });
       setToolStatus("groupChatStatus", groupChatRooms.length ? "1 个房间" : "暂无房间", groupChatRooms.length ? "ok" : "");
       return groupChatRooms;
@@ -6989,27 +7721,47 @@ function typingParticipantLabel(names) {
   return `${uniqueNames.slice(0, 2).join("、")}等 ${uniqueNames.length} 人`;
 }
 
+function groupChatRoomReplyProgress(room) {
+  const raw = room && typeof room.reply_progress === "object" ? room.reply_progress : null;
+  if (!raw) return null;
+  const phase = String(raw.phase || "").trim().toLowerCase();
+  if (!["typing", "image"].includes(phase)) return null;
+  const names = Array.isArray(raw.character_names)
+    ? raw.character_names
+    : [raw.character_name || raw.name || characterNameById(raw.character_id || "")];
+  const cleanNames = Array.from(new Set(names
+    .map(name => compactDisplayText(name))
+    .filter(Boolean)));
+  return cleanNames.length ? { phase, names: cleanNames } : null;
+}
+
 function updateGroupChatTypingIndicator() {
   const indicator = document.getElementById("groupChatTypingIndicator");
   if (!indicator) return;
   const activeRoomId = String(activeGroupChatRoomId || "");
-  const names = groupChatTypingState.roomId === activeRoomId ? groupChatTypingState.names : [];
-  const label = typingParticipantLabel(names);
+  const serverState = groupChatRoomReplyProgress(activeGroupChatRoom());
+  const localState = groupChatTypingState.roomId === activeRoomId ? groupChatTypingState : null;
+  const state = serverState || localState;
+  const label = typingParticipantLabel(state ? state.names : []);
   if (!label) {
     indicator.hidden = true;
     indicator.textContent = "";
+    indicator.removeAttribute("data-phase");
     return;
   }
-  indicator.textContent = `${label}正在输入中...`;
+  const phase = state && state.phase === "image" ? "image" : "typing";
+  indicator.textContent = `${label}${phase === "image" ? "正在生图..." : "正在输入中..."}`;
+  indicator.dataset.phase = phase;
   indicator.hidden = false;
 }
 
-function setGroupChatTyping(roomIdValue, names) {
+function setGroupChatTyping(roomIdValue, names, phase = "typing") {
   groupChatTypingState = {
     roomId: String(roomIdValue || ""),
     names: Array.from(new Set((Array.isArray(names) ? names : [])
       .map(name => compactDisplayText(name))
-      .filter(Boolean)))
+      .filter(Boolean))),
+    phase: phase === "image" ? "image" : "typing"
   };
   updateGroupChatTypingIndicator();
 }
@@ -7017,7 +7769,7 @@ function setGroupChatTyping(roomIdValue, names) {
 function clearGroupChatTyping(roomIdValue = "") {
   const id = String(roomIdValue || "");
   if (!id || groupChatTypingState.roomId === id) {
-    groupChatTypingState = { roomId: "", names: [] };
+    groupChatTypingState = { roomId: "", names: [], phase: "typing" };
   }
   updateGroupChatTypingIndicator();
 }
@@ -7227,6 +7979,63 @@ function mergeGroupChatRoom(room) {
   activeGroupChatRoomId = id;
 }
 
+function groupChatRoomMessageRevision(room) {
+  const messages = roomMessages(room);
+  const last = messages.length ? messages[messages.length - 1] : null;
+  return [
+    messages.length,
+    last ? chatMessageId(last) : "",
+    last && (last.updated_at || last.created_at || last.timestamp || "")
+  ].join("|");
+}
+
+function shouldPollGroupChatRoom(roomIdValue) {
+  const id = String(roomIdValue || "").trim();
+  if (!id) return false;
+  const room = groupChatRooms.find((item, index) => roomId(item, index) === id);
+  return groupChatPendingReplyRooms.has(id) || !!groupChatRoomReplyProgress(room);
+}
+
+function scheduleGroupChatReplyPoll(delay = GROUP_CHAT_REPLY_POLL_INTERVAL_MS) {
+  if (groupChatReplyPollTimer) {
+    clearTimeout(groupChatReplyPollTimer);
+    groupChatReplyPollTimer = null;
+  }
+  const roomIdValue = String(activeGroupChatRoomId || "").trim();
+  if (!shouldPollGroupChatRoom(roomIdValue)) return;
+  groupChatReplyPollTimer = setTimeout(() => {
+    groupChatReplyPollTimer = null;
+    refreshGroupChatReplyProgress(roomIdValue);
+  }, Math.max(0, Number(delay) || 0));
+}
+
+async function refreshGroupChatReplyProgress(roomIdValue) {
+  const id = String(roomIdValue || "").trim();
+  if (!id) return null;
+  if (groupChatReplyPollRequest) return groupChatReplyPollRequest;
+  const beforeRoom = groupChatRooms.find((item, index) => roomId(item, index) === id);
+  const beforeRevision = groupChatRoomMessageRevision(beforeRoom);
+  groupChatReplyPollRequest = (async () => {
+    const res = await fetch(`${API}/api/group-chat/rooms/${encodeURIComponent(id)}?limit=50`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    const updatedRoom = data.room || data;
+    if (updatedRoom && (updatedRoom.id || updatedRoom.room_id)) {
+      mergeGroupChatRoom(updatedRoom);
+      const afterRevision = groupChatRoomMessageRevision(updatedRoom);
+      if (beforeRevision !== afterRevision) renderGroupChatRooms();
+      else updateGroupChatTypingIndicator();
+    }
+    return updatedRoom;
+  })()
+    .catch(() => null)
+    .finally(() => {
+      groupChatReplyPollRequest = null;
+      scheduleGroupChatReplyPoll();
+    });
+  return groupChatReplyPollRequest;
+}
+
 async function createGroupChatRoom() {
   const participants = groupRoomParticipantSelectionForRoom();
   if (!participants.length) { showToast("请至少选择一个参与角色"); return; }
@@ -7299,7 +8108,12 @@ async function deleteGroupChatMessage(messageId) {
   if (!id) return;
   const target = roomMessages(room).find(message => chatMessageId(message) === id);
   if (!target) { showToast("找不到要删除的消息"); return; }
-  const ok = window.confirm("删除这条消息后，它不会再进入当前房间上下文。继续吗？");
+  const targetMeta = chatMessageMetadata(target);
+  const hasGalleryImage = !!String(targetMeta.image_filename || "").trim();
+  const confirmText = hasGalleryImage
+    ? "删除这张图片后，会同时从群聊上下文和画廊中删除。继续吗？"
+    : "删除这条消息后，它不会再进入当前房间上下文。继续吗？";
+  const ok = window.confirm(confirmText);
   if (!ok) return;
   setToolStatus("groupChatStatus", "删除消息中");
   try {
@@ -7309,9 +8123,30 @@ async function deleteGroupChatMessage(messageId) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
     if (data.room) mergeGroupChatRoom(data.room);
+    const deletedImageFilename = String(data.image_filename || "").trim();
+    if (deletedImageFilename) {
+      removeLocalImage(deletedImageFilename);
+      if (currentModalImg === deletedImageFilename) {
+        currentModalImg = "";
+        closeModal();
+      }
+      renderActivePhotoView();
+      updateBadges();
+    }
     renderGroupChatRooms();
-    setToolStatus("groupChatStatus", "消息已删除", "ok");
-    showToast("已删除这条消息");
+    const cleanupErrors = Array.isArray(data.gallery_cleanup?.errors)
+      ? data.gallery_cleanup.errors
+      : [];
+    if (data.gallery_error || cleanupErrors.length) {
+      setToolStatus("groupChatStatus", "消息已删除，图片清理异常", "error");
+      showToast("消息已删除，但关联图片没有完全清理");
+    } else if (data.gallery_deleted) {
+      setToolStatus("groupChatStatus", "图片已删除", "ok");
+      showToast("图片已从群聊和画廊删除");
+    } else {
+      setToolStatus("groupChatStatus", "消息已删除", "ok");
+      showToast("已删除这条消息");
+    }
   } catch(e) {
     setToolStatus("groupChatStatus", "删除失败", "error");
     showToast("删除失败：" + (e && e.message ? e.message : "未知错误"));
@@ -7347,7 +8182,7 @@ async function clearGroupChatContext() {
 
 async function requestGroupChatReplies(roomIdValue, options = {}) {
   const room = groupChatRooms.find((item, index) => roomId(item, index) === roomIdValue);
-  const isRewind = !!options.rewind_message_id;
+  const isRewind = !!(options.rewind_message_id || options.regenerate_message_id);
   const replyParticipants = groupChatReplyParticipants(room, options.sender_character_id, options.character_ids);
   if (!room || replyParticipants.length <= 0) {
     clearGroupChatTyping(roomIdValue);
@@ -7359,6 +8194,10 @@ async function requestGroupChatReplies(roomIdValue, options = {}) {
   if (btn) { btn.disabled = true; btn.textContent = isRewind ? "回溯中" : "角色回复中"; }
   setToolStatus("groupChatStatus", isRewind ? "回溯重发中" : "角色回复中");
   setGroupChatTyping(roomIdValue, replyNames);
+  if (!isRewind) {
+    groupChatPendingReplyRooms.add(roomIdValue);
+    scheduleGroupChatReplyPoll(150);
+  }
   try {
     const body = {
       trigger_message_id: options.trigger_message_id || "",
@@ -7389,7 +8228,9 @@ async function requestGroupChatReplies(roomIdValue, options = {}) {
     setToolStatus("groupChatStatus", isRewind ? "回溯失败" : "角色回复失败", "error");
     showToast((isRewind ? "回溯失败：" : "角色回复失败：") + (e && e.message ? e.message : "未知错误"));
   } finally {
+    groupChatPendingReplyRooms.delete(roomIdValue);
     clearGroupChatTyping(roomIdValue);
+    if (!isRewind) refreshGroupChatReplyProgress(roomIdValue);
     if (btn) { btn.disabled = false; btn.textContent = idleText; }
   }
 }
@@ -7404,8 +8245,8 @@ async function rewindGroupChatMessage(messageId) {
   const generated = chatMessageIsGenerated(target);
   const senderCharacterId = chatMessageSenderCharacterId(target);
   const ok = window.confirm(generated
-    ? "会删除这条消息及之后的聊天记录，并由同一个角色重新生成这条消息。继续吗？"
-    : "会删除这条消息之后的聊天记录，并重新生成角色回复。继续吗？");
+    ? "成功后会用同一角色重新生成的内容替换这条消息及之后的记录；如果生成失败，原文字和原图片都会保留。继续吗？"
+    : "成功后会替换这条消息之后的角色回复；如果生成失败，原聊天记录会保留。继续吗？");
   if (!ok) return;
   await requestGroupChatReplies(activeGroupChatRoomId, {
     trigger_message_id: id,
@@ -7415,6 +8256,13 @@ async function rewindGroupChatMessage(messageId) {
     sender_character_id: generated ? "" : senderCharacterId,
     sender_type: String(target.sender_type || target.sender?.type || "")
   });
+}
+
+function handleGroupChatComposerKeydown(event) {
+  if (!event || event.isComposing || event.keyCode === 229) return;
+  if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+  event.preventDefault();
+  sendGroupChatMessage();
 }
 
 async function sendGroupChatMessage() {
@@ -7652,6 +8500,7 @@ function switchTab(tab) {
     renderWardrobe();
   } else if (tab === "group-chat") {
     if (groupChatSec) groupChatSec.classList.remove("hidden");
+    setGroupChatMobileView("chat");
     showFavoritesOnly = false;
     showUnfavoritesOnly = false;
     showTodayOnly = false;
@@ -8795,7 +9644,7 @@ window.addEventListener("resize", () => {
 	  if (btn && btn.disabled) return;
 	  setModalWardrobeBtnState("busy");
 	  try {
-	    const res = await fetch('/api/favorite-outfits' + apiKeyQuery(), {
+	    const res = await fetch('/api/favorite-outfits', {
 	      method: 'POST',
 	      headers: { 'Content-Type': 'application/json' },
 	      body: JSON.stringify(payload)
@@ -9101,14 +9950,16 @@ async function sendScheduleImage(channel, btn) {
   if (btn) btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><span>发送中</span>`;
   closeScheduleSendMenu();
   showToast(`📨 正在发送到${label}...`, 4000);
-  openLiveLogs({ scrollToBottom: true, status: `正在发送到${label}，日志自动刷新中...` });
 
   try {
-    const res = await fetch(appendApiKeyQuery(`${API}/api/images/${encodeURIComponent(imgId)}/send`), {
+    const sendRequest = fetch(`${API}/api/images/${encodeURIComponent(imgId)}/send`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ channel: normalizedChannel }),
     });
+    await new Promise(resolve => setTimeout(resolve, 250));
+    openLiveLogs({ filter: 'important', scrollToBottom: true, status: `正在发送到${label}，日志自动刷新中...` });
+    const res = await sendRequest;
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.error) {
       throw new Error(data.message || data.error || `HTTP ${res.status}`);
@@ -9150,27 +10001,27 @@ const CG_SIZE_MAP = {
   "2:3": { "1k": "1024x1536", "2k": "1365x2048", "4k": "2731x4096" },
   "9:16": { "1k": "768x1366", "2k": "1152x2048", "4k": "2304x4096" }
 };
-const BUILTIN_REF_FALLBACKS = [
+const DEFAULT_STYLE_REF_FALLBACKS = [
   {
     filename: "reference_face.jpg",
-    url: "/local-refs/reference_face.jpg",
     label: "冷御风",
-    builtin: true,
-    prompt: "Cool elegant portrait reference with mature, confident, polished styling and chic city mood."
+    style: "cool",
+    source: "default",
+    builtin: true
   },
   {
     filename: "ref_style_girly.jpg",
-    url: "/local-refs/ref_style_girly.jpg",
     label: "少女风",
-    builtin: true,
-    prompt: "Bright girly portrait reference with lively, cheerful, playful styling and sunny everyday mood."
+    style: "girly",
+    source: "default",
+    builtin: true
   },
   {
     filename: "ref_style_sweet.jpg",
-    url: "/local-refs/ref_style_sweet.jpg",
     label: "甜妹风",
-    builtin: true,
-    prompt: "Soft sweet portrait reference with gentle, warm, delicate styling and cozy romantic mood."
+    style: "sweet",
+    source: "default",
+    builtin: true
   }
 ];
 const CUSTOM_IMAGE_MODEL_FALLBACKS = ["gpt-image-2"];
@@ -9426,37 +10277,73 @@ document.addEventListener("DOMContentLoaded", () => {
 // Reference image selector
 let uploadedRefs = [];
 let activeCustomWardrobeRef = null;
-function mergeBuiltinRefs(refList) {
-  const refs = new Map();
-  BUILTIN_REF_FALLBACKS.forEach(ref => refs.set(ref.filename, ref));
-  (Array.isArray(refList) ? refList : []).filter(ref => ref && ref.builtin).forEach(ref => {
-    refs.set(ref.filename || ref.url, Object.assign({}, ref));
+let pendingDefaultStyleUpload = "";
+function mergeDefaultStyleRefs(refList) {
+  const serverRefs = Array.isArray(refList) ? refList : [];
+  return DEFAULT_STYLE_REF_FALLBACKS.map(slot => {
+    const matched = serverRefs.find(ref => {
+      if (!ref || !ref.builtin || String(ref.source || "").toLowerCase() !== "default") return false;
+      return String(ref.style || "").toLowerCase() === slot.style
+        || String(ref.filename || "") === slot.filename;
+    });
+    return Object.assign({}, slot, matched || {}, {
+      available: !!(matched && matched.url)
+    });
   });
-  return Array.from(refs.values());
 }
 function bindReferenceGridSelection(grid) {
   grid.querySelectorAll(".cg-ref-item").forEach(item => {
-    item.addEventListener("click", () => {
+    item.addEventListener("click", event => {
+      const replaceButton = event.target.closest(".cg-ref-replace");
+      const uploadStyle = replaceButton
+        ? replaceButton.dataset.style
+        : item.dataset.uploadStyle;
+      if (uploadStyle) {
+        event.stopPropagation();
+        requestDefaultStyleUpload(uploadStyle);
+        return;
+      }
       grid.querySelectorAll(".cg-ref-item").forEach(x => x.classList.remove("active"));
       item.classList.add("active");
       saveCustomGenState();
     });
+    if (item.getAttribute("role") === "button") {
+      item.addEventListener("keydown", event => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        item.click();
+      });
+    }
   });
 }
-function renderRefImages(builtinRefs, uploadRefs, options = {}) {
+function renderRefImages(defaultRefs, uploadRefs, options = {}) {
   const grid = document.getElementById("cgRefGrid");
   if (!grid) return;
+  defaultRefs = Array.isArray(defaultRefs) ? defaultRefs : [];
+  uploadRefs = Array.isArray(uploadRefs) ? uploadRefs : [];
   const wardrobeRef = options.wardrobeRef || activeCustomWardrobeRef;
   const selectedRef = options.selectedRef || "";
   let html = `<div class="cg-ref-item active" data-ref=""><div class="cg-ref-none">📸</div></div>`;
 
-  builtinRefs.forEach(ref => {
-    const label = escapeHtml(ref.label || ref.style || "参考图");
+  defaultRefs.forEach(ref => {
+    const label = escapeHtml(ref.label || ref.style || "默认风格");
+    const style = escapeHtml(ref.style || "");
     const url = escapeHtml(ref.url || "");
-    html += `<div class="cg-ref-item" data-ref="${url}" title="${label}">
-      <img src="${url}" alt="${label}" loading="lazy" decoding="async" style="object-fit:cover;width:100%;height:100%;">
-      <span style="position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:10px;color:#fff;background:rgba(0,0,0,0.5);border-radius:0 0 8px 8px;">${label}</span>
-    </div>`;
+    if (ref.available && url) {
+      html += `<div class="cg-ref-item default-style" data-ref="${url}" title="${label}" role="button" tabindex="0">
+        <img src="${url}" alt="${label}" loading="lazy" decoding="async">
+        <button class="cg-ref-replace" type="button" data-style="${style}" aria-label="更换${label}底模" title="更换${label}底模"><i class="fa-solid fa-camera" aria-hidden="true"></i></button>
+        <span style="position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:10px;color:#fff;background:rgba(0,0,0,0.5);border-radius:0 0 8px 8px;">${label}</span>
+      </div>`;
+    } else {
+      html += `<div class="cg-ref-item default-style missing" data-ref="" data-upload-style="${style}" title="上传${label}底模" role="button" tabindex="0">
+        <div class="cg-ref-upload-empty">
+          <i class="fa-solid fa-camera" aria-hidden="true"></i>
+          <strong>${label}</strong>
+          <span>点击上传</span>
+        </div>
+      </div>`;
+    }
   });
 
   if (wardrobeRef && wardrobeRef.url) {
@@ -9478,7 +10365,7 @@ function renderRefImages(builtinRefs, uploadRefs, options = {}) {
     </div>`;
   });
 
-  if (builtinRefs.length === 0 && uploadRefs.length === 0 && !(wardrobeRef && wardrobeRef.url)) {
+  if (defaultRefs.length === 0 && uploadRefs.length === 0 && !(wardrobeRef && wardrobeRef.url)) {
     html += `<div style="padding:10px;color:#999;font-size:13px;">暂无参考图，点击"📤 上传参考图"添加</div>`;
   }
 
@@ -9487,41 +10374,69 @@ function renderRefImages(builtinRefs, uploadRefs, options = {}) {
   bindReferenceGridSelection(grid);
 }
 async function loadRefImages(options = {}) {
-  renderRefImages(BUILTIN_REF_FALLBACKS, uploadedRefs, options);
+  renderRefImages(mergeDefaultStyleRefs([]), uploadedRefs, options);
   try {
-    // 同时加载内置底模 + 用户上传
     const [refListRes, uploadedRes] = await Promise.all([
       fetch(`${API}/api/ref-list`),
       fetch(`${API}/api/uploaded-refs`)
     ]);
     const refList = await refListRes.json();
     const uploadedRefsFromServer = await uploadedRes.json();
-    const refItems = Array.isArray(refList) ? refList : [];
-    const builtinRefs = refItems.filter(ref => ref && ref.builtin);
-    uploadedRefs = uploadedRefsFromServer;
-    renderRefImages(mergeBuiltinRefs(builtinRefs), uploadedRefs, options);
+    uploadedRefs = Array.isArray(uploadedRefsFromServer) ? uploadedRefsFromServer : [];
+    renderRefImages(mergeDefaultStyleRefs(refList), uploadedRefs, options);
   } catch(e) {
     console.error("load refs:", e);
-    renderRefImages(BUILTIN_REF_FALLBACKS, uploadedRefs, options);
+    renderRefImages(mergeDefaultStyleRefs([]), uploadedRefs, options);
+  }
+}
+function requestDefaultStyleUpload(style) {
+  const slot = DEFAULT_STYLE_REF_FALLBACKS.find(ref => ref.style === style);
+  const input = document.getElementById("cgStyleRefUpload");
+  if (!slot || !input) return;
+  pendingDefaultStyleUpload = style;
+  input.value = "";
+  input.click();
+}
+async function uploadReferenceFile(file, style = "") {
+  const formData = new FormData();
+  if (style) formData.append("style", style);
+  formData.append("file", file);
+  const res = await fetch(`${API}/api/upload-ref`, {
+    method: "POST",
+    body: formData
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) {
+    throw new Error(data.message || data.error || `HTTP ${res.status}`);
+  }
+  return data;
+}
+async function uploadDefaultStyleRef(event) {
+  const input = event.target;
+  const file = input.files && input.files[0];
+  const style = pendingDefaultStyleUpload;
+  if (!file || !style) {
+    input.value = "";
+    return;
+  }
+  const slot = DEFAULT_STYLE_REF_FALLBACKS.find(ref => ref.style === style);
+  try {
+    const data = await uploadReferenceFile(file, style);
+    await loadRefImages({ selectedRef: data.url || "" });
+    showToast(`✅ ${slot ? slot.label : "默认"}底模已更新`);
+  } catch(e) {
+    showToast("❌ 底模上传失败：" + e.message);
+  } finally {
+    pendingDefaultStyleUpload = "";
+    input.value = "";
   }
 }
 async function uploadRefImage(event) {
   const file = event.target.files[0];
   if (!file) return;
-  const formData = new FormData();
-  formData.append("file", file);
   try {
-    const res = await fetch(`${API}/api/upload-ref`, { method: "POST", body: formData });
-    const data = await res.json();
-    if (data.error) { showToast("❌ " + data.error); return; }
-    uploadedRefs.push(data);
-    // Rebuild grid and select the new one
-    await loadRefImages();
-    const grid = document.getElementById("cgRefGrid");
-    const items = grid.querySelectorAll(".cg-ref-item");
-    if (items.length > 0) {
-      items[items.length - 1].click(); // select last (newly uploaded)
-    }
+    const data = await uploadReferenceFile(file);
+    await loadRefImages({ selectedRef: data.url || "" });
     showToast("✅ 参考图已上传");
   } catch(e) { showToast("❌ " + e.message); }
   event.target.value = "";
@@ -9654,8 +10569,7 @@ async function loadGallery() {
   }
 }
 
-loadDisplayConfig();
-loadGallery();
+bootGalleryApp();
 
 // ===== Settings Modal =====
 let activeSettingsPanel = "persona";
@@ -9688,10 +10602,12 @@ function openSettings() {
   document.getElementById("skAppearance").value = "";
   document.getElementById("skPersona").value = "";
   document.getElementById("skGiteeFallback").checked = false;
+  document.getElementById("skGptChatFallback").checked = false;
   availableLlmModels = [];
   setLlmModelChain([]);
   setPushChannel("wechat");
   syncGiteeFallbackVisual(false);
+  syncGptChatFallbackVisual(false);
   const cleanupResult = document.getElementById("skCleanupResult");
   if (cleanupResult) cleanupResult.textContent = "";
   updateCleanupCustomVisibility();
@@ -9804,6 +10720,16 @@ function syncGiteeFallbackVisual(enabled) {
   if (row) row.classList.toggle("enabled", enabled === true);
   if (status) {
     status.textContent = enabled ? "✓ 回退开" : "○ 回退关";
+    status.className = "sk-status " + (enabled ? "set" : "unset");
+  }
+}
+
+function syncGptChatFallbackVisual(enabled) {
+  const row = document.getElementById("skGptChatFallbackRow");
+  const status = document.getElementById("skGptChatFallbackStatus");
+  if (row) row.classList.toggle("enabled", enabled === true);
+  if (status) {
+    status.textContent = enabled ? "✓ Chat 回退开" : "○ Chat 回退关";
     status.className = "sk-status " + (enabled ? "set" : "unset");
   }
 }
@@ -10049,7 +10975,7 @@ async function loadKeywordCloudPayload(force) {
   if (!force && keywordCloudCache.payload && Date.now() - keywordCloudCache.updatedAt < 60000) {
     return keywordCloudCache.payload;
   }
-  const res = await fetch(appendApiKeyQuery("/api/keyword-cloud?limit=64"));
+  const res = await fetch("/api/keyword-cloud?limit=64");
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "词云加载失败");
   keywordCloudCache = { payload: data, updatedAt: Date.now() };
@@ -10352,8 +11278,8 @@ async function loadSettingsStatus() {
         githubProxyStatus.textContent = "✓ 已设置";
         githubProxyStatus.className = "sk-status set";
       } else {
-        githubProxyStatus.textContent = "○ 必填";
-        githubProxyStatus.className = "sk-status unset";
+        githubProxyStatus.textContent = "○ 未设置，将直连 GitHub";
+        githubProxyStatus.className = "sk-status optional";
       }
     }
     const imageDirEl = document.getElementById("skImageDir");
@@ -10378,6 +11304,9 @@ async function loadSettingsStatus() {
     const giteeFallbackEl = document.getElementById("skGiteeFallback");
     giteeFallbackEl.checked = data.gitee_fallback_enabled === true;
     syncGiteeFallbackVisual(giteeFallbackEl.checked);
+    const gptChatFallbackEl = document.getElementById("skGptChatFallback");
+    gptChatFallbackEl.checked = data.gpt_chat_fallback_enabled === true;
+    syncGptChatFallbackVisual(gptChatFallbackEl.checked);
 
     // Appearance: show as textarea content (not masked)
     const appEl = document.getElementById("skAppearance");
@@ -10858,21 +11787,16 @@ async function saveSettings() {
   const llmModel = document.getElementById("skLlmModel").value;
   const llmModels = fullLlmModelChain();
   const giteeFallbackEnabled = document.getElementById("skGiteeFallback").checked;
+  const gptChatFallbackEnabled = document.getElementById("skGptChatFallback").checked;
   const missing = [];
   requireSettingsValue("Gitee API URL", giteeUrl, missing);
   if (!giteeKey && !hasSavedSecret("gitee_key")) missing.push("Gitee API Key");
   requireSettingsValue("GPT Image Base URL", gptBaseUrl, missing);
   if (!gptKey && !hasSavedSecret("gpt_key")) missing.push("GPT Image Key");
-  requireSettingsValue("CPA Base URL", cpaUrl, missing);
-  if (!cpaKey && !hasSavedSecret("cpa_key")) missing.push("CPA API Key");
-  requireSettingsValue("GitHub API 代理", githubProxy, missing);
+  requireSettingsValue("LLM Base URL", cpaUrl, missing);
+  if (!cpaKey && !hasSavedSecret("cpa_key")) missing.push("LLM API Key");
   if (missing.length) {
     showToast("请先填写：" + missing.join("、"), 7000);
-    const status = document.getElementById("skGithubProxyStatus");
-    if (status) {
-      status.textContent = "缺少必填：" + missing.join("、");
-      status.className = "sk-status unset";
-    }
     return;
   }
 
@@ -10900,6 +11824,7 @@ async function saveSettings() {
     body.hermes_cli = document.getElementById("skHermesCliPath")?.value.trim() || "";
     body.openclaw_cli = document.getElementById("skOpenclawCliPath")?.value.trim() || "";
     body.gitee_fallback_enabled = giteeFallbackEnabled;
+    body.gpt_chat_fallback_enabled = gptChatFallbackEnabled;
     // llm_model: always send; llm_models keeps the ordered fallback chain
     body.llm_model = llmModel;
     body.llm_models = llmModels;
@@ -11268,6 +12193,7 @@ function summarizePhotoJobError(jobOrText) {
   }
   var lower = raw.toLowerCase();
   var reasons = [];
+  var chatFallbackDisabled = lower.includes('chat-compatible gpt image fallback is disabled');
   var endpoint = '';
   var endpointMatch = raw.match(/\[(https?:\/\/[^/\]]+|[\w.-]+:\d+)\]/);
   if (endpointMatch) endpoint = endpointMatch[1];
@@ -11303,7 +12229,9 @@ function summarizePhotoJobError(jobOrText) {
   } else if (lower.includes('content_policy_violation') || lower.includes('safety system')) {
     reasons.push('上游安全策略拒绝了这次图片请求');
   } else if (lower.includes('path not found') || lower.includes('images api error 404')) {
-    reasons.push('当前中转不支持 Images API，已尝试 chat 兼容生图');
+    reasons.push(chatFallbackDisabled
+      ? '当前中转不支持 Images API'
+      : '当前中转不支持 Images API，已尝试 Chat 兼容生图');
   }
   if (
     lower.includes('no base64 image in response') &&
@@ -11327,6 +12255,9 @@ function summarizePhotoJobError(jobOrText) {
   }
   if (lower.includes('gitee fallback is disabled')) {
     reasons.push('当时 Gitee 回退未启用，无法自动换线路');
+  }
+  if (chatFallbackDisabled) {
+    reasons.push('当时 Chat 端点回退未启用，未改走 /chat/completions');
   }
   var summary = Array.from(new Set(reasons)).join('；');
   if (summary && !summary.includes('Gitee') && (summary.includes('连接失败') || summary.includes('响应超时'))) {
@@ -11373,11 +12304,10 @@ function loadScheduleEggData(options) {
   }
 
   // 并行拉取日程详情、今日照片和真实待执行生图任务
-  var apiSuffix = apiKeyQuery();
   scheduleEggRequest = Promise.all([
-    fetch('/api/schedule-detail' + apiSuffix).then(function(r){ return r.json(); }).catch(function(){ return null; }),
-    fetch('/api/today' + apiSuffix).then(function(r){ return r.json(); }).catch(function(){ return null; }),
-    fetch('/api/photo-jobs' + apiSuffix).then(function(r){ return r.json(); }).catch(function(){ return null; }),
+    fetch('/api/schedule-detail').then(function(r){ return r.json(); }).catch(function(){ return null; }),
+    fetch('/api/today').then(function(r){ return r.json(); }).catch(function(){ return null; }),
+    fetch('/api/photo-jobs').then(function(r){ return r.json(); }).catch(function(){ return null; }),
   ]).then(function(results) {
     var detail = results[0];
     var today  = results[1];
@@ -11695,7 +12625,7 @@ function toggleFavoriteOutfitPlan(btn) {
   }
 
   btn.disabled = true;
-  fetch('/api/favorite-outfits' + apiKeyQuery(), {
+  fetch('/api/favorite-outfits', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -11740,7 +12670,7 @@ function toggleDislikedOutfitPlan(btn) {
   }
 
   btn.disabled = true;
-  fetch('/api/disliked-outfits' + apiKeyQuery(), {
+  fetch('/api/disliked-outfits', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -11868,7 +12798,7 @@ function renderWardrobeItem(item) {
     : (wardrobeFailed ? '衣架图生成失败<br>可以手动重试' : '还没有衣架图<br>生成后可直接做图生图参考');
   var html = '<article class="wardrobe-card" data-outfit-id="' + escapeAttr(outfitId) + '" data-wardrobe-signature="' + escapeAttr(wardrobeItemSignature(item)) + '">';
   html += hasWardrobeImage
-    ? '<div class="wardrobe-thumb"><img src="' + escapeAttr(wardrobeImageSrc) + '" alt="' + escapeAttr(style + ' 衣架图') + '" loading="lazy" decoding="async"></div>'
+    ? '<button class="wardrobe-thumb wardrobe-thumb-btn" type="button" onclick="openFullscreenImg(' + jsStringArg(wardrobeImageSrc) + ')" title="放大查看" aria-label="放大查看 ' + escapeAttr(style) + ' 衣架图"><img src="' + escapeAttr(wardrobeImageSrc) + '" alt="' + escapeAttr(style + ' 衣架图') + '" loading="lazy" decoding="async"></button>'
     : '<div class="wardrobe-thumb"><div class="wardrobe-thumb-empty"><i class="fa-solid fa-shirt" aria-hidden="true"></i><span>' + emptyText + '</span></div></div>';
   html += '<div class="wardrobe-meta"><span class="wardrobe-style">' + escapeHtml(style) + '</span><span class="wardrobe-date">' + escapeHtml(dateText) + '</span></div>';
   html += '<div class="wardrobe-copy">';
@@ -11971,7 +12901,7 @@ function loadWardrobe(options) {
   if (shouldRender && !softRender && !wardrobeLoaded && content) {
     content.innerHTML = '<div class="wardrobe-empty"><div class="icon">👗</div><p>正在打开衣柜...</p></div>';
   }
-  wardrobeRequest = fetch('/api/favorite-outfits' + apiKeyQuery())
+  wardrobeRequest = fetch('/api/favorite-outfits')
     .then(function(r) {
       return r.json().then(function(data) {
         if (!r.ok || data.error) throw new Error(data.error || 'favorite_list_failed');
@@ -12121,7 +13051,7 @@ async function saveWardrobeEdit() {
     btn.textContent = '保存中...';
   }
   try {
-    var res = await fetch('/api/favorite-outfits/' + encodeURIComponent(outfitId) + apiKeyQuery(), {
+    var res = await fetch('/api/favorite-outfits/' + encodeURIComponent(outfitId), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -12204,7 +13134,7 @@ async function generateWardrobeImage(btn) {
   const busyTimer = setInterval(updateBusyText, 1000);
   showToast('🧥 正在生成衣架图，通常需要 1-2 分钟...', 6000);
   try {
-    const res = await fetch('/api/favorite-outfits/' + encodeURIComponent(outfitId) + '/wardrobe-image' + apiKeyQuery(), {
+    const res = await fetch('/api/favorite-outfits/' + encodeURIComponent(outfitId) + '/wardrobe-image', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ aspect: '3:4', resolution: '1k' })
@@ -12315,7 +13245,7 @@ function removeFavoriteOutfitPlan(btn) {
   }
   payload.favorite = false;
   btn.disabled = true;
-  fetch('/api/favorite-outfits' + apiKeyQuery(), {
+  fetch('/api/favorite-outfits', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -12338,10 +13268,9 @@ function removeFavoriteOutfitPlan(btn) {
 
 function readPhotoJobState(timeText) {
   var wanted = extractClockTime(timeText);
-  var apiSuffix = apiKeyQuery();
   return Promise.all([
-    fetch('/api/today' + apiSuffix).then(function(r){ return r.json(); }).catch(function(){ return null; }),
-    fetch('/api/photo-jobs' + apiSuffix).then(function(r){ return r.json(); }).catch(function(){ return null; }),
+    fetch('/api/today').then(function(r){ return r.json(); }).catch(function(){ return null; }),
+    fetch('/api/photo-jobs').then(function(r){ return r.json(); }).catch(function(){ return null; }),
   ]).then(function(results) {
     var today = results[0];
     var jobsData = results[1];
@@ -12465,8 +13394,7 @@ function startPhotoPlanEdit(el) {
 }
 
 function savePhotoPlanActivity(timeText, activity, holder, previousActivity) {
-  var apiSuffix = apiKeyQuery();
-  fetch('/api/photo-jobs/plan' + apiSuffix, {
+  fetch('/api/photo-jobs/plan', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ time: timeText, activity: activity })
@@ -12498,8 +13426,7 @@ function retryPhotoJob(timeText, btn) {
   }
   showToast('已提交重试：' + timeText);
 
-  var apiSuffix = apiKeyQuery();
-  fetch('/api/photo-jobs/retry' + apiSuffix, {
+  fetch('/api/photo-jobs/retry', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ time: timeText })
@@ -12551,8 +13478,7 @@ function savePhotoJobLimit() {
     btn.textContent = '保存中';
   }
 
-  var apiSuffix = apiKeyQuery();
-  fetch('/api/photo-job-limit' + apiSuffix, {
+  fetch('/api/photo-job-limit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ max_daily: value })
@@ -12592,8 +13518,7 @@ function refreshScheduleEgg() {
   if (body) {
     body.innerHTML = '<div class="egg-loading">🔮 正在重新生成今天的日程...</div>';
   }
-  var apiSuffix = apiKeyQuery();
-  fetch('/api/refresh-schedule' + apiSuffix, { method: 'POST' })
+  fetch('/api/refresh-schedule', { method: 'POST' })
     .then(function(r) {
       return r.json().then(function(data) {
         if (!r.ok) throw new Error(data.error || 'refresh_failed');
@@ -12726,8 +13651,16 @@ function ensureLiveLogOverlay() {
   overlay.className = 'prompt-overlay';
   overlay.onclick = function(e) { if (e.target === this) closeLiveLogs(); };
   overlay.innerHTML = '<div class="prompt-card log-card">' +
-    '<div class="prompt-header"><span>📜 运行日志</span><button class="prompt-close" onclick="closeLiveLogs()">✕</button></div>' +
-    '<div class="prompt-body log-body"><pre id="liveLogText">正在读取日志...</pre></div>' +
+    '<div class="prompt-header"><span class="log-header-title"><i class="fa-regular fa-rectangle-list" aria-hidden="true"></i><span class="log-header-copy"><strong>运行日志</strong><small>只展示最近记录，重复内容会自动合并</small></span></span><button class="prompt-close" onclick="closeLiveLogs()" aria-label="关闭">✕</button></div>' +
+    '<div class="log-toolbar" role="tablist" aria-label="日志级别筛选">' +
+      '<button class="log-filter-btn active" type="button" data-log-filter="important" onclick="setLiveLogFilter(\'important\')">重点 <span class="log-filter-count">0</span></button>' +
+      '<button class="log-filter-btn" type="button" data-log-filter="all" onclick="setLiveLogFilter(\'all\')">全部 <span class="log-filter-count">0</span></button>' +
+      '<button class="log-filter-btn" type="button" data-log-filter="INFO" onclick="setLiveLogFilter(\'INFO\')">信息 <span class="log-filter-count">0</span></button>' +
+      '<button class="log-filter-btn" type="button" data-log-filter="DEBUG" onclick="setLiveLogFilter(\'DEBUG\')">调试 <span class="log-filter-count">0</span></button>' +
+      '<button class="log-filter-btn" type="button" data-log-filter="WARN" onclick="setLiveLogFilter(\'WARN\')">警告 <span class="log-filter-count">0</span></button>' +
+      '<button class="log-filter-btn" type="button" data-log-filter="ERROR" onclick="setLiveLogFilter(\'ERROR\')">错误 <span class="log-filter-count">0</span></button>' +
+    '</div>' +
+    '<div class="prompt-body log-body"><div class="log-list" id="liveLogList"><div class="log-empty"><i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><strong>正在读取日志</strong></div></div></div>' +
     '<div class="prompt-footer log-footer">' +
       '<span class="log-status" id="liveLogStatus">准备刷新</span>' +
       '<div class="log-controls">' +
@@ -12738,64 +13671,218 @@ function ensureLiveLogOverlay() {
     '</div>' +
     '</div>';
   document.body.appendChild(overlay);
+  const list = document.getElementById('liveLogList');
+  if (list) {
+    list.tabIndex = 0;
+    list.addEventListener('scroll', handleLiveLogScroll, { passive: true });
+  }
   return overlay;
 }
 
 function setLiveLogStatus(text) {
+  liveLogStatusText = text || '';
   const el = document.getElementById('liveLogStatus');
-  if (el) el.textContent = text || '';
+  if (!el) return;
+  const pausedText = liveLogFollowLatest ? '' : ' · 已暂停跟随，6 秒无操作后恢复';
+  el.textContent = liveLogStatusText + pausedText;
 }
 
-function renderLiveLogHtml(text) {
-  const raw = String(text || '');
-  const marker = raw.match(/\n原始错误[^\n]*\n/);
-  if (!marker || typeof marker.index !== 'number') {
-    return raw.split('\n').map(line => {
-      let cls = 'log-line log-diagnostic';
-      if (line.startsWith('[DEBUG]')) cls = 'log-line log-level-debug';
-      else if (line.startsWith('[INFO]')) cls = 'log-line log-level-info';
-      else if (line.startsWith('[WARN]')) cls = 'log-line log-level-warn';
-      else if (line.startsWith('[ERROR]')) cls = 'log-line log-level-error';
-      else if (line.startsWith('运行日志') || line.startsWith('已隐藏普通') || /^INFO\s+\d+/.test(line)) cls = 'log-line log-summary';
-      return '<span class="' + cls + '">' + escapeHtml(line) + '</span>';
-    }).join('\n');
+function liveLogIsNearBottom(list) {
+  if (!list) return true;
+  return list.scrollHeight - list.scrollTop - list.clientHeight <= 32;
+}
+
+function clearLiveLogScrollResume() {
+  if (liveLogScrollResumeTimer) {
+    clearTimeout(liveLogScrollResumeTimer);
+    liveLogScrollResumeTimer = null;
   }
-  const before = raw.slice(0, marker.index);
-  const title = marker[0];
-  const after = raw.slice(marker.index + title.length);
-  return '<span class="log-diagnostic">' + escapeHtml(before) + '</span>'
-    + '<span class="log-raw-title">' + escapeHtml(title) + '</span>'
-    + '<span class="log-raw-block">' + escapeHtml(after) + '</span>';
 }
 
-function setLiveLogText(text) {
-  const textEl = document.getElementById('liveLogText');
-  if (!textEl) return;
-  textEl.innerHTML = renderLiveLogHtml(text || '');
+function setLiveLogScrollPosition(list, scrollTop) {
+  if (!list) return;
+  liveLogProgrammaticScroll = true;
+  list.scrollTop = scrollTop;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => { liveLogProgrammaticScroll = false; });
+  });
+}
+
+function resumeLiveLogFollowing() {
+  clearLiveLogScrollResume();
+  const auto = document.getElementById('liveLogAuto');
+  const overlay = document.getElementById('liveLogOverlay');
+  if (!auto || !auto.checked || !overlay || !overlay.classList.contains('show')) return;
+  const list = document.getElementById('liveLogList');
+  liveLogFollowLatest = true;
+  setLiveLogScrollPosition(list, list ? list.scrollHeight : 0);
+  setLiveLogStatus('已恢复跟随最新日志');
+}
+
+function scheduleLiveLogScrollResume() {
+  clearLiveLogScrollResume();
+  liveLogScrollResumeTimer = setTimeout(resumeLiveLogFollowing, LIVE_LOG_SCROLL_RESUME_MS);
+}
+
+function handleLiveLogScroll() {
+  if (liveLogProgrammaticScroll) return;
+  const list = document.getElementById('liveLogList');
+  if (!list) return;
+  if (liveLogIsNearBottom(list)) {
+    liveLogFollowLatest = true;
+    clearLiveLogScrollResume();
+  } else {
+    liveLogFollowLatest = false;
+    scheduleLiveLogScrollResume();
+  }
+  setLiveLogStatus(liveLogStatusText);
+}
+
+function getFilteredLiveLogEntries() {
+  if (liveLogFilter === 'all') return liveLogEntries.slice();
+  if (liveLogFilter === 'important') return liveLogEntries.filter(item => Boolean(item && item.important));
+  return liveLogEntries.filter(item => item && item.level === liveLogFilter);
+}
+
+function updateLiveLogFilterCounts() {
+  document.querySelectorAll('[data-log-filter]').forEach(button => {
+    const filter = button.dataset.logFilter || 'important';
+    const count = filter === 'all'
+      ? liveLogEntries.length
+      : filter === 'important'
+        ? liveLogEntries.filter(item => Boolean(item && item.important)).length
+        : liveLogEntries.filter(item => item && item.level === filter).length;
+    const countEl = button.querySelector('.log-filter-count');
+    if (countEl) countEl.textContent = String(count);
+    button.classList.toggle('active', filter === liveLogFilter);
+  });
+}
+
+function liveLogEntryKey(item) {
+  const raw = [
+    item && item.level,
+    item && item.category,
+    item && item.logger,
+    item && item.message,
+    item && item.detail,
+  ].map(value => String(value || '').trim()).join('\u001f');
+  let hash = 2166136261;
+  for (let idx = 0; idx < raw.length; idx += 1) {
+    hash = Math.imul(hash ^ raw.charCodeAt(idx), 16777619);
+  }
+  return 'log-' + (hash >>> 0).toString(36);
+}
+
+function rememberLiveLogDetailState(details) {
+  if (!details) return;
+  const key = String(details.dataset.logDetailKey || '');
+  if (!key) return;
+  if (details.open) liveLogOpenDetailKeys.add(key);
+  else liveLogOpenDetailKeys.delete(key);
+}
+
+function pruneLiveLogOpenDetails() {
+  const available = new Set(
+    liveLogEntries
+      .filter(item => String((item && item.detail) || '').trim())
+      .map(liveLogEntryKey)
+  );
+  liveLogOpenDetailKeys.forEach(key => {
+    if (!available.has(key)) liveLogOpenDetailKeys.delete(key);
+  });
+}
+
+function liveLogActualRepeatCount(item) {
+  return Math.max(0, Number((item && item.repeat_count) || 1) - 1);
+}
+
+function renderLiveLogEntries() {
+  const list = document.getElementById('liveLogList');
+  if (!list) return;
+  updateLiveLogFilterCounts();
+  const entries = getFilteredLiveLogEntries();
+  if (!entries.length) {
+    const title = liveLogFallbackText ? '日志读取结果' : '这个分类暂时没有记录';
+    const detail = liveLogFallbackText || '可以切换到“全部”查看系统运行信息';
+    list.innerHTML = '<div class="log-empty"><i class="fa-regular fa-circle-check" aria-hidden="true"></i><strong>' + escapeHtml(title) + '</strong><span>' + escapeHtml(detail) + '</span></div>';
+    return;
+  }
+  const levelLabels = { INFO: '信息', DEBUG: '调试', WARN: '警告', ERROR: '错误' };
+  list.innerHTML = entries.map(item => {
+    const repeat = liveLogActualRepeatCount(item);
+    const detail = String(item.detail || '').trim();
+    const loggerName = String(item.logger || '').trim();
+    const entryKey = liveLogEntryKey(item);
+    const detailOpen = liveLogOpenDetailKeys.has(entryKey) ? ' open' : '';
+    const technical = detail
+      ? '<details data-log-detail-key="' + escapeAttr(entryKey) + '"' + detailOpen + ' ontoggle="rememberLiveLogDetailState(this)"><summary>技术详情</summary><pre>' + escapeHtml((loggerName ? loggerName + '\n' : '') + detail) + '</pre></details>'
+      : '';
+    const repeatHtml = repeat > 0 ? '<span class="log-repeat">重复 ' + repeat + ' 次</span>' : '';
+    return '<article class="log-entry" data-level="' + escapeAttr(item.level || 'INFO') + '" data-log-key="' + escapeAttr(entryKey) + '">' +
+      '<span class="log-entry-bar" aria-hidden="true"></span>' +
+      '<div><div class="log-entry-meta">' +
+        '<span class="log-level-badge">' + escapeHtml(levelLabels[item.level] || item.level || '信息') + '</span>' +
+        '<time class="log-entry-time">' + escapeHtml(item.time || '') + '</time>' +
+        '<span class="log-category-badge">' + escapeHtml(item.category_label || '系统') + '</span>' +
+        '<span class="log-entry-source">' + escapeHtml(item.source || loggerName || '系统') + '</span>' +
+        repeatHtml +
+      '</div><div class="log-entry-message">' + escapeHtml(item.message || '无内容') + '</div>' + technical + '</div>' +
+    '</article>';
+  }).join('');
+}
+
+function setLiveLogFilter(filter) {
+  liveLogFilter = ['important', 'all', 'INFO', 'DEBUG', 'WARN', 'ERROR'].includes(filter) ? filter : 'important';
+  renderLiveLogEntries();
+  if (liveLogFollowLatest) {
+    const list = document.getElementById('liveLogList');
+    setLiveLogScrollPosition(list, list ? list.scrollHeight : 0);
+  }
+}
+
+function liveLogSignature(entries) {
+  const items = Array.isArray(entries) ? entries : [];
+  const last = items.length ? items[items.length - 1] : {};
+  return [items.length, last.time || '', last.level || '', last.message || '', last.repeat_count || 1].join('|');
 }
 
 function refreshLiveLogs(manual, scrollToBottom) {
-  const textEl = document.getElementById('liveLogText');
-  if (!textEl) return Promise.resolve();
+  const list = document.getElementById('liveLogList');
+  if (!list) return Promise.resolve();
+  if (scrollToBottom) {
+    liveLogFollowLatest = true;
+    clearLiveLogScrollResume();
+  }
   if (manual) setLiveLogStatus('正在刷新...');
-  const keepScrollTop = textEl.scrollTop;
-  return fetch(appendApiKeyQuery('/api/logs?lines=100&mode=levels'))
+  const keepScrollTop = list.scrollTop;
+  return fetch('/api/logs?lines=100&mode=levels')
     .then(r => r.json().then(data => ({ ok: r.ok, data })))
     .then(({ ok, data }) => {
       if (!ok || data.error) throw new Error(data.message || data.detail || data.error || 'log_failed');
-      const text = data.text || data.message || '暂无日志';
-      setLiveLogText(text);
-      textEl.scrollTop = scrollToBottom ? textEl.scrollHeight : keepScrollTop;
+      const nextEntries = Array.isArray(data.entries) ? data.entries : [];
+      const nextSignature = liveLogSignature(nextEntries);
+      const hasNewEntries = !manual && Boolean(liveLogLastSignature) && nextSignature !== liveLogLastSignature;
+      liveLogEntries = nextEntries;
+      liveLogLastSignature = nextSignature;
+      liveLogFallbackText = liveLogEntries.length ? '' : (data.message || '暂无日志');
+      pruneLiveLogOpenDetails();
+      renderLiveLogEntries();
+      setLiveLogScrollPosition(list, liveLogFollowLatest ? list.scrollHeight : keepScrollTop);
       const time = new Date().toLocaleTimeString();
       const levels = data.level_counts || {};
       const hiddenAccess = Number(data.hidden_access_count || 0);
+      const updateText = hasNewEntries
+        ? (liveLogFollowLatest ? `已跟随到最新 ${time}` : '有新日志，暂未跳转')
+        : `已更新 ${time}`;
       const countText = data.status === 'ok'
-        ? `已更新 ${time} · 有用 ${data.filtered_count || 0} 条 · 隐藏访问 ${hiddenAccess} 条 · INFO ${levels.INFO || 0} · DEBUG ${levels.DEBUG || 0} · WARN ${levels.WARN || 0} · ERROR ${levels.ERROR || 0}`
+        ? `${updateText} · 重点 ${data.important_count || 0} 条 · 合并后 ${data.filtered_count || 0} 条 · 隐藏访问 ${hiddenAccess} 条`
         : `未找到日志 ${time}`;
       setLiveLogStatus(countText);
     })
     .catch(e => {
-      setLiveLogText('读取日志失败：' + (e && e.message ? e.message : '未知错误'));
+      liveLogEntries = [];
+      liveLogFallbackText = '读取日志失败：' + (e && e.message ? e.message : '未知错误');
+      renderLiveLogEntries();
       setLiveLogStatus('读取失败');
     });
 }
@@ -12813,15 +13900,30 @@ function scheduleLiveLogRefresh() {
 }
 
 function toggleLiveLogAuto() {
+  const auto = document.getElementById('liveLogAuto');
+  if (auto && auto.checked) {
+    liveLogFollowLatest = true;
+    clearLiveLogScrollResume();
+    const list = document.getElementById('liveLogList');
+    setLiveLogScrollPosition(list, list ? list.scrollHeight : 0);
+  } else {
+    clearLiveLogScrollResume();
+  }
   scheduleLiveLogRefresh();
 }
 
 function openLiveLogs(options) {
   const opts = options || {};
   const overlay = ensureLiveLogOverlay();
+  liveLogFollowLatest = opts.scrollToBottom !== false;
+  clearLiveLogScrollResume();
+  if (opts.filter) {
+    liveLogFilter = ['important', 'all', 'INFO', 'DEBUG', 'WARN', 'ERROR'].includes(opts.filter) ? opts.filter : 'important';
+    updateLiveLogFilterCounts();
+  }
   overlay.classList.add('show');
   if (opts.status) setLiveLogStatus(opts.status);
-  refreshLiveLogs(true, Boolean(opts.scrollToBottom)).then(() => {
+  refreshLiveLogs(true, liveLogFollowLatest).then(() => {
     if (opts.status) setLiveLogStatus(opts.status);
     scheduleLiveLogRefresh();
   });
@@ -12834,10 +13936,15 @@ function closeLiveLogs() {
     clearInterval(liveLogTimer);
     liveLogTimer = null;
   }
+  clearLiveLogScrollResume();
 }
 
 function copyLiveLogs() {
-  const text = document.getElementById('liveLogText')?.textContent || '';
+  const levelLabels = { INFO: '信息', DEBUG: '调试', WARN: '警告', ERROR: '错误' };
+  const text = getFilteredLiveLogEntries().map(item => {
+    const repeat = liveLogActualRepeatCount(item);
+    return '[' + (levelLabels[item.level] || item.level || '信息') + '] ' + (item.time || '') + ' [' + (item.category_label || '系统') + '] ' + (item.message || '') + (repeat > 0 ? '（重复 ' + repeat + ' 次）' : '');
+  }).join('\n') || liveLogFallbackText;
   if (!text) return;
   navigator.clipboard.writeText(text).then(() => {
     showToast('日志已复制 ✅');

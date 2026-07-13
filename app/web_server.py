@@ -14,10 +14,13 @@ except ImportError:
 
     fcntl = _FcntlFallback()
 import hashlib
+import hmac
 import ipaddress
 import json
 import logging
 import os
+import random
+import secrets
 import shlex
 import shutil
 import sys
@@ -32,7 +35,7 @@ import uuid
 
 import aiohttp
 from aiohttp import web
-from PIL import Image
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from characters import (
     LOCAL_CHARACTER_SOURCE,
@@ -95,6 +98,12 @@ LOG_ENTRY_RE = re.compile(
     r'\[(?P<level>[A-Z]+)\] (?P<logger>[^:]+): (?P<message>.*)$'
 )
 LOG_ACCESS_RE = re.compile(r'"(?P<method>[A-Z]+)\s+(?P<path>[^"]+?)\s+HTTP/[^"]+"\s+(?P<status>\d{3})')
+ICON_PROBE_BASENAME_RE = re.compile(
+    r'^(?:favicon(?:-\d+x\d+)?\.(?:ico|png|svg)|'
+    r'apple-touch-icon(?:-\d+x\d+)?\.png|'
+    r'icon-maskable(?:-\d+(?:x\d+)?)?\.png)$',
+    re.IGNORECASE,
+)
 LOG_LEVEL_LABELS = {
     "DEBUG": "调试",
     "INFO": "信息",
@@ -102,6 +111,20 @@ LOG_LEVEL_LABELS = {
     "ERROR": "错误",
     "CRITICAL": "严重错误",
 }
+LOG_SOURCE_LABELS = {
+    "portrait_gallery": "画廊服务",
+    "web_server": "网页服务",
+    "apscheduler.scheduler": "任务调度",
+    "apscheduler.executors.default": "任务执行",
+    "aiohttp.access": "接口访问",
+}
+LOG_SYSTEM_NOISE_PREFIXES = (
+    "持久化日志已启用",
+    "Scheduler started",
+    "动态任务调度器已启动",
+    "画廊服务启动",
+    "画廊启动",
+)
 LOG_USEFUL_KEYWORDS = (
     "生图",
     "日程",
@@ -158,9 +181,10 @@ LOG_ERROR_DETAIL_KEYWORDS = (
     "超时",
 )
 SEND_CAPTION_DELAY_SECONDS = 3
+SEND_WECHAT_CAPTION_DELAY_SECONDS = 45
 SEND_TIMEOUT_SECONDS = 90
 SEND_RETRY_DELAYS_SECONDS = (60, 180)
-SEND_COOLDOWN_BUFFER_SECONDS = 5
+SEND_COOLDOWN_BUFFER_SECONDS = 15
 SEND_RETRYABLE_MARKERS = (
     "rate limited",
     "too many requests",
@@ -172,6 +196,10 @@ SEND_RETRYABLE_MARKERS = (
     "remoteprotocolerror",
     "server disconnected",
     "temporarily unavailable",
+)
+SEND_CONTEXT_ERROR_MARKERS = (
+    "requires a fresh wechat conversation context",
+    "send the bot a wechat message first",
 )
 DEFAULT_PHOTO_JOB_LIMIT = 6
 MIN_PHOTO_JOB_LIMIT = 3
@@ -213,6 +241,17 @@ UPDATE_PROTECTED_PREFIXES = (
     "app/references/uploads/",
 )
 LOCALHOST_NAMES = {"localhost", "127.0.0.1", "::1", "[::1]"}
+GALLERY_PASSWORD_ENV = "GALLERY_PASSWORD"
+GALLERY_AUTH_HASH_ALGORITHM = "pbkdf2_sha256"
+GALLERY_AUTH_HASH_ITERATIONS = 240_000
+GALLERY_AUTH_PUBLIC_PATHS = {
+    "/api/auth/status",
+    "/api/auth/setup",
+    "/api/auth/login",
+    "/api/auth/logout",
+    "/api/health",
+}
+CUSTOM_DEFAULT_REFERENCE_STYLES = ("cool", "girly", "sweet")
 READ_ONLY_POST_API_PATHS = {
     "/api/check-update",
     "/api/hermes/check-update",
@@ -247,6 +286,7 @@ class GalleryServer:
         self.host = self.gallery_config.get("host", "0.0.0.0")
         self.port = self.gallery_config.get("port", 18888)
         self.token = self.gallery_config.get("token", "")
+        self.auth_store_path = os.path.join(self.data_dir, "gallery_auth.json")
         self.default_image_dir = default_image_dir(data_dir)
         self.image_dir = self._resolve_image_dir()
         self.app_reference_dir = resolve_builtin_reference_dir(config, config_path)
@@ -257,9 +297,12 @@ class GalleryServer:
         self.picxazz_sync = PicxazzSyncClient(config, data_dir)
         self._image_info_cache = {}
         self.group_chat_store = GroupChatStore(data_dir)
+        self._group_chat_reply_progress: dict[str, dict] = {}
+        self._group_chat_background_tasks: set[asyncio.Task] = set()
         self._wardrobe_image_locks: dict[str, asyncio.Lock] = {}
         self._manual_send_lock = asyncio.Lock()
         self._manual_send_cooldown_until = 0.0
+        self._manual_send_last_error = ""
         self._restart_scheduled = False
         os.makedirs(self.default_image_dir, exist_ok=True)
         os.makedirs(self.image_dir, exist_ok=True)
@@ -288,82 +331,203 @@ class GalleryServer:
         self.on_update_photo_plan = None
         self.on_image_dir_changed = None
 
-        self.app = web.Application(middlewares=[self.api_key_middleware])
+        self.app = web.Application(middlewares=[self.gallery_auth_middleware])
         self._setup_routes()
+        self.app.on_cleanup.append(self._cleanup_group_chat_background_tasks)
 
     @staticmethod
-    def _request_host_name(request: web.Request) -> str:
-        host = str(request.host or "").split(",", 1)[0].strip().lower()
+    def _normalize_host_name(value: str) -> str:
+        host = str(value or "").split(",", 1)[0].strip().lower()
+        if "://" in host:
+            parsed = urlparse(host)
+            host = parsed.hostname or ""
+        else:
+            host = host.split("/", 1)[0]
         if host.startswith("["):
-            return host[1:].split("]", 1)[0]
-        if host.count(":") == 1:
-            return host.rsplit(":", 1)[0]
-        return host.strip("[]")
+            host = host[1:].split("]", 1)[0]
+        elif host.count(":") == 1:
+            host = host.rsplit(":", 1)[0]
+        return host.strip("[]").rstrip(".")
+
+    @classmethod
+    def _request_host_name(cls, request: web.Request) -> str:
+        return cls._normalize_host_name(request.host or "")
 
     @staticmethod
-    def _is_local_request(request: web.Request) -> bool:
+    def _request_client_ip(request: web.Request) -> str:
         remote = request.remote or ""
         if not remote and request.transport:
             peer = request.transport.get_extra_info("peername")
             if isinstance(peer, tuple) and peer:
                 remote = str(peer[0])
-        remote = str(remote or "").strip().strip("[]")
+        return str(remote or "").strip().strip("[]")
+
+    def _is_local_request(self, request: web.Request) -> bool:
+        remote = self._request_client_ip(request)
         host = GalleryServer._request_host_name(request)
         host_is_local = host in LOCALHOST_NAMES
         if remote in LOCALHOST_NAMES:
             return True
         try:
-            remote_ip = ipaddress.ip_address(remote)
-            if remote_ip.is_loopback:
-                return True
-            # Docker Desktop / bridge networking can make a host browser opened at
-            # localhost appear to aiohttp as the private bridge gateway. Keep
-            # that local-only flow usable without treating arbitrary hostnames
-            # as trusted.
-            return bool(host_is_local and remote_ip.is_private)
+            remote_ip = ipaddress.ip_address(str(remote or "").strip().strip("[]"))
         except ValueError:
-            return host_is_local
-
-    @staticmethod
-    def _requires_local_or_key(request: web.Request) -> bool:
-        if not request.path.startswith("/api/"):
-            return False
-        if any(request.path.startswith(prefix) for prefix in PRIVATE_API_PATH_PREFIXES):
+            return bool(host_is_local and not remote)
+        if remote_ip.is_loopback:
             return True
-        if request.method.upper() in {"GET", "HEAD", "OPTIONS"}:
-            return False
-        if request.path in READ_ONLY_POST_API_PATHS:
-            return False
-        return True
+        # Docker Desktop / bridge networking can make a host browser opened at
+        # localhost appear to aiohttp as the private bridge gateway. Keep that
+        # local-only flow usable without trusting arbitrary hostnames.
+        if host_is_local and (remote_ip.is_private or remote_ip.is_link_local):
+            return True
+        return False
+
+    def _load_auth_store(self) -> dict:
+        try:
+            with open(self.auth_store_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except FileNotFoundError:
+            return {}
+        except Exception as e:
+            logger.warning("读取画廊访问密码状态失败: %s", e)
+            return {}
+
+    def _save_auth_store(self, data: dict) -> None:
+        os.makedirs(self.data_dir, exist_ok=True)
+        payload = dict(data or {})
+        payload["version"] = 1
+        tmp_path = f"{self.auth_store_path}.{uuid.uuid4().hex}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp_path, self.auth_store_path)
 
     @staticmethod
-    def _local_or_key_required_payload() -> dict:
-        return {
-            "error": "local_or_api_key_required",
-            "message": (
-                "远程写操作需要配置 GALLERY_API_KEY 并通过 X-API-Key 调用；"
-                "如果是从 1.2.3 一键升级被拦截，请在部署机器执行手动安全升级命令。"
-            ),
-            "manual_update_command": MANUAL_UPDATE_COMMAND,
-            "docker_manual_update_command": DOCKER_MANUAL_UPDATE_COMMAND,
+    def _hash_gallery_password(password: str, salt_hex: str = "") -> str:
+        salt = bytes.fromhex(salt_hex) if salt_hex else secrets.token_bytes(16)
+        digest = hashlib.pbkdf2_hmac(
+            "sha256",
+            str(password or "").encode("utf-8"),
+            salt,
+            GALLERY_AUTH_HASH_ITERATIONS,
+        )
+        return (
+            f"{GALLERY_AUTH_HASH_ALGORITHM}$"
+            f"{GALLERY_AUTH_HASH_ITERATIONS}$"
+            f"{salt.hex()}$"
+            f"{digest.hex()}"
+        )
+
+    @staticmethod
+    def _verify_gallery_password_hash(password: str, stored_hash: str) -> bool:
+        parts = str(stored_hash or "").split("$")
+        if len(parts) != 4 or parts[0] != GALLERY_AUTH_HASH_ALGORITHM:
+            return False
+        try:
+            iterations = int(parts[1])
+            salt = bytes.fromhex(parts[2])
+            expected = bytes.fromhex(parts[3])
+        except (TypeError, ValueError):
+            return False
+        actual = hashlib.pbkdf2_hmac(
+            "sha256",
+            str(password or "").encode("utf-8"),
+            salt,
+            iterations,
+        )
+        return hmac.compare_digest(actual, expected)
+
+    def _configured_gallery_password_source(self) -> str:
+        if os.environ.get(GALLERY_PASSWORD_ENV, ""):
+            return "env"
+        if self._load_auth_store().get("password_hash"):
+            return "stored"
+        return ""
+
+    def _gallery_password_configured(self) -> bool:
+        return bool(self._configured_gallery_password_source())
+
+    def _verify_gallery_password(self, password: str) -> bool:
+        password = str(password or "")
+        env_password = os.environ.get(GALLERY_PASSWORD_ENV, "")
+        if env_password:
+            return hmac.compare_digest(password, env_password)
+        stored_hash = self._load_auth_store().get("password_hash", "")
+        return self._verify_gallery_password_hash(password, stored_hash)
+
+    def _authorize_client_ip(self, request: web.Request) -> None:
+        client_ip = self._request_client_ip(request)
+        if not client_ip:
+            return
+        now = int(time.time())
+        data = self._load_auth_store()
+        authorized_ips = data.get("authorized_ips")
+        if not isinstance(authorized_ips, dict):
+            authorized_ips = {}
+        item = authorized_ips.get(client_ip) if isinstance(authorized_ips.get(client_ip), dict) else {}
+        authorized_ips[client_ip] = {
+            "created_at": int(item.get("created_at") or now),
+            "last_seen": now,
         }
+        data["authorized_ips"] = authorized_ips
+        self._save_auth_store(data)
 
-    @staticmethod
+    def _deauthorize_client_ip(self, request: web.Request) -> None:
+        client_ip = self._request_client_ip(request)
+        if not client_ip:
+            return
+        data = self._load_auth_store()
+        authorized_ips = data.get("authorized_ips")
+        if isinstance(authorized_ips, dict) and client_ip in authorized_ips:
+            authorized_ips.pop(client_ip, None)
+            data["authorized_ips"] = authorized_ips
+            self._save_auth_store(data)
+
+    def _client_ip_authorized(self, request: web.Request) -> bool:
+        client_ip = self._request_client_ip(request)
+        if not client_ip:
+            return False
+        authorized_ips = self._load_auth_store().get("authorized_ips")
+        return isinstance(authorized_ips, dict) and client_ip in authorized_ips
+
+    def _request_has_gallery_access(self, request: web.Request) -> bool:
+        if self._is_local_request(request):
+            return True
+        if not self._gallery_password_configured():
+            return False
+        return self._client_ip_authorized(request)
+
+    def _auth_required_payload(self, request: web.Request) -> tuple[dict, int]:
+        configured = self._gallery_password_configured()
+        is_local = self._is_local_request(request)
+        client_ip = self._request_client_ip(request)
+        if not configured:
+            return {
+                "error": "password_setup_required",
+                "message": "首次部署需要先在本机浏览器设置访问密码。",
+                "auth_configured": False,
+                "setup_allowed": is_local,
+                "client_ip": client_ip,
+            }, 401
+        return {
+            "error": "password_required",
+            "message": "请输入画廊访问密码。",
+            "auth_configured": True,
+            "client_ip": client_ip,
+        }, 401
+
     @web.middleware
-    async def api_key_middleware(request: web.Request, handler):
-        """Protect API routes with X-API-Key; local writes may run without a key."""
+    async def gallery_auth_middleware(self, request: web.Request, handler):
+        """Require the gallery password for non-local gallery data access."""
         path = request.path
-        if path.startswith("/api/"):
-            api_key = os.environ.get("GALLERY_API_KEY", "")
-            provided = request.headers.get("X-API-Key", "") or request.query.get("key", "")
-            if api_key:
-                if provided != api_key:
-                    return web.json_response({"error": "unauthorized"}, status=401)
-            elif GalleryServer._requires_local_or_key(request) and not GalleryServer._is_local_request(request):
-                return web.json_response(
-                    GalleryServer._local_or_key_required_payload(),
-                    status=403,
-                )
+        protected_path = (
+            (path.startswith("/api/") and path not in GALLERY_AUTH_PUBLIC_PATHS)
+            or path.startswith("/images/")
+            or path.startswith("/local-refs/")
+        )
+        if protected_path:
+            if not self._request_has_gallery_access(request):
+                payload, status = self._auth_required_payload(request)
+                return web.json_response(payload, status=status)
         return await handler(request)
 
     def _setup_routes(self):
@@ -380,6 +544,10 @@ class GalleryServer:
         self.app.router.add_get("/", self.handle_index)
 
         # API
+        self.app.router.add_get("/api/auth/status", self.handle_auth_status)
+        self.app.router.add_post("/api/auth/setup", self.handle_auth_setup)
+        self.app.router.add_post("/api/auth/login", self.handle_auth_login)
+        self.app.router.add_post("/api/auth/logout", self.handle_auth_logout)
         self.app.router.add_get("/api/today", self.handle_today)
         self.app.router.add_get("/api/gallery", self.handle_gallery)
         self.app.router.add_get("/api/entries/{date}", self.handle_entry)
@@ -473,6 +641,96 @@ class GalleryServer:
 
     async def handle_health(self, request: web.Request):
         return web.json_response({"status": "ok"})
+
+    async def _read_json_body(self, request: web.Request) -> dict:
+        try:
+            data = await request.json()
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _auth_status_payload(self, request: web.Request) -> dict:
+        password_source = self._configured_gallery_password_source()
+        is_local = self._is_local_request(request)
+        configured = bool(password_source)
+        authorized_ip = self._client_ip_authorized(request) if configured else False
+        return {
+            "status": "ok",
+            "auth_configured": configured,
+            "password_source": password_source,
+            "needs_setup": not configured,
+            "setup_allowed": bool(is_local and not configured),
+            "local": bool(is_local),
+            "authorized": bool(is_local or authorized_ip),
+            "client_ip": self._request_client_ip(request),
+        }
+
+    async def handle_auth_status(self, request: web.Request):
+        return web.json_response(self._auth_status_payload(request))
+
+    async def handle_auth_setup(self, request: web.Request):
+        if self._gallery_password_configured():
+            return web.json_response(
+                {
+                    "error": "password_already_configured",
+                    "message": "访问密码已经设置。",
+                    **self._auth_status_payload(request),
+                },
+                status=409,
+            )
+        if not self._is_local_request(request):
+            return web.json_response(
+                {
+                    "error": "setup_local_only",
+                    "message": "首次设置访问密码只能在部署机器本机完成。",
+                    **self._auth_status_payload(request),
+                },
+                status=403,
+            )
+
+        body = await self._read_json_body(request)
+        password = str(body.get("password") or "").strip()
+        if len(password) < 6:
+            return web.json_response(
+                {"error": "password_too_short", "message": "访问密码至少需要 6 个字符。"},
+                status=400,
+            )
+
+        data = self._load_auth_store()
+        data["password_hash"] = self._hash_gallery_password(password)
+        data["password_set_at"] = int(time.time())
+        data["password_source"] = "stored"
+        self._save_auth_store(data)
+        self._authorize_client_ip(request)
+        logger.warning("画廊访问密码已通过本机 Web 首次设置。")
+        return web.json_response({"status": "ok", **self._auth_status_payload(request)})
+
+    async def handle_auth_login(self, request: web.Request):
+        if not self._gallery_password_configured():
+            return web.json_response(
+                {
+                    "error": "password_setup_required",
+                    "message": "首次部署需要先在本机浏览器设置访问密码。",
+                    **self._auth_status_payload(request),
+                },
+                status=401,
+            )
+
+        body = await self._read_json_body(request)
+        password = str(body.get("password") or "")
+        if not self._verify_gallery_password(password):
+            return web.json_response(
+                {"error": "invalid_password", "message": "访问密码不正确。"},
+                status=401,
+            )
+
+        self._authorize_client_ip(request)
+        logger.info("画廊访问密码登录成功: ip=%s", self._request_client_ip(request))
+        return web.json_response({"status": "ok", **self._auth_status_payload(request)})
+
+    async def handle_auth_logout(self, request: web.Request):
+        self._deauthorize_client_ip(request)
+        return web.json_response({"status": "ok", **self._auth_status_payload(request)})
 
     def _schedule_python_restart(self, reason: str = "manual", delay: float = 0.8) -> tuple[bool, str]:
         if self._restart_scheduled:
@@ -606,6 +864,42 @@ class GalleryServer:
         return (ts or "")[5:]
 
     @staticmethod
+    def _log_category(logger_name: str, message: str) -> tuple[str, str]:
+        if any((message or "").strip().startswith(prefix) for prefix in LOG_SYSTEM_NOISE_PREFIXES):
+            return "system", "系统"
+        text = f"{logger_name} {message}".lower()
+        if logger_name == "aiohttp.access" or "接口" in message:
+            return "api", "接口"
+        if logger_name.startswith("apscheduler"):
+            return "schedule", "日程"
+        if any(word in text for word in ("推送", "发送", "wechat", "weixin", "telegram", "hermes", "openclaw")):
+            return "delivery", "推送"
+        if any(word in text for word in ("日程", "schedule", "动态任务", "动态生图任务", "补拍", "定时任务")):
+            return "schedule", "日程"
+        if any(word in text for word in ("生图", "图片", "generate", "image-to-image", "text-to-image", "底模")):
+            return "image", "生图"
+        if any(word in text for word in ("模型", "model", "llm", "gpt", "gemini", "gitee")):
+            return "model", "模型"
+        if any(word in text for word in ("参考", "衣柜", "wardrobe", "reference", "picxazz")):
+            return "asset", "素材"
+        return "system", "系统"
+
+    @staticmethod
+    def _log_source_label(logger_name: str) -> str:
+        if logger_name in LOG_SOURCE_LABELS:
+            return LOG_SOURCE_LABELS[logger_name]
+        if logger_name.startswith("apscheduler"):
+            return "任务调度"
+        if "zhuzhu" in logger_name:
+            return "生图引擎"
+        return logger_name.rsplit(".", 1)[-1].replace("_", " ") or "系统"
+
+    @staticmethod
+    def _is_log_noise(message: str) -> bool:
+        text = (message or "").strip()
+        return any(text.startswith(prefix) for prefix in LOG_SYSTEM_NOISE_PREFIXES)
+
+    @staticmethod
     def _is_error_detail_line(line: str) -> bool:
         low = (line or "").lower()
         return any(k in low for k in LOG_ERROR_DETAIL_KEYWORDS)
@@ -613,6 +907,12 @@ class GalleryServer:
     @staticmethod
     def _diagnose_error_text(text: str) -> str:
         low = (text or "").lower()
+        if "fresh wechat conversation context" in low or "send the bot a wechat message first" in low:
+            return "微信会话上下文已失效；请先在微信里给 Hermes 发任意一条消息，收到回复后再发送图片。"
+        if "ret=-2" in low and "unknown error" in low:
+            return "微信会话上下文已失效，并非已发送次数过多；请先在微信里给 Hermes 发任意一条消息刷新上下文。"
+        if "ret=-2" in low and "rate limit" in low:
+            return "iLink 返回了 -2；这不代表已有消息发送成功，也可能是微信会话上下文过期。请先给 Hermes 发一条微信消息刷新上下文。"
         if "status=no response" in low or "detail=no response" in low:
             return "该次文本模型请求当时没有拿到响应，不等于模型不可用；如果后续已有成功记录，可以忽略这条旧错误。"
         if "request_failed" in low or "请求超时" in low:
@@ -664,10 +964,10 @@ class GalleryServer:
         if not m:
             return None
         status = int(m.group("status"))
-        if status < 500:
-            return None
         method = m.group("method")
         path = m.group("path").split("?", 1)[0]
+        if status < 500 or cls._is_ignorable_access_path(path):
+            return None
         return f"接口请求失败：{method} {path} 返回 {status}。"
 
     @staticmethod
@@ -682,12 +982,90 @@ class GalleryServer:
         }
 
     @staticmethod
+    def _is_ignorable_access_path(path: str) -> bool:
+        clean_path = str(path or "").split("?", 1)[0].rstrip("/")
+        basename = clean_path.rsplit("/", 1)[-1]
+        return bool(ICON_PROBE_BASENAME_RE.fullmatch(basename))
+
+    @staticmethod
     def _is_normal_access_status(status: int) -> bool:
         return 200 <= status < 400
 
     @classmethod
     def _translate_log_message(cls, message: str, level: str = "INFO", logger_name: str = "") -> str:
         text = (message or "").strip()
+
+        if text == "Scheduler started":
+            return "任务调度器已启动。"
+        if text.startswith("持久化日志已启用"):
+            return "日志系统已启动，历史日志会自动轮转清理。"
+        if text == "动态任务调度器已启动":
+            return "动态任务调度器已启动。"
+        if text.startswith("Added job ") and "job store" in text:
+            return "任务已加入调度队列。"
+        if text.startswith("Removed job "):
+            return "调度队列中的旧任务已移除。"
+        if text.startswith("Running job "):
+            return "调度任务开始执行。"
+        if text.startswith("Job ") and "executed successfully" in text:
+            return "调度任务执行完成。"
+
+        m = re.search(r'手动发送图片:\s*channel=([^\s]+).*?image=([^\s]+)', text)
+        if m:
+            channel_label = "微信" if m.group(1) == "wechat" else "TG" if m.group(1) == "telegram" else m.group(1)
+            return f"开始手动发送图片到{channel_label}：{os.path.basename(m.group(2))}。"
+
+        m = re.search(r'发送(微信|TG)图片:\s*attempt=(\d+)/(\d+)', text)
+        if m:
+            return f"正在发送{m.group(1)}图片：第 {m.group(2)}/{m.group(3)} 次。"
+
+        m = re.search(r'(微信|TG)图片发送超时:\s*attempt=(\d+)/(\d+)', text)
+        if m:
+            return f"{m.group(1)}图片发送超时：第 {m.group(2)}/{m.group(3)} 次。"
+
+        m = re.search(r'准备推送图片:\s*channel=([^,\s]+),\s*agent=([^,\s]+)', text)
+        if m:
+            channel_label = "微信" if m.group(1) == "wechat" else "TG" if m.group(1) == "telegram" else m.group(1)
+            return f"准备通过 {m.group(2)} 推送图片到{channel_label}。"
+
+        m = re.search(r'(微信|TG)图片发送重试等待\s*([0-9.]+)s\s*\((\d+)/(\d+)\)', text)
+        if m:
+            return f"{m.group(1)}图片发送将在 {m.group(2)} 秒后重试：下一次为第 {m.group(3)}/{m.group(4)} 次。"
+
+        if text.startswith("微信图片发送失败") or text.startswith("TG图片发送失败"):
+            channel_label = "微信" if text.startswith("微信") else "TG"
+            return f"{channel_label}图片发送失败：{cls._diagnose_error_text(text)}"
+
+        if text.startswith("微信图片发送停止重试"):
+            return (
+                "微信图片发送已停止：会话上下文已失效，并非真实限流；"
+                "请先在微信里给 Hermes 发任意一条消息，收到回复后再重试。"
+            )
+
+        if any(text.startswith(prefix) for prefix in (
+            "微信图片发送最终失败",
+            "微信发送最终失败",
+            "TG图片发送最终失败",
+            "TG发送最终失败",
+        )):
+            channel_label = "微信" if text.startswith("微信") else "TG"
+            return f"{channel_label}图片最终发送失败：{cls._diagnose_error_text(text)}"
+
+        if any(text.startswith(prefix) for prefix in (
+            "微信发送失败: 图片未送达",
+            "微信手动发送失败: 图片未送达",
+            "TG发送失败: 图片未送达",
+            "TG手动发送失败: 图片未送达",
+        )):
+            channel_label = "微信" if text.startswith("微信") else "TG"
+            return f"{channel_label}图片未送达，已跳过文案发送。"
+
+        if text.startswith("推送未完全成功"):
+            return "图片推送未完成，请查看前面的失败原因。"
+
+        if text.startswith("微信图片发送成功") or text.startswith("TG图片发送成功"):
+            channel_label = "微信" if text.startswith("微信") else "TG"
+            return f"{channel_label}图片发送成功。"
 
         m = re.search(r'开始定时生图:\s*theme=([^,\s]+),\s*schedule_time=([^\s,]+)\s*(.*)', text)
         if m:
@@ -817,6 +1195,17 @@ class GalleryServer:
         if m:
             return f"开始生图：引擎 {m.group(2)}，模型 {m.group(3)}，风格 {m.group(4)}，尺寸 {m.group(5)}。"
 
+        m = re.search(
+            r'生图引擎自动回退:\s*requested=([^,\s]+),\s*failed=([^,\s]+),\s*actual=([^,\s]+),\s*reason=(.*)',
+            text,
+        )
+        if m:
+            labels = {"gptimage": "GPT Image", "gitee": "Gitee", "gemini": "Gemini"}
+            failed_label = labels.get(m.group(2), m.group(2))
+            actual_label = labels.get(m.group(3), m.group(3))
+            reason = m.group(4).strip().rstrip("。")
+            return f"{failed_label} 生图失败，已自动改用 {actual_label}；最终图片由 {actual_label} 生成。原因：{reason}。"
+
         m = re.search(r'生图成功:\s*(.+)', text)
         if m:
             return f"生图成功：{m.group(1).strip()}。"
@@ -860,6 +1249,10 @@ class GalleryServer:
             return "Agnes 图片接口失败，已停止，不再改走 GPT 聊天兼容端点。"
         if text.startswith("Agnes Images API unsupported; not retrying chat-compatible GPT Image endpoint"):
             return "当前中转不支持 Agnes 图片接口，已停止，不再改走 GPT 聊天兼容端点。"
+        if text.startswith("Images API failed; chat-compatible GPT Image fallback is disabled"):
+            return "图片接口失败，Chat 端点回退未开启，已停止继续换线路。"
+        if text.startswith("Images API unsupported; chat-compatible GPT Image fallback is disabled"):
+            return "当前中转不支持 Images API，Chat 端点回退未开启，未改走 /chat/completions。"
         if text.startswith("Images API failed; retrying chat-compatible GPT Image endpoint"):
             return "图片接口失败，正在改用聊天兼容 GPT Image 端点重试。"
         if (
@@ -1082,8 +1475,21 @@ class GalleryServer:
 
             match = LOG_ENTRY_RE.match(line)
             if not match:
-                if entries and cls._is_error_detail_line(line):
-                    entries[-1]["message"] = f"{entries[-1]['message']} | {line.strip()}"
+                if entries:
+                    detail_line = line.strip()
+                    previous_detail = str(entries[-1].get("detail") or "").strip()
+                    entries[-1]["detail"] = (
+                        f"{previous_detail}\n{detail_line}".strip()
+                        if previous_detail
+                        else detail_line
+                    )
+                    if cls._is_error_detail_line(line):
+                        diagnosis = cls._diagnose_error_text(entries[-1]["detail"])
+                        if diagnosis != "详见下方原始错误。":
+                            entries[-1]["message"] = entries[-1]["message"].replace(
+                                "详见下方原始错误。",
+                                diagnosis,
+                            )
                 continue
 
             ts = match.group("ts")
@@ -1095,7 +1501,10 @@ class GalleryServer:
             if logger_name == "aiohttp.access":
                 access = cls._access_log_parts(message)
                 if access:
-                    if cls._is_normal_access_status(access["status"]):
+                    if (
+                        cls._is_normal_access_status(access["status"])
+                        or cls._is_ignorable_access_path(access["path"])
+                    ):
                         hidden_access_count += 1
                         continue
                     message_text = f"接口异常：{access['method']} {access['path']} -> {access['status']}"
@@ -1108,28 +1517,58 @@ class GalleryServer:
             else:
                 message_text = cls._translate_log_message(message, level, logger_name)
 
+            category, category_label = cls._log_category(logger_name, f"{message} {message_text}")
+            translated = message_text.strip()
+            raw_message = message.strip()
+            is_noise = cls._is_log_noise(raw_message)
             entries.append({
                 "time": cls._format_log_time(ts),
                 "level": display_level,
                 "logger": logger_name,
-                "message": message_text,
+                "source": cls._log_source_label(logger_name),
+                "category": category,
+                "category_label": category_label,
+                "message": translated,
+                "detail": raw_message if raw_message != translated else "",
+                "important": display_level in {"WARN", "ERROR"} or (
+                    not is_noise and cls._is_useful_log_message(level, logger_name, message, line)
+                ),
+                "repeat_count": 1,
             })
 
-        selected = entries[-max_items:]
+        collapsed = {}
+        for item in entries:
+            key = (item["level"], item["category"], item["message"])
+            previous = collapsed.pop(key, None)
+            if previous:
+                item["repeat_count"] = previous.get("repeat_count", 1) + 1
+                item["first_time"] = previous.get("first_time") or previous.get("time")
+            collapsed[key] = item
+
+        selected = list(collapsed.values())[-max_items:]
         counts = {"DEBUG": 0, "INFO": 0, "WARN": 0, "ERROR": 0}
+        event_counts = {"DEBUG": 0, "INFO": 0, "WARN": 0, "ERROR": 0}
         for item in selected:
             counts[item["level"]] = counts.get(item["level"], 0) + 1
+            event_counts[item["level"]] = event_counts.get(item["level"], 0) + item.get("repeat_count", 1)
+
+        important_count = sum(1 for item in selected if item.get("important"))
 
         output = [
             f"运行日志（最近 {len(selected)} 条）",
-            f"INFO {counts.get('INFO', 0)} · DEBUG {counts.get('DEBUG', 0)} · WARN {counts.get('WARN', 0)} · ERROR {counts.get('ERROR', 0)}",
+            f"重点 {important_count} · INFO {counts.get('INFO', 0)} · DEBUG {counts.get('DEBUG', 0)} · WARN {counts.get('WARN', 0)} · ERROR {counts.get('ERROR', 0)}",
         ]
         if hidden_access_count:
-            output.append(f"已隐藏普通接口访问日志 {hidden_access_count} 条（2xx/3xx）。")
+            output.append(f"已隐藏普通接口访问或图标探测日志 {hidden_access_count} 条。")
         if selected:
             output.append("")
             for item in selected:
-                output.append(f"[{item['level']}] {item['time']} {item['logger']} ｜ {item['message']}")
+                repeat_count = max(0, item.get("repeat_count", 1) - 1)
+                repeat = f" 重复 {repeat_count} 次" if repeat_count else ""
+                output.append(
+                    f"[{item['level']}] {item['time']} [{item['category_label']}] "
+                    f"{item['message']}{repeat}"
+                )
         else:
             output.append("")
             output.append("最近没有可显示的分类日志。")
@@ -1138,21 +1577,23 @@ class GalleryServer:
             "text": "\n".join(output),
             "filtered_count": len(selected),
             "total_count": len(entries),
+            "entries": selected,
+            "important_count": important_count,
             "raw_error_count": counts.get("ERROR", 0),
             "level_counts": counts,
+            "level_event_counts": event_counts,
             "hidden_access_count": hidden_access_count,
         }
 
     async def handle_logs(self, request: web.Request):
         """Return a tail of the live gallery service log for the UI log viewer."""
-        api_key = os.environ.get("GALLERY_API_KEY", "")
-        if not api_key and not self._is_local_request(request):
+        if not self._request_has_gallery_access(request):
             return web.json_response(
                 {
-                    "error": "local_only",
-                    "message": "实时日志只允许本机查看；远程查看请配置 GALLERY_API_KEY。",
+                    "error": "password_required",
+                    "message": "请输入画廊访问密码。",
                 },
-                status=403,
+                status=401,
             )
         try:
             lines = int(request.query.get("lines", "300"))
@@ -1173,7 +1614,7 @@ class GalleryServer:
             mode = str(request.query.get("mode") or "").strip().lower()
             raw_mode = mode == "raw" or request.query.get("raw") == "1"
             level_mode = mode in {"levels", "level", "structured"}
-            read_lines = lines if raw_mode else min(5000, lines * (8 if level_mode else 4))
+            read_lines = lines if raw_mode else min(20000, max(5000, lines * (100 if level_mode else 20)))
             text = self._redact_log_text(self._tail_log_file(path, read_lines))
             stat = os.stat(path)
             payload = {
@@ -2343,6 +2784,57 @@ class GalleryServer:
                 errors.append(f"{candidate}: {e}")
         return deleted, errors
 
+    @staticmethod
+    def _normalize_gallery_image_filename(filename: str) -> str:
+        raw = unquote(str(filename or "")).strip()
+        if not raw or not re.fullmatch(r"[a-zA-Z0-9_.-]+", raw) or ".." in raw:
+            raise ValueError("invalid_filename")
+        return raw
+
+    def _delete_gallery_image(self, filename: str) -> dict:
+        """Remove one image from storage, gallery data, and image metadata."""
+        img_id = self._normalize_gallery_image_filename(filename)
+        deleted_file_count, errors = self._delete_image_files(img_id)
+
+        removed_entry_count = 0
+        store = ScheduleStore(self.data_dir)
+
+        def _delete_entries(all_data):
+            nonlocal removed_entry_count
+            if not isinstance(all_data, dict):
+                return all_data
+            for key, entry in list(all_data.items()):
+                if key == img_id or (
+                    isinstance(entry, dict)
+                    and entry.get("image_filename") == img_id
+                ):
+                    del all_data[key]
+                    removed_entry_count += 1
+            return all_data
+
+        store.update(_delete_entries)
+
+        metadata_deleted = False
+        lock_path = os.path.join(self.data_dir, ".image_metadata.lock")
+        with open(lock_path, "w") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                metadata = self._load_image_metadata()
+                if img_id in metadata:
+                    del metadata[img_id]
+                    self._save_image_metadata(metadata)
+                    metadata_deleted = True
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+        return {
+            "image_filename": img_id,
+            "deleted_file_count": deleted_file_count,
+            "removed_entry_count": removed_entry_count,
+            "metadata_deleted": metadata_deleted,
+            "errors": errors,
+        }
+
     async def handle_image_file(self, request: web.Request):
         filename = request.match_info.get("filename", "")
         path = self._image_file_path(filename)
@@ -2428,11 +2920,12 @@ class GalleryServer:
             "error": "send_failed",
             "channel": channel,
             "agent": delivery.get("agent", ""),
-            "message": f"{label}发送失败，请查看运行日志。",
+            "message": self._manual_send_last_error or f"{label}发送失败，请查看运行日志。",
         }, status=500)
 
     async def _send_existing_image(self, channel: str, image_path: str, caption: str, delivery: dict) -> bool:
         channel = normalize_push_channel(channel)
+        self._manual_send_last_error = ""
         agent = delivery.get("agent", "")
         logger.info("手动发送图片: channel=%s agent=%s image=%s", channel, agent, os.path.basename(image_path))
         if agent == "openclaw":
@@ -2483,7 +2976,9 @@ class GalleryServer:
                 return False
             caption_ok = True
             if caption:
-                await asyncio.sleep(SEND_CAPTION_DELAY_SECONDS)
+                caption_delay = SEND_WECHAT_CAPTION_DELAY_SECONDS if channel == "wechat" else SEND_CAPTION_DELAY_SECONDS
+                logger.info("%s图片发送成功，等待 %ss 后发送文案以降低限流概率", label, caption_delay)
+                await asyncio.sleep(caption_delay)
                 caption_ok = await self._run_manual_hermes_send(
                     hermes_cmd,
                     target,
@@ -2601,6 +3096,19 @@ class GalleryServer:
                 logger.info("%s发送成功", label)
                 return True
             last_output = output or f"exit code {result.returncode}"
+            if self._is_wechat_context_error(last_output):
+                self._manual_send_last_error = (
+                    "微信会话上下文已失效。请先在微信里给 Hermes 发任意一条消息，"
+                    "收到回复后再重新发送图片。"
+                )
+                log_fn = logger.error if required else logger.warning
+                log_fn(
+                    "%s发送停止重试: 微信会话上下文已失效；"
+                    "请先在微信里给 Hermes 发任意一条消息，收到回复后再重试。 output=%s",
+                    label,
+                    last_output,
+                )
+                return False
             retryable = self._is_retryable_send_error(last_output)
             cooldown_seconds = self._extract_send_cooldown_seconds(last_output)
             if cooldown_seconds:
@@ -2645,7 +3153,19 @@ class GalleryServer:
         return ("..." + output[-1500:]) if len(output) > 1500 else output
 
     @staticmethod
-    def _is_retryable_send_error(output: str) -> bool:
+    def _is_wechat_context_error(output: str) -> bool:
+        text = (output or "").lower()
+        if any(marker in text for marker in SEND_CONTEXT_ERROR_MARKERS):
+            return True
+        has_minus_two = bool(
+            re.search(r'\b(?:ret|errcode)\b["\']?\s*(?:=|:)\s*-2\b', text)
+        )
+        return has_minus_two and "unknown error" in text
+
+    @classmethod
+    def _is_retryable_send_error(cls, output: str) -> bool:
+        if cls._is_wechat_context_error(output):
+            return False
         text = (output or "").lower()
         return any(marker in text for marker in SEND_RETRYABLE_MARKERS)
 
@@ -3107,6 +3627,7 @@ class GalleryServer:
         plugin_config_path = os.path.join(self.data_dir, "plugin_config.json")
         gitee_key = ""
         gitee_fallback_enabled = False
+        gpt_chat_fallback_enabled = False
         if os.path.exists(plugin_config_path):
             try:
                 with open(plugin_config_path, 'r') as f:
@@ -3115,6 +3636,9 @@ class GalleryServer:
                     if gitee_keys:
                         gitee_key = gitee_keys[0]
                     gitee_fallback_enabled = bool(plugin_config.get("gitee_fallback_enabled", False))
+                    gpt_chat_fallback_enabled = bool(
+                        plugin_config.get("gpt_chat_fallback_enabled", False)
+                    )
             except Exception as e:
                 logger.error(f"Load plugin config error: {e}")
 
@@ -3220,6 +3744,7 @@ class GalleryServer:
             "llm_models": self.config.get("llm", {}),
             "llm_model_chain": llm_model_chain,
             "gitee_fallback_enabled": gitee_fallback_enabled,
+            "gpt_chat_fallback_enabled": gpt_chat_fallback_enabled,
             "push_channel": push_channel,
             "push_channel_local": normalize_push_channel(local_push_channel_raw) if local_push_channel_raw else "",
             "push_agent": push_agent,
@@ -3594,6 +4119,9 @@ class GalleryServer:
             if meta_entry.get("source") == "hermes_api" or img_file.startswith("hermes_"):
                 normalized["source"] = "hermes_api"
                 source = "hermes_api"
+            meta_model = meta_entry.get("model_name") or meta_entry.get("model")
+            if meta_model and not normalized.get("model_name"):
+                normalized["model_name"] = meta_model
             for field in (
                 "prompt_mode",
                 "pure_prompt",
@@ -4154,8 +4682,12 @@ class GalleryServer:
                     with open(api_keys_path, 'w', encoding='utf-8') as f:
                         json.dump(keys_config, f, ensure_ascii=False, indent=2)
 
-                    # 更新 plugin_config.json 的 Gitee 配置
-                    if "gitee_key" in body or "gitee_fallback_enabled" in body:
+                    # 更新 plugin_config.json 的生图回退配置。
+                    if (
+                        "gitee_key" in body
+                        or "gitee_fallback_enabled" in body
+                        or "gpt_chat_fallback_enabled" in body
+                    ):
                         plugin_config_path = os.path.join(self.data_dir, "plugin_config.json")
                         plugin_config = {}
                         if os.path.exists(plugin_config_path):
@@ -4164,6 +4696,10 @@ class GalleryServer:
 
                         if "gitee_fallback_enabled" in body:
                             plugin_config["gitee_fallback_enabled"] = bool(body["gitee_fallback_enabled"])
+                        if "gpt_chat_fallback_enabled" in body:
+                            plugin_config["gpt_chat_fallback_enabled"] = bool(
+                                body["gpt_chat_fallback_enabled"]
+                            )
 
                         if body.get("gitee_key"):
                             if "gitee_config" not in plugin_config:
@@ -4877,6 +5413,40 @@ class GalleryServer:
             return ext
         return REFERENCE_MIME_EXTENSIONS.get((content_type or "").split(";")[0].strip().lower(), "")
 
+    @staticmethod
+    def _default_reference_upload_spec(style: str) -> dict:
+        normalized_style = str(style or "").strip().lower()
+        if normalized_style not in CUSTOM_DEFAULT_REFERENCE_STYLES:
+            return {}
+        for filename, info in BUILTIN_REFERENCE_MAP.items():
+            if str(info.get("style") or "").strip().lower() == normalized_style:
+                return {
+                    "filename": filename,
+                    "style": normalized_style,
+                    "label": info.get("label", ""),
+                    "prompt": info.get("prompt", ""),
+                }
+        return {}
+
+    @staticmethod
+    def _write_default_reference_image(source_path: str, target_path: str) -> None:
+        target_tmp = f"{target_path}.{uuid.uuid4().hex}.tmp"
+        try:
+            with Image.open(source_path) as source:
+                source.seek(0)
+                image = ImageOps.exif_transpose(source)
+                if image.mode in ("RGBA", "LA") or "transparency" in image.info:
+                    rgba = image.convert("RGBA")
+                    normalized = Image.new("RGB", rgba.size, "white")
+                    normalized.paste(rgba, mask=rgba.getchannel("A"))
+                else:
+                    normalized = image.convert("RGB")
+                normalized.save(target_tmp, format="JPEG", quality=95, optimize=True)
+            os.replace(target_tmp, target_path)
+        finally:
+            if os.path.exists(target_tmp):
+                os.remove(target_tmp)
+
     def _reference_profiles(self) -> list[dict]:
         return load_reference_profiles(
             self.data_dir,
@@ -4909,6 +5479,89 @@ class GalleryServer:
         result["selection_reason"] = selected.get("selection_reason", "")
         result["random_fallback"] = bool(selected.get("random_fallback"))
         return result
+
+    def _reference_profile_result(
+        self,
+        profile: dict,
+        selection_mode: str = "",
+        selection_reason: str = "",
+    ) -> dict:
+        path = resolve_reference_profile_path(profile, self.reference_dir, self.app_reference_dir)
+        if not path:
+            return {}
+        result = reference_profile_response(profile)
+        result["path"] = path
+        try:
+            version = os.stat(path).st_mtime_ns
+        except OSError:
+            version = 0
+        url = str(result.get("url") or "").strip()
+        if url and version:
+            separator = "&" if "?" in url else "?"
+            result["url"] = f"{url}{separator}v={version}"
+            result["version"] = version
+        if selection_mode:
+            result["selection_mode"] = selection_mode
+        if selection_reason:
+            result["selection_reason"] = selection_reason
+        return result
+
+    def _reference_profile_for_value(self, value: str) -> dict:
+        ref_name = self._reference_basename(value)
+        raw_value = str(value or "").strip()
+        if not ref_name and not raw_value:
+            return {}
+        for profile in self._reference_profiles():
+            result = self._reference_profile_result(profile)
+            if not result:
+                continue
+            candidates = {
+                self._reference_basename(result.get("filename", "")),
+                self._reference_basename(result.get("url", "")),
+                self._reference_basename(result.get("path", "")),
+            }
+            if ref_name and ref_name in candidates:
+                return result
+            if raw_value and raw_value in {result.get("url", ""), result.get("path", "")}:
+                return result
+        return {}
+
+    def _select_default_custom_reference_sync(self) -> dict:
+        profiles = [
+            profile
+            for profile in self._reference_profiles()
+            if profile.get("active") is not False
+        ]
+        default_style_refs = []
+        for profile in profiles:
+            if profile.get("source") != "default" or not profile.get("builtin"):
+                continue
+            if str(profile.get("style") or "").strip().lower() not in CUSTOM_DEFAULT_REFERENCE_STYLES:
+                continue
+            result = self._reference_profile_result(
+                profile,
+                selection_mode="custom_default_style",
+                selection_reason="自定义生图默认从三种风格底模中随机选取",
+            )
+            if result:
+                default_style_refs.append(result)
+        if default_style_refs:
+            return random.choice(default_style_refs)
+
+        existing_refs = []
+        for profile in profiles:
+            if profile.get("source") == "default":
+                continue
+            result = self._reference_profile_result(
+                profile,
+                selection_mode="custom_random_reference",
+                selection_reason="三种风格底模不可用，随机选取已有参考像",
+            )
+            if result:
+                existing_refs.append(result)
+        if existing_refs:
+            return random.choice(existing_refs)
+        return {}
 
     def _iter_uploaded_refs(self) -> list[dict]:
         refs = []
@@ -5028,52 +5681,107 @@ class GalleryServer:
 
     async def handle_ref_list(self, request: web.Request):
         """返回参考图列表（内置底模 + 用户上传）"""
-        refs = [
-            reference_profile_response(profile)
-            for profile in self._reference_profiles()
-            if profile.get("source") != "wardrobe"
-        ]
+        refs = []
+        for profile in self._reference_profiles():
+            if profile.get("source") == "wardrobe":
+                continue
+            result = self._reference_profile_result(profile)
+            if result:
+                result.pop("path", None)
+                refs.append(result)
         refs.extend(self._iter_wardrobe_refs())
         return web.json_response(refs)
 
     async def handle_uploaded_refs(self, request: web.Request):
         """列出已上传的自定义参考图"""
         try:
-            refs = [
-                reference_profile_response(profile)
-                for profile in self._reference_profiles()
-                if profile.get("source") == "upload"
-            ]
+            refs = []
+            for profile in self._reference_profiles():
+                if profile.get("source") != "upload":
+                    continue
+                result = self._reference_profile_result(profile)
+                if result:
+                    result.pop("path", None)
+                    refs.append(result)
             return web.json_response(refs)
         except Exception as e:
             logger.error(f"List uploaded refs error: {e}")
             return web.json_response([])
 
     async def handle_upload_ref(self, request: web.Request):
-        """上传自定义参考图到 data/references/uploads 持久化目录"""
-        reader = await request.multipart()
-        field = await reader.next()
-        if not field or not field.filename:
-            return web.json_response({"error": "no_file"}, status=400)
-
-        ext = self._reference_ext(field.filename, field.headers.get("Content-Type", ""))
-        if not ext:
-            return web.json_response({"error": "invalid_image_type"}, status=400)
-
-        save_name = f"upload_{int(time.time())}_{uuid.uuid4().hex[:8]}{ext}"
-        save_path = os.path.join(self.uploaded_reference_dir, save_name)
-
+        """上传普通参考图，或按 style 替换固定默认底模。"""
+        temp_path = ""
+        original_filename = ""
+        content_type = ""
+        style = ""
         try:
-            with open(save_path, "wb") as f:
-                while True:
-                    chunk = await field.read_chunk()
-                    if not chunk:
-                        break
-                    f.write(chunk)
-        except Exception:
-            if os.path.exists(save_path):
-                os.remove(save_path)
-            raise
+            reader = await request.multipart()
+            while True:
+                field = await reader.next()
+                if field is None:
+                    break
+                if field.name == "style" and not field.filename:
+                    style = (await field.text()).strip().lower()
+                    continue
+                if not field.filename or temp_path:
+                    await field.read(decode=False)
+                    continue
+
+                original_filename = field.filename
+                content_type = field.headers.get("Content-Type", "")
+                ext = self._reference_ext(original_filename, content_type)
+                if not ext:
+                    return web.json_response({"error": "invalid_image_type"}, status=400)
+                temp_path = os.path.join(
+                    self.uploaded_reference_dir,
+                    f".reference_upload_{uuid.uuid4().hex}{ext}",
+                )
+                with open(temp_path, "wb") as f:
+                    while True:
+                        chunk = await field.read_chunk()
+                        if not chunk:
+                            break
+                        f.write(chunk)
+
+            if not temp_path:
+                return web.json_response({"error": "no_file"}, status=400)
+
+            if style:
+                spec = self._default_reference_upload_spec(style)
+                if not spec:
+                    return web.json_response({"error": "invalid_style"}, status=400)
+                save_name = spec["filename"]
+                save_path = os.path.join(self.reference_dir, save_name)
+                try:
+                    self._write_default_reference_image(temp_path, save_path)
+                except (UnidentifiedImageError, OSError, ValueError):
+                    return web.json_response({"error": "invalid_image"}, status=400)
+
+                profile = upsert_reference_profile(self.data_dir, {
+                    "filename": save_name,
+                    "url": f"/local-refs/{save_name}",
+                    "label": spec["label"],
+                    "style": spec["style"],
+                    "prompt": spec["prompt"],
+                    "tags": [spec["style"], spec["label"]],
+                    "source": "default",
+                    "builtin": True,
+                    "active": True,
+                    "analysis_status": "uploaded",
+                    "analysis_error": "",
+                })
+                result = self._reference_profile_result(profile)
+                result.pop("path", None)
+                return web.json_response(result or reference_profile_response(profile))
+
+            ext = self._reference_ext(original_filename, content_type)
+            save_name = f"upload_{int(time.time())}_{uuid.uuid4().hex[:8]}{ext}"
+            save_path = os.path.join(self.uploaded_reference_dir, save_name)
+            os.replace(temp_path, save_path)
+            temp_path = ""
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
 
         loop = asyncio.get_running_loop()
         analysis = await loop.run_in_executor(
@@ -6059,6 +6767,76 @@ class GalleryServer:
         text = re.sub(r"\s+", " ", text).strip()
         return text[:limit].rstrip()
 
+    def _set_group_chat_reply_progress(
+        self,
+        room_id: str,
+        phase: str,
+        character_id: str = "",
+        character_name: str = "",
+        token: str = "",
+    ) -> str:
+        clean_room_id = str(room_id or "").strip()
+        if not clean_room_id:
+            return ""
+        clean_token = str(token or "").strip() or uuid.uuid4().hex
+        clean_phase = "image" if str(phase or "").strip().lower() == "image" else "typing"
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        current = self._group_chat_reply_progress.get(clean_room_id) or {}
+        started_at = current.get("started_at") if current.get("_token") == clean_token else ""
+        self._group_chat_reply_progress[clean_room_id] = {
+            "_token": clean_token,
+            "phase": clean_phase,
+            "character_id": str(character_id or "").strip(),
+            "character_name": str(character_name or "").strip(),
+            "started_at": started_at or now,
+            "updated_at": now,
+        }
+        return clean_token
+
+    def _clear_group_chat_reply_progress(self, room_id: str, token: str = "") -> None:
+        clean_room_id = str(room_id or "").strip()
+        current = self._group_chat_reply_progress.get(clean_room_id)
+        if not current:
+            return
+        clean_token = str(token or "").strip()
+        if clean_token and current.get("_token") != clean_token:
+            return
+        self._group_chat_reply_progress.pop(clean_room_id, None)
+
+    def _public_group_chat_reply_progress(self, room_id: str) -> Optional[dict]:
+        progress = self._group_chat_reply_progress.get(str(room_id or "").strip())
+        if not progress:
+            return None
+        return {
+            key: value
+            for key, value in progress.items()
+            if not str(key).startswith("_")
+        }
+
+    def _track_group_chat_background_task(self, task: asyncio.Task) -> asyncio.Task:
+        self._group_chat_background_tasks.add(task)
+
+        def _done(completed: asyncio.Task) -> None:
+            self._group_chat_background_tasks.discard(completed)
+            if completed.cancelled():
+                return
+            try:
+                completed.exception()
+            except asyncio.CancelledError:
+                return
+
+        task.add_done_callback(_done)
+        return task
+
+    async def _cleanup_group_chat_background_tasks(self, _app) -> None:
+        tasks = [task for task in self._group_chat_background_tasks if not task.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._group_chat_background_tasks.clear()
+        self._group_chat_reply_progress.clear()
+
     @staticmethod
     def _group_chat_normalized_placeholder_text(value: str) -> str:
         return re.sub(r"[\s\"'“”‘’`，,。.!！?？:：]+", "", str(value or "")).strip()
@@ -6128,6 +6906,8 @@ class GalleryServer:
             "style、size、character_ids（合照时填写参与角色 id）。\n"
             "当用户明确要求看照片/图片/自拍/合照，或角色自己说要拍照、发照片、给大家看时，必须使用 image_request；不要只口头说会去拍。\n"
             "image_request.prompt 要描述可直接生成的画面：场景、动作、表情、穿搭、氛围和构图，不要写成聊天句子。\n"
+            "image_request.prompt 里的所有人物必须明确为 21 岁以上成年人，并保持非色情的日常摄影表达；"
+            "不要写 18 岁、未成年、学生或校服身份、性化身材或诱惑性描述，可改写为成年时尚造型。\n"
             "如果只是普通聊天，image_request 必须为 null。\n"
             "回复要自然、像即时聊天，通常 1 到 3 句；可以接住最近一条消息，也可以主动延展话题。\n"
             f"群聊参与者：{('、'.join(participant_names) or '未配置')}\n"
@@ -6547,6 +7327,84 @@ class GalleryServer:
         )
         return self._public_group_message(message), message
 
+    async def _run_group_chat_image_task(
+        self,
+        progress_token: str,
+        room_id: str,
+        room: dict,
+        character: dict,
+        body: dict,
+        image_request: dict,
+        reply_text: str,
+        used_model: str,
+        preferred_model: str,
+        trigger_message_id: str,
+        rewind_message_id: str,
+        parent_message_id: str = "",
+    ) -> tuple[dict, dict]:
+        character_id = str(character.get("id") or "").strip()
+        try:
+            return await self._generate_group_chat_image_message(
+                room_id,
+                room,
+                character,
+                body,
+                image_request,
+                reply_text,
+                used_model,
+                preferred_model,
+                trigger_message_id,
+                rewind_message_id,
+                parent_message_id,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(
+                "Group chat image tool call failed: room=%s character=%s err=%s",
+                room_id,
+                character_id,
+                e,
+            )
+            raise
+        finally:
+            self._clear_group_chat_reply_progress(room_id, progress_token)
+
+    def _start_group_chat_image_task(
+        self,
+        progress_token: str,
+        room_id: str,
+        room: dict,
+        character: dict,
+        body: dict,
+        image_request: dict,
+        reply_text: str,
+        used_model: str,
+        preferred_model: str,
+        trigger_message_id: str,
+        rewind_message_id: str,
+        parent_message_id: str = "",
+    ) -> asyncio.Task:
+        character_id = str(character.get("id") or "").strip() or "character"
+        task = asyncio.create_task(
+            self._run_group_chat_image_task(
+                progress_token,
+                room_id,
+                room,
+                character,
+                body,
+                image_request,
+                reply_text,
+                used_model,
+                preferred_model,
+                trigger_message_id,
+                rewind_message_id,
+                parent_message_id,
+            ),
+            name=f"group-chat-image:{room_id}:{character_id}",
+        )
+        return self._track_group_chat_background_task(task)
+
     async def _call_group_chat_llm(
         self,
         prompt: str,
@@ -6747,6 +7605,7 @@ class GalleryServer:
         public_room["message_count"] = len(messages)
         public_room["hermes_bridge"] = payload.get("hermes_bridge", {})
         public_room["title"] = public_room.get("name", "")
+        public_room["reply_progress"] = self._public_group_chat_reply_progress(room_id)
         return public_room
 
     async def handle_group_chat_rooms(self, request: web.Request):
@@ -6908,12 +7767,48 @@ class GalleryServer:
             if request.method.upper() != "DELETE":
                 return web.json_response({"error": "method_not_allowed"}, status=405)
             result = self.group_chat_store.delete_message(room_id, message_id)
+            deleted_message = result.get("message", {})
+            metadata = deleted_message.get("metadata") if isinstance(deleted_message, dict) else {}
+            raw_image_filename = (
+                metadata.get("image_filename")
+                if isinstance(metadata, dict)
+                else ""
+            )
+            image_filename = ""
+            gallery_cleanup = {}
+            gallery_error = ""
+            if raw_image_filename:
+                try:
+                    image_filename = self._normalize_gallery_image_filename(raw_image_filename)
+                    gallery_cleanup = self._delete_gallery_image(image_filename)
+                except ValueError as e:
+                    gallery_error = str(e) or "invalid_filename"
+                    logger.warning(
+                        "Skip invalid group chat image cleanup: room=%s message=%s filename=%r",
+                        room_id,
+                        message_id,
+                        raw_image_filename,
+                    )
+                except Exception as e:
+                    gallery_error = str(e) or "gallery_delete_failed"
+                    logger.error(
+                        "Group chat gallery image cleanup failed: room=%s message=%s filename=%r err=%s",
+                        room_id,
+                        message_id,
+                        raw_image_filename,
+                        e,
+                        exc_info=True,
+                    )
             payload = self.group_chat_store.room_payload(room_id, message_limit=50)
             public_room = self._public_group_room_payload((payload or {}).get("room") or {}, message_limit=50) if payload else None
             return web.json_response({
                 "success": True,
-                "message": self._public_group_message(result.get("message", {})),
+                "message": self._public_group_message(deleted_message),
                 "removed_count": result.get("removed_count", 0),
+                "image_filename": image_filename,
+                "gallery_deleted": bool(gallery_cleanup) and not gallery_cleanup.get("errors"),
+                "gallery_cleanup": gallery_cleanup,
+                "gallery_error": gallery_error,
                 "room": public_room,
                 "room_payload": payload,
             })
@@ -6930,6 +7825,21 @@ class GalleryServer:
     async def handle_group_chat_reply(self, request: web.Request):
         """Generate LLM-backed replies for enabled participants in a room."""
         room_id = request.match_info.get("room_id", "")
+        rewind_snapshot: list[dict] = []
+        rewind_generated_ids: set[str] = set()
+        rewind_restored = False
+
+        def restore_rewind_snapshot() -> None:
+            nonlocal rewind_restored
+            if rewind_restored or not rewind_snapshot:
+                return
+            self.group_chat_store.restore_messages(
+                room_id,
+                rewind_snapshot,
+                discard_message_ids=rewind_generated_ids,
+            )
+            rewind_restored = True
+
         try:
             try:
                 body = await request.json()
@@ -6951,6 +7861,9 @@ class GalleryServer:
             rewind_message_id = str(body.get("rewind_message_id") or body.get("rewindMessageId") or "").strip()
             rewind_result = None
             regenerate_plan = {}
+            regenerate_requires_image = False
+            if regenerate_message_id or rewind_message_id:
+                rewind_snapshot = self.group_chat_store.list_messages(room_id)
             if regenerate_message_id:
                 try:
                     regenerate_plan = self._group_chat_regenerate_plan(room_id, regenerate_message_id)
@@ -6971,6 +7884,7 @@ class GalleryServer:
                 force_image_request = regenerate_plan.get("force_image_request")
                 if isinstance(force_image_request, dict) and force_image_request:
                     body["_force_image_request"] = force_image_request
+                    regenerate_requires_image = True
                     body["_regenerate_hint"] = (
                         "这是回溯重发：请重新生成被点击的这条消息本身。"
                         "原消息包含图片，本次必须重新写一条聊天文字，并提供 image_request 对象重新生成图片。"
@@ -6995,12 +7909,15 @@ class GalleryServer:
             if not targets:
                 response = {"error": "no_reply_participants"}
                 if rewind_message_id:
+                    restore_rewind_snapshot()
+                    room = self.group_chat_store.get_room(room_id) or room
                     payload = self.group_chat_store.room_payload(room_id, message_limit=50)
                     response.update({
                         "messages": [],
                         "rewind": {
                             "message_id": rewind_message_id,
                             "removed_count": (rewind_result or {}).get("removed_count", 0),
+                            "restored": True,
                         },
                         "room": self._public_group_room_payload((payload or {}).get("room") or room, message_limit=50) if payload else None,
                         "room_payload": payload,
@@ -7024,14 +7941,21 @@ class GalleryServer:
                 character_id = str(character.get("id") or "").strip()
                 character_name = str(character.get("name") or character_id or "角色").strip()
                 preferred_model = str(character.get("llm_model") or "").strip()
-                prompt = self._group_chat_reply_prompt(
-                    room,
-                    character,
-                    participants,
-                    messages + generated,
-                    regenerate_hint=str(body.get("_regenerate_hint") or ""),
+                progress_token = self._set_group_chat_reply_progress(
+                    room_id,
+                    "typing",
+                    character_id,
+                    character_name,
                 )
+                image_task = None
                 try:
+                    prompt = self._group_chat_reply_prompt(
+                        room,
+                        character,
+                        participants,
+                        messages + generated,
+                        regenerate_hint=str(body.get("_regenerate_hint") or ""),
+                    )
                     raw_content, used_model = await self._call_group_chat_llm(
                         prompt,
                         preferred_model=preferred_model,
@@ -7079,11 +8003,21 @@ class GalleryServer:
                         parent_message_id = str(message.get("id") or "")
                         public_message = self._public_group_message(message)
                         generated.append(public_message)
+                        if rewind_snapshot and parent_message_id:
+                            rewind_generated_ids.add(parent_message_id)
                         messages.append(message)
 
                     if image_request:
                         try:
-                            public_image, image_message = await self._generate_group_chat_image_message(
+                            self._set_group_chat_reply_progress(
+                                room_id,
+                                "image",
+                                character_id,
+                                character_name,
+                                token=progress_token,
+                            )
+                            image_task = self._start_group_chat_image_task(
+                                progress_token,
                                 room_id,
                                 room,
                                 character,
@@ -7096,15 +8030,13 @@ class GalleryServer:
                                 rewind_message_id,
                                 parent_message_id,
                             )
+                            public_image, image_message = await asyncio.shield(image_task)
                             generated.append(public_image)
+                            image_message_id = str(image_message.get("id") or "")
+                            if rewind_snapshot and image_message_id:
+                                rewind_generated_ids.add(image_message_id)
                             messages.append(image_message)
                         except Exception as image_error:
-                            logger.warning(
-                                "Group chat image tool call failed: room=%s character=%s err=%s",
-                                room_id,
-                                character_id,
-                                image_error,
-                            )
                             failures.append({
                                 "character_id": character_id,
                                 "character_name": character_name,
@@ -7123,12 +8055,29 @@ class GalleryServer:
                         "character_name": character_name,
                         "error": str(e),
                     })
+                finally:
+                    if image_task is None:
+                        self._clear_group_chat_reply_progress(room_id, progress_token)
+
+            generated_image = any(
+                str(item.get("type") or item.get("message_type") or "").strip().lower() == "image"
+                for item in generated
+                if isinstance(item, dict)
+            )
+            rollback_required = not generated or (regenerate_requires_image and not generated_image)
+            if rollback_required and rewind_message_id:
+                restore_rewind_snapshot()
 
             payload = self.group_chat_store.room_payload(room_id, message_limit=50)
             public_room = self._public_group_room_payload((payload or {}).get("room") or room, message_limit=50) if payload else None
-            if not generated:
+            if rollback_required:
                 response = {
                     "error": "reply_generation_failed",
+                    "message": (
+                        "图片重新生成失败，已保留原图和原聊天记录。"
+                        if regenerate_requires_image
+                        else "回溯重发失败，已保留原聊天记录。"
+                    ),
                     "failures": failures,
                 }
                 if rewind_message_id:
@@ -7137,6 +8086,7 @@ class GalleryServer:
                         "rewind": {
                             "message_id": rewind_message_id,
                             "removed_count": (rewind_result or {}).get("removed_count", 0),
+                            "restored": rewind_restored,
                         },
                         "room": public_room,
                         "room_payload": payload,
@@ -7153,6 +8103,14 @@ class GalleryServer:
                 "room_payload": payload,
             })
         except Exception as e:
+            try:
+                restore_rewind_snapshot()
+            except Exception as restore_error:
+                logger.error(
+                    "Group chat rewind restore failed: room=%s err=%s",
+                    room_id,
+                    restore_error,
+                )
             logger.error("Group chat reply API error: %s", e)
             return web.json_response({"error": str(e)}, status=500)
 
@@ -8086,6 +9044,19 @@ JSON 格式：
             ref_image = self._resolve_reference_image(raw_ref_image, allow_any_path=True)
             if raw_ref_image and not ref_image:
                 return web.json_response({"error": "invalid_ref_image"}, status=400)
+            selected_reference = {}
+            if ref_image:
+                selected_reference = (
+                    self._reference_profile_for_value(raw_ref_image)
+                    or self._reference_profile_for_value(ref_image)
+                    or self._wardrobe_reference_for_value(raw_ref_image)
+                    or self._wardrobe_reference_for_value(ref_image)
+                )
+                if selected_reference and not selected_reference.get("path"):
+                    selected_reference["path"] = ref_image
+            elif not pure:
+                selected_reference = self._select_default_custom_reference_sync()
+                ref_image = str(selected_reference.get("path") or "").strip()
             api_source = self._normalize_api_source(
                 body.get("api_source"),
                 body.get("source"),
@@ -8117,7 +9088,18 @@ JSON 格式：
             raw_image_model = str(body.get("model") or body.get("image_model") or body.get("gpt_model") or "").strip()
             if raw_image_model and not image_model and raw_image_model.lower() not in {"default", "auto", "current"}:
                 return web.json_response({"error": "invalid_image_model"}, status=400)
-            entry = await self.on_generate_custom(user_prompt, size, ref_image, shot_type, pure, api_source, api_caption, image_model, api_description)
+            entry = await self.on_generate_custom(
+                user_prompt,
+                size,
+                ref_image,
+                shot_type,
+                pure,
+                api_source,
+                api_caption,
+                image_model,
+                api_description,
+                selected_reference,
+            )
             if entry and entry.status == "ok":
                 payload = entry.to_dict()
                 try:
@@ -8201,36 +9183,11 @@ JSON 格式：
     async def handle_delete_image(self, request: web.Request):
         """删除图片和条目"""
         img_id = request.match_info.get("img_id")
-        # Path traversal validation: only allow safe characters
-        if not img_id or not re.match(r'^[a-zA-Z0-9_.-]+$', img_id) or '..' in img_id:
-            return web.json_response({"error": "invalid_filename"}, status=400)
         try:
-            # 1. Delete image file
-            self._delete_image_files(img_id)
-
-            # 2. Remove from schedule_data.json
-            store = ScheduleStore(self.data_dir)
-            def _delete_entry(all_data):
-                removed = False
-                # Try direct key match (filename as key)
-                if img_id in all_data:
-                    del all_data[img_id]
-                    removed = True
-                else:
-                    # Try matching by image_filename field
-                    for key, entry in list(all_data.items()):
-                        if entry.get("image_filename") == img_id:
-                            del all_data[key]
-                            removed = True
-                return all_data
-            store.update(_delete_entry)
-
-            metadata = self._load_image_metadata()
-            if img_id in metadata:
-                del metadata[img_id]
-                self._save_image_metadata(metadata)
-
-            return web.json_response({"success": True})
+            result = self._delete_gallery_image(img_id)
+            return web.json_response({"success": True, **result})
+        except ValueError as e:
+            return web.json_response({"error": str(e) or "invalid_filename"}, status=400)
         except Exception as e:
             logger.error(f"Delete image error: {e}")
             return web.json_response({"error": str(e)}, status=500)

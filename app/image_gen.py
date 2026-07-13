@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import os
+import re
 import subprocess
 import sys
 from typing import Optional
@@ -46,6 +47,64 @@ class ImageGenerator:
             merged.update(extra)
         return build_child_env(self.config, self.config_path, self.data_dir, merged)
 
+    @staticmethod
+    def _fallback_transition(stderr: str) -> Optional[tuple[str, str]]:
+        text = str(stderr or "")
+        markers = (
+            ("GPT Image failed, falling back to Gitee", "gptimage", "gitee"),
+            ("Gemini CPA failed, falling back to Gitee", "gemini", "gitee"),
+            ("Gitee failed, falling back to GPT Image", "gitee", "gptimage"),
+        )
+        for marker, failed_engine, actual_engine in markers:
+            if marker in text:
+                return failed_engine, actual_engine
+        return None
+
+    @staticmethod
+    def _fallback_reason(stderr: str, failed_engine: str = "") -> str:
+        text = str(stderr or "")
+        lower = text.lower()
+        engine_label = {
+            "gptimage": "GPT Image",
+            "gitee": "Gitee",
+            "gemini": "Gemini",
+        }.get(str(failed_engine or "").strip().lower(), "生图")
+        reasons = []
+        if "insufficient_quota" in lower or "额度已用完" in lower:
+            reasons.append(f"{engine_label} 图片账号额度已用完")
+        if "deactivated_workspace" in lower or "workspace" in lower and "deactivat" in lower:
+            reasons.append(f"{engine_label} 工作区已停用")
+        if "no available compatible accounts" in lower:
+            reasons.append(f"{engine_label} 没有可用的兼容账号")
+        if "unexpected eof" in lower:
+            reasons.append("上游连接意外中断")
+        if any(
+            marker in lower
+            for marker in (
+                "no available channel",
+                "no available provider",
+                "没有可用",
+                "无可用渠道",
+                "model_not_found",
+            )
+        ):
+            reasons.append(f"上游没有可用的 {engine_label} 渠道")
+        if any(marker in lower for marker in ("content_policy_violation", "safety system", "content policy")):
+            reasons.append("上游内容安全策略拒绝了请求")
+        if any(marker in lower for marker in ("timed out", "timeout", "read timeout")):
+            reasons.append("上游请求超时")
+        if reasons:
+            return "；".join(dict.fromkeys(reasons))
+
+        for raw_line in reversed(text.splitlines()):
+            line = re.sub(r"\s+", " ", raw_line).strip()
+            low = line.lower()
+            if not line or "falling back" in low:
+                continue
+            if any(marker in low for marker in ("error", "failed", "failure", "unsupported")):
+                return line[:500]
+        return "原生图引擎未返回图片"
+
     async def generate(
         self,
         prompt: str,
@@ -67,7 +126,10 @@ class ImageGenerator:
         if not timeout:
             timeout = image_process_timeout(self.config, with_reference_fallback=bool(style or ref_image))
         model_label = image_model or "-"
-        logger.info(f"开始生图: theme={theme}, engine={engine}, model={model_label}, style={style}, size={size or '-'}, prompt={prompt[:80]}...")
+        logger.info(
+            f"开始生图: theme={theme}, engine={engine}, model={model_label}, "
+            f"style={style}, size={size or '-'}, prompt={prompt}"
+        )
 
         generate_script = self.generate_script
         if not os.path.isfile(generate_script):
@@ -123,6 +185,7 @@ class ImageGenerator:
                 if ".png" in line or ".jpg" in line:
                     output_path = line.strip()
 
+            fallback_transition = self._fallback_transition(result.stderr)
             if output_path and os.path.exists(output_path):
                 # 复制到 gallery 目录
                 filename = os.path.basename(output_path)
@@ -130,6 +193,15 @@ class ImageGenerator:
                 if output_path != dest:
                     import shutil
                     shutil.copy2(output_path, dest)
+                if fallback_transition:
+                    failed_engine, actual_engine = fallback_transition
+                    logger.warning(
+                        "生图引擎自动回退: requested=%s, failed=%s, actual=%s, reason=%s",
+                        engine,
+                        failed_engine,
+                        actual_engine,
+                        self._fallback_reason(result.stderr, failed_engine),
+                    )
                 logger.info(f"生图成功: {filename}")
                 return filename
             else:

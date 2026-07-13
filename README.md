@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.3.2**
+当前版本：**v1.3.3**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -63,13 +63,7 @@ python3 main.py
 
 访问 **http://localhost:18889** 即可使用画廊。
 
-如果设置了 `GALLERY_API_KEY`，首次访问请带上密钥：
-
-```text
-http://localhost:18889/?key=your-gallery-api-key
-```
-
-前端会把密钥保存在浏览器 `localStorage`，后续同源 `/api/*` 请求会自动带上 `X-API-Key`。
+首次部署时，本机打开 Web UI 会先要求设置访问密码；也可以提前通过 `GALLERY_PASSWORD` 环境变量预置密码。非本机访问需要输入密码，验证通过后服务端会把当前访问 IP 记录到 `data/gallery_auth.json`。
 
 ### 5. 部署方式
 
@@ -102,7 +96,7 @@ curl http://localhost:18889/api/health
 如果要使用已经发布到 Docker Hub/GHCR 的镜像，通过 `PORTRAIT_GALLERY_IMAGE` 指定：
 
 ```bash
-PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.2 docker compose up -d
+PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.3 docker compose up -d
 curl http://localhost:18889/api/health
 ```
 
@@ -231,7 +225,7 @@ curl -X POST http://localhost:18889/api/hermes/update \
   -d '{"dry_run": false, "restart": true}'
 ```
 
-如果旧版本（尤其是 `v1.2.3`）在 Web 一键升级时返回 `local_or_api_key_required`，请在部署机器执行手动安全升级命令：
+如果旧版本（尤其是 `v1.2.3`）在 Web 一键升级时返回本机/认证相关错误，请在部署机器执行手动安全升级命令：
 
 ```bash
 cd /path/to/portrait-gallery
@@ -287,15 +281,19 @@ curl -X POST http://localhost:18889/api/config/keys \
 | `GITHUB_PROXY` | GitHub 更新检查/在线更新代理（也可在 Web 设置中填写） |
 | `GITHUB_REPOSITORY` | GitHub Release 检查仓库，格式 `OWNER/REPO` |
 | `GITHUB_RELEASE_API` | GitHub Release API 完整地址，优先级高于 `GITHUB_REPOSITORY` |
-| `GALLERY_API_KEY` | Web UI 认证密钥（留空则不认证） |
+| `GALLERY_PASSWORD` | Web UI 访问密码；留空时首次本机打开页面设置 |
 | `PORTRAIT_GALLERY_IMAGE` | Docker Compose 使用的镜像名/标签，默认 `hermes-portrait-gallery:latest` |
 
-启用 `GALLERY_API_KEY` 后，命令行 API 需要带认证：
+Docker Compose 会读取本地 `.env` 并把 `GALLERY_PASSWORD` 传入容器；不要把 `.env` 提交到仓库。
+
+远程命令行访问受保护 API 时，先从同一访问 IP 登录一次：
 
 ```bash
-curl -H "X-API-Key: $GALLERY_API_KEY" http://localhost:18889/api/gallery
-# 或
-curl "http://localhost:18889/api/gallery?key=$GALLERY_API_KEY"
+curl -X POST http://localhost:18889/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"password": "your-gallery-password"}'
+
+curl http://localhost:18889/api/gallery
 ```
 
 ### Hermes 生图文案
@@ -322,6 +320,16 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥、三级 LLM 模型链、Gitee 回退、日程风格和升级选项
 
 ## 🧾 Release Notes
+
+### v1.3.3
+
+- Web 访问控制切换为访问密码方案：支持 `GALLERY_PASSWORD` 环境变量、首次本机 Web 设置密码、非本地访问登录，以及已登录 IP 持久化；移除旧版 `GALLERY_API_KEY` / `X-API-Key` 入口。
+- 远程访问会保护 API、生成图片和本地参考图；Docker Compose 支持从本地 `.env` 透传 `GALLERY_PASSWORD`，避免把部署密码写进仓库。
+- 群聊图片生成增加后台任务与进度状态，前端可持续展示当前角色/阶段；取消等待不会中断后台生图，图片消息删除会同步清理画廊图片和元数据。
+- 角色与群聊生图提示词改为 image-only 构建，并净化未成年、校服、露骨身体描述和挑逗语义，降低上游安全拒绝概率。
+- GPT Image 失败处理更明确：额度用完、工作区停用、无可用账号/渠道等终止错误不再盲目重试；聊天端点 fallback 默认关闭，仅显式开启或显式 chat endpoint 时使用。
+- 日志视图增强：保留完整生图提示词细节，过滤成功访问噪声，解释微信上下文失效和生图引擎回退原因，方便排查真实故障。
+- 日程与参考图体验补强：调度历史去重更稳定，衣柜/默认参考图上传与回退链路增加测试覆盖。
 
 ### v1.3.2
 
@@ -356,7 +364,7 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 
 ### v1.2.5
 
-- 修复 Docker/localhost 场景下一键安全升级可能被误判为远程写操作并返回 `local_or_api_key_required` 的问题。
+- 修复 Docker/localhost 场景下一键安全升级可能被误判为远程写操作并返回本机认证错误的问题。
 - 检查更新改为只读 GET 请求；升级被鉴权拦截时会显示手动安全升级命令。
 - 优化移动端顶部 Tab 和卡片底部 `收藏 / 分享 / 删除` 按钮尺寸。
 
@@ -483,7 +491,7 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 ### v1.0.7
 
 - 修复 Python 3.9 本地运行时对 `dict | None` 类型注解不兼容导致的启动失败。
-- 修复开启 `GALLERY_API_KEY` 后 Web UI 主接口未带认证导致首页、设置、生图等功能不可用的问题。
+- 修复开启旧版 Web 访问密钥后主接口未带认证导致首页、设置、生图等功能不可用的问题。
 - 优化在线更新接口：`git pull` 成功后先返回响应，再延迟重启，避免前端误报更新失败。
 - 补全旧图片条目的展示数据：从 `image_metadata.json` 回填完整 prompt、规范模型名、修复误显示为画质 prompt 的穿搭字段，并用当日日程 caption 做合理回填。
 - 生成链路写入 caption、model、source 等 gallery 字段，让今日/全部/彩蛋视图展示更完整。

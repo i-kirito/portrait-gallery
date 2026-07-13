@@ -13,6 +13,7 @@ from core import (
     RETRY_DELAY_SECONDS,
     build_caption_for_image,
     build_prompt,
+    schedule_filename_theme,
     sync_to_gallery,
     get_gitee_key,
     get_image_model,
@@ -81,7 +82,13 @@ def generate(theme: str, send: bool = False, caption: bool = False,
         return None
 
     img_data, gen_time = result
-    path, filename, ts = save_image(img_data, theme, MODEL_NAME)
+    filename_theme = schedule_filename_theme(theme, schedule_time)
+    path, filename, ts = save_image(
+        img_data,
+        theme,
+        MODEL_NAME,
+        filename_theme=filename_theme,
+    )
     update_metadata(filename, theme, prompt, MODEL_NAME, ts, gen_time, {"source": source})
 
     caption_text = None
