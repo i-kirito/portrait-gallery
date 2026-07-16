@@ -11,6 +11,7 @@ import shutil
 import sys
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
@@ -31,6 +32,7 @@ from settings import (
     base_style_label,
     config_float,
     config_int,
+    configured_timezone,
     get_nested,
     image_request_timeout,
     llm_choice_text,
@@ -47,6 +49,8 @@ from settings import (
     resolve_data_dir,
     resolve_project_root,
     resolve_reference_dir,
+    service_now,
+    service_today,
     theme_style_default,
 )
 
@@ -528,6 +532,25 @@ def _caption_activity(schedule_time: str = "") -> str:
     return text
 
 
+def _next_schedule_activity(schedule_time: str = "") -> str:
+    current = _normalize_schedule_slot_time(schedule_time)
+    if not current:
+        return ""
+    context = _load_daily_schedule_context(service_today(_GALLERY_CONFIG).isoformat(), schedule_time)
+    candidates = []
+    for line in str(context.get("schedule") or "").splitlines():
+        match = re.match(r"^\s*(\d{1,2}):(\d{2})\s+(.+)$", line)
+        if not match:
+            continue
+        clock = f"{int(match.group(1)):02d}:{int(match.group(2)):02d}"
+        if clock > current:
+            candidates.append((clock, match.group(3).strip()))
+    if not candidates:
+        return ""
+    clock, activity = min(candidates, key=lambda item: item[0])
+    return f"{clock} {activity}".strip()
+
+
 def _trim_caption_piece(text: str, limit: int = 28) -> str:
     cleaned = re.sub(r"\s+", " ", str(text or "")).strip(" ，,、；;。.!！?")
     if len(cleaned) <= limit:
@@ -604,71 +627,77 @@ def _personalized_caption_fallback(theme: str, persona: dict, schedule_time: str
     user_name = persona.get("user_name") or "你"
     activity = _caption_activity(schedule_time)
     if activity:
+        next_activity = _next_schedule_activity(schedule_time)
         activity_key = re.sub(r"\s+", "", activity)
         specific_templates = []
         if any(word in activity_key for word in ("歌会", "唱歌", "情歌", "练歌", "歌曲", "吉他曲", "曲目")):
             specific_templates.extend([
-                f"{character}先把歌单顺一遍，等会儿开播就不慌了。",
-                f"这首要是唱顺了，{character}今晚就算完成一件小事。",
-                f"{character}想先试试麦，别等开播了才发现声音不对。",
+                f"{character}先把这一段唱顺，眼前这首不留含糊。",
+                "节拍和换气再对一遍，这会儿只管把歌练稳。",
+                f"{character}把耳返听清楚，先专心处理这一首。",
             ])
         if any(word in activity_key for word in ("直播", "开播", "设备", "妆容", "灯光", "麦克风", "麦")):
             specific_templates.extend([
-                f"{character}先把灯光和麦检查好，等会儿开播就不慌了。",
-                "口红和眼妆再确认一下，开播前别漏掉小细节。",
-                f"{character}想先试一下设备，别等直播开始才手忙脚乱。",
+                f"{character}把灯光和麦逐项确认，先把手上的准备做稳。",
+                "口红、眼妆和镜头位置再看一遍，眼前的小细节别漏。",
+                f"{character}先专心试设备，把当前这一步检查清楚。",
             ])
         if any(word in activity_key for word in ("厨房", "牛排", "奶茶", "做饭", "晚餐", "甜点", "午餐", "早餐", "牛奶", "松饼")):
             specific_templates.extend([
-                f"{character}想先把台面收干净，等会儿吃饭也省心。",
-                "菜还没完全做好，已经开始琢磨第一口要先尝哪里。",
-                f"{character}一边看火候，一边想着等下别忘了把厨房擦一下。",
+                f"{character}先盯紧火候，把手上这一份认真做好。",
+                "味道再确认一下，这会儿先不让锅里的节奏乱掉。",
+                f"{character}把眼前的步骤做完，别在关键火候上分心。",
             ])
         if any(word in activity_key for word in ("电脑", "游戏", "速通", "Live2D", "平板", "建模", "耳机")):
             specific_templates.extend([
-                f"{character}想先把卡住的地方处理掉，后面就能轻松一点。",
-                "这个细节再改一遍，应该就差不多能收工了。",
-                f"{character}盯着屏幕想了想，决定先从最麻烦的那一项开始。",
+                f"{character}先把卡住的地方拆开处理，注意力放在这一屏。",
+                "这个细节再核对一遍，当前这一步不能含糊。",
+                f"{character}盯着屏幕理清思路，先解决眼前最麻烦的部分。",
             ])
         if any(word in activity_key for word in ("动漫", "新番", "追番", "电视", "沙发", "抱枕")):
             specific_templates.extend([
-                f"{character}打算先把这一集看完，再去处理剩下的小事。",
-                "抱枕拿顺手了，接下来就安安心心看一会儿。",
-                f"{character}想趁现在没人催，先把进度追到最新。",
+                f"{character}把抱枕放顺手，安静看完眼前这一段。",
+                "这一集正看到关键处，先把注意力留在剧情里。",
+                f"{character}暂时不分心，认真把当前进度看下去。",
             ])
         if any(word in activity_key for word in ("床", "睡", "护肤", "洗澡", "被窝", "枕头", "晚安")):
             specific_templates.extend([
-                f"{character}想赶紧把护肤做完，早点躺下才是真的舒服。",
-                "今晚不想再拖了，收拾完就直接休息。",
-                f"{character}把明天要用的东西放好，睡前就不用再爬起来找。",
+                f"{character}把眼前的洗漱和护理慢慢做好，让身体放松下来。",
+                "这会儿不赶时间，先把当前的休息节奏安顿好。",
+                f"{character}把枕头和被子整理舒服，专心让自己静下来。",
             ])
         if any(word in activity_key for word in ("街", "散步", "路灯", "公园", "出门", "逛")):
             specific_templates.extend([
-                f"{character}想边走边看看店铺，遇到顺眼的地方就停一下。",
-                "先别急着回去，顺路多逛一小段也不错。",
-                f"{character}准备找个不挤的位置，慢慢把照片拍完。",
+                f"{character}放慢脚步看看周围，把这段路走得自在一点。",
+                "人多的地方先绕开，按自己的节奏继续走。",
+                f"{character}边走边留意脚下，先享受眼前这段路。",
             ])
         if any(word in activity_key for word in ("阳台", "摇椅", "小憩", "打盹", "薄毯", "沙发", "抱枕", "发呆")):
             specific_templates.extend([
-                f"{character}想再坐五分钟，等精神缓过来再起身。",
-                "毯子盖好了，先眯一会儿，别把下午弄得太赶。",
-                f"{character}准备小睡一下，醒来再继续收拾后面的事。",
+                f"{character}把毯子盖好，先安心享受眼前这段休息。",
+                "呼吸慢下来，这会儿只需要让自己放松一点。",
+                f"{character}靠稳一点，专心把这一小段空闲留给自己。",
             ])
         if any(word in activity_key for word in ("整理房间", "房间", "浇水", "多肉", "植物")):
             specific_templates.extend([
-                f"{character}想把这盆浇完，再顺手看看房间哪里还乱。",
-                "先把植物照顾好，等会儿整理房间也更有劲。",
-                f"{character}一边浇水一边想着，下午最好把桌面也清出来。",
+                f"{character}先把眼前这盆照顾好，水量和叶片都看仔细。",
+                "手边这一块慢慢整理，先让眼前清爽起来。",
+                f"{character}专心收好正在处理的东西，不让桌面越理越乱。",
             ])
 
         generic_templates = [
-            f"{character}想先把眼前这件事做完，后面就不用一直惦记了。",
-            f"今天先按这个节奏来，别把小事都拖到晚上。",
-            f"{character}打算把手边的事排清楚，等会儿就能轻松一点。",
-            f"现在先不想太多，照着计划一件件来就好。",
-            f"{character}想给自己留点空档，别把一天塞得太满。",
+            f"{character}先把眼前这件事认真做好，不急着想别的。",
+            "现在只管手上这一项，按自己的节奏慢慢来。",
+            f"{character}把注意力放回当前动作，先不让思绪跑远。",
+            "眼前这一步做稳就好，不需要把自己催得太紧。",
         ]
         templates = specific_templates or generic_templates
+        if next_activity:
+            next_text = re.sub(r"^\d{1,2}:\d{2}\s*", "", next_activity).strip()
+            if next_text:
+                templates = list(templates) + [
+                    f"{character}先把眼前这件事做好，按日程再去{_trim_caption_piece(next_text, 20)}。"
+                ]
         return _shorten_caption(_caption_pick(templates, theme, schedule_time, character, user_name), 72)
     templates = {
         "morning": f"{character}想先把早餐和出门前的小事处理好，别一早就手忙脚乱。",
@@ -678,6 +707,16 @@ def _personalized_caption_fallback(theme: str, persona: dict, schedule_time: str
         "sexy": f"{character}想把状态调整好，等会儿拍的时候别太僵。",
     }
     return templates.get(theme, f"{character}想先把手边这件事做完，后面就不用一直惦记。")
+
+
+def build_caption_fallback(
+    theme: str,
+    schedule_time: str = "",
+    persona: Optional[dict] = None,
+) -> str:
+    """Build a local caption without depending on the LLM endpoint."""
+    resolved_persona = persona if isinstance(persona, dict) else _runtime_persona()
+    return _personalized_caption_fallback(theme, resolved_persona, schedule_time)
 
 
 def _caption_voice_hint(persona: dict) -> str:
@@ -1167,7 +1206,7 @@ def _extract_time_from_filename(filename: str) -> str:
     m = re.search(r'_(\d{10})\.\w+$', filename)
     if m:
         ts = int(m.group(1))
-        return time.strftime("%H:%M", time.localtime(ts))
+        return datetime.fromtimestamp(ts, configured_timezone(_GALLERY_CONFIG)).strftime("%H:%M")
     return ""
 
 
@@ -1388,7 +1427,7 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
         shutil.copy2(path, dst)
 
     # 2. Build entry for schedule_data.json
-    today = time.strftime("%Y-%m-%d")
+    today = service_today(_GALLERY_CONFIG).isoformat()
     style_name = (outfit_style or "").strip()
     base_style = style or ""  # cool/girly/sweet or empty
     source_uses_base_style = source in {"chat", "custom", "hermes_api"}
@@ -1462,6 +1501,11 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
         "outfit_keywords": str(daily_context.get("outfit_keywords") or "").strip(),
         "scene_keywords": str(daily_context.get("scene_keywords") or "").strip(),
     }
+    if source == "cron" and os.getenv("ZHUZHU_DELIVERY_PENDING", "").strip() == "1":
+        entry.update({
+            "delivery_status": "pending",
+            "delivery_updated_at": service_now(_GALLERY_CONFIG).isoformat(),
+        })
     if schedule_time_slot:
         entry["time"] = schedule_time_slot
     if generation_mode:
@@ -1510,6 +1554,7 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
         print(f"🖼️ Synced to gallery: {filename}", file=sys.stderr)
     except Exception as e:
         print(f"[gallery_sync] Failed: {e}", file=sys.stderr)
+        raise RuntimeError(f"gallery_sync_failed: {e}") from e
 
 
 def _metadata_store(path: str):
@@ -1549,6 +1594,24 @@ def update_metadata(filename: str, theme: str, prompt: str, model_name: str, ts:
             _metadata_store(p).update(_merge)
         except Exception as e:
             print(f"[metadata] Failed to update {p}: {e}", file=sys.stderr)
+
+
+def update_metadata_caption(filename: str, caption: str) -> None:
+    """Persist a caption before gallery synchronization or delivery can fail."""
+    filename = os.path.basename(str(filename or "").strip())
+    caption = repair_mojibake_text(caption).strip()
+    if not filename or not caption:
+        return
+    try:
+        def _merge(metadata):
+            entry = dict(metadata.get(filename) or {})
+            entry["caption"] = caption
+            metadata[filename] = entry
+            return metadata
+
+        _metadata_store(META_PATH).update(_merge)
+    except Exception as e:
+        print(f"[metadata] Failed to persist caption for {filename}: {e}", file=sys.stderr)
 
 
 def enhance_prompt(user_input: str, theme: Optional[str] = None) -> str:
@@ -1618,6 +1681,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         "sexy": "带点坏坏氛围的性感美照",
     }
     activity = _caption_activity(schedule_time)
+    next_activity = _next_schedule_activity(schedule_time) if activity else ""
     slot = re.match(r"^(\d{1,2}:\d{2})", str(schedule_time or "").strip())
     scene = (
         f"{slot.group(1)} 的拍照计划：{activity}" if activity and slot
@@ -1628,7 +1692,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
     character = persona.get("name") or "角色"
     user_name = persona.get("user_name") or "用户"
     caption_voice = (
-        "自然、口语、具体，像自己在心里安排下一步，不撒娇、不营业、不对任何人说话"
+        "自然、口语、具体，像自己在心里确认当前动作；只有存在真实下一项时才安排下一步，不撒娇、不营业、不对任何人说话"
         if activity
         else _caption_voice_hint(persona)
     )
@@ -1637,13 +1701,19 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         if activity
         else f"读者称呼“{user_name}”，可以自然亲近但不要写成固定营业话术。"
     )
+    next_schedule_rule = (
+        f"唯一允许提到的后续安排是：{next_activity}。不得改写成其他会议、餐饮或任务。"
+        if next_activity
+        else "没有提供后续日程时，只写当前动作和当下念头，禁止自行编造下一项安排。"
+    )
     system_msg = (
         f"你正在以“{character}”的口吻，为刚拍的照片写一句自然的小心思。{address_rule}"
         f"下面的口吻只作为说话习惯参考，不要为了风格写得文艺或矫饰：{caption_voice}。"
-        "小心思要像她当时脑子里冒出来的普通念头：接下来要干嘛、手上这件事怎么安排、有什么小担心或小期待。"
+        "小心思要像她当时脑子里冒出来的普通念头：手上这件事怎么安排、有什么小担心或小期待。"
         "可以自然带一点语气词，但整体要口语、具体、轻松，不要故意可爱、不要像朋友圈文案。"
         "但不要直接复述、罗列或解释 SOUL、人设、身份、关系定义或性格设定原文，只用它来决定说话的口吻。"
         "如果提供了具体日程，必须严格贴合该时间、地点和活动，不要写与日程冲突的起床、被窝、睡前等内容。"
+        f"{next_schedule_rule}"
         "内容优先聚焦当前动作和接下来的计划，不要只写景物、光线、心情或穿搭点评。"
         "不要复述当前日程原句，不要写“刚刚X时拍下这一刻，想把穿搭和心情分享给Y”这类模板句。"
         "禁止使用“留了一张”“放进画廊”“收进画廊”“现场感”“不能不存”等记录/收藏话术。"
@@ -1669,9 +1739,10 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
             print(f"[caption] image compress failed: {e}", file=sys.stderr)
             img_b64 = None
 
+    next_context = f"下一项真实日程：{next_activity}。" if next_activity else "没有提供下一项日程，不得虚构。"
     text_user_content = (
-        f"当前日程：{scene}。请写一条短小心思，像当时心里真实想的一句话，"
-        "具体到正在做的事或下一步安排，不要文艺比喻。"
+        f"当前日程：{scene}。{next_context}请写一条短小心思，像当时心里真实想的一句话，"
+        "具体到正在做的事；只有给出真实下一项时才可以提到下一步，不要文艺比喻。"
     )
     request_variants: list[tuple[str, object]] = []
     if img_b64 and not activity:

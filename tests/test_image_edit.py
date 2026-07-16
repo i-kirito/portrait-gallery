@@ -20,6 +20,7 @@ os.environ["HERMES_GALLERY_LOG"] = str(Path(_TEST_LOG_DIR.name) / "gallery.log")
 
 from image_editing import (  # noqa: E402
     build_precision_image_edit_prompt,
+    normalize_image_edit_target,
     replace_image_schedule_description,
     rewrite_image_edit_schedule_description,
 )
@@ -48,6 +49,27 @@ class PrecisionImageEditPromptTest(unittest.TestCase):
         )
 
         self.assertEqual("10:27 坐在雨后的窗边整理设计稿", updated)
+
+    def test_schedule_only_prompt_changes_visible_activity(self):
+        prompt = build_precision_image_edit_prompt(
+            "background",
+            "",
+            previous_schedule_description="在晨光中进行全身拉伸唤醒肌肉",
+            schedule_description="坐在窗边喝咖啡并阅读杂志",
+        )
+
+        self.assertIn("UPDATED SCHEDULE ACTIVITY: 坐在窗边喝咖啡并阅读杂志", prompt)
+        self.assertIn("Change the subject's action and pose", prompt)
+        self.assertIn("scene/background", prompt)
+        self.assertIn("Preserve the person's identity", prompt)
+        self.assertNotIn("EDIT SCOPE: 背景 ONLY", prompt)
+
+    def test_schedule_target_is_internal_only(self):
+        self.assertEqual("", normalize_image_edit_target("schedule"))
+        self.assertEqual(
+            "schedule",
+            normalize_image_edit_target("schedule", allow_internal=True),
+        )
 
     def test_background_edit_rewrites_existing_location_in_place(self):
         updated = rewrite_image_edit_schedule_description(
@@ -204,6 +226,8 @@ class PortraitGalleryImageEditTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual("48x64", call.kwargs["size"])
             self.assertTrue(call.kwargs["precise_edit"])
             self.assertTrue(call.kwargs["prompt_final"])
+            self.assertIn("UPDATED SCHEDULE ACTIVITY", call.args[0])
+            self.assertIn("坐在繁华的商业街旁边的阳光咖啡馆", call.args[0])
             self.assertEqual(original_filename, saved_metadata["edited.png"]["edited_from"])
             self.assertEqual(original_filename, saved_metadata["edited.png"]["replaced_image_filename"])
             self.assertEqual(
@@ -211,6 +235,116 @@ class PortraitGalleryImageEditTest(unittest.IsolatedAsyncioTestCase):
                 saved_metadata["edited.png"]["schedule_time"],
             )
             delete_image_files.assert_called_once_with(original_filename)
+
+    async def test_schedule_only_edit_regenerates_image_and_updates_card(self):
+        with tempfile.TemporaryDirectory(prefix="portrait-gallery-schedule-edit-main-") as temp_dir:
+            data_dir = Path(temp_dir) / "data"
+            image_dir = data_dir / "images"
+            image_dir.mkdir(parents=True)
+            original_filename = "original.png"
+            original_path = image_dir / original_filename
+            Image.new("RGB", (48, 64), (235, 225, 215)).save(original_path)
+            ScheduleStore(str(data_dir)).save({
+                original_filename: {
+                    "id": original_filename,
+                    "date": "2026-07-16",
+                    "time": "07:12",
+                    "image_filename": original_filename,
+                    "image_path": f"/images/{original_filename}",
+                    "outfit": "风格：酷飒风 穿搭：黑色工装造型",
+                    "status": "ok",
+                    "source": "cron",
+                    "schedule_time": "07:12 在晨光中进行全身拉伸唤醒肌肉",
+                },
+            })
+            (data_dir / "image_metadata.json").write_text(
+                json.dumps({original_filename: {"model": "gpt-image-2"}}),
+                encoding="utf-8",
+            )
+            saved_metadata = {}
+            delete_image_files = Mock(return_value=([original_filename], []))
+            app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+            app.data_dir = str(data_dir)
+            app.config = {}
+            app.web_server = SimpleNamespace(
+                _image_file_path=lambda filename: str(original_path) if filename == original_filename else "",
+                _update_image_metadata_entry=lambda filename, entry: saved_metadata.update({filename: entry}),
+                _delete_image_files=delete_image_files,
+            )
+            app.image_gen = SimpleNamespace(generate=AsyncMock(return_value="edited.png"))
+
+            result = await app.edit_image(
+                original_filename,
+                "background",
+                "",
+                "坐在窗边喝咖啡并阅读杂志",
+            )
+
+            prompt = app.image_gen.generate.await_args.args[0]
+            self.assertEqual("ok", result["status"])
+            self.assertEqual("schedule", result["edit_target"])
+            self.assertEqual("日程", result["edit_target_label"])
+            self.assertEqual("坐在窗边喝咖啡并阅读杂志", result["edit_instruction"])
+            self.assertEqual("07:12 坐在窗边喝咖啡并阅读杂志", result["schedule_time"])
+            self.assertIn("UPDATED SCHEDULE ACTIVITY: 坐在窗边喝咖啡并阅读杂志", prompt)
+            self.assertIn("Change the subject's action and pose", prompt)
+            self.assertEqual("schedule", saved_metadata["edited.png"]["edit_target"])
+            delete_image_files.assert_called_once_with(original_filename)
+
+    async def test_edit_discards_result_when_source_is_replaced_during_generation(self):
+        with tempfile.TemporaryDirectory(prefix="portrait-gallery-edit-conflict-") as temp_dir:
+            data_dir = Path(temp_dir) / "data"
+            image_dir = data_dir / "images"
+            image_dir.mkdir(parents=True)
+            original_filename = "original.png"
+            original_path = image_dir / original_filename
+            Image.new("RGB", (48, 64), (225, 215, 205)).save(original_path)
+            store = ScheduleStore(str(data_dir))
+            store.save({
+                "card": {
+                    "id": original_filename,
+                    "date": "2026-07-16",
+                    "time": "10:27",
+                    "image_filename": original_filename,
+                    "image_path": f"/images/{original_filename}",
+                    "status": "ok",
+                    "source": "cron",
+                    "schedule_time": "10:27 原始活动",
+                },
+            })
+            (data_dir / "image_metadata.json").write_text("{}", encoding="utf-8")
+            update_metadata = Mock()
+            delete_image_files = Mock(return_value=(["edited.png"], []))
+
+            async def replace_source_during_generate(*_args, **_kwargs):
+                store.update(lambda entries: {
+                    **entries,
+                    "card": {
+                        **entries["card"],
+                        "id": "rerolled.png",
+                        "image_filename": "rerolled.png",
+                        "image_path": "/images/rerolled.png",
+                    },
+                })
+                return "edited.png"
+
+            app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+            app.data_dir = str(data_dir)
+            app.config = {}
+            app.web_server = SimpleNamespace(
+                _image_file_path=lambda filename: str(original_path) if filename == original_filename else "",
+                _update_image_metadata_entry=update_metadata,
+                _delete_image_files=delete_image_files,
+            )
+            app.image_gen = SimpleNamespace(generate=AsyncMock(side_effect=replace_source_during_generate))
+
+            result = await app.edit_image(original_filename, "background", "改成雨后街道")
+
+            self.assertEqual("failed", result["status"])
+            self.assertEqual("edit_source_changed", result["error"])
+            self.assertEqual("rerolled.png", store.load()["card"]["image_filename"])
+            update_metadata.assert_not_called()
+            delete_image_files.assert_called_once_with("edited.png")
 
     async def test_reroll_precision_edit_uses_current_image_as_edit_source(self):
         with tempfile.TemporaryDirectory(prefix="portrait-gallery-edit-reroll-") as temp_dir:
@@ -357,6 +491,53 @@ class ImageEditEndpointTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(400, invalid.status)
         self.assertEqual(400, too_long.status)
 
+    async def test_endpoint_allows_schedule_only_image_edit(self):
+        with tempfile.TemporaryDirectory(prefix="portrait-gallery-schedule-edit-api-") as temp_dir:
+            server = self._make_server(Path(temp_dir))
+            server.on_edit_image = AsyncMock(return_value={
+                "id": "edited.png",
+                "date": "2026-07-16",
+                "time": "07:12",
+                "image_filename": "edited.png",
+                "image_path": "/images/edited.png",
+                "status": "ok",
+                "source": "image_edit",
+                "replaced_image_filename": "original.png",
+                "schedule_time": "07:12 坐在窗边喝咖啡并阅读杂志",
+            })
+            test_server = TestServer(server.app)
+            await test_server.start_server(access_log=None)
+            client = TestClient(test_server)
+            try:
+                response = await client.post(
+                    "/api/images/original.png/edit",
+                    json={
+                        "target": "background",
+                        "instruction": "",
+                        "schedule_description": "坐在窗边喝咖啡并阅读杂志",
+                    },
+                )
+                missing_both = await client.post(
+                    "/api/images/original.png/edit",
+                    json={"target": "background", "instruction": ""},
+                )
+                direct_schedule_target = await client.post(
+                    "/api/images/original.png/edit",
+                    json={"target": "schedule", "instruction": "坐在窗边喝咖啡"},
+                )
+            finally:
+                await client.close()
+
+        self.assertEqual(200, response.status)
+        self.assertEqual(400, missing_both.status)
+        self.assertEqual(400, direct_schedule_target.status)
+        server.on_edit_image.assert_awaited_once_with(
+            "original.png",
+            "background",
+            "",
+            "坐在窗边喝咖啡并阅读杂志",
+        )
+
 
 class ImageEditFrontendContractTest(unittest.TestCase):
     def test_modal_uses_edit_button_and_precision_endpoint(self):
@@ -373,10 +554,16 @@ class ImageEditFrontendContractTest(unittest.TestCase):
         submit = html[submit_start:submit_end]
         self.assertIn("replaceLocalImage(replacedImage, data)", submit)
         self.assertIn("scheduleManuallyChanged ? {schedule_description:scheduleDescription} : {}", submit)
+        self.assertIn("if (!instruction && !scheduleManuallyChanged)", submit)
+        self.assertIn("请输入修改内容或调整日程说明", submit)
         self.assertIn("图片与日程说明已更新", submit)
         self.assertIn("已替换当前图片", submit)
+        self.assertIn("已开始后台编辑，可关闭窗口继续浏览", submit)
+        self.assertIn("const editDialogStillOpen", submit)
+        self.assertIn("if (editDialogStillOpen)", submit)
         self.assertNotIn("原图已保留", submit)
         self.assertNotIn("revealGeneratedGalleryEntry", submit)
+        self.assertNotIn("closeImageEdit(true)", submit)
         self.assertIn("function isPrecisionImageEditEntry(e)", html)
         self.assertIn('generationType === "image_edit"', html)
         self.assertIn('if (isPrecisionImageEditEntry(e)) return "";', html)
@@ -386,8 +573,29 @@ class ImageEditFrontendContractTest(unittest.TestCase):
         self.assertIn("grid-template-rows:minmax(0,1fr) auto", html)
         self.assertIn("min-width:0;min-height:0;overflow-y:auto", html)
         self.assertIn("border-top:1px solid #f0e8f1", html)
+        self.assertIn("display:flex;flex-direction:column;padding:15px", html)
         self.assertIn("max-height:none;object-fit:cover;object-position:center", html)
         self.assertIn("grid-template-rows:auto clamp(300px,52vh,500px) auto", html)
+        self.assertNotIn("if (imageEditBusy && !force) return", html)
+        self.assertIn("cancel.textContent = imageEditBusy ? '关闭窗口' : '取消';", html)
+        self.assertIn("document.getElementById('imageEditCloseBtn').disabled = false;", html)
+        self.assertIn("<span>后台编辑中</span>", html)
+
+    def test_gallery_card_shows_favorite_reroll_edit_and_delete_actions(self):
+        html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")
+        grid_start = html.index(': `<div class="gallery-grid">')
+        grid_end = html.index("content.insertAdjacentHTML", grid_start)
+        gallery_grid = html[grid_start:grid_end]
+
+        self.assertIn('<span class="ca-label">收藏</span>', gallery_grid)
+        self.assertIn('<span class="ca-label">编辑</span>', gallery_grid)
+        self.assertIn('<span class="ca-label">删除</span>', gallery_grid)
+        self.assertNotIn('<span class="ca-label">分享</span>', gallery_grid)
+        self.assertNotIn('<span class="ca-label">详情</span>', gallery_grid)
+        self.assertIn("renderRerollButton(e, {card: true})", gallery_grid)
+        self.assertIn('<span class="ca-label">重抽</span>', html)
+        self.assertIn("openImageEditForImage(${imageFilenameArg})", gallery_grid)
+        self.assertIn("grid-template-columns: repeat(4, minmax(0, 1fr))", html)
 
     def test_character_style_is_not_relabelled_as_group_chat(self):
         html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")

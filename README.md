@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.3.4**
+当前版本：**v1.3.5**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -63,7 +63,7 @@ python3 main.py
 
 访问 **http://localhost:18889** 即可使用画廊。
 
-首次部署时，本机打开 Web UI 会先要求设置访问密码；也可以提前通过 `GALLERY_PASSWORD` 环境变量预置密码。非本机访问需要输入密码，验证通过后服务端会把当前访问 IP 记录到 `data/gallery_auth.json`。
+首次部署时，本机打开 Web UI 会先要求设置访问密码；也可以提前通过 `GALLERY_PASSWORD` 环境变量预置密码。非本机访问需要输入密码，验证通过后服务端会签发独立的 7 天会话 Cookie；修改密码会立即使旧会话失效。
 
 ### 5. 部署方式
 
@@ -96,7 +96,7 @@ curl http://localhost:18889/api/health
 如果要使用已经发布到 Docker Hub/GHCR 的镜像，通过 `PORTRAIT_GALLERY_IMAGE` 指定：
 
 ```bash
-PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.4 docker compose up -d
+PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.5 docker compose up -d
 curl http://localhost:18889/api/health
 ```
 
@@ -293,15 +293,20 @@ curl -X POST http://localhost:18889/api/config/keys \
 
 Docker Compose 会读取本地 `.env` 并把 `GALLERY_PASSWORD` 传入容器；不要把 `.env` 提交到仓库。
 
-远程命令行访问受保护 API 时，先从同一访问 IP 登录一次：
+远程命令行访问受保护 API 时，需要保存登录返回的签名会话 Cookie：
 
 ```bash
-curl -X POST http://localhost:18889/api/auth/login \
+curl -c /tmp/portrait-gallery.cookies \
+  -X POST http://localhost:18889/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"password": "your-gallery-password"}'
 
-curl http://localhost:18889/api/gallery
+curl -b /tmp/portrait-gallery.cookies \
+  http://localhost:18889/api/gallery
 ```
+
+脚本也可以从登录响应读取 `session_token`，后续通过 `X-Gallery-Session` 或
+`Authorization: Bearer SESSION_TOKEN` 请求，不需要依赖固定来源 IP。
 
 ### Hermes 生图文案
 
@@ -318,8 +323,8 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 ## 🖥️ 前端功能
 
 - **今日 Tab** — 横版大卡片，直接展示穿搭/日程/caption，今日生图计划可双击编辑活动内容
-- **全部 Tab** — 6 列网格，点击弹窗查看详情（收藏/分享/删除）
-- **收藏 Tab** — 筛选已收藏图片
+- **全部 Tab** — 响应式网格，卡片支持收藏、重抽、编辑和删除
+- **收藏 Tab** — 显示全图库真实收藏总数，并一次展示全部收藏图片
 - **衣柜 Tab** — 展示收藏穿搭方案和 GPT 生成的衣架参考图，支持编辑、重生和图生图引用
 - **角色 Tab** — 管理本地角色、人设、外貌、绑定模型、单人照、设定图和多角色合照
 - **群聊 Tab** — 创建群聊房间、编辑参与角色、保存消息、删除/清空上下文、回溯重发回复和触发群聊图片生成
@@ -327,6 +332,17 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥、三级 LLM 模型链、Gitee 回退、日程风格和升级选项
 
 ## 🧾 Release Notes
+
+### v1.3.5
+
+- 画廊分页改用稳定游标，删除已加载卡片后不会漏图；收藏角标使用服务端真实总数，收藏 Tab 会自动取完并直接展示全部收藏图片。
+- 图库卡片恢复“重抽”按钮，精准编辑支持后台运行和日程说明同步修改；提交前会核验源卡版本，避免旧编辑结果覆盖重抽结果或复活已删除卡片。
+- 今日穿搭方案支持直接编辑发型与穿搭，并同步更新仍未执行的生图任务；衣柜参考资料、生成中状态和首次底模引导的持久化更稳健。
+- 定时图片发送新增 `pending / sending / sent / failed` 持久状态，服务重启可把已生成但未送达的原图恢复为手动重发，不会重复生图。
+- Web 认证从按 IP 授权升级为签名会话 Cookie/Header，密码变化会使旧会话失效；运行时模型与集成配置写入独立原子文件，局域网域名访问继续受同源保护。
+- 在线升级改为稳定快进并保留无关文件的 staged 状态；图库、参考资料和元数据继续使用锁内原子更新。
+- 真实日期提示会区分完整官方日历年份与零散自定义日期；自建年度假期表需在 `schedule.calendar.complete_years` 明确声明完整年份。
+- 设置、日志、图片编辑弹窗补充焦点管理和触控尺寸，移动端风格标签改为横向滚动且卡片长标签会安全截断。
 
 ### v1.3.4
 

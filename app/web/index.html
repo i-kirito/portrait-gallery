@@ -1958,6 +1958,26 @@ textarea:focus-visible,
   grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
   gap: 12px;
 }
+.gallery-load-more {
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:12px;
+  margin:24px auto 4px;
+  color:#746c78;
+  font-size:13px;
+}
+.gallery-load-more button {
+  min-height:40px;
+  padding:0 18px;
+  border:1px solid #d9d0dc;
+  border-radius:8px;
+  background:#fff;
+  color:#3f3742;
+  cursor:pointer;
+}
+.gallery-load-more button:hover { border-color:#b58eac;background:#faf7fb; }
+.gallery-load-more button:disabled { cursor:wait;opacity:.65; }
 
 .gallery-card {
   background: #fff;
@@ -2015,6 +2035,8 @@ textarea:focus-visible,
   position: absolute;
   top: 8px;
   right: 8px;
+  box-sizing: border-box;
+  max-width: calc(100% - 72px);
   background: linear-gradient(135deg, #e91e63, #9c27b0);
   color: #fff;
   padding: 2px 8px;
@@ -2024,6 +2046,9 @@ textarea:focus-visible,
   z-index: 2;
   cursor: pointer;
   transition: opacity 0.15s;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .gallery-card .card-style-tag:hover { opacity: 0.8; }
 .gallery-card .card-body {
@@ -2098,7 +2123,7 @@ textarea:focus-visible,
 }
 .gallery-card .card-body .card-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
   margin-top: 7px;
   padding-top: 7px;
@@ -2144,6 +2169,12 @@ textarea:focus-visible,
   background: #fff1f7;
   transform: translateY(-1px);
   box-shadow: 0 6px 14px rgba(233,30,99,0.12);
+}
+.gallery-card .card-body .card-actions .ca-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  transform: none;
+  box-shadow: none;
 }
 .gallery-card .card-body .card-actions .ca-btn.liked {
   border-color: #ff4f93;
@@ -2605,6 +2636,32 @@ textarea:focus-visible,
   border-color: #e53935;
   color: #e53935;
   background: #ffebee;
+}
+
+@media (max-width: 560px) {
+  .style-filter-bar {
+    flex-wrap: nowrap;
+    gap: 7px;
+    max-width: none;
+    margin: 0 -14px 8px;
+    padding: 7px 14px 9px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-padding-inline: 14px;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .style-filter-bar::-webkit-scrollbar {
+    display: none;
+  }
+  .style-pill {
+    flex: 0 0 auto;
+    min-height: 36px;
+    padding: 6px 13px;
+    white-space: nowrap;
+    scroll-snap-align: start;
+  }
 }
 
 /* ===== Loading / Empty / Error ===== */
@@ -4949,7 +5006,7 @@ textarea:focus-visible,
 .gallery-grid.cols-4 .gallery-card .card-body .card-actions .ca-btn { min-height: 33px; font-size: 12px; padding: 0 7px; }
 .gallery-grid.cols-4 .gallery-card .card-date-tag { font-size: 12px; padding: 3px 9px; }
 
-@container (max-width: 168px) {
+@container (max-width: 230px) {
   .gallery-card .card-body .card-actions {
     gap: 4px;
   }
@@ -4960,7 +5017,10 @@ textarea:focus-visible,
     font-size: 11px;
   }
   .gallery-card .card-body .card-actions .ca-btn .ca-icon {
-    font-size: 12px;
+    font-size: 14px;
+  }
+  .gallery-card .card-body .card-actions .ca-btn .ca-label {
+    display: none;
   }
 }
 
@@ -5065,6 +5125,10 @@ textarea:focus-visible,
 .egg-outfit-item:hover { background: #fff; border-color: rgba(228,202,255,0.95); }
 .egg-outfit-label { font-size: 11px; color: #a78bfa; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
 .egg-outfit-value { font-size: 14px; color: #333; line-height: 1.58; overflow-wrap: anywhere; }
+.egg-outfit-value.editable { cursor: text; border-radius: 8px; padding: 5px 7px; margin: -5px -7px; transition: background 0.16s ease, box-shadow 0.16s ease; }
+.egg-outfit-value.editable:hover { background: rgba(139,92,246,0.08); box-shadow: inset 0 0 0 1px rgba(139,92,246,0.14); }
+.egg-outfit-value.editing { padding: 0; margin: 0; }
+.egg-outfit-edit-input { min-height: 66px; max-height: 190px; }
 .egg-outfit-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
 .egg-outfit-head .egg-outfit-label { margin-bottom: 0; }
 .egg-style-manage {
@@ -5179,8 +5243,8 @@ textarea:focus-visible,
 }
 
 /* 📝 提示词弹窗 */
-.prompt-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(6px); z-index: 10000; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
-.prompt-overlay.show { opacity: 1; pointer-events: auto; }
+.prompt-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(6px); z-index: 10000; display: flex; align-items: center; justify-content: center; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.3s, visibility 0s linear 0.3s; }
+.prompt-overlay.show { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; }
 .prompt-card { background: #fff; border-radius: 18px; width: 480px; max-height: 75vh; display: flex; flex-direction: column; box-shadow: 0 30px 80px rgba(0,0,0,0.25); transform: scale(0.9); transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1); }
 .prompt-overlay.show .prompt-card { transform: scale(1); }
 .prompt-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid #f0e4f4; font-size: 15px; font-weight: 700; color: #7c3aed; }
@@ -5253,6 +5317,20 @@ textarea:focus-visible,
   .log-controls { width: 100%; margin-left: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .log-toggle { grid-column: 1 / -1; justify-content: flex-end; }
   .log-footer .prompt-copy-btn { width: 100%; min-width: 0; }
+}
+@media (pointer: coarse) {
+  .tc-btn,
+  .ca-btn,
+  .mbtn,
+  .egg-photo-action-btn,
+  .sk-settings-tab,
+  .cg-size-btn,
+  .prompt-copy-btn,
+  .prompt-close,
+  .settings-btn,
+  .gallery-load-more button { min-height: 44px; }
+  .prompt-close,
+  .settings-btn { min-width: 44px; }
 }
 .sk-endpoints-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
 .sk-endpoint-row { display: grid; grid-template-columns: 96px minmax(0, 1fr) minmax(0, 1fr) auto; gap: 7px; align-items: center; }
@@ -5404,7 +5482,7 @@ textarea:focus-visible,
 
 <div class="header">
   <div class="header-left">
-      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.3.4</span></h1>
+      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.3.5</span></h1>
   </div>
   <div class="tabs">
     <button class="tab has-badge" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="showUnfavoriteGallery(event)"><span class="tab-label"><span class="tab-icon" aria-hidden="true">✨</span><span class="tab-text">全部</span></span><span class="tab-badge" id="badge-all">0</span></button>
@@ -5705,9 +5783,9 @@ textarea:focus-visible,
 </div>
 
 <!-- Settings Modal -->
-<div class="sk-overlay" id="skOverlay" onclick="if(event.target===this)closeSettings()">
-  <div class="sk-modal" onclick="event.stopPropagation()">
-    <h2>⚙️ 设置</h2>
+<div class="sk-overlay" id="skOverlay" aria-hidden="true" onclick="if(event.target===this)closeSettings()">
+  <div class="sk-modal" role="dialog" aria-modal="true" aria-labelledby="skDialogTitle" tabindex="-1" onclick="event.stopPropagation()">
+    <h2 id="skDialogTitle">⚙️ 设置</h2>
     <div class="sk-settings-tabs" role="tablist" aria-label="设置分类">
       <button type="button" class="sk-settings-tab active" data-settings-panel="persona" onclick="setSettingsPanel('persona')">人设</button>
       <button type="button" class="sk-settings-tab" data-settings-panel="model" onclick="setSettingsPanel('model')">模型</button>
@@ -5935,7 +6013,7 @@ textarea:focus-visible,
           <span class="sk-update-title">版本与服务</span>
           <span class="sk-update-desc">检查代码更新，或重新加载当前服务</span>
         </div>
-        <span class="sk-version-text">当前 <strong id="settingsVersion">v1.3.4</strong></span>
+        <span class="sk-version-text">当前 <strong id="settingsVersion">v1.3.5</strong></span>
       </div>
       <div class="sk-update-row">
         <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
@@ -5958,9 +6036,9 @@ textarea:focus-visible,
 <div class="toast" id="toast"></div>
 
 <!-- Custom Gen Modal -->
-<div class="cg-overlay" id="cgOverlay" onclick="if(event.target===this)closeCustomGen()">
-  <div class="cg-modal" onclick="event.stopPropagation()">
-    <h2>🎀 穿搭生成</h2>
+<div class="cg-overlay" id="cgOverlay" aria-hidden="true" onclick="if(event.target===this)closeCustomGen()">
+  <div class="cg-modal" role="dialog" aria-modal="true" aria-labelledby="cgDialogTitle" tabindex="-1" onclick="event.stopPropagation()">
+    <h2 id="cgDialogTitle">🎀 穿搭生成</h2>
     <div class="cg-field">
       <div class="cg-label-row">
         <label for="cgPrompt">穿搭描述</label>
@@ -6217,6 +6295,17 @@ if (document.readyState === "loading") {
 
 let allEntries = [];
 let todayData = null;  // {date, photos: [...], schedule, outfit_style}
+let galleryNextCursor = "";
+let galleryHasMore = false;
+let galleryTotal = 0;
+let galleryFavoriteTotal = null;
+let galleryViewTotal = 0;
+let galleryStyles = [];
+let galleryLoadedTagFilter = null;
+let galleryLoadedFavoritesOnly = false;
+let galleryPageLoading = false;
+let galleryReloadPending = "";
+const galleryDetailRequests = new Map();
 let currentTagFilter = "";
 let showFavoritesOnly = false;
 let showUnfavoritesOnly = false;
@@ -6243,6 +6332,87 @@ let availableLlmModels = [];
 let llmModelsRequest = null;
 let llmModelChain = [];
 let scheduleEggCache = { html: "", dateText: "", updatedAt: 0 };
+
+const accessibleDialogState = new WeakMap();
+
+function dialogFocusableElements(overlay) {
+  return Array.from(overlay.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+  )).filter(element => element.getAttribute('aria-hidden') !== 'true' && element.getClientRects().length > 0);
+}
+
+function closeAccessibleDialog(overlay) {
+  if (!overlay) return;
+  if (overlay.id === 'skOverlay') closeSettings();
+  else if (overlay.id === 'cgOverlay') closeCustomGen();
+  else if (overlay.id === 'promptOverlay') closePrompt();
+  else if (overlay.id === 'liveLogOverlay') closeLiveLogs();
+  else if (overlay.id === 'modalOverlay') closeModal();
+}
+
+function handleAccessibleDialogKeydown(event) {
+  const overlay = event.currentTarget;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    closeAccessibleDialog(overlay);
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  const focusable = dialogFocusableElements(overlay);
+  if (!focusable.length) {
+    event.preventDefault();
+    const dialog = overlay.querySelector('[role="dialog"]');
+    if (dialog) dialog.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function activateAccessibleDialog(overlay, preferredSelector = '', returnFocusTarget = null) {
+  if (!overlay) return;
+  const returnFocus = returnFocusTarget instanceof HTMLElement
+    ? returnFocusTarget
+    : (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  accessibleDialogState.set(overlay, { returnFocus });
+  overlay.setAttribute('aria-hidden', 'false');
+  overlay.removeEventListener('keydown', handleAccessibleDialogKeydown);
+  overlay.addEventListener('keydown', handleAccessibleDialogKeydown);
+  const focusDialogTarget = () => {
+    if (!accessibleDialogState.has(overlay) || overlay.getAttribute('aria-hidden') === 'true') return;
+    const preferred = preferredSelector ? overlay.querySelector(preferredSelector) : null;
+    const target = preferred || dialogFocusableElements(overlay)[0] || overlay.querySelector('[role="dialog"]');
+    if (target && typeof target.focus === 'function') target.focus();
+  };
+  requestAnimationFrame(() => {
+    focusDialogTarget();
+    requestAnimationFrame(() => {
+      if (!overlay.contains(document.activeElement)) focusDialogTarget();
+    });
+  });
+}
+
+function deactivateAccessibleDialog(overlay) {
+  if (!overlay) return;
+  overlay.setAttribute('aria-hidden', 'true');
+  overlay.removeEventListener('keydown', handleAccessibleDialogKeydown);
+  const state = accessibleDialogState.get(overlay);
+  accessibleDialogState.delete(overlay);
+  const returnFocus = state && state.returnFocus;
+  if (returnFocus && document.contains(returnFocus) && typeof returnFocus.focus === 'function') {
+    requestAnimationFrame(() => {
+      if (!accessibleDialogState.has(overlay)) returnFocus.focus();
+    });
+  }
+}
 let scheduleEggRequest = null;
 let keywordCloudCache = { payload: null, updatedAt: 0 };
 const appDisplay = {
@@ -6327,11 +6497,11 @@ function clearFilter() {
 }
 
 function filterByTag(tag) {
-  currentTagFilter = tag.replace(/^#/, '');
+  currentTagFilter = String(tag || '').replace(/^#/, '').trim();
   switchTab('gallery');
 }
 
-function showUnfavoriteGallery(event) {
+async function showUnfavoriteGallery(event) {
   if (event) {
     event.preventDefault();
     event.stopPropagation();
@@ -6353,6 +6523,12 @@ function showUnfavoriteGallery(event) {
   showFavoritesOnly = false;
   showUnfavoritesOnly = true;
   showTodayOnly = false;
+  if (galleryLoadedFavoritesOnly) {
+    await loadGallery({ skipTabSwitch: true });
+    showFavoritesOnly = false;
+    showUnfavoritesOnly = true;
+    showTodayOnly = false;
+  }
   renderGallery();
 }
 
@@ -6481,7 +6657,15 @@ function renderScheduleItemHtml(slot, imgId) {
 
 function renderRerollButton(entry, options = {}) {
   const imgId = entry && entry.image_filename;
-  if (!imgId || !entry.prompt) return "";
+  const hasPrompt = Boolean(entry && (entry.prompt || entry.has_prompt === true));
+  if (!imgId) return "";
+  if (options.card) {
+    if (!hasPrompt) {
+      return `<button type="button" class="ca-btn card-reroll-btn" disabled title="暂无提示词，无法重抽" aria-label="暂无提示词，无法重抽"><i class="fa-solid fa-rotate-right ca-icon" aria-hidden="true"></i><span class="ca-label">重抽</span></button>`;
+    }
+    return `<button type="button" class="ca-btn card-reroll-btn" data-img="${escapeAttr(imgId)}" onclick="rerollImage(this.dataset.img,event,this)" title="重抽图片" aria-label="重抽图片"><i class="fa-solid fa-rotate-right ca-icon" aria-hidden="true"></i><span class="ca-label">重抽</span></button>`;
+  }
+  if (!hasPrompt) return "";
   const idAttr = options.id ? ` id="${escapeAttr(options.id)}"` : "";
   const onClick = options.modal
     ? "rerollModalImage(event)"
@@ -6497,6 +6681,17 @@ function matchesOutfitStyleFilter(e, filterLower) {
   if (rawStyle && rawStyle.toLowerCase() === needle) return true;
   if (displayStyle && displayStyle.toLowerCase() === needle) return true;
   return needle === "自定义".toLowerCase() && isBaseModelStyle(rawStyle);
+}
+
+function matchesGalleryTagFilter(e, filterValue) {
+  const filterLower = String(filterValue || "").trim().toLowerCase();
+  if (!filterLower) return true;
+  if (matchesOutfitStyleFilter(e, filterLower)) return true;
+  const tags = String((e && e.caption) || "").match(/#[^\s#]+/g) || [];
+  return tags.some(tag => (
+    tag.toLowerCase() === filterLower
+    || tag.slice(1).toLowerCase() === filterLower
+  ));
 }
 
 function showToast(msg, d = 3000) {
@@ -7304,7 +7499,21 @@ function upsertGeneratedGalleryEntry(entry) {
   const normalized = Object.assign({}, entry, { image_filename: filename });
   const index = allEntries.findIndex(item => item && item.image_filename === filename);
   if (index >= 0) allEntries[index] = Object.assign({}, allEntries[index], normalized);
-  else allEntries.unshift(normalized);
+  else {
+    allEntries.unshift(normalized);
+    const loaded = allEntries.filter(item => item && item.image_filename).length;
+    const currentTotal = Number.isFinite(galleryTotal) ? galleryTotal : 0;
+    galleryTotal = Math.max(loaded, currentTotal + 1);
+    if (!currentTagFilter || matchesGalleryTagFilter(normalized, currentTagFilter)) {
+      const loadedView = allEntries.filter(item => (
+        item && item.image_filename && matchesGalleryTagFilter(item, currentTagFilter)
+      )).length;
+      const currentViewTotal = Number.isFinite(galleryViewTotal) ? galleryViewTotal : 0;
+      galleryViewTotal = Math.max(loadedView, currentViewTotal + 1);
+    }
+    const styleLabel = displayOutfitStyle(normalized);
+    if (styleLabel && !galleryStyles.includes(styleLabel)) galleryStyles.push(styleLabel);
+  }
 }
 
 async function appendGeneratedImageToGroupChatRoom(roomIdValue, entry, characterIds = []) {
@@ -8360,10 +8569,19 @@ function updateBadges() {
   const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
   // Only count image entries (exclude date-keyed entries that have no image_filename)
   const imageEntries = allEntries.filter(e => e.image_filename);
-  const allCount = imageEntries.length;
-  const favCount = imageEntries.filter(e => e.favorite === true).length;
+  const allCount = Math.max(
+    imageEntries.length,
+    Number.isFinite(galleryTotal) ? galleryTotal : 0
+  );
+  const loadedFavCount = imageEntries.filter(e => e.favorite === true).length;
+  const favCount = Number.isFinite(galleryFavoriteTotal)
+    ? galleryFavoriteTotal
+    : loadedFavCount;
   // Today badge: only count web and cron sources (not import)
-  const todayCount = imageEntries.filter(e => e.date === today && (e.source === 'web' || e.source === 'cron')).length;
+  const todayEntries = todayData && Array.isArray(todayData.photos)
+    ? todayData.photos
+    : imageEntries;
+  const todayCount = todayEntries.filter(e => e.date === today && (e.source === 'web' || e.source === 'cron')).length;
   const bAll = document.getElementById("badge-all");
   const bFav = document.getElementById("badge-favorites");
   const bToday = document.getElementById("badge-today");
@@ -8405,11 +8623,39 @@ function updateLocalFavorite(imgId, isFavorite) {
   return changed;
 }
 
+function adjustGalleryFavoriteTotal(previousFavorite, nextFavorite) {
+  if (!Number.isFinite(galleryFavoriteTotal) || previousFavorite === nextFavorite) return;
+  galleryFavoriteTotal = Math.max(
+    0,
+    galleryFavoriteTotal + (nextFavorite ? 1 : -1)
+  );
+}
+
 function removeLocalImage(imgId) {
+  const previousTotal = Number.isFinite(galleryTotal) ? galleryTotal : 0;
+  const previousViewTotal = Number.isFinite(galleryViewTotal) ? galleryViewTotal : 0;
+  const removedEntry = allEntries.find(e => e.image_filename === imgId || e.date === imgId)
+    || (todayData && Array.isArray(todayData.photos)
+      ? todayData.photos.find(e => e.image_filename === imgId || e.date === imgId)
+      : null);
+  const removedFromView = !currentTagFilter
+    || (removedEntry && matchesGalleryTagFilter(removedEntry, currentTagFilter));
   allEntries = allEntries.filter(e => e.image_filename !== imgId && e.date !== imgId);
+  if (removedEntry && removedEntry.favorite === true && Number.isFinite(galleryFavoriteTotal)) {
+    galleryFavoriteTotal = Math.max(0, galleryFavoriteTotal - 1);
+  }
   if (todayData && Array.isArray(todayData.photos)) {
     todayData.photos = todayData.photos.filter(e => e.image_filename !== imgId && e.date !== imgId);
   }
+  const loaded = allEntries.filter(entry => entry && entry.image_filename).length;
+  galleryTotal = Math.max(loaded, previousTotal > 0 ? previousTotal - 1 : 0);
+  const loadedView = allEntries.filter(entry => (
+    entry && entry.image_filename && matchesGalleryTagFilter(entry, currentTagFilter)
+  )).length;
+  galleryViewTotal = Math.max(
+    loadedView,
+    removedFromView && previousViewTotal > 0 ? previousViewTotal - 1 : previousViewTotal
+  );
 }
 
 function replaceEntryInList(list, oldImgId, freshEntry) {
@@ -8510,10 +8756,13 @@ function switchTab(tab) {
     renderToday();
   } else if (tab === "favorites") {
     if (gallerySec) gallerySec.classList.remove("hidden");
+    currentTagFilter = "";
     showFavoritesOnly = true;
     showUnfavoritesOnly = false;
     showTodayOnly = false;
-    renderGallery();
+    const content = document.getElementById("galleryContent");
+    if (content) content.innerHTML = `<div class="loading-state"><div class="spinner"></div><p>正在整理全部收藏...</p></div>`;
+    loadFavoriteGallery();
   } else if (tab === "wardrobe") {
     if (wardrobeSec) wardrobeSec.classList.remove("hidden");
     showFavoritesOnly = false;
@@ -8540,7 +8789,11 @@ function switchTab(tab) {
     showFavoritesOnly = false;
     showUnfavoritesOnly = false;
     showTodayOnly = false;
-    renderGallery();
+    if (galleryLoadedFavoritesOnly || galleryLoadedTagFilter !== currentTagFilter) {
+      loadGallery({ skipTabSwitch: true });
+    } else {
+      renderGallery();
+    }
   }
 }
 
@@ -8831,7 +9084,7 @@ function renderToday() {
           <div class="modal-actions" onclick="event.stopPropagation()">
             <button class="mbtn" onclick="event.stopPropagation();toggleFavorite(${todayImageArg});"><i class="${today.favorite ? 'fa-solid' : 'fa-regular'} fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
             <button class="mbtn" onclick="event.stopPropagation();shareImage(${todayImageArg});"><i class="fa-solid fa-share-nodes btn-icon" aria-hidden="true"></i> 分享</button>
-            <button class="mbtn" onclick="event.stopPropagation();showPrompt(this)" data-prompt="${encodeURIComponent(today.prompt || '')}"><i class="fa-regular fa-pen-to-square btn-icon" aria-hidden="true"></i> 提示词</button>
+            <button class="mbtn" onclick="event.stopPropagation();showPrompt(this)" data-image="${todayImageFilenameAttr}" data-prompt="${encodeURIComponent(today.prompt || '')}"><i class="fa-regular fa-pen-to-square btn-icon" aria-hidden="true"></i> 提示词</button>
             <button class="mbtn danger" onclick="event.stopPropagation();deleteImage(${todayDeleteArg}, event);"><i class="fa-regular fa-trash-can btn-icon" aria-hidden="true"></i> 删除</button>
           </div>
         </div>
@@ -8845,9 +9098,29 @@ function renderToday() {
 }
 
 // ===== Gallery Grid =====
+function galleryLoadMoreHtml() {
+  if (showFavoritesOnly || !galleryHasMore) return '';
+  const loaded = allEntries.filter(entry => (
+    entry && entry.image_filename && matchesGalleryTagFilter(entry, currentTagFilter)
+  )).length;
+  const total = Math.max(loaded, galleryViewTotal || loaded);
+  return `<div class="gallery-load-more"><button type="button" onclick="loadMoreGallery(this)">加载更多</button><span>已载入 ${loaded} / ${total}</span></div>`;
+}
+
+function alignActiveStyleFilter() {
+  if (!window.matchMedia('(max-width: 560px)').matches) return;
+  requestAnimationFrame(() => {
+    const bar = document.querySelector('.style-filter-bar');
+    const active = bar && bar.querySelector('.style-pill.active');
+    if (!bar || !active) return;
+    const centered = active.offsetLeft - ((bar.clientWidth - active.offsetWidth) / 2);
+    bar.scrollLeft = Math.max(0, centered);
+  });
+}
+
 function renderGallery() {
   const content = document.getElementById("galleryContent");
-  if (!allEntries.length) {
+  if (!allEntries.length && galleryTotal <= 0) {
     content.innerHTML = `<div class="empty-state"><div class="icon">👗</div><p>还没有穿搭记录呢～</p></div>`;
     return;
   }
@@ -8881,17 +9154,7 @@ function renderGallery() {
     filtered = filtered.filter(e => e.favorite !== true);
   }
   if (currentTagFilter) {
-    const filterLower = currentTagFilter.toLowerCase();
-    filtered = filtered.filter(e => {
-      // Match against normalized display style.
-      if (matchesOutfitStyleFilter(e, filterLower)) return true;
-      // Also match against caption hashtags as fallback
-      if (e.caption) {
-        const tags = e.caption.match(/#[^\s#]+/g) || [];
-        if (tags.some(t => t.toLowerCase() === filterLower || t.slice(1).toLowerCase() === filterLower)) return true;
-      }
-      return false;
-    });
+    filtered = filtered.filter(e => matchesGalleryTagFilter(e, currentTagFilter));
   }
   
   let headerHtml = '';
@@ -8944,14 +9207,17 @@ function renderGallery() {
   }
   // Style filter bar for gallery tab
   if (!showTodayOnly && !showFavoritesOnly && !showUnfavoritesOnly) {
-    const styles = [...new Set(allEntries.map(e => displayOutfitStyle(e)).filter(Boolean))].sort(compareStyleFilterLabels);
+    const styleSource = galleryStyles.length
+      ? galleryStyles
+      : allEntries.map(e => displayOutfitStyle(e));
+    const styles = [...new Set(styleSource.filter(Boolean))].sort(compareStyleFilterLabels);
     if (styles.length) {
       const stylePills = styles.map(s => {
         const active = currentTagFilter && currentTagFilter.toLowerCase() === s.toLowerCase();
-        return `<button class="style-pill${active ? ' active' : ''}" onclick="filterByTag(${jsStringArg(s)})">${escapeHtml(s)}</button>`;
+        return `<button type="button" class="style-pill${active ? ' active' : ''}" aria-pressed="${active ? 'true' : 'false'}" onclick="filterByTag(${jsStringArg(s)})">${escapeHtml(s)}</button>`;
       }).join('');
       const clearBtn = currentTagFilter ? `<button class="style-pill clear" onclick="clearFilter()">✕ 清除</button>` : '';
-      headerHtml += `<div class="style-filter-bar">${stylePills}${clearBtn}</div>`;
+      headerHtml += `<div class="style-filter-bar" role="group" aria-label="按风格筛选">${stylePills}${clearBtn}</div>`;
     }
   }
   if (currentTagFilter) {
@@ -8959,7 +9225,8 @@ function renderGallery() {
   }
   
   if (!filtered.length) {
-    content.innerHTML = headerHtml + `<div class="empty-state"><div class="icon">🔍</div><p>没有匹配的结果～</p></div>`;
+    content.innerHTML = headerHtml + `<div class="empty-state"><div class="icon">🔍</div><p>没有匹配的结果～</p></div>` + galleryLoadMoreHtml();
+    alignActiveStyleFilter();
     return;
   }
   
@@ -9014,7 +9281,7 @@ function renderGallery() {
                 <div class="tc-actions">
                   <button class="tc-btn ${e.favorite ? 'liked' : ''}" onclick="toggleFavorite(${imageFilenameArg}, event)" data-img="${safeImageFilename}"><i class="${e.favorite ? 'fa-solid' : 'fa-regular'} fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
                   <button class="tc-btn" onclick="shareImage(${imageFilenameArg}, event)"><i class="fa-solid fa-share-nodes btn-icon" aria-hidden="true"></i> 分享</button>
-                  <button class="tc-btn" onclick="showPrompt(this)" data-prompt="${encodeURIComponent(e.prompt || '')}"><i class="fa-regular fa-pen-to-square btn-icon" aria-hidden="true"></i> 提示词</button>
+                  <button class="tc-btn" onclick="showPrompt(this)" data-image="${safeImageFilename}" data-prompt="${encodeURIComponent(e.prompt || '')}"><i class="fa-regular fa-pen-to-square btn-icon" aria-hidden="true"></i> 提示词</button>
                   <button class="tc-btn danger" onclick="deleteImage(${deleteArg}, event)"><i class="fa-regular fa-trash-can btn-icon" aria-hidden="true"></i> 删除</button>
                 </div>
               </div>
@@ -9031,14 +9298,14 @@ function renderGallery() {
             ? `<img src="/images/${imageFilenameAttr}" alt="${escapeAttr(e.date || '')}" loading="lazy" decoding="async">`
             : `<div class="img-placeholder">📸</div>`;
           const displayStyle = displayOutfitStyle(e);
-          const styleTag = displayStyle ? `<span class="card-style-tag" onclick="event.stopPropagation();filterByTag(${jsStringArg(displayStyle)});">${escapeHtml(displayStyle)}</span>` : "";
+          const styleTag = displayStyle ? `<span class="card-style-tag" title="${escapeAttr(displayStyle)}" onclick="event.stopPropagation();filterByTag(${jsStringArg(displayStyle)});">${escapeHtml(displayStyle)}</span>` : "";
           const timeDisplay = e.time ? e.time : "";
           let metaHtml = "";
           if (e.model_name) metaHtml += `<span class="meta-tag meta-model">🤖 ${escapeHtml(e.model_name)}</span>`;
           const referenceLabel = displayReferenceMeta(e);
           if (referenceLabel) metaHtml += `<span class="meta-tag meta-ref">${escapeHtml(referenceLabel)}</span>`;
           return `
-            <div class="gallery-card" data-gallery-img="${imageFilenameAttr}" onclick="event.stopPropagation();openModal(allEntries.find(x=>x.image_filename===${imageFilenameArg}))">
+            <div class="gallery-card" data-gallery-img="${imageFilenameAttr}" onclick="event.stopPropagation();openModal(allEntries.find(x=>x.image_filename===${imageFilenameArg}),this.querySelector('.card-edit-btn'))">
               <div class="card-img-wrap">
                 ${imgHtml}
                 <span class="card-date-tag">${escapeHtml(shortDate(e.date))}</span>
@@ -9052,7 +9319,8 @@ function renderGallery() {
                 ${metaHtml ? `<div class="card-meta">${metaHtml}</div>` : ''}
                 <div class="card-actions">
                   <button class="ca-btn ${e.favorite ? 'liked' : ''}" aria-label="${e.favorite ? '取消收藏' : '收藏'}" onclick="event.stopPropagation();toggleFavorite(${imageFilenameArg}, event)" data-img="${imageFilenameAttr}"><i class="${e.favorite ? 'fa-solid' : 'fa-regular'} fa-heart ca-icon" aria-hidden="true"></i><span class="ca-label">收藏</span></button>
-                  <button class="ca-btn" aria-label="分享" onclick="event.stopPropagation();shareImage(${imageFilenameArg}, event)"><i class="fa-solid fa-share-nodes ca-icon" aria-hidden="true"></i><span class="ca-label">分享</span></button>
+                  ${renderRerollButton(e, {card: true})}
+                  <button class="ca-btn card-edit-btn" aria-label="编辑图片" onclick="event.stopPropagation();openImageEditForImage(${imageFilenameArg})"><i class="fa-solid fa-wand-magic-sparkles ca-icon" aria-hidden="true"></i><span class="ca-label">编辑</span></button>
                   <button class="ca-btn danger" aria-label="删除" onclick="event.stopPropagation();deleteImage(${deleteArg}, event)"><i class="fa-regular fa-trash-can ca-icon" aria-hidden="true"></i><span class="ca-label">删除</span></button>
                 </div>
               </div>
@@ -9060,6 +9328,8 @@ function renderGallery() {
         }).join("")
     }</div>`
   );
+  content.insertAdjacentHTML('beforeend', galleryLoadMoreHtml());
+  alignActiveStyleFilter();
   requestAnimationFrame(() => {
     try {
       window.applyGalleryColumns?.();
@@ -9436,7 +9706,7 @@ ms.textContent = `
 	  .image-edit-head { grid-column:1;padding:14px 15px; }
 	  .image-edit-preview { min-height:0;height:100%;aspect-ratio:auto;border-right:0;border-bottom:1px solid #eee7f0; }
 	  .image-edit-preview img { max-height:none;object-fit:cover;object-position:center 30%; }
-	  .image-edit-form { display:flex;padding:15px;gap:13px;overflow:visible;background:#fff; }
+	  .image-edit-form { display:flex;flex-direction:column;padding:15px;gap:13px;overflow:visible;background:#fff; }
 	  .image-edit-form-scroll { overflow:visible;padding:0;display:flex;gap:13px; }
 	  .image-edit-targets { grid-template-columns:repeat(3,minmax(0,1fr)); }
 	  .image-edit-target { min-height:36px;padding:6px 4px;font-size:12px; }
@@ -9452,9 +9722,10 @@ document.head.appendChild(ms);
 const modalOverlay = document.createElement("div");
 modalOverlay.className = "modal-overlay";
 modalOverlay.id = "modalOverlay";
+modalOverlay.setAttribute("aria-hidden", "true");
 modalOverlay.onclick = (e) => { if (e.target === modalOverlay) closeModal(); };
 modalOverlay.innerHTML = `
-  <div class="modal-content" id="modalContent" onclick="event.stopPropagation()">
+  <div class="modal-content" id="modalContent" role="dialog" aria-modal="true" aria-label="图片详情" tabindex="-1" onclick="event.stopPropagation()">
     <div class="modal-image" id="modalImageWrap"></div>
     <div class="modal-info today-card-info">
       <div class="modal-info-top">
@@ -9610,7 +9881,7 @@ function syncModalDetailHeight() {
     modal.classList.add("modal-fit-detail");
   });
 }
-function openModal(e) {
+function openModal(e, returnFocusTarget = null) {
   if (!e.image_filename) return;
   currentModalImg = e.image_filename;
   resetModalDetailHeight();
@@ -9691,14 +9962,17 @@ function openModal(e) {
 	    }).catch(function() {});
 	  }
 	  // Prompt button data
+	  document.getElementById("modalPromptBtn").setAttribute("data-image", e.image_filename || "");
 	  document.getElementById("modalPromptBtn").setAttribute("data-prompt", encodeURIComponent(e.prompt || ""));
 	  modalOverlay.classList.add("open");
+  activateAccessibleDialog(modalOverlay, '#modalFav', returnFocusTarget);
   document.body.style.overflow = "hidden";
   syncModalDetailHeight();
 }
 function closeModal() {
   closeScheduleSendMenu();
   modalOverlay.classList.remove("open");
+  deactivateAccessibleDialog(modalOverlay);
   document.body.style.overflow = "";
   resetModalDetailHeight();
 }
@@ -9739,6 +10013,10 @@ window.addEventListener("resize", () => {
 	  return (match ? match[1] : raw).trim();
 	}
 	function openImageEdit() {
+	  if (imageEditBusy && !imageEditOverlay.classList.contains('open')) {
+	    showToast('已有图片正在后台编辑，请等待完成');
+	    return;
+	  }
 	  const entry = currentModalEntry();
 	  if (!entry || !entry.image_filename) {
 	    showToast('找不到当前图片');
@@ -9757,8 +10035,17 @@ window.addEventListener("resize", () => {
 	  imageEditOverlay.removeAttribute('aria-hidden');
 	  requestAnimationFrame(() => input.focus({preventScroll:true}));
 	}
-	function closeImageEdit(force = false) {
-	  if (imageEditBusy && !force) return;
+	function openImageEditForImage(imageFilename) {
+	  const normalizedFilename = String(imageFilename || '').trim();
+	  const entry = allEntries.find(item => item && item.image_filename === normalizedFilename);
+	  if (!entry) {
+	    showToast('找不到当前图片');
+	    return;
+	  }
+	  currentModalImg = entry.image_filename;
+	  openImageEdit();
+	}
+	function closeImageEdit() {
 	  imageEditOverlay.classList.remove('open');
 	  imageEditOverlay.setAttribute('aria-hidden', 'true');
 	  imageEditSourceImg = '';
@@ -9774,22 +10061,19 @@ window.addEventListener("resize", () => {
 	  document.querySelectorAll('[data-image-edit-target]').forEach(button => { button.disabled = imageEditBusy; });
 	  document.getElementById('imageEditInstruction').disabled = imageEditBusy;
 	  document.getElementById('imageEditScheduleDescription').disabled = imageEditBusy;
-	  document.getElementById('imageEditCancelBtn').disabled = imageEditBusy;
-	  document.getElementById('imageEditCloseBtn').disabled = imageEditBusy;
+	  const cancel = document.getElementById('imageEditCancelBtn');
+	  cancel.disabled = false;
+	  cancel.textContent = imageEditBusy ? '关闭窗口' : '取消';
+	  document.getElementById('imageEditCloseBtn').disabled = false;
 	  const submit = document.getElementById('imageEditSubmitBtn');
 	  submit.disabled = imageEditBusy;
 	  submit.innerHTML = imageEditBusy
-	    ? '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><span>编辑并保存中</span>'
+	    ? '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><span>后台编辑中</span>'
 	    : '<i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span>生成并保存</span>';
 	}
 	async function submitImageEdit() {
 	  if (imageEditBusy || !imageEditSourceImg) return;
 	  const instruction = document.getElementById('imageEditInstruction').value.trim();
-	  if (!instruction) {
-	    showToast('请输入要修改的内容');
-	    document.getElementById('imageEditInstruction').focus();
-	    return;
-	  }
 	  const scheduleInput = document.getElementById('imageEditScheduleDescription');
 	  const scheduleDescription = scheduleInput.value.replace(/\s+/g, ' ').trim();
 	  if (imageEditOriginalScheduleDescription && !scheduleDescription) {
@@ -9798,29 +10082,43 @@ window.addEventListener("resize", () => {
 	    return;
 	  }
 	  const scheduleManuallyChanged = scheduleDescription !== imageEditOriginalScheduleDescription;
+	  if (!instruction && !scheduleManuallyChanged) {
+	    showToast('请输入修改内容或调整日程说明');
+	    document.getElementById('imageEditInstruction').focus();
+	    return;
+	  }
 	  const originalScheduleDescription = imageEditOriginalScheduleDescription;
 	  const sourceImage = imageEditSourceImg;
+	  const requestedTarget = imageEditTarget;
 	  setImageEditBusy(true);
-	  showToast('正在精准编辑当前图片...');
+	  showToast('已开始后台编辑，可关闭窗口继续浏览');
 	  try {
 	    const response = await fetch(`${API}/api/images/${encodeURIComponent(sourceImage)}/edit`, {
 	      method: 'POST',
 	      headers: {'Content-Type':'application/json'},
 	      body: JSON.stringify(Object.assign(
-	        {target:imageEditTarget, instruction},
+	        {target:requestedTarget, instruction},
 	        scheduleManuallyChanged ? {schedule_description:scheduleDescription} : {}
 	      ))
 	    });
 	    const data = await response.json().catch(() => ({}));
 	    if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
 	    const replacedImage = data.replaced_image_filename || sourceImage;
+	    const editDialogStillOpen = imageEditOverlay.classList.contains('open')
+	      && imageEditSourceImg === sourceImage;
+	    const detailModalStillOpen = modalOverlay.classList.contains('open')
+	      && currentModalImg === sourceImage;
 	    if (!replaceLocalImage(replacedImage, data)) upsertGeneratedGalleryEntry(data);
 	    renderActivePhotoView();
 	    updateBadges();
 	    window.applyGalleryColumns?.();
 	    const scheduleChanged = imageEditScheduleDescription(data) !== originalScheduleDescription;
-	    closeImageEdit(true);
-	    openModal(data);
+	    if (editDialogStillOpen) {
+	      closeImageEdit();
+	      openModal(data);
+	    } else if (detailModalStillOpen) {
+	      openModal(data);
+	    }
 	    showToast(scheduleChanged ? '图片与日程说明已更新' : '精准编辑完成，已替换当前图片');
 	  } catch(error) {
 	    showToast('编辑失败：' + (error && error.message ? error.message : '未知错误'));
@@ -10121,6 +10419,7 @@ async function toggleFavorite(imgId, event) {
   const optimisticFavorite = !previousFavorite;
   const btn = event && event.currentTarget ? event.currentTarget : null;
   if (btn) btn.disabled = true;
+  adjustGalleryFavoriteTotal(previousFavorite, optimisticFavorite);
   updateLocalFavorite(imgId, optimisticFavorite);
   renderActivePhotoView();
   updateBadges();
@@ -10133,10 +10432,12 @@ async function toggleFavorite(imgId, event) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
     const serverFavorite = typeof data.success === "boolean" ? data.success : optimisticFavorite;
+    adjustGalleryFavoriteTotal(optimisticFavorite, serverFavorite);
     updateLocalFavorite(imgId, serverFavorite);
     renderActivePhotoView();
     updateBadges();
   } catch(e) {
+    adjustGalleryFavoriteTotal(optimisticFavorite, previousFavorite);
     updateLocalFavorite(imgId, previousFavorite);
     renderActivePhotoView();
     updateBadges();
@@ -10534,7 +10835,9 @@ function currentCustomGenPayload(refImageOverride = "") {
 function openCustomGen(options = {}) {
   activeCustomWardrobeRef = options.wardrobeRef || null;
   restoreCustomGenState();
-  document.getElementById("cgOverlay").classList.add("open");
+  const overlay = document.getElementById("cgOverlay");
+  overlay.classList.add("open");
+  activateAccessibleDialog(overlay, '#cgPrompt');
   document.body.style.overflow = "hidden";
   updateCustomSizeHint();
   loadCustomImageModels();
@@ -10559,7 +10862,9 @@ async function openCustomGenFromWardrobe(btn) {
 
 function closeCustomGen() {
   saveCustomGenState();
-  document.getElementById("cgOverlay").classList.remove("open");
+  const overlay = document.getElementById("cgOverlay");
+  overlay.classList.remove("open");
+  deactivateAccessibleDialog(overlay);
   document.body.style.overflow = "";
 }
 document.addEventListener("DOMContentLoaded", () => {
@@ -10829,11 +11134,96 @@ async function quickCustomImg2ImgFromModal(event, btn) {
 }
 
 // ===== Load =====
-async function loadGallery() {
+async function loadFavoriteGallery() {
+  if (galleryPageLoading) {
+    galleryReloadPending = "favorites";
+    return;
+  }
+  galleryPageLoading = true;
   try {
+    let cursor = "";
+    let hasMore = true;
+    let favoriteEntries = [];
+    let latestPayload = null;
+    while (hasMore) {
+      const params = new URLSearchParams({
+        favorites: 'true',
+        limit: '100',
+        include_prompt: 'false'
+      });
+      if (cursor) params.set('cursor', cursor);
+      const response = await fetch(`${API}/api/gallery?${params.toString()}`);
+      if (response.status === 401) throw new Error("需要访问密码，请先登录画廊");
+      if (!response.ok) throw new Error("收藏请求失败");
+      const payload = await response.json();
+      const pageEntries = Array.isArray(payload.items) ? payload.items : [];
+      favoriteEntries = favoriteEntries.concat(pageEntries);
+      latestPayload = payload;
+      hasMore = payload.has_more === true;
+      const nextCursor = String(payload.next_cursor || '');
+      if (hasMore && (!nextCursor || nextCursor === cursor)) {
+        throw new Error("收藏分页游标无效");
+      }
+      cursor = nextCursor;
+    }
+
+    if (!showFavoritesOnly) return;
+    const seen = new Set();
+    allEntries = favoriteEntries.filter(entry => {
+      const filename = entry && entry.image_filename;
+      if (!filename || seen.has(filename)) return false;
+      seen.add(filename);
+      return true;
+    });
+    const totalAll = Number(latestPayload && latestPayload.total_all);
+    const favoriteTotal = Number(latestPayload && latestPayload.favorite_total);
+    galleryTotal = Number.isFinite(totalAll) ? totalAll : galleryTotal;
+    galleryFavoriteTotal = Number.isFinite(favoriteTotal)
+      ? favoriteTotal
+      : allEntries.length;
+    galleryViewTotal = galleryFavoriteTotal;
+    galleryStyles = latestPayload && Array.isArray(latestPayload.styles)
+      ? latestPayload.styles.map(style => String(style || '').trim()).filter(Boolean)
+      : galleryStyles;
+    galleryNextCursor = "";
+    galleryHasMore = false;
+    galleryLoadedTagFilter = "";
+    galleryLoadedFavoritesOnly = true;
+    renderGallery();
+    updateBadges();
+  } catch(error) {
+    if (showFavoritesOnly) {
+      document.getElementById("galleryContent").innerHTML =
+        `<div class="error-state">❌ 收藏加载失败：${escapeHtml(error.message)}</div>`;
+    }
+  } finally {
+    galleryPageLoading = false;
+    const pending = galleryReloadPending;
+    galleryReloadPending = "";
+    if (pending === "favorites") loadFavoriteGallery();
+    else if (pending === "gallery") loadGallery();
+  }
+}
+
+async function loadGallery(options = {}) {
+  const append = options.append === true;
+  if (galleryPageLoading) {
+    if (!append) galleryReloadPending = "gallery";
+    return;
+  }
+  if (append && (!galleryHasMore || !galleryNextCursor)) return;
+  const requestedTagFilter = currentTagFilter;
+  galleryPageLoading = true;
+  try {
+    const galleryParams = new URLSearchParams({
+      limit: '48',
+      include_prompt: 'false'
+    });
+    if (append) galleryParams.set('cursor', galleryNextCursor);
+    if (requestedTagFilter) galleryParams.set('style', requestedTagFilter);
     const [todayRes, galleryRes] = await Promise.all([
       fetch(`${API}/api/today`),
-      fetch(`${API}/api/gallery`)
+      fetch(`${API}/api/gallery?${galleryParams.toString()}`)
     ]);
     if (todayRes.status === 401 || galleryRes.status === 401) {
       throw new Error("需要访问密码，请先登录画廊");
@@ -10842,7 +11232,35 @@ async function loadGallery() {
       throw new Error("API 请求失败");
     }
     todayData = await todayRes.json();
-    allEntries = await galleryRes.json();
+    const galleryPayload = await galleryRes.json();
+    if (requestedTagFilter !== currentTagFilter) {
+      galleryReloadPending = true;
+      return;
+    }
+    const pageEntries = Array.isArray(galleryPayload)
+      ? galleryPayload
+      : (Array.isArray(galleryPayload.items) ? galleryPayload.items : []);
+    galleryHasMore = !Array.isArray(galleryPayload) && galleryPayload.has_more === true;
+    galleryNextCursor = !Array.isArray(galleryPayload) ? String(galleryPayload.next_cursor || '') : '';
+    const responseViewTotal = !Array.isArray(galleryPayload)
+      ? Number(galleryPayload.total)
+      : pageEntries.length;
+    galleryViewTotal = Number.isFinite(responseViewTotal) ? responseViewTotal : pageEntries.length;
+    const responseAllTotal = !Array.isArray(galleryPayload)
+      ? Number(galleryPayload.total_all)
+      : pageEntries.length;
+    galleryTotal = Number.isFinite(responseAllTotal) ? responseAllTotal : galleryViewTotal;
+    const responseFavoriteTotal = !Array.isArray(galleryPayload)
+      ? Number(galleryPayload.favorite_total)
+      : NaN;
+    if (Number.isFinite(responseFavoriteTotal)) galleryFavoriteTotal = responseFavoriteTotal;
+    const responseStyles = !Array.isArray(galleryPayload) && Array.isArray(galleryPayload.styles)
+      ? galleryPayload.styles
+      : pageEntries.map(entry => displayOutfitStyle(entry));
+    galleryStyles = [...new Set(responseStyles.map(style => String(style || '').trim()).filter(Boolean))];
+    galleryLoadedTagFilter = requestedTagFilter;
+    galleryLoadedFavoritesOnly = false;
+    allEntries = append ? allEntries.concat(pageEntries) : pageEntries;
     // Dedup by image_filename (keep first occurrence), but allow date-keyed entries (no image_filename)
     const seen = new Set();
     allEntries = allEntries.filter(e => {
@@ -10854,20 +11272,51 @@ async function loadGallery() {
     // Merge today photos into allEntries (avoid duplicates)
     if (todayData && todayData.photos) {
       for (const p of todayData.photos) {
+        if (requestedTagFilter && !matchesGalleryTagFilter(p, requestedTagFilter)) continue;
         if (p.image_filename && !seen.has(p.image_filename)) {
           allEntries.push(p);
           seen.add(p.image_filename);
         }
       }
     }
-    // Default to saved tab or today
-    const savedTab = window.galleryStorageGet('active_tab', 'today');
-    loadWardrobe({ render: savedTab === 'wardrobe', silent: true }).catch(() => null);
-    switchTab(savedTab);
+    if (append) {
+      renderGallery();
+    } else {
+      // Default to saved tab or today
+      const savedTab = window.galleryStorageGet('active_tab', 'today');
+      loadWardrobe({ render: savedTab === 'wardrobe', silent: true }).catch(() => null);
+      if (options.skipTabSwitch) renderActivePhotoView();
+      else switchTab(savedTab);
+    }
     updateBadges();
   } catch(e) {
-    document.getElementById("galleryContent").innerHTML =
-      `<div class="error-state">❌ 加载失败：${e.message}</div>`;
+    if (!append) {
+      document.getElementById("galleryContent").innerHTML =
+        `<div class="error-state">❌ 加载失败：${escapeHtml(e.message)}</div>`;
+    } else {
+      showToast('加载更多失败：' + e.message);
+    }
+  } finally {
+    galleryPageLoading = false;
+    const pending = galleryReloadPending;
+    galleryReloadPending = "";
+    if (pending === "favorites") loadFavoriteGallery();
+    else if (pending === "gallery") loadGallery();
+  }
+}
+
+async function loadMoreGallery(btn) {
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '加载中';
+  }
+  try {
+    await loadGallery({ append: true });
+  } finally {
+    if (btn && document.body.contains(btn)) {
+      btn.disabled = false;
+      btn.textContent = '加载更多';
+    }
   }
 }
 
@@ -10890,7 +11339,9 @@ function setSettingsPanel(panel) {
 }
 
 function openSettings() {
-  document.getElementById("skOverlay").classList.add("open");
+  const overlay = document.getElementById("skOverlay");
+  overlay.classList.add("open");
+  activateAccessibleDialog(overlay, '.sk-settings-tab.active');
   document.body.style.overflow = "hidden";
   setSettingsPanel(activeSettingsPanel || "persona");
   // Clear input fields
@@ -10919,7 +11370,9 @@ function openSettings() {
 }
 
 function closeSettings() {
-  document.getElementById("skOverlay").classList.remove("open");
+  const overlay = document.getElementById("skOverlay");
+  overlay.classList.remove("open");
+  deactivateAccessibleDialog(overlay);
   document.body.style.overflow = "";
 }
 
@@ -12492,7 +12945,7 @@ function extractClockTime(value) {
 function summarizePhotoJobError(jobOrText) {
   var raw = '';
   if (jobOrText && typeof jobOrText === 'object') {
-    raw = jobOrText.error || jobOrText.error_summary || '';
+    raw = jobOrText.error_summary || jobOrText.error || '';
   } else {
     raw = String(jobOrText || '');
   }
@@ -12816,18 +13269,20 @@ function loadScheduleEggData(options) {
         var planM = parseInt(planParts[1] || '0', 10);
         var planPast = (nowH > planH) || (nowH === planH && nowM >= planM);
         var planPhoto = plan.photo;
-        var planDone = !!planPhoto || plan.status === 'done';
+        var planDeliveryFailed = plan.status === 'delivery_failed';
+        var planSending = plan.status === 'sending';
+        var planDone = !planDeliveryFailed && !planSending && (!!planPhoto || plan.status === 'done');
         var planTheme = plan.theme || inferTheme(plan.time);
         var planScheduled = plan.status === 'scheduled';
-        var planRunning = plan.status === 'running';
-        var planFailed = plan.status === 'failed';
+        var planRunning = plan.status === 'running' || planSending;
+        var planFailed = plan.status === 'failed' || planDeliveryFailed;
         var planSkipped = plan.status === 'skipped' || plan.status === 'missed';
-        var planRunningRetryable = planRunning && !!(plan.job && plan.job.retryable);
+        var planRunningRetryable = !planSending && planRunning && !!(plan.job && plan.job.retryable);
         var planErrorText = planFailed ? summarizePhotoJobError(plan.job || plan) : (planRunningRetryable ? '生成状态卡住，可以重试' : '');
 
-        var planRetryable = !planDone && !planScheduled && (!planRunning || planRunningRetryable) && (planSkipped || planFailed || planPast || planRunningRetryable);
+        var planRetryable = !planDone && !planScheduled && !planSending && (!planRunning || planRunningRetryable) && (planSkipped || planFailed || planPast || planRunningRetryable);
         var planStatusCls = planDone ? 'done' : (planRunningRetryable ? 'failed' : (planRunning ? 'running' : (planFailed ? 'failed' : ((planSkipped || (planPast && !planScheduled)) ? 'past' : 'pending'))));
-        var planStatusText = planDone ? '✅ 已完成' : (planRunningRetryable ? '⚠️ 卡住' : (planRunning ? '⏳ 生成中' : (planFailed ? '⚠️ 失败' : (planSkipped ? '⌛ 已过未排' : (planScheduled ? '⏳ 待执行' : (planPast ? '⏳ 已过' : '⏳ 待执行'))))));
+        var planStatusText = planDone ? '✅ 已完成' : (planDeliveryFailed ? '⚠️ 发送失败' : (planSending ? '⏳ 发送中' : (planRunningRetryable ? '⚠️ 卡住' : (planRunning ? '⏳ 生成中' : (planFailed ? '⚠️ 失败' : (planSkipped ? '⌛ 已过未排' : (planScheduled ? '⏳ 待执行' : (planPast ? '⏳ 已过' : '⏳ 待执行'))))))));
 
         html += '<div class="egg-photo-item">';
         html += '<span class="egg-photo-status-badge ' + planStatusCls + '">' + planStatusText + '</span>';
@@ -12839,7 +13294,7 @@ function loadScheduleEggData(options) {
         if (planOutfitStyle) html += '<span class="egg-photo-style">' + escapeHtml(planOutfitStyle) + '</span>';
         if (planRetryable) {
           html += '<span class="egg-photo-actions">';
-          html += '<button class="egg-photo-action-btn egg-photo-retry-btn" data-time="' + escapeAttr(plan.time) + '" onclick="retryPhotoJob(this.dataset.time, this)">重试</button>';
+          html += '<button class="egg-photo-action-btn egg-photo-retry-btn" data-time="' + escapeAttr(plan.time) + '" onclick="retryPhotoJob(this.dataset.time, this)">' + (planDeliveryFailed ? '重发' : '重试') + '</button>';
           html += '</span>';
         }
         else if (plan.scheduleOnly) html += '<span class="egg-photo-style">刷新时已过</span>';
@@ -12889,7 +13344,7 @@ function loadScheduleEggData(options) {
           if (outfitKeys[m] === '风格') {
             html += '<div class="egg-outfit-item"><div class="egg-outfit-head"><div class="egg-outfit-label">' + (outfitIcons[outfitKeys[m]]||'') + ' ' + outfitKeys[m] + '</div><button class="egg-style-manage" type="button" data-action="manage-outfit-styles">调整风格池</button></div><div class="egg-outfit-value">' + escapeHtml(outfit[outfitKeys[m]]) + '</div></div>';
           } else {
-            html += '<div class="egg-outfit-item"><div class="egg-outfit-label">' + (outfitIcons[outfitKeys[m]]||'') + ' ' + outfitKeys[m] + '</div><div class="egg-outfit-value">' + escapeHtml(outfit[outfitKeys[m]]) + '</div></div>';
+            html += '<div class="egg-outfit-item"><div class="egg-outfit-label">' + (outfitIcons[outfitKeys[m]]||'') + ' ' + outfitKeys[m] + '</div><div class="egg-outfit-value editable" data-outfit-field="' + escapeAttr(outfitKeys[m]) + '" data-outfit-value="' + escapeAttr(outfit[outfitKeys[m]]) + '" ondblclick="startOutfitPlanEdit(this)" title="双击编辑">' + escapeHtml(outfit[outfitKeys[m]]) + '</div></div>';
           }
         }
       }
@@ -13722,14 +14177,98 @@ function savePhotoPlanActivity(timeText, activity, holder, previousActivity) {
   });
 }
 
+function restoreOutfitPlanValue(holder, field, value) {
+  if (!holder) return;
+  holder.classList.remove('editing');
+  holder.textContent = value || '';
+  holder.dataset.outfitField = field || '';
+  holder.dataset.outfitValue = value || '';
+}
+
+function startOutfitPlanEdit(el) {
+  if (!el || el.classList.contains('editing')) return;
+  var field = el.dataset.outfitField || '';
+  var original = el.dataset.outfitValue || el.textContent || '';
+  if (field !== '发型' && field !== '穿搭') return;
+
+  el.classList.add('editing');
+  el.textContent = '';
+  var input = document.createElement('textarea');
+  input.className = 'egg-photo-edit-input egg-outfit-edit-input';
+  input.rows = field === '穿搭' ? 4 : 3;
+  input.maxLength = 1200;
+  input.value = original;
+  el.appendChild(input);
+  input.focus();
+  input.select();
+
+  var finished = false;
+  function cancelEdit() {
+    if (finished) return;
+    finished = true;
+    restoreOutfitPlanValue(el, field, original);
+  }
+  function commitEdit() {
+    if (finished) return;
+    var next = input.value.replace(/\s+/g, ' ').trim();
+    if (!next) {
+      showToast(field + '不能为空');
+      cancelEdit();
+      return;
+    }
+    if (next === original.trim()) {
+      cancelEdit();
+      return;
+    }
+    finished = true;
+    input.disabled = true;
+    saveOutfitPlanValue(field, next, el, original);
+  }
+
+  input.addEventListener('keydown', function(event) {
+    if (event.isComposing) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelEdit();
+    } else if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      commitEdit();
+    }
+  });
+  input.addEventListener('blur', function() {
+    setTimeout(commitEdit, 0);
+  });
+}
+
+function saveOutfitPlanValue(field, value, holder, previousValue) {
+  fetch('/api/schedule-detail/outfit', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ field: field, value: value })
+  }).then(function(response) {
+    return response.json().then(function(data) {
+      if (!response.ok || data.error) throw new Error(data.message || data.error || 'save_failed');
+      return data;
+    });
+  }).then(function() {
+    showToast('已更新' + field + '，后续生图将使用新方案');
+    scheduleEggCache = { html: '', dateText: '', updatedAt: 0 };
+    loadScheduleEggData({ force: true });
+  }).catch(function(error) {
+    restoreOutfitPlanValue(holder, field, previousValue || '');
+    showToast('保存失败：' + (error && error.message ? error.message : '未知错误'));
+  });
+}
+
 function retryPhotoJob(timeText, btn) {
   if (!timeText) return;
   var keepDisabled = false;
+  var originalLabel = btn ? (btn.textContent || '重试') : '重试';
   if (btn) {
     btn.disabled = true;
     btn.textContent = '排队中';
   }
-  showToast('已提交重试：' + timeText);
+  showToast('已提交' + (originalLabel === '重发' ? '重发' : '重试') + '：' + timeText);
 
   fetch('/api/photo-jobs/retry', {
     method: 'POST',
@@ -13744,7 +14283,7 @@ function retryPhotoJob(timeText, btn) {
     if (data.status === 'already_done') showToast('这个时间点已经有图啦');
     else if (data.status === 'running') {
       keepDisabled = true;
-      showToast('这个时间点正在生成中');
+      showToast(data.action === 'resend' ? '这张图正在发送中' : '这个时间点正在生成中');
       startPhotoRetryPolling(timeText);
     } else if (data.status === 'limit_reached') {
       showToast(data.message || '今日生图计划已达上限');
@@ -13752,7 +14291,7 @@ function retryPhotoJob(timeText, btn) {
       showToast(data.message || '03:00-06:00 不执行生图');
     } else {
       keepDisabled = true;
-      showToast('已开始补拍：' + timeText);
+      showToast(data.action === 'resend' ? '已开始重发原图：' + timeText : '已开始补拍：' + timeText);
       startPhotoRetryPolling(timeText);
     }
     return loadScheduleEggData({ silent: true });
@@ -13761,7 +14300,7 @@ function retryPhotoJob(timeText, btn) {
   }).finally(function() {
     if (btn && !keepDisabled) {
       btn.disabled = false;
-      btn.textContent = '重试';
+      btn.textContent = originalLabel;
     }
   });
 }
@@ -13899,9 +14438,40 @@ if (document.readyState === 'loading') {
 }
 
 // 📝 提示词弹窗
-function showPrompt(btn) {
-  const raw = btn.getAttribute('data-prompt') || '';
-  const prompt = decodeURIComponent(raw);
+async function loadGalleryImageDetail(imageFilename) {
+  const filename = String(imageFilename || '').trim();
+  if (!filename) return null;
+  if (galleryDetailRequests.has(filename)) return galleryDetailRequests.get(filename);
+  const request = fetch(`${API}/api/images/${encodeURIComponent(filename)}`)
+    .then(async response => {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+      if (!replaceLocalImage(filename, data)) allEntries.push(data);
+      return data;
+    })
+    .finally(() => galleryDetailRequests.delete(filename));
+  galleryDetailRequests.set(filename, request);
+  return request;
+}
+
+async function showPrompt(btn) {
+  let raw = btn.getAttribute('data-prompt') || '';
+  let prompt = decodeURIComponent(raw);
+  const imageFilename = btn.getAttribute('data-image') || '';
+  if (!prompt && imageFilename) {
+    const wasDisabled = btn.disabled;
+    btn.disabled = true;
+    try {
+      const detail = await loadGalleryImageDetail(imageFilename);
+      prompt = String((detail && detail.prompt) || '');
+      btn.setAttribute('data-prompt', encodeURIComponent(prompt));
+    } catch (error) {
+      showToast('提示词加载失败：' + (error && error.message ? error.message : 'unknown_error'));
+      return;
+    } finally {
+      btn.disabled = wasDisabled;
+    }
+  }
   if (!prompt) { showToast('暂无提示词'); return; }
 
   let overlay = document.getElementById('promptOverlay');
@@ -13909,9 +14479,10 @@ function showPrompt(btn) {
     overlay = document.createElement('div');
     overlay.id = 'promptOverlay';
     overlay.className = 'prompt-overlay';
+    overlay.setAttribute('aria-hidden', 'true');
     overlay.onclick = function(e) { if (e.target === this) closePrompt(); };
-    overlay.innerHTML = '<div class="prompt-card">' +
-      '<div class="prompt-header"><span>📝 生图提示词</span><button class="prompt-close" onclick="closePrompt()">✕</button></div>' +
+    overlay.innerHTML = '<div class="prompt-card" role="dialog" aria-modal="true" aria-labelledby="promptDialogTitle" tabindex="-1">' +
+      '<div class="prompt-header"><span id="promptDialogTitle">📝 生图提示词</span><button class="prompt-close" onclick="closePrompt()" aria-label="关闭">✕</button></div>' +
       '<div class="prompt-body"><pre id="promptText"></pre></div>' +
       '<div class="prompt-footer"><button class="prompt-copy-btn" onclick="copyPrompt()">📋 复制</button></div>' +
       '</div>';
@@ -13919,11 +14490,15 @@ function showPrompt(btn) {
   }
   document.getElementById('promptText').textContent = prompt;
   overlay.classList.add('show');
+  activateAccessibleDialog(overlay, '.prompt-close', btn);
 }
 
 function closePrompt() {
   var el = document.getElementById('promptOverlay');
-  if (el) el.classList.remove('show');
+  if (el) {
+    el.classList.remove('show');
+    deactivateAccessibleDialog(el);
+  }
 }
 
 function copyPrompt() {
@@ -13954,9 +14529,10 @@ function ensureLiveLogOverlay() {
   overlay = document.createElement('div');
   overlay.id = 'liveLogOverlay';
   overlay.className = 'prompt-overlay';
+  overlay.setAttribute('aria-hidden', 'true');
   overlay.onclick = function(e) { if (e.target === this) closeLiveLogs(); };
-  overlay.innerHTML = '<div class="prompt-card log-card">' +
-    '<div class="prompt-header"><span class="log-header-title"><i class="fa-regular fa-rectangle-list" aria-hidden="true"></i><span class="log-header-copy"><strong>运行日志</strong><small>只展示最近记录，重复内容会自动合并</small></span></span><button class="prompt-close" onclick="closeLiveLogs()" aria-label="关闭">✕</button></div>' +
+  overlay.innerHTML = '<div class="prompt-card log-card" role="dialog" aria-modal="true" aria-labelledby="liveLogDialogTitle" tabindex="-1">' +
+    '<div class="prompt-header"><span class="log-header-title"><i class="fa-regular fa-rectangle-list" aria-hidden="true"></i><span class="log-header-copy"><strong id="liveLogDialogTitle">运行日志</strong><small>只展示最近记录，重复内容会自动合并</small></span></span><button class="prompt-close" onclick="closeLiveLogs()" aria-label="关闭">✕</button></div>' +
     '<div class="log-toolbar" role="tablist" aria-label="日志级别筛选">' +
       '<button class="log-filter-btn active" type="button" data-log-filter="important" onclick="setLiveLogFilter(\'important\')">重点 <span class="log-filter-count">0</span></button>' +
       '<button class="log-filter-btn" type="button" data-log-filter="all" onclick="setLiveLogFilter(\'all\')">全部 <span class="log-filter-count">0</span></button>' +
@@ -14227,6 +14803,7 @@ function openLiveLogs(options) {
     updateLiveLogFilterCounts();
   }
   overlay.classList.add('show');
+  activateAccessibleDialog(overlay, '.prompt-close');
   if (opts.status) setLiveLogStatus(opts.status);
   refreshLiveLogs(true, liveLogFollowLatest).then(() => {
     if (opts.status) setLiveLogStatus(opts.status);
@@ -14236,7 +14813,10 @@ function openLiveLogs(options) {
 
 function closeLiveLogs() {
   const overlay = document.getElementById('liveLogOverlay');
-  if (overlay) overlay.classList.remove('show');
+  if (overlay) {
+    overlay.classList.remove('show');
+    deactivateAccessibleDialog(overlay);
+  }
   if (liveLogTimer) {
     clearInterval(liveLogTimer);
     liveLogTimer = null;

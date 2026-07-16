@@ -43,9 +43,17 @@ from photo_plan_edit import (
     replace_schedule_activity,
     update_schedule_details_activity,
 )
+from outfit_plan_edit import (
+    MAX_OUTFIT_PLAN_EDIT_LENGTH,
+    normalize_outfit_plan_field,
+    normalize_outfit_plan_value,
+    replace_outfit_plan_field,
+    update_schedule_details_outfit,
+)
 from web_server import GalleryServer
 from store import ImageMetadataStore, ScheduleStore
 from text_repair import repair_mojibake_text
+from zhuzhu.core import build_caption_fallback
 from characters import (
     LOCAL_CHARACTER_SOURCE,
     build_character_image_prompt,
@@ -59,6 +67,7 @@ from settings import (
     api_keys_path,
     apply_network_env,
     auto_push_agent,
+    configured_timezone,
     configured_python,
     custom_shot_label,
     custom_shot_prompt,
@@ -124,6 +133,10 @@ ICON_PROBE_BASENAME_RE = re.compile(
     r'icon-maskable(?:-\d+(?:x\d+)?)?\.png)$',
     re.IGNORECASE,
 )
+
+
+class PhotoDeliveryError(RuntimeError):
+    """Raised so APScheduler records a generated-but-undelivered photo as failed."""
 
 
 def _is_icon_probe_path(path: str) -> bool:
@@ -334,6 +347,7 @@ class PortraitGalleryApp:
         self.web_server.on_rebuild_photo_jobs = self.rebuild_photo_jobs
         self.web_server.on_retry_photo_job = self.retry_photo_job
         self.web_server.on_update_photo_plan = self.update_photo_plan
+        self.web_server.on_update_outfit_plan = self.update_outfit_plan
         self.web_server.on_reroll_image = self.reroll_image
         self.web_server.on_edit_image = self.edit_image
 
@@ -351,7 +365,18 @@ class PortraitGalleryApp:
         self._backfill_semaphore = asyncio.Semaphore(1)
         self._hermes_send_lock = asyncio.Lock()
         self._hermes_send_cooldown_until = 0.0
+        self._last_delivery_error = ""
         self._schedule_refresh_task: Optional[asyncio.Task] = None
+        self._recover_orphaned_generated_photos()
+
+    def _now(self) -> datetime:
+        return datetime.now(configured_timezone(getattr(self, "config", {})))
+
+    def _today(self):
+        return self._now().date()
+
+    def _naive_now(self) -> datetime:
+        return self._now().replace(tzinfo=None)
 
     @staticmethod
     def _schedule_reference_source(source: str) -> bool:
@@ -421,7 +446,7 @@ class PortraitGalleryApp:
         return -1
 
     def _saved_today_schedule_reference(self) -> dict:
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = self._today().isoformat()
         try:
             all_data = ScheduleStore(self.data_dir).load()
         except Exception as e:
@@ -620,7 +645,7 @@ class PortraitGalleryApp:
 
     def _next_schedule_run_time(self, *, force_tomorrow: bool = False) -> datetime:
         mode, start_minute, end_minute = self._schedule_time_config()
-        now = datetime.now()
+        now = self._naive_now()
         today = now.date()
 
         if mode == "fixed":
@@ -665,7 +690,7 @@ class PortraitGalleryApp:
 
     def _is_schedule_generation_window_now(self) -> bool:
         mode, start_minute, end_minute = self._schedule_time_config()
-        now = datetime.now()
+        now = self._naive_now()
         current_minute = now.hour * 60 + now.minute
         if mode == "fixed":
             return current_minute == start_minute
@@ -677,7 +702,7 @@ class PortraitGalleryApp:
             start_minute = SCHEDULE_GENERATION_DEFAULT_START_MINUTE
             end_minute = SCHEDULE_GENERATION_DEFAULT_END_MINUTE
 
-        now = datetime.now()
+        now = self._naive_now()
         current_minute = now.hour * 60 + now.minute
         retry_delay_minutes = max(1, SCHEDULE_GENERATION_RETRY_DELAY_SECONDS // 60)
         if current_minute < start_minute:
@@ -728,10 +753,9 @@ class PortraitGalleryApp:
     def _is_exact_hour_time(_hour: int, minute: int = 0) -> bool:
         return int(minute) == 0
 
-    @classmethod
-    def _is_photo_quiet_now(cls) -> bool:
-        now = datetime.now()
-        return cls._is_photo_quiet_time(now.hour, now.minute)
+    def _is_photo_quiet_now(self) -> bool:
+        now = self._now()
+        return self._is_photo_quiet_time(now.hour, now.minute)
 
     async def generate_and_save(self) -> DailyEntry:
         """生成日程 → 生图 → 保存"""
@@ -812,8 +836,8 @@ class PortraitGalleryApp:
         selected_reference: Optional[dict] = None,
     ) -> DailyEntry:
         """自定义 prompt 生图"""
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        ts = int(datetime.now().timestamp())
+        today_str = self._today().isoformat()
+        ts = int(self._now().timestamp())
         shot_type = normalize_custom_shot_type(shot_type)
         shot_label = custom_shot_label(shot_type)
         shot_prompt = custom_shot_prompt(shot_type, size)
@@ -964,7 +988,7 @@ class PortraitGalleryApp:
         return text
 
     def _entry_time_now(self) -> str:
-        return datetime.now().strftime("%H:%M")
+        return self._now().strftime("%H:%M")
 
     async def generate_character(
         self,
@@ -984,7 +1008,7 @@ class PortraitGalleryApp:
         )
         character = registry.get_character(character_id, fallback=False)
         if not character or not character.get("enabled", True):
-            return DailyEntry(date=datetime.now().strftime("%Y-%m-%d"), outfit="角色不存在或已停用", status="failed")
+            return DailyEntry(date=self._today().isoformat(), outfit="角色不存在或已停用", status="failed")
 
         shot_type = normalize_custom_shot_type(shot_type) if str(shot_type or "").strip() else ""
         shot_label = custom_shot_label(shot_type) if shot_type else ""
@@ -1048,7 +1072,7 @@ class PortraitGalleryApp:
             size=size,
             image_model=image_model,
         )
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = self._today().isoformat()
         if not filename:
             logger.error("角色生图失败: character=%s", character.get("id"))
             return DailyEntry(date=today_str, outfit="生成失败", status="failed")
@@ -1112,7 +1136,7 @@ class PortraitGalleryApp:
             self.data_dir,
         )
         character = registry.get_character(character_id, fallback=False)
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = self._today().isoformat()
         if not character or not character.get("enabled", True):
             return DailyEntry(date=today_str, outfit="角色不存在或已停用", status="failed")
 
@@ -1255,7 +1279,7 @@ class PortraitGalleryApp:
             if cid and cid not in seen_ids:
                 characters.append(character)
                 seen_ids.add(cid)
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = self._today().isoformat()
         if len(characters) < 2:
             return DailyEntry(date=today_str, outfit="合照至少需要两个可用角色", status="failed")
 
@@ -1617,8 +1641,6 @@ class PortraitGalleryApp:
                 return {"status": "failed", "error": "schedule_description_required"}
         if not target:
             return {"status": "failed", "error": "invalid_edit_target"}
-        if not instruction:
-            return {"status": "failed", "error": "edit_instruction_required"}
 
         store = ScheduleStore(self.data_dir)
         all_data = store.load()
@@ -1638,43 +1660,7 @@ class PortraitGalleryApp:
         original_meta = metadata.get(image_filename, {})
         original_meta = original_meta if isinstance(original_meta, dict) else {}
         size = self._image_edit_size(image_path, original_meta)
-        prompt = build_precision_image_edit_prompt(target, instruction)
-        raw_model_name = str(original_meta.get("model") or "").strip()
-        if self._engine_from_model_name(raw_model_name) != "gptimage":
-            raw_model_name = ""
-
-        filename = await self.image_gen.generate(
-            prompt,
-            engine="gptimage",
-            timeout=image_process_timeout(self.config, with_reference_fallback=True),
-            ref_image=image_path,
-            size=size,
-            source="custom",
-            prompt_final=True,
-            no_auto_style=True,
-            theme="custom",
-            image_model=raw_model_name,
-            precise_edit=True,
-        )
-        if not filename:
-            logger.error("图片精准编辑失败: image=%s target=%s", image_filename, target)
-            return {"status": "failed", "error": "edit_generate_failed"}
-
-        generated_metadata = ImageMetadataStore(self.data_dir).load()
-        generated_meta = generated_metadata.get(filename, {})
-        generated_meta = dict(generated_meta) if isinstance(generated_meta, dict) else {}
-        if generated_meta and str(generated_meta.get("generation_mode") or "") != "img2img":
-            logger.error("精准编辑丢失原图参考，拒绝结果: image=%s generated=%s", image_filename, filename)
-            cleanup = getattr(self.web_server, "_delete_gallery_image", None)
-            if callable(cleanup):
-                try:
-                    cleanup(filename)
-                except Exception as e:
-                    logger.error("清理无效精准编辑结果失败: image=%s error=%s", filename, e)
-            return {"status": "failed", "error": "edit_reference_lost"}
-
-        now = datetime.now()
-        target_label = image_edit_target_label(target)
+        now = self._now()
         replacement_key = original_key or image_filename
         if re.match(r'^\d{4}-\d{2}-\d{2}$', str(replacement_key)):
             replacement_key = image_filename
@@ -1708,6 +1694,54 @@ class PortraitGalleryApp:
                 normalized_schedule_description,
             )
         schedule_changed = updated_schedule_time != original_schedule_time
+        if not instruction and not schedule_changed:
+            return {"status": "failed", "error": "edit_instruction_required"}
+
+        effective_target = target if instruction else "schedule"
+        target_label = image_edit_target_label(effective_target)
+        effective_instruction = instruction or normalized_schedule_description or ""
+        prompt = build_precision_image_edit_prompt(
+            effective_target,
+            instruction,
+            previous_schedule_description=original_schedule_description,
+            schedule_description=(
+                normalized_schedule_description if schedule_changed else ""
+            ),
+        )
+        raw_model_name = str(original_meta.get("model") or "").strip()
+        if self._engine_from_model_name(raw_model_name) != "gptimage":
+            raw_model_name = ""
+
+        filename = await self.image_gen.generate(
+            prompt,
+            engine="gptimage",
+            timeout=image_process_timeout(self.config, with_reference_fallback=True),
+            ref_image=image_path,
+            size=size,
+            source="custom",
+            prompt_final=True,
+            no_auto_style=True,
+            theme="custom",
+            image_model=raw_model_name,
+            precise_edit=True,
+        )
+        if not filename:
+            logger.error("图片精准编辑失败: image=%s target=%s", image_filename, effective_target)
+            return {"status": "failed", "error": "edit_generate_failed"}
+
+        generated_metadata = ImageMetadataStore(self.data_dir).load()
+        generated_meta = generated_metadata.get(filename, {})
+        generated_meta = dict(generated_meta) if isinstance(generated_meta, dict) else {}
+        if generated_meta and str(generated_meta.get("generation_mode") or "") != "img2img":
+            logger.error("精准编辑丢失原图参考，拒绝结果: image=%s generated=%s", image_filename, filename)
+            cleanup = getattr(self.web_server, "_delete_gallery_image", None)
+            if callable(cleanup):
+                try:
+                    cleanup(filename)
+                except Exception as e:
+                    logger.error("清理无效精准编辑结果失败: image=%s error=%s", filename, e)
+            return {"status": "failed", "error": "edit_reference_lost"}
+
         selected_reference = {
             "id": f"edit_source_{image_filename}",
             "filename": image_filename,
@@ -1716,13 +1750,26 @@ class PortraitGalleryApp:
             "prompt": "",
             "source": "gallery",
             "selection_mode": "precision_edit",
-            "selection_reason": f"precision_edit:{target}",
+            "selection_reason": f"precision_edit:{effective_target}",
         }
         result = {}
+        merge_state = {"source_changed": False, "replacement_key": replacement_key}
 
         def _merge_edit(all_entries: dict):
+            current_key, current_source = self._find_entry_by_image(
+                all_entries,
+                image_filename,
+            )
+            if not current_source:
+                merge_state["source_changed"] = True
+                return all_entries
+
+            active_replacement_key = current_key or replacement_key
+            if re.match(r'^\d{4}-\d{2}-\d{2}$', str(active_replacement_key)):
+                active_replacement_key = image_filename
+            merge_state["replacement_key"] = active_replacement_key
             generated_key, generated_entry = self._find_entry_by_image(all_entries, filename)
-            generated = dict(original)
+            generated = dict(current_source)
             generated.update(dict(generated_entry or {}))
             for field in (
                 "outfit_style",
@@ -1740,15 +1787,15 @@ class PortraitGalleryApp:
                 "schedule_details",
                 "schedule_time",
             ):
-                if field in original:
-                    generated[field] = original[field]
-            edit_history = original.get("edit_history")
+                if field in current_source:
+                    generated[field] = current_source[field]
+            edit_history = current_source.get("edit_history")
             edit_history = list(edit_history) if isinstance(edit_history, list) else []
             history_item = {
                 "from_image": image_filename,
-                "target": target,
+                "target": effective_target,
                 "target_label": target_label,
-                "instruction": instruction,
+                "instruction": effective_instruction,
                 "edited_at": now.isoformat(timespec="seconds"),
             }
             if schedule_changed:
@@ -1760,19 +1807,19 @@ class PortraitGalleryApp:
             edit_history.append(history_item)
             generated.update({
                 "id": filename,
-                "date": original_date,
-                "time": original_time,
+                "date": str(current_source.get("date") or original_date),
+                "time": str(current_source.get("time") or original_time),
                 "image_filename": filename,
                 "image_path": f"/images/{filename}",
                 "prompt": prompt,
-                "caption": original.get("caption", ""),
-                "favorite": bool(original.get("favorite", False)),
+                "caption": current_source.get("caption", ""),
+                "favorite": bool(current_source.get("favorite", False)),
                 "status": "ok",
-                "source": original.get("source") or "custom",
+                "source": current_source.get("source") or "custom",
                 "generation_type": "image_edit",
                 "prompt_mode": "precision_edit",
                 "pure_prompt": True,
-                "custom_prompt": instruction,
+                "custom_prompt": effective_instruction,
                 "custom_ref_mode": "precision_edit",
                 "generation_mode": "img2img",
                 "requested_generation_mode": "img2img",
@@ -1780,13 +1827,13 @@ class PortraitGalleryApp:
                 "requested_ref_image_path": f"/images/{image_filename}",
                 "selected_reference": selected_reference,
                 "edited_from": image_filename,
-                "edit_target": target,
+                "edit_target": effective_target,
                 "edit_target_label": target_label,
-                "edit_instruction": instruction,
+                "edit_instruction": effective_instruction,
                 "edit_history": edit_history,
-                "original_image_filename": original.get("original_image_filename") or image_filename,
+                "original_image_filename": current_source.get("original_image_filename") or image_filename,
                 "replaced_image_filename": image_filename,
-                "replacement_key": replacement_key,
+                "replacement_key": active_replacement_key,
             })
             if schedule_changed:
                 generated.update({
@@ -1796,16 +1843,26 @@ class PortraitGalleryApp:
                     "schedule_edit_source": "image_edit",
                 })
             for key, entry in list(all_entries.items()):
-                if key == replacement_key or re.match(r'^\d{4}-\d{2}-\d{2}$', str(key)):
+                if key == active_replacement_key or re.match(r'^\d{4}-\d{2}-\d{2}$', str(key)):
                     continue
                 entry_filename = entry.get("image_filename") if isinstance(entry, dict) else ""
                 if key in {generated_key, image_filename, filename} or entry_filename in {image_filename, filename}:
                     del all_entries[key]
-            all_entries[replacement_key] = generated
+            all_entries[active_replacement_key] = generated
             result.update(generated)
             return all_entries
 
         store.update(_merge_edit)
+        if merge_state["source_changed"]:
+            self._delete_replaced_image(filename)
+            logger.warning(
+                "图片精准编辑结果已丢弃，源卡片在生成期间发生变化: source=%s generated=%s",
+                image_filename,
+                filename,
+            )
+            return {"status": "failed", "error": "edit_source_changed"}
+
+        replacement_key = str(merge_state["replacement_key"] or replacement_key)
 
         metadata_updater = getattr(self.web_server, "_update_image_metadata_entry", None)
         if callable(metadata_updater):
@@ -1813,9 +1870,9 @@ class PortraitGalleryApp:
                 "source": "image_edit",
                 "precise_edit": True,
                 "edited_from": image_filename,
-                "edit_target": target,
+                "edit_target": effective_target,
                 "edit_target_label": target_label,
-                "edit_instruction": instruction,
+                "edit_instruction": effective_instruction,
                 "replaced_image_filename": image_filename,
                 "replacement_key": replacement_key,
                 "requested_generation_mode": "img2img",
@@ -1842,7 +1899,7 @@ class PortraitGalleryApp:
             "图片精准编辑替换成功: %s -> %s target=%s schedule_changed=%s",
             image_filename,
             filename,
-            target,
+            effective_target,
             schedule_changed,
         )
         return result
@@ -1861,7 +1918,8 @@ class PortraitGalleryApp:
         is_precision_edit = self._is_precision_edit_reroll(original, meta)
         prompt = (meta.get("prompt") or original.get("prompt") or "").strip()
         edit_target = normalize_image_edit_target(
-            original.get("edit_target") or meta.get("edit_target")
+            original.get("edit_target") or meta.get("edit_target"),
+            allow_internal=True,
         )
         edit_instruction = normalize_image_edit_instruction(
             original.get("edit_instruction")
@@ -1895,7 +1953,7 @@ class PortraitGalleryApp:
         if not prompt and not is_scheduled_reroll:
             return {"status": "failed", "error": "prompt_missing"}
 
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = self._today().isoformat()
         original_date = original.get("date") or today_str
         reroll_uses_today_schedule = is_scheduled_reroll and original_date == today_str
         if is_scheduled_reroll and not reroll_uses_today_schedule and not prompt:
@@ -2046,7 +2104,7 @@ class PortraitGalleryApp:
             return {"status": "failed", "error": "generate_failed"}
 
         original_time = original.get("time") or self._image_time_from_filename(image_filename)
-        now_time = self._image_time_from_filename(filename) or datetime.now().strftime("%H:%M")
+        now_time = self._image_time_from_filename(filename) or self._now().strftime("%H:%M")
         schedule_context_entry = {}
         if is_scheduled_reroll:
             schedule_context_entry = self._reroll_schedule_context(
@@ -2282,6 +2340,282 @@ class PortraitGalleryApp:
         image_dir = getattr(self.web_server, "image_dir", os.path.join(self.data_dir, "images"))
         return os.path.isfile(os.path.join(image_dir, os.path.basename(path)))
 
+    def _photo_image_path(self, filename_or_path: str) -> str:
+        raw = str(filename_or_path or "").strip()
+        if not raw:
+            return ""
+        image_dir_is_allowed = getattr(
+            getattr(self, "web_server", None),
+            "_image_dir_is_allowed",
+            None,
+        )
+        if os.path.isabs(raw) and os.path.isfile(raw):
+            if not callable(image_dir_is_allowed) or image_dir_is_allowed(os.path.dirname(raw)):
+                return raw
+        filename = os.path.basename(raw.removeprefix("/images/"))
+        if not filename.lower().endswith(REFERENCE_IMAGE_EXTENSIONS):
+            return ""
+        search_dirs = []
+        image_search_dirs = getattr(getattr(self, "web_server", None), "_image_search_dirs", None)
+        if callable(image_search_dirs):
+            search_dirs.extend(image_search_dirs())
+        else:
+            search_dirs.extend([
+                getattr(getattr(self, "web_server", None), "image_dir", ""),
+                os.path.join(self.data_dir, "images"),
+            ])
+        for image_dir in dict.fromkeys(path for path in search_dirs if path):
+            if callable(image_dir_is_allowed) and not image_dir_is_allowed(image_dir):
+                continue
+            candidate = os.path.join(image_dir, filename)
+            if os.path.isfile(candidate):
+                return candidate
+        return ""
+
+    def _delivery_enabled(self) -> bool:
+        integrations = self.config.get("integrations", {}) if isinstance(self.config.get("integrations"), dict) else {}
+        return integrations.get("send_enabled") is not False
+
+    def _set_gallery_delivery_status(
+        self,
+        filename: str,
+        status: str,
+        *,
+        error: str = "",
+    ) -> None:
+        filename = os.path.basename(str(filename or "").strip())
+        if not filename:
+            return
+        now_text = self._now().isoformat()
+        patch = {
+            "delivery_status": str(status or "").strip(),
+            "delivery_updated_at": now_text,
+        }
+        if status == "sent":
+            patch["delivery_sent_at"] = now_text
+            patch["delivery_error"] = ""
+        elif status == "failed":
+            patch["delivery_error"] = str(error or "delivery_failed")[:600]
+
+        def _update(all_data):
+            for key, entry in all_data.items():
+                if not isinstance(entry, dict):
+                    continue
+                if key == filename or entry.get("image_filename") == filename:
+                    entry.update(patch)
+            return all_data
+
+        try:
+            ScheduleStore(self.data_dir).update(_update)
+        except Exception as exc:
+            logger.error("保存图片投递状态失败: image=%s error=%s", filename, exc)
+        try:
+            ImageMetadataStore(self.data_dir).update(
+                lambda metadata: {
+                    **metadata,
+                    filename: {
+                        **(metadata.get(filename) if isinstance(metadata.get(filename), dict) else {}),
+                        **patch,
+                    },
+                }
+            )
+        except Exception as exc:
+            logger.warning("保存图片投递元数据失败: image=%s error=%s", filename, exc)
+
+    def _record_photo_delivery_failure(
+        self,
+        slot_key: str,
+        *,
+        theme: str,
+        time_text: str,
+        activity: str,
+        image_path: str,
+        caption: str,
+        error: str,
+    ) -> None:
+        filename = os.path.basename(str(image_path or ""))
+        detail = str(error or "delivery_failed").strip() or "delivery_failed"
+        self._set_gallery_delivery_status(filename, "failed", error=detail)
+        if not slot_key:
+            return
+        self._failed_photo_jobs[slot_key] = {
+            "reason": "delivery_failed",
+            "theme": theme,
+            "time": time_text,
+            "activity": activity,
+            "failed_at": self._now().isoformat(),
+            "image_filename": filename,
+            "image_path": image_path,
+            "caption": caption,
+            "error": detail[-1200:],
+            "error_summary": "图片已生成，但发送失败；重试只会重发原图，不会重新生图",
+        }
+        self._save_failed_photo_jobs()
+
+    def _recover_orphaned_generated_photos(self) -> None:
+        """Register today's generated files left behind by an interrupted gallery sync."""
+        today_text = self._today().isoformat()
+        try:
+            metadata = ImageMetadataStore(self.data_dir).load()
+            schedule_store = ScheduleStore(self.data_dir)
+            schedule_data = schedule_store.load()
+            daily_entry = schedule_data.get(today_text)
+            daily_entry = daily_entry if isinstance(daily_entry, dict) else {}
+            changed = False
+
+            recovered_delivery_files = set()
+            for entry in schedule_data.values():
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("date") != today_text or entry.get("status") != "ok":
+                    continue
+                delivery_status = str(entry.get("delivery_status") or "").strip()
+                if entry.get("source") != "cron" or delivery_status not in {"pending", "sending"}:
+                    continue
+                filename = os.path.basename(str(entry.get("image_filename") or ""))
+                image_path = self._photo_image_path(filename)
+                if not filename or not image_path or filename in recovered_delivery_files:
+                    continue
+                raw_time = str(entry.get("schedule_time") or entry.get("time") or "")
+                match = re.match(r"\s*(\d{1,2}):(\d{2})\s*(.*)", raw_time)
+                if not match:
+                    match = re.search(r"_schedule_(\d{2})(\d{2})(?:_|\.)", filename)
+                if not match:
+                    logger.warning("无法恢复缺少日程时间的发送中图片: image=%s", filename)
+                    continue
+                time_text = f"{int(match.group(1)):02d}:{int(match.group(2)):02d}"
+                activity = match.group(3).strip() if match.lastindex and match.lastindex >= 3 else ""
+                slot_key = f"{today_text} {time_text}"
+                error = (
+                    "delivery_interrupted_before_send"
+                    if delivery_status == "pending"
+                    else "delivery_interrupted_by_restart"
+                )
+                self._set_gallery_delivery_status(filename, "failed", error=error)
+                self._failed_photo_jobs[slot_key] = {
+                    "reason": "delivery_failed",
+                    "theme": entry.get("theme") or self._theme_for_hour(int(time_text[:2])),
+                    "time": time_text,
+                    "activity": activity,
+                    "failed_at": self._now().isoformat(),
+                    "image_filename": filename,
+                    "image_path": image_path,
+                    "caption": str(entry.get("caption") or ""),
+                    "error": error,
+                    "error_summary": (
+                        "图片生成后尚未发送服务便已中断；重发会使用原图，不会重新生图"
+                        if delivery_status == "pending"
+                        else "图片发送过程中服务中断；重发会使用原图，不会重新生图"
+                    ),
+                }
+                recovered_delivery_files.add(filename)
+                changed = True
+                logger.warning(
+                    "已恢复发送中断的定时原图，等待手动重发: slot=%s image=%s",
+                    slot_key,
+                    filename,
+                )
+
+            for slot_key, failed in list(self._failed_photo_jobs.items()):
+                date_text, _, time_text = slot_key.partition(" ")
+                if date_text != today_text or failed.get("reason") == "delivery_failed":
+                    continue
+                if not re.fullmatch(r"\d{2}:\d{2}", time_text):
+                    continue
+                if self._check_photo_exists_for_slot(date_text, time_text):
+                    continue
+
+                token = time_text.replace(":", "")
+                candidates = []
+                for filename, meta in metadata.items():
+                    if not isinstance(filename, str) or not isinstance(meta, dict):
+                        continue
+                    if str(meta.get("source") or "") != "cron":
+                        continue
+                    if not re.search(rf"_schedule_{re.escape(token)}(?:_|\.)", filename):
+                        continue
+                    image_path = self._photo_image_path(filename)
+                    if not image_path:
+                        continue
+                    try:
+                        created_at = int(meta.get("created_at") or os.path.getmtime(image_path))
+                        created_date = datetime.fromtimestamp(
+                            created_at,
+                            configured_timezone(self.config),
+                        ).date().isoformat()
+                    except (OSError, TypeError, ValueError):
+                        continue
+                    if created_date == date_text:
+                        candidates.append((created_at, filename, image_path, meta))
+                if not candidates:
+                    continue
+
+                created_at, filename, image_path, meta = max(candidates, key=lambda item: item[0])
+                recovered_schedule_time = f"{time_text} {failed.get('activity', '')}".strip()
+                recovered_theme = str(
+                    failed.get("theme") or self._theme_for_hour(int(time_text[:2]))
+                )
+                recovered_caption = repair_mojibake_text(meta.get("caption") or "").strip()
+                if not recovered_caption:
+                    recovered_caption = build_caption_fallback(
+                        recovered_theme,
+                        recovered_schedule_time,
+                        load_runtime_persona(self.config, self.data_dir),
+                    )
+                if not recovered_caption:
+                    recovered_caption = repair_mojibake_text(
+                        daily_entry.get("caption") or ""
+                    ).strip()
+                entry = {
+                    "date": date_text,
+                    "time": datetime.fromtimestamp(
+                        created_at,
+                        configured_timezone(self.config),
+                    ).strftime("%H:%M"),
+                    "schedule_time": recovered_schedule_time,
+                    "image_filename": filename,
+                    "prompt": str(meta.get("prompt") or ""),
+                    "caption": recovered_caption,
+                    "outfit": str(daily_entry.get("outfit") or ""),
+                    "outfit_style": str(daily_entry.get("outfit_style") or ""),
+                    "theme": recovered_theme,
+                    "model_name": str(meta.get("model_name") or meta.get("model") or ""),
+                    "size": str(meta.get("size") or ""),
+                    "generation_time": meta.get("generation_time"),
+                    "status": "ok",
+                    "source": "cron",
+                    "delivery_status": "failed",
+                    "delivery_error": "gallery_sync_interrupted_before_delivery",
+                    "delivery_updated_at": self._now().isoformat(),
+                    "recovered_from_metadata": True,
+                }
+
+                def _register(all_data, image_filename=filename, payload=entry):
+                    if not isinstance(all_data.get(image_filename), dict):
+                        all_data[image_filename] = payload
+                    return all_data
+
+                schedule_store.update(_register)
+                failed.update({
+                    "reason": "delivery_failed",
+                    "image_filename": filename,
+                    "image_path": image_path,
+                    "caption": entry["caption"],
+                    "error": "gallery_sync_interrupted_before_delivery",
+                    "error_summary": "图片已生成但同步中断；重发会使用原图，不会重新生图",
+                })
+                self._failed_photo_jobs[slot_key] = failed
+                changed = True
+                logger.warning(
+                    "已恢复同步中断的定时原图，等待手动重发: slot=%s image=%s",
+                    slot_key,
+                    filename,
+                )
+            if changed:
+                self._save_failed_photo_jobs()
+        except Exception as exc:
+            logger.error("恢复同步中断的定时原图失败: %s", exc, exc_info=True)
+
     def _mark_photo_job_inflight(self, slot_key: str):
         if not slot_key:
             return
@@ -2320,7 +2654,7 @@ class PortraitGalleryApp:
             if not match:
                 logger.warning("动态生图任务错过执行但无法解析时间: %s", job_id)
                 return
-            now = datetime.now()
+            now = self._naive_now()
             run_time = datetime.combine(now.date(), dt_time(int(match.group(1)), int(match.group(2))))
 
         date_text = run_time.strftime("%Y-%m-%d")
@@ -2335,7 +2669,7 @@ class PortraitGalleryApp:
             "theme": theme,
             "time": time_text,
             "activity": activity,
-            "failed_at": datetime.now().isoformat(),
+            "failed_at": self._now().isoformat(),
             "error": f"APScheduler missed dynamic photo job {job_id} scheduled at {run_time.isoformat()}",
             "error_summary": "服务当时繁忙，定时生图错过执行窗口，可手动重试",
         }
@@ -2371,7 +2705,7 @@ class PortraitGalleryApp:
                     "theme": self._theme_for_hour(hour),
                     "time": time_text,
                     "activity": activity,
-                    "failed_at": datetime.now().isoformat(),
+                    "failed_at": self._now().isoformat(),
                     "error": f"stale running state after {int(now_ts - started_at)}s",
                     "error_summary": "生成状态卡住，已转为可重试",
                 }
@@ -2381,7 +2715,7 @@ class PortraitGalleryApp:
             self._save_failed_photo_jobs()
 
     def _today_completed_photo_count(self) -> int:
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = self._today().isoformat()
         seen = set()
         try:
             all_data = ScheduleStore(self.data_dir).load()
@@ -2394,6 +2728,8 @@ class PortraitGalleryApp:
                     continue
                 if entry.get("source", "") != "cron":
                     continue
+                if entry.get("delivery_status") in {"sending", "failed"}:
+                    continue
                 img_file = entry.get("image_filename", "")
                 if img_file and self._photo_image_exists(img_file):
                     seen.add(img_file)
@@ -2403,15 +2739,15 @@ class PortraitGalleryApp:
 
     def _today_inflight_photo_count(self, today_str: str = "") -> int:
         self._expire_stale_photo_jobs()
-        today_str = today_str or datetime.now().strftime("%Y-%m-%d")
+        today_str = today_str or self._today().isoformat()
         return sum(1 for key in self._photo_jobs_inflight if key.startswith(f"{today_str} "))
 
     def _today_scheduled_photo_count(self, today_str: str = "") -> int:
-        today_str = today_str or datetime.now().strftime("%Y-%m-%d")
+        today_str = today_str or self._today().isoformat()
         try:
             target_date = datetime.strptime(today_str, "%Y-%m-%d").date()
         except ValueError:
-            target_date = datetime.now().date()
+            target_date = self._today()
         count = 0
         for job in self.aps.get_jobs():
             if not job.id.startswith("photo_dynamic_"):
@@ -2427,7 +2763,7 @@ class PortraitGalleryApp:
         return time_text if re.match(r'^\d{2}:\d{2}$', time_text or "") else ""
 
     def _today_completed_photo_times(self, today_str: str = "") -> set[str]:
-        today_str = today_str or datetime.now().strftime("%Y-%m-%d")
+        today_str = today_str or self._today().isoformat()
         times: set[str] = set()
         try:
             all_data = ScheduleStore(self.data_dir).load()
@@ -2452,18 +2788,18 @@ class PortraitGalleryApp:
         return times
 
     def _today_failed_photo_times(self, today_str: str = "") -> set[str]:
-        today_str = today_str or datetime.now().strftime("%Y-%m-%d")
+        today_str = today_str or self._today().isoformat()
         times = set()
-        for slot_key in self._failed_photo_jobs:
+        for slot_key, failed in self._failed_photo_jobs.items():
             date_text, _, time_text = slot_key.partition(" ")
             if date_text == today_str and re.match(r'^\d{2}:\d{2}$', time_text):
-                if not self._check_photo_exists_for_slot(today_str, time_text):
+                if failed.get("reason") == "delivery_failed" or not self._check_photo_exists_for_slot(today_str, time_text):
                     times.add(time_text)
         return times
 
     def _today_inflight_photo_times(self, today_str: str = "") -> set[str]:
         self._expire_stale_photo_jobs()
-        today_str = today_str or datetime.now().strftime("%Y-%m-%d")
+        today_str = today_str or self._today().isoformat()
         times = set()
         for slot_key in self._photo_jobs_inflight:
             date_text, _, time_text = slot_key.partition(" ")
@@ -2472,11 +2808,11 @@ class PortraitGalleryApp:
         return times
 
     def _today_scheduled_photo_times(self, today_str: str = "") -> set[str]:
-        today_str = today_str or datetime.now().strftime("%Y-%m-%d")
+        today_str = today_str or self._today().isoformat()
         try:
             target_date = datetime.strptime(today_str, "%Y-%m-%d").date()
         except ValueError:
-            target_date = datetime.now().date()
+            target_date = self._today()
         times = set()
         for job in self.aps.get_jobs():
             if not job.id.startswith("photo_dynamic_"):
@@ -2493,7 +2829,7 @@ class PortraitGalleryApp:
         include_scheduled: bool = False,
         exclude_slot_key: str = "",
     ) -> set[str]:
-        today_str = today_str or datetime.now().strftime("%Y-%m-%d")
+        today_str = today_str or self._today().isoformat()
         times = set()
         times.update(self._today_completed_photo_times(today_str))
         times.update(self._today_failed_photo_times(today_str))
@@ -2523,7 +2859,7 @@ class PortraitGalleryApp:
         include_scheduled: bool = False,
         exclude_slot_key: str = "",
     ) -> tuple[int, int, int, int, int, int, int]:
-        today_str = today_str or datetime.now().strftime("%Y-%m-%d")
+        today_str = today_str or self._today().isoformat()
         max_daily = self._get_photo_job_limit()
         completed_times = self._today_completed_photo_times(today_str)
         failed_times = self._today_failed_photo_times(today_str)
@@ -2556,7 +2892,7 @@ class PortraitGalleryApp:
 
     def _prune_photo_jobs_for_limit(self):
         """Remove pending dynamic jobs that would exceed today's configured plan cap."""
-        today = datetime.now().date()
+        today = self._today()
         today_str = today.strftime("%Y-%m-%d")
         max_daily = self._get_photo_job_limit()
         existing_plan_times = self._today_photo_plan_times(today_str, include_scheduled=False)
@@ -2613,7 +2949,7 @@ class PortraitGalleryApp:
         return ""
 
     def _today_completed_photo_periods(self) -> set[str]:
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = self._today().isoformat()
         completed_periods = set()
         try:
             all_data = ScheduleStore(self.data_dir).load()
@@ -2736,7 +3072,7 @@ class PortraitGalleryApp:
             return []
 
     def _today_schedule_entry(self) -> dict:
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = self._today().isoformat()
         try:
             all_data = ScheduleStore(self.data_dir).load()
             if self._is_usable_schedule_entry(all_data.get(today_str)):
@@ -2764,7 +3100,7 @@ class PortraitGalleryApp:
         if not activity:
             return {"status": "error", "time": normalized_time, "message": "empty_activity"}
 
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = self._today().isoformat()
         result = {"status": "not_found", "time": normalized_time}
 
         def _update(all_data):
@@ -2814,7 +3150,7 @@ class PortraitGalleryApp:
                     activity,
                 )
                 entry["schedule_details"] = details
-            entry["schedule_edited_at"] = datetime.now().isoformat()
+            entry["schedule_edited_at"] = self._now().isoformat()
             entry["schedule_edit_source"] = "web"
             all_data[schedule_key] = entry
             result.update({
@@ -2842,7 +3178,7 @@ class PortraitGalleryApp:
             job = self.aps.get_job(job_id)
             if job:
                 run_time = self._local_job_run_time(job)
-                if not run_time or run_time.date() == datetime.now().date():
+                if not run_time or run_time.date() == self._today():
                     theme = job.args[0] if getattr(job, "args", None) else self._theme_for_hour(int(normalized_time.split(":", 1)[0]))
                     schedule_text_for_job = f"{normalized_time} {activity}".strip()
                     job.modify(args=[theme, schedule_text_for_job])
@@ -2854,6 +3190,66 @@ class PortraitGalleryApp:
                     job_updated = True
         result["job_updated"] = job_updated
         logger.info("今日生图计划已编辑: time=%s activity=%s job_updated=%s", normalized_time, activity[:40], job_updated)
+        return result
+
+    def update_outfit_plan(self, field: str, value: str) -> dict:
+        """Update one editable field in today's outfit and pending slot details."""
+        field = normalize_outfit_plan_field(field)
+        value = normalize_outfit_plan_value(value)
+        if not field:
+            return {"status": "error", "message": "invalid_outfit_field"}
+        if not value:
+            return {"status": "error", "field": field, "message": "empty_outfit_value"}
+        if len(value) > MAX_OUTFIT_PLAN_EDIT_LENGTH:
+            return {"status": "error", "field": field, "message": "outfit_value_too_long"}
+
+        today_str = self._today().isoformat()
+        result = {"status": "not_found", "date": today_str, "field": field}
+
+        def _update(all_data):
+            schedule_key = ""
+            if self._is_usable_schedule_entry(all_data.get(today_str)):
+                schedule_key = today_str
+            if not schedule_key:
+                for key, entry in all_data.items():
+                    if (
+                        isinstance(entry, dict)
+                        and not entry.get("image_filename")
+                        and entry.get("date") == today_str
+                        and self._is_usable_schedule_entry(entry)
+                    ):
+                        schedule_key = key
+                        break
+            if not schedule_key:
+                result["message"] = "today_schedule_not_found"
+                return all_data
+
+            entry = dict(all_data.get(schedule_key) or {})
+            entry["outfit"] = replace_outfit_plan_field(entry.get("outfit", ""), field, value)
+            entry["schedule_details"] = update_schedule_details_outfit(
+                entry.get("schedule_details"),
+                field,
+                value,
+            )
+            if field == "穿搭":
+                entry["outfit_keywords"] = value
+            entry["outfit_edited_at"] = self._now().isoformat()
+            entry["outfit_edit_source"] = "web"
+            all_data[schedule_key] = entry
+            result.update({
+                "status": "ok",
+                "value": value,
+                "schedule_key": schedule_key,
+                "updated_slots": len(entry.get("schedule_details") or []),
+            })
+            return all_data
+
+        ScheduleStore(self.data_dir).update(_update)
+        logger.info(
+            "今日穿搭方案已编辑: field=%s updated_slots=%s",
+            field,
+            result.get("updated_slots", 0),
+        )
         return result
 
     def rebuild_photo_jobs(self) -> list:
@@ -2869,7 +3265,7 @@ class PortraitGalleryApp:
             logger.warning("日程文本为空，跳过动态生图调度")
             return
 
-        now = datetime.now()
+        now = self._naive_now()
         today = now.date()
         today_str = today.strftime("%Y-%m-%d")
 
@@ -3019,6 +3415,73 @@ class PortraitGalleryApp:
             async with self._inflight_lock:
                 self._clear_photo_job_inflight(slot_key)
 
+    async def _retry_photo_delivery(self, slot_key: str, failed: dict) -> None:
+        """Resend an already generated image without consuming generation quota."""
+        image_path = self._photo_image_path(
+            failed.get("image_path") or failed.get("image_filename") or ""
+        )
+        filename = os.path.basename(image_path or str(failed.get("image_filename") or ""))
+        caption = str(failed.get("caption") or "").strip()
+        try:
+            if not image_path:
+                error = "delivery_retry_image_missing"
+                failed.update({
+                    "failed_at": self._now().isoformat(),
+                    "error": error,
+                    "error_summary": "原图文件已不存在，无法重发",
+                })
+                self._failed_photo_jobs[slot_key] = failed
+                self._save_failed_photo_jobs()
+                return
+
+            if not self._delivery_enabled():
+                error = "delivery_disabled"
+                self._set_gallery_delivery_status(filename, "disabled", error=error)
+                failed.update({
+                    "failed_at": self._now().isoformat(),
+                    "error": error,
+                    "error_summary": "图片推送已在设置中关闭，开启后再重发",
+                })
+                self._failed_photo_jobs[slot_key] = failed
+                self._save_failed_photo_jobs()
+                return
+
+            self._set_gallery_delivery_status(filename, "sending")
+            send_ok = await self._send_generated_photo(image_path, caption)
+            if send_ok:
+                self._set_gallery_delivery_status(filename, "sent")
+                current = self._failed_photo_jobs.get(slot_key)
+                if isinstance(current, dict) and current.get("reason") == "delivery_failed":
+                    self._failed_photo_jobs.pop(slot_key, None)
+                    self._save_failed_photo_jobs()
+                logger.info("原图重发成功: %s image=%s", slot_key, filename)
+                return
+
+            error = self._last_delivery_error or "delivery_failed"
+            self._set_gallery_delivery_status(filename, "failed", error=error)
+            failed.update({
+                "failed_at": self._now().isoformat(),
+                "error": error[-1200:],
+                "error_summary": "图片重发仍未送达；请恢复会话或等待限流解除后再试",
+            })
+            self._failed_photo_jobs[slot_key] = failed
+            self._save_failed_photo_jobs()
+            logger.error("原图重发失败: %s image=%s error=%s", slot_key, filename, error)
+        except Exception as exc:
+            error = str(exc) or "delivery_retry_failed"
+            self._set_gallery_delivery_status(filename, "failed", error=error)
+            failed.update({
+                "failed_at": self._now().isoformat(),
+                "error": error[-1200:],
+                "error_summary": "图片重发异常，可稍后再次重试",
+            })
+            self._failed_photo_jobs[slot_key] = failed
+            self._save_failed_photo_jobs()
+            logger.error("原图重发异常: %s error=%s", slot_key, exc, exc_info=True)
+        finally:
+            async with self._inflight_lock:
+                self._clear_photo_job_inflight(slot_key)
+
     @staticmethod
     def _theme_for_hour(hour: int) -> str:
         if 0 <= hour < 6:
@@ -3033,7 +3496,7 @@ class PortraitGalleryApp:
 
     def _today_schedule_activity_map(self) -> dict:
         """Return {HH:mm: activity} for today's persisted schedule."""
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = self._today().isoformat()
         activity_by_time = {}
         try:
             schedule_text = self._today_schedule_text()
@@ -3050,7 +3513,7 @@ class PortraitGalleryApp:
         self._expire_stale_photo_jobs()
         activity_by_time = self._today_schedule_activity_map()
         jobs = []
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = self._today().isoformat()
         seen_times = set()
         for job in self.aps.get_jobs():
             if not job.id.startswith("photo_dynamic_"):
@@ -3090,10 +3553,12 @@ class PortraitGalleryApp:
             started_at = float(self._photo_jobs_inflight_started.get(slot_key) or time.time())
             running_seconds = max(0, int(time.time() - started_at))
             stale_after = self._photo_job_stale_seconds()
+            failed = self._failed_photo_jobs.get(slot_key) or {}
+            delivery_retry = failed.get("reason") == "delivery_failed"
             jobs.append({
                 "id": f"photo_backfill_{time_text.replace(':', '_')}",
                 "type": "photo",
-                "status": "running",
+                "status": "sending" if delivery_retry else "running",
                 "theme": self._theme_for_hour(hour),
                 "time": time_text,
                 "run_at": datetime.fromtimestamp(started_at).isoformat(),
@@ -3102,14 +3567,18 @@ class PortraitGalleryApp:
                 "stale_after_seconds": stale_after,
                 "retryable": running_seconds >= stale_after,
                 "activity": activity_by_time.get(time_text, ""),
-                "source": "backfill",
+                "source": "delivery_retry" if delivery_retry else "backfill",
+                "image_filename": failed.get("image_filename", "") if delivery_retry else "",
             })
 
         for slot_key, failed in sorted(self._failed_photo_jobs.items()):
             date_text, _, time_text = slot_key.partition(" ")
             if date_text != today_str or not re.match(r'^\d{2}:\d{2}$', time_text):
                 continue
-            if time_text in seen_times or self._check_photo_exists_for_slot(today_str, time_text):
+            delivery_failed = failed.get("reason") == "delivery_failed"
+            if time_text in seen_times or (
+                not delivery_failed and self._check_photo_exists_for_slot(today_str, time_text)
+            ):
                 continue
             seen_times.add(time_text)
             hour = int(time_text.split(":", 1)[0])
@@ -3117,15 +3586,17 @@ class PortraitGalleryApp:
             jobs.append({
                 "id": f"photo_failed_{time_text.replace(':', '_')}",
                 "type": "photo",
-                "status": "missed" if expired else "failed",
+                "status": "delivery_failed" if delivery_failed else ("missed" if expired else "failed"),
                 "theme": failed.get("theme") or self._theme_for_hour(hour),
                 "time": time_text,
-                "run_at": failed.get("failed_at") or datetime.now().isoformat(),
+                "run_at": failed.get("failed_at") or self._now().isoformat(),
                 "activity": failed.get("activity") or activity_by_time.get(time_text, ""),
-                "source": "expired" if expired else "failed",
+                "source": "delivery_failed" if delivery_failed else ("expired" if expired else "failed"),
                 "error": failed.get("error", ""),
-                "error_summary": self._summarize_photo_failure(failed.get("error", ""))
-                or failed.get("error_summary", ""),
+                "error_summary": failed.get("error_summary", "")
+                or self._summarize_photo_failure(failed.get("error", "")),
+                "image_filename": failed.get("image_filename", ""),
+                "retry_label": "重发" if delivery_failed else "重试",
             })
 
         jobs.sort(key=lambda item: item["time"])
@@ -3137,7 +3608,7 @@ class PortraitGalleryApp:
         if not match:
             return "", "", ""
         time_text = f"{int(match.group(1)):02d}:{int(match.group(2)):02d}"
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = self._today().isoformat()
         return f"{today_str} {time_text}", time_text, match.group(3).strip()
 
     @staticmethod
@@ -3233,6 +3704,30 @@ class PortraitGalleryApp:
         slot_key, time_text, activity_hint = self._slot_key_for_schedule_time(schedule_time)
         if not slot_key:
             return {"status": "error", "message": "invalid_time"}
+        failed = self._failed_photo_jobs.get(slot_key) or {}
+        if failed.get("reason") == "delivery_failed":
+            image_path = self._photo_image_path(
+                failed.get("image_path") or failed.get("image_filename") or ""
+            )
+            if not image_path:
+                return {
+                    "status": "image_missing",
+                    "time": time_text,
+                    "message": "原图文件已不存在，无法重发",
+                }
+            async with self._inflight_lock:
+                self._expire_stale_photo_jobs()
+                if slot_key in self._photo_jobs_inflight:
+                    return {"status": "running", "time": time_text, "action": "resend"}
+                self._mark_photo_job_inflight(slot_key)
+            logger.info("手动重发已有图片: %s image=%s", time_text, os.path.basename(image_path))
+            asyncio.create_task(self._retry_photo_delivery(slot_key, dict(failed)))
+            return {
+                "status": "queued",
+                "action": "resend",
+                "time": time_text,
+                "image_filename": os.path.basename(image_path),
+            }
         time_match = re.match(r"^(\d{2}):(\d{2})$", time_text or "")
         if time_match and self._is_photo_quiet_time(int(time_match.group(1)), int(time_match.group(2))):
             return {
@@ -3253,7 +3748,7 @@ class PortraitGalleryApp:
                 "message": "03:00-06:00 为日程生成时段，不执行生图",
             }
 
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = self._today().isoformat()
         if self._check_photo_exists_for_slot(today_str, time_text):
             return {"status": "already_done", "time": time_text}
 
@@ -3374,6 +3869,9 @@ class PortraitGalleryApp:
             cmd.extend(["--schedule-time", schedule_time])
         try:
             loop = asyncio.get_running_loop()
+            child_env = self.image_gen.build_env()
+            if self._delivery_enabled():
+                child_env["ZHUZHU_DELIVERY_PENDING"] = "1"
             result = await loop.run_in_executor(
                 None,
                 lambda: subprocess.run(
@@ -3382,19 +3880,22 @@ class PortraitGalleryApp:
                     text=True,
                     timeout=image_process_timeout(self.config, with_reference_fallback=True),
                     cwd=self.image_gen.script_dir,
-                    env=self.image_gen.build_env(),
+                    env=child_env,
                 )
             )
             if result.returncode == 0:
                 # 解析输出获取图片路径和caption
                 image_path = ""
                 caption_text = ""
-                for line in result.stdout.split("\n"):
+                for line in f"{result.stdout}\n{result.stderr}".split("\n"):
                     line = line.strip()
                     if line.startswith("SUCCESS:"):
                         image_path = line.split("SUCCESS:", 1)[1].strip()
                     if "Synced to gallery" in line:
                         logger.info(f"定时生图成功: {line}")
+                        if not image_path:
+                            synced_filename = line.rsplit(":", 1)[-1].strip()
+                            image_path = self._photo_image_path(synced_filename)
                     if line.startswith("CAPTION:"):
                         caption_text = self._prefer_caption_text(
                             line.split("CAPTION:", 1)[1].strip(),
@@ -3402,12 +3903,10 @@ class PortraitGalleryApp:
                         )
                         logger.info(f"Caption: {caption_text}")
                 logger.info(f"定时生图完成: theme={theme}")
-                if slot_key:
-                    if self._failed_photo_jobs.pop(slot_key, None) is not None:
-                        self._save_failed_photo_jobs()
 
                 # 按设置的推送渠道发送到 TG / 微信。
                 if image_path:
+                    image_path = self._photo_image_path(image_path) or image_path
                     filename = os.path.basename(image_path)
                     if selected_reference and filename:
                         store = ScheduleStore(self.data_dir)
@@ -3423,9 +3922,33 @@ class PortraitGalleryApp:
                         except Exception as e:
                             logger.error("保存定时生图参考图信息失败: %s", e)
                     caption_text = self._gallery_caption_for_image(image_path, caption_text)
-                    send_ok = await self._send_generated_photo(image_path, caption_text)
-                    if not send_ok:
-                        logger.warning(f"推送未完全成功: image={image_path}")
+                    if self._delivery_enabled():
+                        self._set_gallery_delivery_status(filename, "sending")
+                        send_ok = await self._send_generated_photo(image_path, caption_text)
+                        if not send_ok:
+                            delivery_error = self._last_delivery_error or "delivery_failed"
+                            self._record_photo_delivery_failure(
+                                slot_key,
+                                theme=theme,
+                                time_text=time_text,
+                                activity=activity,
+                                image_path=image_path,
+                                caption=caption_text,
+                                error=delivery_error,
+                            )
+                            logger.error(
+                                "图片已生成但推送失败: image=%s error=%s",
+                                image_path,
+                                delivery_error,
+                            )
+                            if quota_reserved:
+                                return False
+                            raise PhotoDeliveryError(delivery_error)
+                        self._set_gallery_delivery_status(filename, "sent")
+                    else:
+                        self._set_gallery_delivery_status(filename, "disabled")
+                if slot_key and self._failed_photo_jobs.pop(slot_key, None) is not None:
+                    self._save_failed_photo_jobs()
                 return True
             else:
                 detail = (result.stderr or result.stdout or "").strip()
@@ -3438,12 +3961,14 @@ class PortraitGalleryApp:
                         "theme": theme,
                         "time": time_text,
                         "activity": activity,
-                        "failed_at": datetime.now().isoformat(),
+                        "failed_at": self._now().isoformat(),
                         "error": detail[-1200:],
                         "error_summary": summary,
                     }
                     self._save_failed_photo_jobs()
                 return False
+        except PhotoDeliveryError:
+            raise
         except subprocess.TimeoutExpired:
             timeout = image_process_timeout(self.config, with_reference_fallback=True)
             logger.error(f"定时生图超时: theme={theme} ({timeout}s)")
@@ -3452,7 +3977,7 @@ class PortraitGalleryApp:
                     "theme": theme,
                     "time": time_text,
                     "activity": activity,
-                    "failed_at": datetime.now().isoformat(),
+                    "failed_at": self._now().isoformat(),
                     "error": f"timeout after {timeout}s",
                     "error_summary": "生图请求超时",
                 }
@@ -3466,7 +3991,7 @@ class PortraitGalleryApp:
                     "theme": theme,
                     "time": time_text,
                     "activity": activity,
-                    "failed_at": datetime.now().isoformat(),
+                    "failed_at": self._now().isoformat(),
                     "error": str(e),
                     "error_summary": summary,
                 }
@@ -3509,6 +4034,7 @@ class PortraitGalleryApp:
 
     async def _send_generated_photo(self, image_path: str, caption: str) -> bool:
         """Send generated image using the configured push channel."""
+        self._last_delivery_error = ""
         integrations = self.config.get("integrations", {}) if isinstance(self.config.get("integrations"), dict) else {}
         if integrations.get("send_enabled") is False:
             logger.info("图片推送已在配置中关闭")
@@ -3522,10 +4048,16 @@ class PortraitGalleryApp:
         if agent == "openclaw":
             openclaw_ok = await self._send_to_openclaw(channel, image_path, caption, delivery)
             if openclaw_ok:
+                self._last_delivery_error = ""
                 return True
             logger.warning(f"OpenClaw 推送失败，尝试 Hermes fallback: channel={channel}")
 
-        return await self._send_to_hermes_channel(channel, image_path, caption, delivery)
+        delivered = await self._send_to_hermes_channel(channel, image_path, caption, delivery)
+        if delivered:
+            self._last_delivery_error = ""
+        elif not self._last_delivery_error:
+            self._last_delivery_error = f"{channel}_delivery_failed"
+        return delivered
 
     def _gallery_caption_for_image(self, image_path: str, fallback: str = "") -> str:
         """Use the gallery card caption as the single source for outbound copy."""
@@ -3599,6 +4131,7 @@ class PortraitGalleryApp:
                     break
         if not hermes_cmd:
             logger.warning("未找到 Hermes CLI，跳过推送")
+            self._last_delivery_error = "hermes_cli_not_found"
             return False
         channel = normalize_push_channel(channel)
         target = delivery.get("wechat_target") if channel == "wechat" else (
@@ -3617,6 +4150,8 @@ class PortraitGalleryApp:
             )
             if not image_ok:
                 logger.error(f"{label}发送失败: 图片未送达，跳过文案发送")
+                if not self._last_delivery_error:
+                    self._last_delivery_error = f"{channel}_image_delivery_failed"
                 return False
 
             caption_ok = True
@@ -3634,8 +4169,11 @@ class PortraitGalleryApp:
 
         if image_ok and caption_ok:
             logger.info(f"{label}发送完成")
+            self._last_delivery_error = ""
             return True
         logger.warning(f"{label}图片已送达，文案发送被限流或失败: image_ok={image_ok}, caption_ok={caption_ok}")
+        if image_ok:
+            self._last_delivery_error = ""
         return image_ok
 
     async def _send_to_openclaw(self, channel: str, image_path: str, caption: str, delivery: dict) -> bool:
@@ -3644,6 +4182,7 @@ class PortraitGalleryApp:
         openclaw_cmd = integrations.get("openclaw_cli", "") or os.getenv("OPENCLAW_CLI", "") or shutil.which("openclaw")
         if not openclaw_cmd:
             logger.warning("未找到 OpenClaw CLI，无法使用 OpenClaw 推送")
+            self._last_delivery_error = "openclaw_cli_not_found"
             return False
 
         channel = normalize_push_channel(channel)
@@ -3666,6 +4205,7 @@ class PortraitGalleryApp:
 
         if not target:
             logger.warning(f"OpenClaw 推送目标未配置: channel={channel}")
+            self._last_delivery_error = f"openclaw_{channel}_target_missing"
             return False
 
         cmd = [
@@ -3698,16 +4238,20 @@ class PortraitGalleryApp:
             )
         except subprocess.TimeoutExpired:
             logger.warning(f"OpenClaw {label}推送超时")
+            self._last_delivery_error = "openclaw_delivery_timeout"
             return False
         except Exception as e:
             logger.warning(f"OpenClaw {label}推送异常: {e}")
+            self._last_delivery_error = str(e) or "openclaw_delivery_error"
             return False
 
         output = self._hermes_send_output(result.stdout, result.stderr)
         if result.returncode == 0:
             logger.info(f"OpenClaw {label}推送成功")
+            self._last_delivery_error = ""
             return True
         logger.warning(f"OpenClaw {label}推送失败: exit={result.returncode}, output={output}")
+        self._last_delivery_error = output or f"openclaw_exit_{result.returncode}"
         return False
 
     async def _run_hermes_send(
@@ -3755,6 +4299,7 @@ class PortraitGalleryApp:
             output = self._hermes_send_output(result.stdout, result.stderr)
             if result.returncode == 0:
                 logger.info(f"{label}发送成功")
+                self._last_delivery_error = ""
                 return True
 
             last_output = output or f"exit code {result.returncode}"
@@ -3765,6 +4310,7 @@ class PortraitGalleryApp:
                     f"请先在微信里给 Hermes 发任意一条消息，收到回复后再重试。"
                     f" output={last_output}"
                 )
+                self._last_delivery_error = last_output
                 return False
             retryable = self._is_retryable_wechat_error(last_output)
             cooldown_seconds = self._extract_wechat_cooldown_seconds(last_output)
@@ -3783,6 +4329,7 @@ class PortraitGalleryApp:
 
         log_fn = logger.error if required else logger.warning
         log_fn(f"{label}发送最终失败: {last_output}")
+        self._last_delivery_error = last_output or f"{label}_delivery_failed"
         return False
 
     async def _wait_hermes_send_cooldown(self, label: str):

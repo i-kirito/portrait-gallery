@@ -81,6 +81,50 @@ class StoreConcurrencyTest(unittest.TestCase):
             self.assertEqual(12, len(metadata))
             self.assertEqual(set(range(12)), {item["index"] for item in metadata.values()})
 
+    def test_cron_gallery_sync_persists_delivery_pending_before_parent_send(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "source.jpg"
+            source.write_bytes(b"image")
+            schedule_path = root / "schedule_data.json"
+
+            with (
+                patch.object(core, "SECRETARY_GALLERY_DIR", str(root / "images")),
+                patch.object(core, "SECRETARY_SCHEDULE_PATH", str(schedule_path)),
+                patch.dict("os.environ", {"ZHUZHU_DELIVERY_PENDING": "1"}),
+            ):
+                core.sync_to_gallery(
+                    str(source),
+                    "scheduled.jpg",
+                    "noon",
+                    source="cron",
+                    schedule_time="15:12 测试活动",
+                )
+
+            entry = json.loads(schedule_path.read_text(encoding="utf-8"))["scheduled.jpg"]
+            self.assertEqual("pending", entry.get("delivery_status"))
+            self.assertTrue(entry.get("delivery_updated_at"))
+
+    def test_gallery_sync_persistence_failure_is_propagated(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "source.jpg"
+            source.write_bytes(b"image")
+
+            with (
+                patch.object(core, "SECRETARY_GALLERY_DIR", str(root / "images")),
+                patch.object(core, "SECRETARY_SCHEDULE_PATH", str(root / "schedule_data.json")),
+                patch.object(core.ScheduleStore, "update", side_effect=OSError("disk full")),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "gallery_sync_failed"):
+                    core.sync_to_gallery(
+                        str(source),
+                        "failed.jpg",
+                        "custom",
+                        prompt="",
+                        source="custom",
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,11 +4,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 import json
+import logging
 import re
 from typing import Iterable
 
 
 WEEKDAY_LABELS = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+logger = logging.getLogger(__name__)
+_WARNED_MISSING_CALENDAR_YEARS: set[int] = set()
+BUILTIN_COMPLETE_CALENDAR_YEARS = {2026}
 
 WORKDAY_SCHEDULE_TYPES = [
     "工作日",
@@ -124,6 +128,7 @@ class DayContext:
     holiday_name: str = ""
     festival_name: str = ""
     makeup_workday_name: str = ""
+    official_calendar_available: bool = True
 
     @property
     def is_rest_day(self) -> bool:
@@ -193,6 +198,11 @@ class DayContext:
             restriction,
             preferred,
         ]
+        if not self.official_calendar_available:
+            lines.append(
+                f"警告：尚未配置 {self.date_value.year} 年官方节假日和调休表；"
+                "当前只能可靠判断星期和固定公历节日，不要自行猜测春节等农历假期或调休。"
+            )
         if holiday_hint:
             lines.append(holiday_hint)
         return "\n".join(lines)
@@ -220,7 +230,17 @@ class DayContext:
 def build_day_context(target_date: date, config: dict | None = None) -> DayContext:
     holiday_overrides = dict(OFFICIAL_PUBLIC_HOLIDAYS_2026)
     makeup_overrides = dict(OFFICIAL_MAKEUP_WORKDAYS_2026)
-    _merge_calendar_config(holiday_overrides, makeup_overrides, config or {})
+    config = config or {}
+    _merge_calendar_config(holiday_overrides, makeup_overrides, config)
+
+    complete_years = BUILTIN_COMPLETE_CALENDAR_YEARS | _configured_complete_years(config)
+    official_calendar_available = target_date.year in complete_years
+    if not official_calendar_available and target_date.year not in _WARNED_MISSING_CALENDAR_YEARS:
+        _WARNED_MISSING_CALENDAR_YEARS.add(target_date.year)
+        logger.warning(
+            "缺少 %s 年完整官方节假日/调休数据；配置 holidays、makeup_workdays 后还需把年份加入 complete_years",
+            target_date.year,
+        )
 
     key = target_date.isoformat()
     month_day = target_date.strftime("%m-%d")
@@ -236,6 +256,7 @@ def build_day_context(target_date: date, config: dict | None = None) -> DayConte
         holiday_name=holiday_name,
         festival_name=festival_name,
         makeup_workday_name=makeup_name,
+        official_calendar_available=official_calendar_available,
     )
 
 
@@ -247,6 +268,26 @@ def _merge_calendar_config(holidays: dict[str, str], makeup_workdays: dict[str, 
         holidays.update(_normalize_calendar_map(calendar.get(key)))
     for key in ("makeup_workdays", "workdays"):
         makeup_workdays.update(_normalize_calendar_map(calendar.get(key)))
+
+
+def _configured_complete_years(config: dict) -> set[int]:
+    calendar = config.get("schedule", {}).get("calendar", {}) if isinstance(config, dict) else {}
+    if not isinstance(calendar, dict):
+        return set()
+    raw = calendar.get("complete_years", calendar.get("official_years", []))
+    if isinstance(raw, (str, int)):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple, set)):
+        return set()
+    years = set()
+    for value in raw:
+        try:
+            year = int(str(value).strip())
+        except (TypeError, ValueError):
+            continue
+        if 2000 <= year <= 2200:
+            years.add(year)
+    return years
 
 
 def _normalize_calendar_map(value) -> dict[str, str]:

@@ -5,9 +5,8 @@ import logging
 import os
 import random
 import re
-from datetime import datetime, date, timedelta
+from datetime import date, timedelta
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 from calendar_context import build_day_context
 from data import DailyEntry
@@ -22,6 +21,7 @@ from settings import (
     load_enabled_outfit_styles,
     load_runtime_persona,
     load_schedule_forbidden_keywords,
+    service_today,
 )
 
 logger = logging.getLogger(__name__)
@@ -85,6 +85,22 @@ LOW_ENERGY_HOME_TERMS = (
     "刷剧",
     "发呆",
 )
+
+SCHEDULE_ACTIVITY_CATEGORY_ALIASES = {
+    "stretch": ("拉伸", "瑜伽", "热身", "舒展"),
+    "convenience_store": ("便利店", "超市", "杂货店"),
+    "hydration": ("气泡水", "电解质水", "蛋白粉", "补充能量", "运动饮料"),
+    "fitness": ("健身", "训练", "深蹲", "硬拉", "慢跑", "跑步", "运动场", "力量区"),
+    "activity_tracking": ("运动数据", "训练数据", "同步到平板", "数据记录"),
+    "return_home": ("回家", "返家", "骑共享单车"),
+    "room_reset": ("整理房间", "收拾房间", "整理桌面", "打扫"),
+    "meditation": ("冥想", "正念", "呼吸练习"),
+    "bathing": ("泡澡", "热水澡", "洗澡"),
+    "bookstore_reading": ("书店", "阅读", "看书", "杂志"),
+    "creative_work": ("画画", "草图", "设计稿", "手账", "写作", "创作"),
+    "shopping": ("逛街", "购物中心", "商场", "试穿"),
+    "social": ("见朋友", "聚会", "约会", "一起吃", "聊天"),
+}
 
 ACCESSORY_CATEGORY_ALIASES = {
     "necklace": ("锁骨链", "项链", "吊坠", "necklace", "pendant", "choker"),
@@ -324,13 +340,7 @@ class DailyScheduler:
 
     def _configured_today(self) -> date:
         """Return today's date in the configured service timezone."""
-        timezone_name = str(self.config.get("config", {}).get("timezone") or "").strip()
-        if timezone_name:
-            try:
-                return datetime.now(ZoneInfo(timezone_name)).date()
-            except Exception as exc:
-                logger.warning("timezone 配置无效，使用系统日期: %s (%s)", timezone_name, exc)
-        return date.today()
+        return service_today(self.config)
 
     def _day_context(self, target_date: date):
         return build_day_context(target_date, self.config)
@@ -359,6 +369,15 @@ class DailyScheduler:
         for filler in ("今天的", "今日的", "一份", "简单的", "精致的", "舒服的", "轻松的"):
             text = text.replace(filler, "")
         return text[:18]
+
+    @classmethod
+    def _activity_categories(cls, activity: str) -> set[str]:
+        compact = re.sub(r"\s+", "", str(activity or ""))
+        return {
+            category
+            for category, terms in SCHEDULE_ACTIVITY_CATEGORY_ALIASES.items()
+            if any(term in compact for term in terms)
+        }
 
     def _schedule_diversity_prompt_block(self, schedule_history: str) -> str:
         ideas = "\n".join(f"- {item}" for item in SCHEDULE_DIVERSITY_IDEAS)
@@ -706,7 +725,7 @@ class DailyScheduler:
 
     def _recent_schedule_category_counts(self, today: date, days: int = 3) -> dict[str, int]:
         all_data = self._load_schedule_data()
-        counts = {"cooking_days": 0, "bed_idle_start_days": 0, "low_energy_home_days": 0}
+        counts = {"cooking_days": 0, "low_energy_home_days": 0, "category_days": []}
         for i in range(1, days + 1):
             date_str = (today - timedelta(days=i)).isoformat()
             entry = all_data.get(date_str)
@@ -716,10 +735,11 @@ class DailyScheduler:
             activities = [activity for _time_text, activity in items]
             if any(self._activity_has(activity, COOKING_TERMS) for activity in activities):
                 counts["cooking_days"] += 1
-            if activities and self._activity_has(activities[0], BED_IDLE_TERMS):
-                counts["bed_idle_start_days"] += 1
             if any(self._activity_has(activity, LOW_ENERGY_HOME_TERMS) for activity in activities):
                 counts["low_energy_home_days"] += 1
+            categories = set().union(*(self._activity_categories(activity) for activity in activities))
+            if categories:
+                counts["category_days"].append({"date": date_str, "categories": categories})
         return counts
 
     def _schedule_diversity_error(
@@ -751,6 +771,22 @@ class DailyScheduler:
         ]
         if len(low_energy_items) > 2:
             return "床/沙发/追番/发呆类低变化活动过多，请增加外出、兴趣、整理、创作或社交任务"
+        if low_energy_items and recent_counts.get("low_energy_home_days", 0) >= 2:
+            return "最近 3 天已有多天是床/沙发/追番等低变化活动，今天请安排新的外出、兴趣、创作或社交内容"
+
+        candidate_categories = set().union(
+            *(self._activity_categories(activity) for _time_text, activity in display_items)
+        )
+        for recent_day in recent_counts.get("category_days", []):
+            recent_categories = set(recent_day.get("categories") or set())
+            shared = candidate_categories & recent_categories
+            smaller = min(len(candidate_categories), len(recent_categories))
+            if len(shared) >= 4 and smaller and len(shared) / smaller >= 0.55:
+                return (
+                    f"与近 3 天中的 {recent_day.get('date', '某一天')} 活动骨架过于相似: "
+                    + "、".join(sorted(shared))
+                    + "。请更换主要地点、任务类别和活动顺序"
+                )
 
         signatures = [self._activity_signature(activity) for _time_text, activity in display_items]
         duplicates = sorted({item for item in signatures if item and signatures.count(item) > 1})

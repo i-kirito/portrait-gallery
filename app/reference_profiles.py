@@ -16,8 +16,29 @@ from urllib.parse import unquote
 import requests
 
 from settings import builtin_reference_map, llm_choice_text, llm_request_config, llm_temperature_param_error
+from store import LockedJsonDictStore
 
 REFERENCE_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+
+
+class _ReferenceProfileStore(LockedJsonDictStore):
+    """Accept the historical top-level list until it is next persisted."""
+
+    def _load_unlocked(self) -> dict:
+        if not os.path.exists(self.path):
+            return {}
+        try:
+            with open(self.path, "r", encoding="utf-8") as file_obj:
+                data = json.load(file_obj)
+        except (json.JSONDecodeError, OSError):
+            return {}
+        if isinstance(data, list):
+            return {"version": 1, "items": data}
+        return data if isinstance(data, dict) else {}
+
+
+def _profile_store(data_dir: str) -> _ReferenceProfileStore:
+    return _ReferenceProfileStore(reference_profiles_path(data_dir))
 
 
 def reference_profiles_path(data_dir: str) -> str:
@@ -38,26 +59,13 @@ def _is_reference_image_file(filename: str) -> bool:
 
 
 def _read_store(data_dir: str) -> list[dict]:
-    path = reference_profiles_path(data_dir)
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            data = data.get("items", [])
-        return [item for item in data if isinstance(item, dict)]
-    except Exception:
-        return []
+    data = _profile_store(data_dir).load()
+    items = data.get("items", []) if isinstance(data, dict) else []
+    return [item for item in items if isinstance(item, dict)]
 
 
 def _write_store(data_dir: str, items: list[dict]) -> None:
-    os.makedirs(data_dir, exist_ok=True)
-    path = reference_profiles_path(data_dir)
-    tmp_path = f"{path}.tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump({"version": 1, "items": items}, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, path)
+    _profile_store(data_dir).save({"version": 1, "items": items})
 
 
 def _normalize_profile(item: dict) -> dict:
@@ -113,13 +121,13 @@ def _default_profile_items(reference_dir: str, app_reference_dir: str) -> list[d
     return refs
 
 
-def ensure_reference_profiles(
-    data_dir: str,
+def _merged_reference_profiles(
+    items: list[dict],
     reference_dir: str,
     app_reference_dir: str,
     uploaded_reference_dir: str = "",
 ) -> list[dict]:
-    items = [_normalize_profile(item) for item in _read_store(data_dir)]
+    items = [_normalize_profile(item) for item in items]
     by_id = {item["id"]: item for item in items if item.get("id")}
 
     for default in _default_profile_items(reference_dir, app_reference_dir):
@@ -162,8 +170,29 @@ def ensure_reference_profiles(
 
     items = list(by_id.values())
     items.sort(key=lambda item: (item.get("source") != "default", item.get("created_at") or 0, item.get("filename", "")))
-    _write_store(data_dir, items)
     return items
+
+
+def ensure_reference_profiles(
+    data_dir: str,
+    reference_dir: str,
+    app_reference_dir: str,
+    uploaded_reference_dir: str = "",
+) -> list[dict]:
+    store = _profile_store(data_dir)
+
+    def _ensure(data: dict) -> dict:
+        items = data.get("items", []) if isinstance(data.get("items"), list) else []
+        data["version"] = 1
+        data["items"] = _merged_reference_profiles(
+            items,
+            reference_dir,
+            app_reference_dir,
+            uploaded_reference_dir,
+        )
+        return data
+
+    return store.update(_ensure).get("items", [])
 
 
 def load_reference_profiles(
@@ -172,7 +201,12 @@ def load_reference_profiles(
     app_reference_dir: str,
     uploaded_reference_dir: str = "",
 ) -> list[dict]:
-    return ensure_reference_profiles(data_dir, reference_dir, app_reference_dir, uploaded_reference_dir)
+    return _merged_reference_profiles(
+        _read_store(data_dir),
+        reference_dir,
+        app_reference_dir,
+        uploaded_reference_dir,
+    )
 
 
 def upsert_reference_profile(data_dir: str, profile: dict) -> dict:
@@ -180,31 +214,58 @@ def upsert_reference_profile(data_dir: str, profile: dict) -> dict:
     profile["updated_at"] = _now()
     if not profile.get("created_at"):
         profile["created_at"] = profile["updated_at"]
-    items = [_normalize_profile(item) for item in _read_store(data_dir)]
-    replaced = False
-    for idx, item in enumerate(items):
-        if item.get("id") == profile["id"] or (
-            item.get("source") == profile.get("source") and item.get("filename") == profile.get("filename")
-        ):
-            merged = dict(item)
-            merged.update({k: v for k, v in profile.items() if v not in ("", [], None)})
-            merged["active"] = profile.get("active") is not False
-            items[idx] = _normalize_profile(merged)
-            profile = items[idx]
-            replaced = True
-            break
-    if not replaced:
-        items.append(profile)
-    _write_store(data_dir, items)
-    return profile
+    result = {}
+    store = _profile_store(data_dir)
+
+    def _upsert(data: dict) -> dict:
+        nonlocal result
+        items = [
+            _normalize_profile(item)
+            for item in data.get("items", [])
+            if isinstance(item, dict)
+        ]
+        replaced = False
+        for idx, item in enumerate(items):
+            if item.get("id") == profile["id"] or (
+                item.get("source") == profile.get("source")
+                and item.get("filename") == profile.get("filename")
+            ):
+                merged = dict(item)
+                merged.update({k: v for k, v in profile.items() if v not in ("", [], None)})
+                merged["active"] = profile.get("active") is not False
+                items[idx] = _normalize_profile(merged)
+                result = items[idx]
+                replaced = True
+                break
+        if not replaced:
+            items.append(profile)
+            result = profile
+        data["version"] = 1
+        data["items"] = items
+        return data
+
+    store.update(_upsert)
+    return dict(result)
 
 
 def remove_reference_profile(data_dir: str, filename: str) -> None:
     filename = os.path.basename(str(filename or "").strip())
     if not filename:
         return
-    items = [item for item in _read_store(data_dir) if os.path.basename(str(item.get("filename") or "")) != filename]
-    _write_store(data_dir, [_normalize_profile(item) for item in items])
+    store = _profile_store(data_dir)
+
+    def _remove(data: dict) -> dict:
+        items = [
+            _normalize_profile(item)
+            for item in data.get("items", [])
+            if isinstance(item, dict)
+            and os.path.basename(str(item.get("filename") or "")) != filename
+        ]
+        data["version"] = 1
+        data["items"] = items
+        return data
+
+    store.update(_remove)
 
 
 def reference_response(profile: dict) -> dict:

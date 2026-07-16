@@ -6,7 +6,6 @@ import os
 import random
 import re
 import sys
-from datetime import date
 from typing import Optional
 
 import requests
@@ -14,6 +13,7 @@ import requests
 from core import (
     CONFIG_PATH,
     SECRETARY_SCHEDULE_PATH,
+    _GALLERY_CONFIG,
     _strip_hair_color_from_schedule_hair,
     build_caption_for_image,
     build_prompt,
@@ -24,6 +24,7 @@ from core import (
     get_llm_models,
     get_reference_path,
     send_photo,
+    update_metadata_caption,
 )
 from generate_gitee import MODEL_NAME as GITEE_MODEL_NAME
 from generate_gitee import generate as generate_with_gitee
@@ -34,6 +35,8 @@ from settings import (
     llm_choice_text,
     llm_temperature_param_error,
     outfit_style_to_prompt_hint,
+    service_now,
+    service_today,
     style_reference_filename,
 )
 
@@ -69,7 +72,7 @@ def _extract_outfit_style_name(outfit_info: str) -> str:
 
 
 def _get_today_outfit_style_name() -> str:
-    today_str = date.today().isoformat()
+    today_str = service_today(_GALLERY_CONFIG).isoformat()
     if not os.path.exists(_SCHEDULE_PATH):
         return ""
     try:
@@ -411,8 +414,7 @@ def _schedule_time_constraint(value: str) -> str:
     time_text = _normalize_schedule_detail_time(value)
     if not time_text:
         return ""
-    hour, minute = [int(part) for part in time_text.split(":")]
-    clock = f"{hour:02d}:{minute:02d}"
+    hour = int(time_text.split(":", 1)[0])
     if 5 <= hour < 8:
         label = "early morning"
         lighting = "soft early-morning natural daylight"
@@ -431,21 +433,48 @@ def _schedule_time_constraint(value: str) -> str:
         forbid = "night, evening, neon nightlife, or street-lamp-dominated lighting"
     elif 17 <= hour < 19:
         label = "early evening"
-        lighting = "early-evening dusk or golden-hour light only if it fits the exact clock time"
+        lighting = "plausible early-evening dusk or golden-hour light"
         forbid = "deep night or neon nightlife unless explicitly described"
     elif 19 <= hour < 22:
         label = "evening"
-        lighting = "realistic evening ambient light matching the exact clock time"
+        lighting = "realistic evening ambient light"
         forbid = "midday sunlight or unrelated time-of-day changes"
     else:
         label = "late night"
-        lighting = "realistic late-night low light matching the exact clock time"
+        lighting = "realistic late-night low light"
         forbid = "daylight or unrelated time-of-day changes"
     return (
-        f"The scheduled clock time is {clock}, {label}. "
+        f"This activity takes place in the {label}. "
         f"Use {lighting}. "
-        f"Forbidden time mismatch: {forbid}."
+        f"Forbidden time-of-day mismatch: {forbid}."
     )
+
+
+def _apply_schedule_clock_render_guard(prompt: str, schedule_time: str) -> str:
+    """Keep schedule clocks as metadata and prevent models from painting them into images."""
+    normalized_time = _normalize_schedule_detail_time(schedule_time)
+    if not normalized_time:
+        return str(prompt or "").strip()
+    hour_text, minute_text = normalized_time.split(":", 1)
+    clock_variants = {
+        normalized_time,
+        f"{int(hour_text)}:{minute_text}",
+    }
+    clock_choices = "|".join(
+        re.escape(value)
+        for value in sorted(clock_variants, key=len, reverse=True)
+    )
+    clock_pattern = re.compile(
+        rf"(?<!\d)(?:{clock_choices})(?!\d)"
+    )
+    cleaned = clock_pattern.sub("the appropriate time of day", str(prompt or ""))
+    guard = (
+        "The schedule clock is metadata only and must never appear visually. Do not render any "
+        "readable time digits, timestamp, caption, corner overlay, wall or digital clock reading, "
+        "phone or screen time, receipt time, price-label time, storefront sign time, or floating text. "
+        "Any naturally present clock or display must be unreadable and must not show the scheduled time."
+    )
+    return f"{cleaned.rstrip(' .')}. {guard}"
 
 
 def _detail_time_is_daylight(value: str) -> bool:
@@ -616,7 +645,7 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "", schedule
     """Read daily schedule and return context, display slot, outfit, scene, and hair details."""
     if theme not in _THEME_PERIODS or not _THEME_PERIODS[theme]:
         return "", "", "", "", ""
-    today_str = date.today().isoformat()
+    today_str = service_today(_GALLERY_CONFIG).isoformat()
     data = {}
     if os.path.exists(_SCHEDULE_PATH):
         try:
@@ -754,8 +783,7 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "", schedule
     }
     hour_min, hour_max = _THEME_HOURS.get(theme, (0, 0))
     # bedtime 包含凌晨 0-5 点
-    from datetime import datetime
-    now = datetime.now()
+    now = service_now(_GALLERY_CONFIG)
     # 优先用 schedule_time_override 的精确时间
     if schedule_time_override:
         _tm = re.match(r'(\d{1,2}):(\d{2})', schedule_time_override.strip())
@@ -892,6 +920,10 @@ def generate(
     if not resolved_prompt:
         print(f"ERROR: prompt is empty for theme={theme}; generation aborted", file=sys.stderr)
         return None
+
+    if schedule_time_constraint:
+        resolved_prompt = _apply_schedule_clock_render_guard(resolved_prompt, schedule_time)
+        print("🕒 Applied invisible schedule-clock guard", file=sys.stderr)
 
     if source in {"cron", "web"}:
         resolved_prompt = apply_schedule_image_framing(resolved_prompt)
@@ -1034,6 +1066,7 @@ def generate(
     if path and caption:
         caption_text = build_caption_for_image(theme, path, schedule_time=schedule_raw)
         if caption_text:
+            update_metadata_caption(os.path.basename(path), caption_text)
             if send:
                 send_photo(path, caption_text)
             print(f"CAPTION:{caption_text}")

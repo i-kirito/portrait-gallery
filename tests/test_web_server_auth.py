@@ -28,11 +28,24 @@ class DummyTransport:
 
 
 class DummyRequest:
-    def __init__(self, host, remote="", peername=None, path="/api/gallery"):
+    def __init__(
+        self,
+        host,
+        remote="",
+        peername=None,
+        path="/api/gallery",
+        *,
+        method="GET",
+        cookies=None,
+        headers=None,
+    ):
         self.host = host
         self.remote = remote
         self.transport = DummyTransport(peername) if peername else None
         self.path = path
+        self.method = method
+        self.cookies = cookies or {}
+        self.headers = headers or {}
 
 
 class WebServerAuthTest(unittest.TestCase):
@@ -82,6 +95,11 @@ class WebServerAuthTest(unittest.TestCase):
 
         self.assertFalse(self._make_server()._is_local_request(request))
 
+    def test_loopback_proxy_with_public_host_is_not_local(self):
+        request = DummyRequest("gallery.example.com", "127.0.0.1")
+
+        self.assertFalse(self._make_server()._is_local_request(request))
+
 
 class WebServerPasswordAuthTest(unittest.IsolatedAsyncioTestCase):
     @staticmethod
@@ -122,21 +140,46 @@ class WebServerPasswordAuthTest(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(401, response.status)
 
-    async def test_authorized_nonlocal_ip_can_access_protected_image(self):
+    async def test_signed_session_can_access_protected_image(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             server = self._make_server(Path(tmpdir))
             server._save_auth_store({"password_hash": server._hash_gallery_password("secret123")})
-            request = DummyRequest("gallery.example.com", "203.0.113.8", path="/images/today.jpg")
-            server._authorize_client_ip(request)
 
             async def handler(_request):
                 return web.Response(text="ok")
 
             with patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+                token = server._issue_gallery_session()
+                request = DummyRequest(
+                    "gallery.example.com",
+                    "203.0.113.8",
+                    path="/images/today.jpg",
+                    cookies={"gallery_session": token},
+                )
                 response = await server.gallery_auth_middleware(request, handler)
 
             self.assertEqual(200, response.status)
-            self.assertTrue(server._client_ip_authorized(request))
+            self.assertTrue(server._gallery_session_authorized(request))
+
+    async def test_signed_session_header_supports_non_browser_clients(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server = self._make_server(Path(tmpdir))
+            server._save_auth_store({"password_hash": server._hash_gallery_password("secret123")})
+
+            async def handler(_request):
+                return web.json_response({"ok": True})
+
+            with patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+                token = server._issue_gallery_session()
+                request = DummyRequest(
+                    "gallery.example.com",
+                    "203.0.113.8",
+                    headers={"X-Gallery-Session": token},
+                )
+                response = await server.gallery_auth_middleware(request, handler)
+
+            self.assertEqual(200, response.status)
+            self.assertTrue(server._gallery_session_authorized(request))
 
     def test_env_password_verifies_without_stored_hash(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -147,18 +190,38 @@ class WebServerPasswordAuthTest(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(server._verify_gallery_password("secret123"))
                 self.assertFalse(server._verify_gallery_password("wrong"))
 
-    def test_local_setup_hash_authorizes_current_ip(self):
+    def test_password_rotation_invalidates_existing_session(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             server = self._make_server(Path(tmpdir))
-            request = DummyRequest("localhost:18889", "127.0.0.1")
 
             with patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
                 server._save_auth_store({"password_hash": server._hash_gallery_password("secret123")})
-                server._authorize_client_ip(request)
+                token = server._issue_gallery_session()
+                request = DummyRequest(
+                    "gallery.example.com",
+                    "203.0.113.8",
+                    cookies={"gallery_session": token},
+                )
+                self.assertTrue(server._gallery_session_authorized(request))
 
-                data = json.loads((Path(tmpdir) / "gallery_auth.json").read_text(encoding="utf-8"))
-                self.assertIn("127.0.0.1", data.get("authorized_ips", {}))
-                self.assertTrue(server._verify_gallery_password("secret123"))
+                data = server._load_auth_store()
+                data["password_hash"] = server._hash_gallery_password("new-secret")
+                server._save_auth_store(data)
+
+                self.assertFalse(server._gallery_session_authorized(request))
+
+    def test_legacy_authorized_ips_are_removed_from_auth_store(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server = self._make_server(Path(tmpdir))
+            server._save_auth_store({
+                "password_hash": server._hash_gallery_password("secret123"),
+                "authorized_ips": {"127.0.0.1": 123},
+            })
+
+            data = json.loads((Path(tmpdir) / "gallery_auth.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(2, data.get("version"))
+            self.assertNotIn("authorized_ips", data)
 
 
 class WebServerReferenceSelectionTest(unittest.TestCase):

@@ -50,6 +50,16 @@ IMAGE_EDIT_TARGETS = {
     },
 }
 
+INTERNAL_IMAGE_EDIT_TARGETS = {
+    "schedule": {
+        "label": "日程",
+        "scope": (
+            "Change the depicted activity to match the updated schedule, including only the subject "
+            "action, pose, scene, and props required by that activity."
+        ),
+    },
+}
+
 _IMAGE_EDIT_CHANGE_VERBS = r"(?:替换成|替换为|改成|换成|变成|改为|换为)"
 _BACKGROUND_LOCATION_TERMS = (
     "创意园区",
@@ -93,9 +103,13 @@ _BACKGROUND_LOCATION_TERMS = (
 )
 
 
-def normalize_image_edit_target(value: str) -> str:
+def normalize_image_edit_target(value: str, *, allow_internal: bool = False) -> str:
     target = str(value or "").strip().lower()
-    return target if target in IMAGE_EDIT_TARGETS else ""
+    if target in IMAGE_EDIT_TARGETS:
+        return target
+    if allow_internal and target in INTERNAL_IMAGE_EDIT_TARGETS:
+        return target
+    return ""
 
 
 def normalize_image_edit_instruction(value: str) -> str:
@@ -208,29 +222,65 @@ def replace_image_schedule_description(
 
 
 def image_edit_target_label(target: str) -> str:
-    item = IMAGE_EDIT_TARGETS.get(normalize_image_edit_target(target), {})
+    normalized = normalize_image_edit_target(target, allow_internal=True)
+    item = IMAGE_EDIT_TARGETS.get(normalized) or INTERNAL_IMAGE_EDIT_TARGETS.get(normalized, {})
     return str(item.get("label") or "局部")
 
 
-def build_precision_image_edit_prompt(target: str, instruction: str) -> str:
-    target = normalize_image_edit_target(target)
+def build_precision_image_edit_prompt(
+    target: str,
+    instruction: str,
+    *,
+    previous_schedule_description: str = "",
+    schedule_description: str = "",
+) -> str:
+    target = normalize_image_edit_target(target, allow_internal=True)
     instruction = normalize_image_edit_instruction(instruction)
+    previous_schedule_description = normalize_image_edit_schedule_description(
+        previous_schedule_description
+    )
+    schedule_description = normalize_image_edit_schedule_description(schedule_description)
+    schedule_changed = bool(
+        schedule_description
+        and schedule_description != previous_schedule_description
+    )
     if not target:
         raise ValueError("invalid_edit_target")
-    if not instruction:
+    if not instruction and not schedule_changed:
         raise ValueError("edit_instruction_required")
 
-    target_config = IMAGE_EDIT_TARGETS[target]
-    return (
+    sections = [
         "Precision image editing task. The supplied image is the immutable source image. "
-        f"EDIT SCOPE: {target_config['label']} ONLY. "
-        f"Requested change: {instruction}. "
-        f"{target_config['scope']} "
+    ]
+    if instruction:
+        target_config = IMAGE_EDIT_TARGETS.get(target) or INTERNAL_IMAGE_EDIT_TARGETS[target]
+        sections.append(
+            f"EDIT SCOPE: {target_config['label']} ONLY. "
+            f"Requested change: {instruction}. "
+            f"{target_config['scope']} "
+        )
+    if schedule_changed:
+        previous_text = (
+            f"The source image previously represented this activity: {previous_schedule_description}. "
+            if previous_schedule_description
+            else ""
+        )
+        sections.append(
+            f"UPDATED SCHEDULE ACTIVITY: {schedule_description}. "
+            f"{previous_text}"
+            "Make the visible image clearly depict the updated schedule. Change the subject's action "
+            "and pose, the scene/background, and only the props necessary for the new activity. Do not "
+            "preserve an old action, pose, scene, or prop when it conflicts with the updated schedule. "
+            "Preserve the person's identity, face, body proportions, hair, outfit, and visual style. "
+        )
+    sections.append(
         "Apply only the requested change. Preserve every pixel-level visual attribute outside the "
         "edit scope as closely as the image model allows, including identity, face, body proportions, "
         "skin, hair, outfit, pose, hands, expression, foreground objects, camera angle, lens perspective, "
-        "crop, framing, composition, resolution, aspect ratio, and rendering style unless one of those "
-        "elements is explicitly inside the edit scope. Do not redesign, beautify, restyle, recrop, zoom, "
-        "add people, remove people, or introduce unrelated objects. Keep the output dimensions identical "
+        "crop, framing, composition, resolution, aspect ratio, and rendering style unless an element is "
+        "explicitly inside an edit scope or must change to depict the updated schedule. Do not redesign, "
+        "beautify, restyle, recrop, zoom, add people, remove people, or introduce unrelated objects. "
+        "Keep the output dimensions identical "
         "to the source image."
     )
+    return "".join(sections)

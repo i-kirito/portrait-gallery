@@ -82,6 +82,41 @@ class ScheduleDiversityTest(unittest.TestCase):
 
             self.assertIn("最近 3 天", error)
 
+    def test_rejects_a_recently_repeated_activity_skeleton(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            schedule_data = {
+                "2026-07-15": {
+                    "status": "ok",
+                    "schedule": (
+                        "08:12 起床后做瑜伽拉伸\n"
+                        "10:18 去便利店买水\n"
+                        "12:36 喝电解质水补充能量\n"
+                        "15:24 在健身房做力量训练\n"
+                        "17:16 整理今天的运动数据\n"
+                        "19:22 骑共享单车回家"
+                    ),
+                },
+            }
+            Path(tmpdir, "schedule_data.json").write_text(
+                json.dumps(schedule_data, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            scheduler = self.make_scheduler(tmpdir)
+            recent_counts = scheduler._recent_schedule_category_counts(date(2026, 7, 16))
+            candidate = scheduler._schedule_plan_items(
+                "08:16 做一组舒展热身\n"
+                "10:26 去超市买运动饮料\n"
+                "12:42 喝气泡水补充能量\n"
+                "15:18 去运动场慢跑训练\n"
+                "17:28 把训练数据同步到平板\n"
+                "19:32 骑共享单车返家"
+            )
+
+            error = scheduler._schedule_diversity_error(candidate, recent_counts)
+
+            self.assertIn("活动骨架过于相似", error)
+            self.assertIn("2026-07-15", error)
+
     def test_history_keeps_accessories_beyond_the_old_sixty_character_cutoff(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             schedule_data = {

@@ -4,9 +4,11 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import yaml
 
@@ -55,6 +57,47 @@ DEFAULT_STYLE_REFERENCE_PROMPTS = {
         "dreamy approachable vibe, suitable for 甜美风、温柔风、清新风 and relaxed cozy schedules."
     ),
 }
+
+RUNTIME_CONFIG_MUTABLE_FIELDS = {
+    "llm": {"model", "models", "fallback_model"},
+    "integrations": {"hermes_cli", "openclaw_cli"},
+}
+
+
+def configured_timezone(config: dict | None = None) -> ZoneInfo:
+    timezone_name = str(get_nested(config or {}, "config.timezone", "") or "").strip()
+    timezone_name = timezone_name or os.getenv("TZ", "") or "Asia/Shanghai"
+    try:
+        return ZoneInfo(timezone_name)
+    except Exception:
+        return ZoneInfo("Asia/Shanghai")
+
+
+def service_now(config: dict | None = None) -> datetime:
+    return datetime.now(configured_timezone(config))
+
+
+def service_today(config: dict | None = None) -> date:
+    return service_now(config).date()
+
+
+def normalize_runtime_config(value: Any) -> dict:
+    """Keep Web-mutated overrides inside the intentionally writable surface."""
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    for section, allowed_fields in RUNTIME_CONFIG_MUTABLE_FIELDS.items():
+        section_value = value.get(section)
+        if not isinstance(section_value, dict):
+            continue
+        cleaned = {
+            key: field_value
+            for key, field_value in section_value.items()
+            if key in allowed_fields
+        }
+        if cleaned:
+            result[section] = cleaned
+    return result
 
 DEFAULT_BASE_STYLE_LABELS = {
     "cool": "冷御风",
@@ -664,6 +707,13 @@ def load_config(config_path: str = "") -> dict:
             local_config = yaml.safe_load(f) or {}
         if isinstance(local_config, dict):
             config = deep_merge(config, local_config)
+
+    # Mutable Web settings live with deployment data so the base config can
+    # remain read-only in Docker images.
+    data_dir = resolve_data_dir(config, path)
+    runtime_config = normalize_runtime_config(load_json_file(runtime_config_path(data_dir)))
+    if runtime_config:
+        config = deep_merge(config, runtime_config)
     return config
 
 
@@ -1048,6 +1098,10 @@ def api_keys_path(data_dir: str) -> str:
 
 def plugin_config_path(data_dir: str) -> str:
     return os.path.join(data_dir, "plugin_config.json")
+
+
+def runtime_config_path(data_dir: str) -> str:
+    return os.path.join(data_dir, "runtime_config.json")
 
 
 def normalize_chat_url(base_url: str) -> str:

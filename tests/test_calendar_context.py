@@ -47,6 +47,29 @@ class CalendarContextTest(unittest.TestCase):
         self.assertTrue(context.is_rest_day)
         self.assertTrue(context.is_public_holiday)
         self.assertEqual(context.holiday_name, "自定义假期")
+        self.assertFalse(context.official_calendar_available)
+
+    def test_explicit_complete_year_marks_custom_official_calendar_available(self):
+        config = {
+            "schedule": {
+                "calendar": {
+                    "complete_years": [2027],
+                    "holidays": {"2027-01-02": "自定义假期"},
+                }
+            }
+        }
+
+        context = build_day_context(date(2027, 1, 2), config)
+
+        self.assertTrue(context.official_calendar_available)
+        self.assertNotIn("尚未配置 2027 年", context.prompt_block("假期安排"))
+
+    def test_unknown_year_is_explicitly_marked_in_prompt(self):
+        context = build_day_context(date(2028, 7, 16))
+
+        self.assertFalse(context.official_calendar_available)
+        self.assertIn("尚未配置 2028 年官方节假日和调休表", context.prompt_block("周末安排"))
+        self.assertIn("不要自行猜测", context.prompt_block("周末安排"))
 
 
 if __name__ == "__main__":
