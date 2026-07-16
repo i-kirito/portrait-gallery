@@ -27,13 +27,24 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from data import DailyEntry
 from scheduler import DailyScheduler
 from image_gen import ImageGenerator
+from image_editing import (
+    MAX_IMAGE_EDIT_SCHEDULE_DESCRIPTION_LENGTH,
+    build_precision_image_edit_prompt,
+    image_schedule_description,
+    image_edit_target_label,
+    normalize_image_edit_instruction,
+    normalize_image_edit_schedule_description,
+    normalize_image_edit_target,
+    replace_image_schedule_description,
+    rewrite_image_edit_schedule_description,
+)
 from photo_plan_edit import (
     normalize_schedule_clock,
     replace_schedule_activity,
     update_schedule_details_activity,
 )
 from web_server import GalleryServer
-from store import ScheduleStore
+from store import ImageMetadataStore, ScheduleStore
 from text_repair import repair_mojibake_text
 from characters import (
     LOCAL_CHARACTER_SOURCE,
@@ -63,6 +74,7 @@ from settings import (
     resolve_data_dir,
     resolve_project_root,
     resolve_script_dir,
+    schedule_image_size,
 )
 
 TODAY_PHOTO_SOURCES = {"cron", "web"}
@@ -103,6 +115,9 @@ LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 ACCESS_LOG_RE = re.compile(
     r'"(?P<method>[A-Z]+)\s+(?P<path>\S+)\s+HTTP/[^"]+"\s+(?P<status>\d{3})'
 )
+SENSITIVE_QUERY_RE = re.compile(
+    r"(?i)([?&](?:key|api_key|token|access_token)=)[^&\s\"]+"
+)
 ICON_PROBE_BASENAME_RE = re.compile(
     r'^(?:favicon(?:-\d+x\d+)?\.(?:ico|png|svg)|'
     r'apple-touch-icon(?:-\d+x\d+)?\.png|'
@@ -123,7 +138,12 @@ class _UsefulAccessLogFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if record.name != "aiohttp.access":
             return True
-        match = ACCESS_LOG_RE.search(record.getMessage())
+        message = record.getMessage()
+        redacted = SENSITIVE_QUERY_RE.sub(r"\1[REDACTED]", message)
+        if redacted != message:
+            record.msg = redacted
+            record.args = ()
+        match = ACCESS_LOG_RE.search(redacted)
         if not match:
             return True
         if _is_icon_probe_path(match.group("path")):
@@ -315,6 +335,7 @@ class PortraitGalleryApp:
         self.web_server.on_retry_photo_job = self.retry_photo_job
         self.web_server.on_update_photo_plan = self.update_photo_plan
         self.web_server.on_reroll_image = self.reroll_image
+        self.web_server.on_edit_image = self.edit_image
 
         # APScheduler
         timezone = self.config.get("config", {}).get("timezone", "Asia/Shanghai")
@@ -330,6 +351,7 @@ class PortraitGalleryApp:
         self._backfill_semaphore = asyncio.Semaphore(1)
         self._hermes_send_lock = asyncio.Lock()
         self._hermes_send_cooldown_until = 0.0
+        self._schedule_refresh_task: Optional[asyncio.Task] = None
 
     @staticmethod
     def _schedule_reference_source(source: str) -> bool:
@@ -510,14 +532,10 @@ class PortraitGalleryApp:
         except Exception as e:
             logger.error("保存生图参考图信息失败: %s", e)
 
-        metadata_loader = getattr(getattr(self, "web_server", None), "_load_image_metadata", None)
         metadata_updater = getattr(getattr(self, "web_server", None), "_update_image_metadata_entry", None)
-        if callable(metadata_loader) and callable(metadata_updater):
+        if callable(metadata_updater):
             try:
-                metadata = metadata_loader()
-                meta_entry = dict(metadata.get(filename) or {})
-                meta_entry.update(metadata_patch)
-                metadata_updater(filename, meta_entry)
+                metadata_updater(filename, metadata_patch)
             except Exception as e:
                 logger.warning("更新生图参考图元数据失败: %s", e)
 
@@ -753,6 +771,7 @@ class PortraitGalleryApp:
                 entry.base_style,
                 ref_image=selected_reference.get("path", ""),
                 no_auto_style=not bool(selected_reference.get("path")),
+                size=schedule_image_size(self.config),
             )
             if filename:
                 entry.image_filename = filename
@@ -1180,13 +1199,10 @@ class PortraitGalleryApp:
         save_schedule_entry(self.data_dir, entry)
         self._update_image_metadata_caption(filename, caption, display_prompt)
 
-        metadata_loader = getattr(getattr(self, "web_server", None), "_load_image_metadata", None)
         metadata_updater = getattr(getattr(self, "web_server", None), "_update_image_metadata_entry", None)
-        if callable(metadata_loader) and callable(metadata_updater):
+        if callable(metadata_updater):
             try:
-                metadata = metadata_loader()
-                meta_entry = dict(metadata.get(filename) or {})
-                meta_entry.update({
+                metadata_updater(filename, {
                     "purpose": "character_reference",
                     "generation_type": "character_reference",
                     "character_id": character.get("id", ""),
@@ -1194,7 +1210,6 @@ class PortraitGalleryApp:
                     "caption": caption,
                     "display_outfit": display_prompt,
                 })
-                metadata_updater(filename, meta_entry)
             except Exception as e:
                 logger.warning("角色设定图元数据更新失败: %s", e)
 
@@ -1403,51 +1418,35 @@ class PortraitGalleryApp:
     def _remove_image_metadata(self, filename: str):
         if not filename:
             return
-        path = os.path.join(self.data_dir, "image_metadata.json")
-        metadata = load_json_file(path)
-        if not isinstance(metadata, dict) or filename not in metadata:
-            return
-        metadata.pop(filename, None)
-        tmp_path = f"{path}.tmp"
         try:
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(metadata, f, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, path)
+            def _remove(metadata):
+                metadata.pop(filename, None)
+                return metadata
+
+            ImageMetadataStore(self.data_dir).update(_remove)
         except Exception as e:
             logger.error("移除旧图片元数据失败: %s, %s", filename, e)
-            if os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
 
     def _update_image_metadata_caption(self, filename: str, caption: str, display_outfit: str = ""):
         if not filename:
             return
-        path = os.path.join(self.data_dir, "image_metadata.json")
-        metadata = load_json_file(path)
-        if not isinstance(metadata, dict):
-            return
-        entry = metadata.get(filename)
-        if not isinstance(entry, dict):
-            return
-        entry["caption"] = repair_mojibake_text(caption).strip()
-        display_outfit = str(display_outfit or "").strip()
-        if display_outfit:
-            entry["display_outfit"] = display_outfit
-            entry["outfit_description"] = display_outfit
-        tmp_path = f"{path}.tmp"
         try:
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(metadata, f, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, path)
+            repaired_caption = repair_mojibake_text(caption).strip()
+            clean_display_outfit = str(display_outfit or "").strip()
+
+            def _update(metadata):
+                entry = metadata.get(filename)
+                if not isinstance(entry, dict):
+                    return metadata
+                entry["caption"] = repaired_caption
+                if clean_display_outfit:
+                    entry["display_outfit"] = clean_display_outfit
+                    entry["outfit_description"] = clean_display_outfit
+                return metadata
+
+            ImageMetadataStore(self.data_dir).update(_update)
         except Exception as e:
             logger.error("更新图片元数据小心思失败: %s, %s", filename, e)
-            if os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
 
     def _delete_replaced_image(self, filename: str):
         if not filename:
@@ -1517,12 +1516,336 @@ class PortraitGalleryApp:
         return ""
 
     @staticmethod
+    def _is_precision_edit_reroll(original: dict, meta: dict) -> bool:
+        for source in (original, meta):
+            if not isinstance(source, dict):
+                continue
+            precise_raw = source.get("precise_edit")
+            if (
+                precise_raw is True
+                or str(precise_raw or "").strip().lower() in {"1", "true", "yes", "on"}
+            ):
+                return True
+            for field in ("generation_type", "prompt_mode", "custom_ref_mode", "source"):
+                if str(source.get(field) or "").strip().lower() in {"image_edit", "precision_edit"}:
+                    return True
+        return False
+
+    @staticmethod
     def _reference_path_for_display(ref_image: str, selected_reference: dict) -> str:
         if isinstance(selected_reference, dict):
             url = str(selected_reference.get("url") or "").strip()
             if url:
                 return url
         return os.path.basename(ref_image) if ref_image else ""
+
+    def _reroll_image_size(self, is_scheduled_reroll: bool, metadata: dict) -> str:
+        if is_scheduled_reroll:
+            return schedule_image_size(self.config)
+        return str((metadata or {}).get("size") or "").strip()
+
+    def _reroll_schedule_context(
+        self,
+        all_data: dict,
+        original: dict,
+        original_date: str,
+        uses_today_schedule: bool,
+    ) -> dict:
+        if uses_today_schedule:
+            return self._today_schedule_entry()
+        historical = all_data.get(original_date) if isinstance(all_data, dict) else None
+        if isinstance(historical, dict):
+            return historical
+        return original if isinstance(original, dict) else {}
+
+    @staticmethod
+    def _apply_scheduled_reroll_context(generated: dict, schedule_context: dict) -> None:
+        if not isinstance(generated, dict) or not isinstance(schedule_context, dict):
+            return
+        for field in (
+            "outfit_style",
+            "outfit",
+            "base_style",
+            "reference_query",
+            "outfit_keywords",
+            "scene_keywords",
+        ):
+            if field in schedule_context:
+                generated[field] = schedule_context[field]
+
+    @staticmethod
+    def _image_edit_size(image_path: str, metadata: dict) -> str:
+        try:
+            from PIL import Image
+
+            with Image.open(image_path) as image:
+                width, height = image.size
+            if width > 0 and height > 0:
+                return f"{width}x{height}"
+        except Exception:
+            pass
+
+        size = str((metadata or {}).get("size") or "").strip().lower()
+        if re.fullmatch(r"\d{2,5}x\d{2,5}", size):
+            return size
+        try:
+            width = int((metadata or {}).get("width") or 0)
+            height = int((metadata or {}).get("height") or 0)
+        except (TypeError, ValueError):
+            return ""
+        return f"{width}x{height}" if width > 0 and height > 0 else ""
+
+    async def edit_image(
+        self,
+        image_filename: str,
+        target: str,
+        instruction: str,
+        schedule_description: Optional[str] = None,
+    ) -> dict:
+        """Precision-edit one gallery image and replace its existing card."""
+        target = normalize_image_edit_target(target)
+        instruction = normalize_image_edit_instruction(instruction)
+        normalized_schedule_description = None
+        if schedule_description is not None:
+            raw_schedule_description = str(schedule_description or "").strip()
+            if len(raw_schedule_description) > MAX_IMAGE_EDIT_SCHEDULE_DESCRIPTION_LENGTH:
+                return {"status": "failed", "error": "schedule_description_too_long"}
+            normalized_schedule_description = normalize_image_edit_schedule_description(
+                raw_schedule_description
+            )
+            if not normalized_schedule_description:
+                return {"status": "failed", "error": "schedule_description_required"}
+        if not target:
+            return {"status": "failed", "error": "invalid_edit_target"}
+        if not instruction:
+            return {"status": "failed", "error": "edit_instruction_required"}
+
+        store = ScheduleStore(self.data_dir)
+        all_data = store.load()
+        original_key, original = self._find_entry_by_image(all_data, image_filename)
+        if not original:
+            return {"status": "failed", "error": "not_found"}
+
+        image_path_resolver = getattr(self.web_server, "_image_file_path", None)
+        try:
+            image_path = image_path_resolver(image_filename) if callable(image_path_resolver) else ""
+        except ValueError:
+            image_path = ""
+        if not image_path or not os.path.isfile(image_path):
+            return {"status": "failed", "error": "image_file_missing"}
+
+        metadata = ImageMetadataStore(self.data_dir).load()
+        original_meta = metadata.get(image_filename, {})
+        original_meta = original_meta if isinstance(original_meta, dict) else {}
+        size = self._image_edit_size(image_path, original_meta)
+        prompt = build_precision_image_edit_prompt(target, instruction)
+        raw_model_name = str(original_meta.get("model") or "").strip()
+        if self._engine_from_model_name(raw_model_name) != "gptimage":
+            raw_model_name = ""
+
+        filename = await self.image_gen.generate(
+            prompt,
+            engine="gptimage",
+            timeout=image_process_timeout(self.config, with_reference_fallback=True),
+            ref_image=image_path,
+            size=size,
+            source="custom",
+            prompt_final=True,
+            no_auto_style=True,
+            theme="custom",
+            image_model=raw_model_name,
+            precise_edit=True,
+        )
+        if not filename:
+            logger.error("图片精准编辑失败: image=%s target=%s", image_filename, target)
+            return {"status": "failed", "error": "edit_generate_failed"}
+
+        generated_metadata = ImageMetadataStore(self.data_dir).load()
+        generated_meta = generated_metadata.get(filename, {})
+        generated_meta = dict(generated_meta) if isinstance(generated_meta, dict) else {}
+        if generated_meta and str(generated_meta.get("generation_mode") or "") != "img2img":
+            logger.error("精准编辑丢失原图参考，拒绝结果: image=%s generated=%s", image_filename, filename)
+            cleanup = getattr(self.web_server, "_delete_gallery_image", None)
+            if callable(cleanup):
+                try:
+                    cleanup(filename)
+                except Exception as e:
+                    logger.error("清理无效精准编辑结果失败: image=%s error=%s", filename, e)
+            return {"status": "failed", "error": "edit_reference_lost"}
+
+        now = datetime.now()
+        target_label = image_edit_target_label(target)
+        replacement_key = original_key or image_filename
+        if re.match(r'^\d{4}-\d{2}-\d{2}$', str(replacement_key)):
+            replacement_key = image_filename
+        original_date = str(original.get("date") or now.strftime("%Y-%m-%d"))
+        original_time = str(
+            original.get("time")
+            or self._image_time_from_filename(image_filename)
+            or now.strftime("%H:%M")
+        )
+        original_schedule_time = str(original.get("schedule_time") or "").strip()
+        original_schedule_description = image_schedule_description(original_schedule_time)
+        if (
+            normalized_schedule_description is None
+            or normalized_schedule_description == original_schedule_description
+        ):
+            inferred_schedule_description = rewrite_image_edit_schedule_description(
+                original_schedule_time,
+                target,
+                instruction,
+            )
+            normalized_schedule_description = (
+                inferred_schedule_description
+                if inferred_schedule_description != original_schedule_description
+                else None
+            )
+        updated_schedule_time = original_schedule_time
+        if normalized_schedule_description is not None:
+            updated_schedule_time = replace_image_schedule_description(
+                original_schedule_time,
+                original_time,
+                normalized_schedule_description,
+            )
+        schedule_changed = updated_schedule_time != original_schedule_time
+        selected_reference = {
+            "id": f"edit_source_{image_filename}",
+            "filename": image_filename,
+            "url": f"/images/{image_filename}",
+            "label": "原图",
+            "prompt": "",
+            "source": "gallery",
+            "selection_mode": "precision_edit",
+            "selection_reason": f"precision_edit:{target}",
+        }
+        result = {}
+
+        def _merge_edit(all_entries: dict):
+            generated_key, generated_entry = self._find_entry_by_image(all_entries, filename)
+            generated = dict(original)
+            generated.update(dict(generated_entry or {}))
+            for field in (
+                "outfit_style",
+                "outfit",
+                "base_style",
+                "reference_query",
+                "outfit_keywords",
+                "scene_keywords",
+                "character_id",
+                "character_ids",
+                "character_names",
+                "chat_room_id",
+                "schedule",
+                "schedule_prompt",
+                "schedule_details",
+                "schedule_time",
+            ):
+                if field in original:
+                    generated[field] = original[field]
+            edit_history = original.get("edit_history")
+            edit_history = list(edit_history) if isinstance(edit_history, list) else []
+            history_item = {
+                "from_image": image_filename,
+                "target": target,
+                "target_label": target_label,
+                "instruction": instruction,
+                "edited_at": now.isoformat(timespec="seconds"),
+            }
+            if schedule_changed:
+                history_item.update({
+                    "previous_schedule_time": original_schedule_time,
+                    "schedule_time": updated_schedule_time,
+                    "schedule_description": normalized_schedule_description,
+                })
+            edit_history.append(history_item)
+            generated.update({
+                "id": filename,
+                "date": original_date,
+                "time": original_time,
+                "image_filename": filename,
+                "image_path": f"/images/{filename}",
+                "prompt": prompt,
+                "caption": original.get("caption", ""),
+                "favorite": bool(original.get("favorite", False)),
+                "status": "ok",
+                "source": original.get("source") or "custom",
+                "generation_type": "image_edit",
+                "prompt_mode": "precision_edit",
+                "pure_prompt": True,
+                "custom_prompt": instruction,
+                "custom_ref_mode": "precision_edit",
+                "generation_mode": "img2img",
+                "requested_generation_mode": "img2img",
+                "requested_ref_image": image_filename,
+                "requested_ref_image_path": f"/images/{image_filename}",
+                "selected_reference": selected_reference,
+                "edited_from": image_filename,
+                "edit_target": target,
+                "edit_target_label": target_label,
+                "edit_instruction": instruction,
+                "edit_history": edit_history,
+                "original_image_filename": original.get("original_image_filename") or image_filename,
+                "replaced_image_filename": image_filename,
+                "replacement_key": replacement_key,
+            })
+            if schedule_changed:
+                generated.update({
+                    "schedule_time": updated_schedule_time,
+                    "schedule_description": normalized_schedule_description,
+                    "schedule_edited_at": now.isoformat(timespec="seconds"),
+                    "schedule_edit_source": "image_edit",
+                })
+            for key, entry in list(all_entries.items()):
+                if key == replacement_key or re.match(r'^\d{4}-\d{2}-\d{2}$', str(key)):
+                    continue
+                entry_filename = entry.get("image_filename") if isinstance(entry, dict) else ""
+                if key in {generated_key, image_filename, filename} or entry_filename in {image_filename, filename}:
+                    del all_entries[key]
+            all_entries[replacement_key] = generated
+            result.update(generated)
+            return all_entries
+
+        store.update(_merge_edit)
+
+        metadata_updater = getattr(self.web_server, "_update_image_metadata_entry", None)
+        if callable(metadata_updater):
+            generated_meta.update({
+                "source": "image_edit",
+                "precise_edit": True,
+                "edited_from": image_filename,
+                "edit_target": target,
+                "edit_target_label": target_label,
+                "edit_instruction": instruction,
+                "replaced_image_filename": image_filename,
+                "replacement_key": replacement_key,
+                "requested_generation_mode": "img2img",
+                "generation_mode": "img2img",
+                "requested_ref_image": image_filename,
+                "requested_ref_image_path": image_path,
+                "selected_reference": selected_reference,
+            })
+            if schedule_changed:
+                generated_meta.update({
+                    "schedule_time": updated_schedule_time,
+                    "schedule_description": normalized_schedule_description,
+                    "schedule_edited_at": now.isoformat(timespec="seconds"),
+                    "schedule_edit_source": "image_edit",
+                })
+            try:
+                metadata_updater(filename, generated_meta)
+            except Exception as e:
+                logger.error("保存精准编辑元数据失败: image=%s error=%s", filename, e)
+
+        if filename != image_filename:
+            self._delete_replaced_image(image_filename)
+        logger.info(
+            "图片精准编辑替换成功: %s -> %s target=%s schedule_changed=%s",
+            image_filename,
+            filename,
+            target,
+            schedule_changed,
+        )
+        return result
 
     async def reroll_image(self, image_filename: str) -> dict:
         """Generate a new card from an existing card's final prompt."""
@@ -1532,12 +1855,43 @@ class PortraitGalleryApp:
         if not original:
             return {"status": "failed", "error": "not_found"}
 
-        metadata = load_json_file(os.path.join(self.data_dir, "image_metadata.json"))
+        metadata = ImageMetadataStore(self.data_dir).load()
         meta = metadata.get(image_filename, {}) if isinstance(metadata, dict) else {}
+        meta = meta if isinstance(meta, dict) else {}
+        is_precision_edit = self._is_precision_edit_reroll(original, meta)
         prompt = (meta.get("prompt") or original.get("prompt") or "").strip()
+        edit_target = normalize_image_edit_target(
+            original.get("edit_target") or meta.get("edit_target")
+        )
+        edit_instruction = normalize_image_edit_instruction(
+            original.get("edit_instruction")
+            or meta.get("edit_instruction")
+            or original.get("custom_prompt")
+            or meta.get("custom_prompt")
+        )
+        edit_target_label_value = str(
+            original.get("edit_target_label") or meta.get("edit_target_label") or ""
+        ).strip() or image_edit_target_label(edit_target)
+        edit_history_raw = original.get("edit_history") or meta.get("edit_history")
+        edit_history = list(edit_history_raw) if isinstance(edit_history_raw, list) else []
+        edited_from = str(
+            original.get("edited_from") or meta.get("edited_from") or image_filename
+        ).strip()
+        original_image_filename = str(
+            original.get("original_image_filename")
+            or meta.get("original_image_filename")
+            or edited_from
+            or image_filename
+        ).strip()
+        if is_precision_edit and not prompt and edit_target and edit_instruction:
+            prompt = build_precision_image_edit_prompt(edit_target, edit_instruction)
         schedule_time = (original.get("schedule_time") or meta.get("schedule_time") or "").strip()
         original_source = (original.get("source") or meta.get("source") or "").strip()
-        is_scheduled_reroll = original_source in TODAY_PHOTO_SOURCES and bool(schedule_time)
+        is_scheduled_reroll = (
+            not is_precision_edit
+            and original_source in TODAY_PHOTO_SOURCES
+            and bool(schedule_time)
+        )
         if not prompt and not is_scheduled_reroll:
             return {"status": "failed", "error": "prompt_missing"}
 
@@ -1559,9 +1913,33 @@ class PortraitGalleryApp:
         )
         engine = self._engine_from_model_name(raw_model_name)
         engine = engine or self.image_gen.default_engine or "gptimage"
+        if is_precision_edit:
+            engine = "gptimage"
+            if self._engine_from_model_name(raw_model_name) != "gptimage":
+                raw_model_name = ""
         base_style = (original.get("base_style") or "").strip().lower()
         original_selected_reference = self._selected_reference_for_reroll(original, meta)
-        original_ref_image = self._resolve_reroll_reference_image(original, meta) if engine == "gptimage" else ""
+        original_ref_image = ""
+        if is_precision_edit:
+            image_path_resolver = getattr(self.web_server, "_image_file_path", None)
+            try:
+                original_ref_image = image_path_resolver(image_filename) if callable(image_path_resolver) else ""
+            except ValueError:
+                original_ref_image = ""
+            if not original_ref_image or not os.path.isfile(original_ref_image):
+                return {"status": "failed", "error": "image_file_missing"}
+            original_selected_reference = {
+                "id": f"edit_source_{image_filename}",
+                "filename": image_filename,
+                "url": f"/images/{image_filename}",
+                "label": "当前编辑图",
+                "prompt": "",
+                "source": "gallery",
+                "selection_mode": "precision_edit",
+                "selection_reason": f"precision_edit:{edit_target or 'image'}",
+            }
+        elif engine == "gptimage":
+            original_ref_image = self._resolve_reroll_reference_image(original, meta)
         is_custom_source = original_source in {"custom", "hermes_api"}
         custom_ref_mode = str(original.get("custom_ref_mode") or "").strip().lower()
         has_custom_reference = custom_ref_mode == "reference" or bool(
@@ -1577,15 +1955,24 @@ class PortraitGalleryApp:
             if not custom_ref_image:
                 logger.warning("自定义参考图重抽未找到原参考图，将退回文生图: %s", image_filename)
         style = None
-        size = (meta.get("size") or "").strip()
+        size = (
+            self._image_edit_size(original_ref_image, meta)
+            if is_precision_edit
+            else self._reroll_image_size(is_scheduled_reroll, meta)
+        )
         custom_user_prompt = self._extract_custom_user_prompt(original)
         custom_shot_type = normalize_custom_shot_type(original.get("shot_type", ""))
-        is_custom_injected_reroll = is_custom_source and not original_is_pure and bool(custom_user_prompt)
+        is_custom_injected_reroll = (
+            not is_precision_edit
+            and is_custom_source
+            and not original_is_pure
+            and bool(custom_user_prompt)
+        )
         reroll_theme = "custom"
         reroll_source = "custom"
         reroll_prompt = prompt
         reroll_prompt_final = True
-        reroll_no_auto_style = original_is_pure
+        reroll_no_auto_style = is_precision_edit or original_is_pure
         reroll_caption = False
         if is_custom_injected_reroll:
             reroll_prompt = f"{custom_user_prompt}. {custom_shot_prompt(custom_shot_type, size)}"
@@ -1608,7 +1995,9 @@ class PortraitGalleryApp:
                 reroll_no_auto_style = not bool(original_ref_image)
                 reroll_caption = False
 
-        ref_image = custom_ref_image if is_custom_source and custom_ref_image else ""
+        ref_image = original_ref_image if is_precision_edit else (
+            custom_ref_image if is_custom_source and custom_ref_image else ""
+        )
         selected_reference = dict(original_selected_reference) if original_ref_image else {}
         if engine == "gptimage" and is_scheduled_reroll and original_ref_image:
             ref_image = original_ref_image
@@ -1650,6 +2039,7 @@ class PortraitGalleryApp:
             schedule_time=schedule_time if is_scheduled_reroll else "",
             caption=reroll_caption,
             image_model=raw_model_name if engine == "gptimage" else "",
+            precise_edit=is_precision_edit,
         )
         if not filename:
             logger.error("图片重抽失败: %s", image_filename)
@@ -1659,7 +2049,12 @@ class PortraitGalleryApp:
         now_time = self._image_time_from_filename(filename) or datetime.now().strftime("%H:%M")
         schedule_context_entry = {}
         if is_scheduled_reroll:
-            schedule_context_entry = self._today_schedule_entry() if reroll_uses_today_schedule else original
+            schedule_context_entry = self._reroll_schedule_context(
+                all_data,
+                original,
+                original_date,
+                reroll_uses_today_schedule,
+            )
         result = {}
 
         def _merge_reroll(all_data: dict):
@@ -1684,17 +2079,7 @@ class PortraitGalleryApp:
                 "replacement_key": replacement_key,
             })
             if is_scheduled_reroll:
-                for field in (
-                    "outfit_style",
-                    "outfit",
-                    "base_style",
-                    "reference_query",
-                    "outfit_keywords",
-                    "scene_keywords",
-                ):
-                    value = schedule_context_entry.get(field) if isinstance(schedule_context_entry, dict) else None
-                    if value and not generated.get(field):
-                        generated[field] = value
+                self._apply_scheduled_reroll_context(generated, schedule_context_entry)
                 if schedule_time:
                     generated["schedule_time"] = schedule_time
                 if selected_reference:
@@ -1730,6 +2115,25 @@ class PortraitGalleryApp:
                         "requested_ref_image_path",
                         self._reference_path_for_display(ref_image, selected_reference),
                     )
+                if is_precision_edit:
+                    generated.update({
+                        "generation_type": "image_edit",
+                        "prompt_mode": "precision_edit",
+                        "pure_prompt": True,
+                        "custom_prompt": edit_instruction or original.get("custom_prompt", ""),
+                        "custom_ref_mode": "precision_edit",
+                        "generation_mode": "img2img",
+                        "requested_generation_mode": "img2img",
+                        "requested_ref_image": image_filename,
+                        "requested_ref_image_path": f"/images/{image_filename}",
+                        "selected_reference": selected_reference,
+                        "edit_target": edit_target,
+                        "edit_target_label": edit_target_label_value,
+                        "edit_instruction": edit_instruction,
+                        "edit_history": edit_history,
+                        "edited_from": edited_from,
+                        "original_image_filename": original_image_filename,
+                    })
             if (
                 (not is_scheduled_reroll or not reroll_uses_today_schedule)
                 and not generated.get("caption")
@@ -1766,6 +2170,37 @@ class PortraitGalleryApp:
             return all_data
 
         store.update(_merge_reroll)
+        if is_precision_edit:
+            metadata_updater = getattr(self.web_server, "_update_image_metadata_entry", None)
+            if callable(metadata_updater):
+                generated_metadata = ImageMetadataStore(self.data_dir).load()
+                generated_meta = generated_metadata.get(filename, {}) if isinstance(generated_metadata, dict) else {}
+                generated_meta = dict(generated_meta) if isinstance(generated_meta, dict) else {}
+                generated_meta.update({
+                    "source": "image_edit",
+                    "precise_edit": True,
+                    "generation_type": "image_edit",
+                    "prompt_mode": "precision_edit",
+                    "custom_ref_mode": "precision_edit",
+                    "custom_prompt": edit_instruction,
+                    "edited_from": edited_from,
+                    "original_image_filename": original_image_filename,
+                    "edit_target": edit_target,
+                    "edit_target_label": edit_target_label_value,
+                    "edit_instruction": edit_instruction,
+                    "edit_history": edit_history,
+                    "replaced_image_filename": image_filename,
+                    "replacement_key": result.get("replacement_key", original_key or image_filename),
+                    "requested_generation_mode": "img2img",
+                    "generation_mode": "img2img",
+                    "requested_ref_image": image_filename,
+                    "requested_ref_image_path": original_ref_image,
+                    "selected_reference": selected_reference,
+                })
+                try:
+                    metadata_updater(filename, generated_meta)
+                except Exception as e:
+                    logger.error("保存精准编辑重抽元数据失败: image=%s error=%s", filename, e)
         if filename != image_filename:
             self._delete_replaced_image(image_filename)
         logger.info("图片重抽成功: %s -> %s", image_filename, filename)
@@ -1787,8 +2222,21 @@ class PortraitGalleryApp:
                     self._schedule_retry_or_next_daily_job()
 
     async def refresh_schedule(self):
+        """Share one schedule refresh across every app-level caller."""
+        task = getattr(self, "_schedule_refresh_task", None)
+        if task is None or task.done():
+            task = asyncio.create_task(self._refresh_schedule_impl())
+            self._schedule_refresh_task = task
+        else:
+            logger.info("日程刷新已在进行，复用当前任务")
+        try:
+            return await asyncio.shield(task)
+        finally:
+            if task.done() and getattr(self, "_schedule_refresh_task", None) is task:
+                self._schedule_refresh_task = None
+
+    async def _refresh_schedule_impl(self):
         """Regenerate today's schedule and rebuild dynamic photo jobs."""
-        today_str = datetime.now().strftime("%Y-%m-%d")
         # 生成新日程
         entry = await self.scheduler_gen.generate_today()
         
@@ -1811,14 +2259,7 @@ class PortraitGalleryApp:
                 save_schedule_entry(self.data_dir, entry)
             return entry
 
-        # 清除旧日程（日期 key）
-        store = ScheduleStore(self.data_dir)
-        all_data = store.load()
-        if today_str in all_data:
-            del all_data[today_str]
-            store.save(all_data)
-            logger.info("已清除今日日程数据")
-        
+        # save_schedule_entry performs the replacement under one exclusive lock.
         save_schedule_entry(self.data_dir, entry)
         logger.info(f"日程生成成功: {entry.outfit_style}")
         await self._schedule_dynamic_photos(entry.schedule)
@@ -2482,25 +2923,17 @@ class PortraitGalleryApp:
             run_time = datetime.combine(today, dt_time(h, m))
             schedule_text_for_job = f"{schedule_time_str} {activity.strip()}".strip()
 
-            # 已过期的时间点只跳过。自动补拍会在服务重启时把早上的漏拍
-            # 晚上补出来，造成“后面没有计划却生成新图”的错觉；补拍改为只走手动重试。
+            # Do not auto-backfill expired slots, but keep selected ones visible
+            # so the user can explicitly retry them from the daily plan.
             if run_time <= now:
                 if self._check_photo_exists_for_slot(today_str, schedule_time_str):
                     logger.info(f"跳过已过期的时间（已有图片）: {schedule_time_str}")
                     continue
-                if schedule_time_str in planned_times:
-                    logger.info(f"跳过已过期的时间（已有计划记录）: {schedule_time_str}")
-                    continue
-
                 slot_key = f"{today_str} {schedule_time_str}"
-                if slot_key in self._failed_photo_jobs:
-                    logger.info(f"跳过已失败的过期时间（等待手动重试）: {schedule_time_str}")
+                if schedule_time_str in planned_times:
+                    reason = "等待手动重试" if slot_key in self._failed_photo_jobs else "已有计划记录"
+                    logger.info(f"跳过已过期的时间（{reason}）: {schedule_time_str}")
                     continue
-                logger.info(
-                    f"跳过已过期的时间（不自动补拍）: {schedule_time_str} "
-                    f"activity={activity.strip()[:30]}"
-                )
-                continue
 
             candidates.append({
                 "id": job_id,
@@ -2510,11 +2943,35 @@ class PortraitGalleryApp:
                 "theme": theme,
                 "run_time": run_time,
                 "period_label": self._schedule_period_label(h, m),
+                "expired": run_time <= now,
             })
 
         remaining_slots = max(0, max_daily - len(planned_times))
         selected_jobs = self._select_photo_job_candidates(candidates, remaining_slots, planned_periods)
+        scheduled_count = 0
+        retryable_expired_count = 0
+        failed_jobs_changed = False
         for item in selected_jobs:
+            if item.get("expired"):
+                time_text = f"{item['hour']:02d}:{item['minute']:02d}"
+                slot_key = f"{today_str} {time_text}"
+                message = "计划时段已过，不自动补拍，可手动重试"
+                self._failed_photo_jobs[slot_key] = {
+                    "theme": item["theme"],
+                    "time": time_text,
+                    "activity": item["activity"],
+                    "failed_at": now.isoformat(),
+                    "error": message,
+                    "error_summary": message,
+                    "reason": "expired",
+                }
+                failed_jobs_changed = True
+                retryable_expired_count += 1
+                logger.info(
+                    f"跳过已过期的时间（不自动补拍，可手动重试）: {time_text} "
+                    f"activity={item['activity'][:30]}"
+                )
+                continue
             self.aps.add_job(
                 self.photo_job,
                 'date',
@@ -2525,6 +2982,7 @@ class PortraitGalleryApp:
                 coalesce=True,
                 max_instances=1,
             )
+            scheduled_count += 1
             self._photo_job_schedule_meta[item["id"]] = {
                 "theme": item["theme"],
                 "time": f"{item['hour']:02d}:{item['minute']:02d}",
@@ -2536,9 +2994,13 @@ class PortraitGalleryApp:
                 f"activity={item['activity'][:30]}"
             )
 
+        if failed_jobs_changed:
+            self._save_failed_photo_jobs()
+
         logger.info(
-            f"动态生图任务已创建: {len(selected_jobs)} 个 "
-            f"(existing_plans={len(planned_times)}, max_daily={max_daily})"
+            f"动态生图任务已创建: {scheduled_count} 个 "
+            f"(expired_retryable={retryable_expired_count}, "
+            f"existing_plans={len(planned_times)}, max_daily={max_daily})"
         )
 
     async def _backfill_photo_job(self, theme: str, schedule_text: str, slot_key: str):
@@ -2651,15 +3113,16 @@ class PortraitGalleryApp:
                 continue
             seen_times.add(time_text)
             hour = int(time_text.split(":", 1)[0])
+            expired = failed.get("reason") == "expired"
             jobs.append({
                 "id": f"photo_failed_{time_text.replace(':', '_')}",
                 "type": "photo",
-                "status": "failed",
+                "status": "missed" if expired else "failed",
                 "theme": failed.get("theme") or self._theme_for_hour(hour),
                 "time": time_text,
                 "run_at": failed.get("failed_at") or datetime.now().isoformat(),
                 "activity": failed.get("activity") or activity_by_time.get(time_text, ""),
-                "source": "failed",
+                "source": "expired" if expired else "failed",
                 "error": failed.get("error", ""),
                 "error_summary": self._summarize_photo_failure(failed.get("error", ""))
                 or failed.get("error_summary", ""),
@@ -2832,7 +3295,8 @@ class PortraitGalleryApp:
 
     async def photo_job(self, theme: str, schedule_time: str = "", quota_reserved: bool = False) -> bool:
         """定时生图任务 - 调用 generate.py 完整链路"""
-        logger.info(f"开始定时生图: theme={theme}, schedule_time={schedule_time}")
+        target_size = schedule_image_size(self.config)
+        logger.info(f"开始定时生图: theme={theme}, size={target_size}, schedule_time={schedule_time}")
         slot_key, time_text, activity = self._slot_key_for_schedule_time(schedule_time)
         job_id = self._photo_job_id_for_time(time_text)
         if job_id:
@@ -2881,6 +3345,7 @@ class PortraitGalleryApp:
             "--theme", theme,
             "--caption",
             "--source", "cron",
+            "--size", target_size,
         ]
         daily_entry = self._today_schedule_entry()
         selected_reference = await self._select_reference_for_generation({
@@ -3380,6 +3845,28 @@ class PortraitGalleryApp:
         """启动所有服务（同步入口）"""
         asyncio.run(self._async_start())
 
+    async def _restore_daily_schedule_state(self):
+        """Recover today's schedule and in-memory photo jobs after any restart."""
+        today_schedule = ""
+        need_generate = True
+        today_entry = self._today_schedule_entry()
+        if today_entry:
+            today_schedule = today_entry.get("schedule", "")
+            missing_periods = self._schedule_missing_required_periods(today_schedule)
+            if missing_periods:
+                logger.warning("今日日程缺少时间段 %s，后台刷新修复", missing_periods)
+            else:
+                need_generate = False
+
+        if need_generate:
+            logger.info("今日尚未生成完整日程，启动后台补生成...")
+            asyncio.create_task(self.daily_job())
+            return
+
+        logger.info("今日已有数据")
+        self._schedule_next_daily_job(force_tomorrow=True)
+        await self._schedule_dynamic_photos(today_schedule)
+
     async def _async_start(self):
         """异步启动"""
         self.aps.start()
@@ -3392,29 +3879,7 @@ class PortraitGalleryApp:
         await site.start()
         logger.info(f"画廊启动: http://{self.web_server.host}:{self.web_server.port}")
 
-        # 检查今天是否已有完整日程；启动后需要恢复内存里的动态生图任务
-        today_schedule = ""
-        need_generate = True
-        today_entry = self._today_schedule_entry()
-        if today_entry:
-            today_schedule = today_entry.get("schedule", "")
-            missing_periods = self._schedule_missing_required_periods(today_schedule)
-            if missing_periods:
-                logger.warning(f"今日日程缺少时间段 {missing_periods}，后台刷新修复")
-            else:
-                need_generate = False
-
-        if need_generate:
-            if self._is_schedule_generation_window_now():
-                logger.info("今日尚未生成完整日程，后台生成中...")
-                asyncio.create_task(self.daily_job())
-            else:
-                run_at = self._schedule_next_daily_job(force_tomorrow=False)
-                logger.info("今日尚未生成完整日程，将等待日程生成窗口: %s", run_at.strftime("%Y-%m-%d %H:%M"))
-        else:
-            logger.info("今日已有数据")
-            self._schedule_next_daily_job(force_tomorrow=True)
-            await self._schedule_dynamic_photos(today_schedule)
+        await self._restore_daily_schedule_state()
 
         # 保持运行
         await asyncio.Event().wait()

@@ -5404,7 +5404,7 @@ textarea:focus-visible,
 
 <div class="header">
   <div class="header-left">
-      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.3.3</span></h1>
+      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.3.4</span></h1>
   </div>
   <div class="tabs">
     <button class="tab has-badge" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="showUnfavoriteGallery(event)"><span class="tab-label"><span class="tab-icon" aria-hidden="true">✨</span><span class="tab-text">全部</span></span><span class="tab-badge" id="badge-all">0</span></button>
@@ -5813,7 +5813,12 @@ textarea:focus-visible,
         </div>
       </details>
     </div>
-    <input type="hidden" id="skGiteeUrl">
+    <div class="sk-field">
+      <label for="skGiteeUrl">Gitee API URL</label>
+      <div class="sk-desc">Gitee 兼容生图接口地址，必须填写完整的 images/generations 端点</div>
+      <input type="text" id="skGiteeUrl" placeholder="必填：https://ai.gitee.com/v1/images/generations">
+      <div class="sk-status" id="skGiteeUrlStatus">加载中...</div>
+    </div>
     <div class="sk-field">
       <label for="skGiteeKey">Gitee API Key</label>
       <div class="sk-desc">Gitee 生图密钥，必须填写</div>
@@ -5930,7 +5935,7 @@ textarea:focus-visible,
           <span class="sk-update-title">版本与服务</span>
           <span class="sk-update-desc">检查代码更新，或重新加载当前服务</span>
         </div>
-        <span class="sk-version-text">当前 <strong id="settingsVersion">v1.3.3</strong></span>
+        <span class="sk-version-text">当前 <strong id="settingsVersion">v1.3.4</strong></span>
       </div>
       <div class="sk-update-row">
         <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
@@ -6031,6 +6036,18 @@ const API = "";
 const galleryNativeFetch = window.fetch.bind(window);
 let galleryAuthMode = "login";
 let galleryAppBooted = false;
+
+(function stripLegacySensitiveQuery() {
+  const url = new URL(window.location.href);
+  let changed = false;
+  ["key", "api_key", "token", "access_token"].forEach(name => {
+    if (url.searchParams.has(name)) {
+      url.searchParams.delete(name);
+      changed = true;
+    }
+  });
+  if (changed) history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+})();
 
 function galleryApiUrl(input) {
   try {
@@ -6350,6 +6367,12 @@ function displayOutfitStyle(e) {
 }
 
 function compareStyleFilterLabels(a, b) {
+  const groupA = String(a || "").trim() === "群聊";
+  const groupB = String(b || "").trim() === "群聊";
+  if (groupA !== groupB) return groupA ? 1 : -1;
+  const settingA = String(a || "").trim() === "设定图";
+  const settingB = String(b || "").trim() === "设定图";
+  if (settingA !== settingB) return settingA ? 1 : -1;
   const customA = String(a || "").trim() === "自定义";
   const customB = String(b || "").trim() === "自定义";
   if (customA !== customB) return customA ? 1 : -1;
@@ -8638,8 +8661,21 @@ function customGenerationModeLabel(e) {
   return "";
 }
 
+function isPrecisionImageEditEntry(e) {
+  if (!e) return false;
+  const source = String(e.source || "").toLowerCase();
+  const generationType = String(e.generation_type || "").toLowerCase();
+  const promptMode = String(e.prompt_mode || "").toLowerCase();
+  return source === "image_edit"
+    || source === "image-edit"
+    || generationType === "image_edit"
+    || generationType === "image-edit"
+    || promptMode === "precision_edit";
+}
+
 function modalSourceLabel(e) {
   const source = String((e && e.source) || "").toLowerCase();
+  if (isPrecisionImageEditEntry(e)) return "精准编辑";
   if (isHermesApiEntry(e)) return "Hermes API";
   if (e && e.metadata_only) return "聊天生图";
   if (source === "chat") return "聊天生图";
@@ -8678,6 +8714,7 @@ function customShotAngleLabel(e) {
 }
 
 function modalOutfitLabel(e) {
+  if (isPrecisionImageEditEntry(e)) return "原图穿搭";
   if (isHermesApiEntry(e)) return "描述";
   const source = String((e && e.source) || "").toLowerCase();
   if (source === "character") return "角色";
@@ -8687,9 +8724,11 @@ function modalOutfitLabel(e) {
 }
 
 function modalSourceContext(e) {
+  if (isPrecisionImageEditEntry(e)) return "";
   const label = modalSourceLabel(e);
   if (!label) return "";
   let context = label;
+  const source = String((e && e.source) || "").toLowerCase();
   const style = displayOutfitStyle(e);
   if (style && style !== "自定义" && !context.includes(style)) context += ` · ${style}`;
   if (isHermesApiEntry(e)) {
@@ -9242,6 +9281,85 @@ ms.textContent = `
   padding-top: 10px;
   gap: 7px;
 }
+.image-edit-overlay {
+  position:fixed;inset:0;z-index:10030;display:none;align-items:center;justify-content:center;
+  padding:24px;background:rgba(24,12,30,0.52);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+}
+.image-edit-overlay.open { display:flex; }
+.image-edit-dialog {
+  width:min(920px,calc(100vw - 40px));max-height:calc(100vh - 48px);overflow:hidden;
+  display:grid;grid-template-columns:minmax(330px,350px) minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);
+  background:#fff;border:1px solid rgba(233,30,99,0.12);border-radius:8px;
+  box-shadow:0 28px 90px rgba(31,12,39,0.32);animation:slideUp 0.22s cubic-bezier(0.16,1,0.3,1);
+}
+.image-edit-head {
+  grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:18px 20px;border-bottom:1px solid #eee7f0;background:#fff;
+}
+.image-edit-title { min-width:0;display:flex;align-items:center;gap:10px; }
+.image-edit-title-icon {
+  width:34px;height:34px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;
+  color:#fff;background:#d81b60;flex:0 0 auto;
+}
+.image-edit-title-copy { min-width:0;display:flex;flex-direction:column;gap:1px; }
+.image-edit-title-copy strong { font-size:17px;line-height:1.3;color:#302633;letter-spacing:0; }
+.image-edit-title-copy span { font-size:12px;line-height:1.4;color:#918394;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.image-edit-close {
+  width:34px;height:34px;border:0;border-radius:50%;background:#f4eff5;color:#756778;
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex:0 0 auto;
+}
+.image-edit-close:hover { background:#fce4ec;color:#d81b60; }
+.image-edit-close:disabled { opacity:.45;cursor:default; }
+.image-edit-preview {
+  min-height:0;aspect-ratio:3/4;background:#19151c;overflow:hidden;display:block;align-self:stretch;
+  border-right:1px solid #eee7f0;
+}
+.image-edit-preview img { width:100%;height:100%;max-height:none;object-fit:cover;object-position:center;display:block; }
+.image-edit-form {
+  min-width:0;min-height:0;display:grid;grid-template-rows:minmax(0,1fr) auto;overflow:hidden;background:#fff;
+}
+.image-edit-form-scroll {
+  min-width:0;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:20px 20px 12px;
+  display:flex;flex-direction:column;gap:12px;
+}
+.image-edit-field { display:flex;flex-direction:column;gap:8px;min-width:0; }
+.image-edit-field-label { font-size:13px;font-weight:800;color:#5d4d61;letter-spacing:0; }
+.image-edit-targets {
+  display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:4px;
+  background:#f3eef4;border:1px solid #ebe2ed;border-radius:8px;
+}
+.image-edit-target {
+  min-width:0;min-height:38px;padding:7px 8px;border:1px solid transparent;border-radius:6px;
+  background:transparent;color:#756778;font-size:13px;font-weight:800;display:inline-flex;
+  align-items:center;justify-content:center;gap:6px;cursor:pointer;white-space:nowrap;
+}
+.image-edit-target:hover { color:#d81b60;background:#fff8fb; }
+.image-edit-target.active { color:#d81b60;background:#fff;border-color:#f1bfd0;box-shadow:0 3px 10px rgba(126,65,106,0.08); }
+.image-edit-target:disabled { opacity:.55;cursor:default; }
+.image-edit-instruction {
+  width:100%;min-height:110px;resize:vertical;padding:13px 14px;border:1.5px solid #e5dce8;
+  border-radius:8px;background:#fff;color:#3f3442;font:inherit;font-size:14px;line-height:1.65;letter-spacing:0;
+}
+.image-edit-instruction:focus { outline:none;border-color:#d81b60;box-shadow:0 0 0 3px rgba(216,27,96,0.10); }
+.image-edit-schedule {
+  width:100%;height:42px;padding:0 13px;border:1.5px solid #e5dce8;border-radius:8px;
+  background:#fff;color:#3f3442;font:inherit;font-size:14px;line-height:1;letter-spacing:0;
+}
+.image-edit-schedule:focus { outline:none;border-color:#d81b60;box-shadow:0 0 0 3px rgba(216,27,96,0.10); }
+.image-edit-lock { display:flex;align-items:center;gap:7px;color:#8b7c8e;font-size:12px;font-weight:700; }
+.image-edit-lock i { color:#d81b60; }
+.image-edit-actions {
+  display:grid;grid-template-columns:auto minmax(150px,1fr);gap:9px;padding:12px 20px 20px;
+  border-top:1px solid #f0e8f1;background:#fff;box-shadow:0 -10px 24px rgba(58,29,65,.045);
+}
+.image-edit-action {
+  min-height:42px;padding:8px 16px;border-radius:8px;border:1.5px solid #e6dce8;background:#fff;
+  color:#6f6272;font-size:14px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:7px;
+}
+.image-edit-action:hover { border-color:#d81b60;color:#d81b60;background:#fff7fa; }
+.image-edit-action.primary { border-color:#d81b60;background:#d81b60;color:#fff;box-shadow:0 8px 20px rgba(216,27,96,.2); }
+.image-edit-action.primary:hover { background:#c2185b;color:#fff; }
+.image-edit-action:disabled { opacity:.55;cursor:default;box-shadow:none; }
 .delete-confirm-overlay {
   position:fixed;inset:0;z-index:10020;display:flex;align-items:center;justify-content:center;
   padding:24px;background:rgba(24,12,30,0.36);opacity:0;visibility:hidden;pointer-events:none;
@@ -9313,6 +9431,18 @@ ms.textContent = `
 	  .modal-content .today-card-info .modal-schedule { margin-top:6px; }
 	  .modal-content .today-card-info .modal-caption.tc-thought { margin-top:8px;padding:17px 16px; }
 	  .modal-content .today-card-info .modal-actions { margin-top:auto; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+	  .image-edit-overlay { padding:10px;align-items:flex-end; }
+	  .image-edit-dialog { width:100%;max-height:calc(100vh - 20px);overflow:auto;grid-template-columns:1fr;grid-template-rows:auto clamp(300px,52vh,500px) auto;border-radius:8px; }
+	  .image-edit-head { grid-column:1;padding:14px 15px; }
+	  .image-edit-preview { min-height:0;height:100%;aspect-ratio:auto;border-right:0;border-bottom:1px solid #eee7f0; }
+	  .image-edit-preview img { max-height:none;object-fit:cover;object-position:center 30%; }
+	  .image-edit-form { display:flex;padding:15px;gap:13px;overflow:visible;background:#fff; }
+	  .image-edit-form-scroll { overflow:visible;padding:0;display:flex;gap:13px; }
+	  .image-edit-targets { grid-template-columns:repeat(3,minmax(0,1fr)); }
+	  .image-edit-target { min-height:36px;padding:6px 4px;font-size:12px; }
+	  .image-edit-instruction { min-height:100px;resize:none; }
+	  .image-edit-schedule { height:40px; }
+	  .image-edit-actions { grid-template-columns:1fr 1.5fr;padding:4px 0 0;border-top:0;box-shadow:none; }
 	  .modal-content.modal-fit-detail { height:auto; }
 	}
 	}`;
@@ -9338,13 +9468,62 @@ modalOverlay.innerHTML = `
 	      <div class="modal-actions">
 	        <button class="mbtn" id="modalFav" onclick="modalToggleFav()"><i class="fa-regular fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
 	        <button class="mbtn" id="modalWardrobe" onclick="modalAddToWardrobe()" title="收藏到衣柜"><i class="fa-solid fa-shirt btn-icon" aria-hidden="true"></i> 入衣柜</button>
-	        <button class="mbtn" onclick="modalShare()"><i class="fa-solid fa-share-nodes btn-icon" aria-hidden="true"></i> 分享</button>
+	        <button class="mbtn" id="modalEditBtn" onclick="openImageEdit()"><i class="fa-solid fa-wand-magic-sparkles btn-icon" aria-hidden="true"></i> 编辑</button>
 	        <button class="mbtn" id="modalPromptBtn" onclick="showPrompt(this)"><i class="fa-regular fa-pen-to-square btn-icon" aria-hidden="true"></i> 提示词</button>
 	        <button class="mbtn danger" onclick="modalDelete()"><i class="fa-regular fa-trash-can btn-icon" aria-hidden="true"></i> 删除</button>
       </div>
     </div>
   </div>`;
 document.body.appendChild(modalOverlay);
+
+const imageEditOverlay = document.createElement("div");
+imageEditOverlay.className = "image-edit-overlay";
+imageEditOverlay.id = "imageEditOverlay";
+imageEditOverlay.setAttribute("aria-hidden", "true");
+imageEditOverlay.onclick = (event) => { if (event.target === imageEditOverlay) closeImageEdit(); };
+imageEditOverlay.innerHTML = `
+  <div class="image-edit-dialog" role="dialog" aria-modal="true" aria-labelledby="imageEditTitle" onclick="event.stopPropagation()">
+    <div class="image-edit-head">
+      <div class="image-edit-title">
+        <span class="image-edit-title-icon" aria-hidden="true"><i class="fa-solid fa-wand-magic-sparkles"></i></span>
+        <span class="image-edit-title-copy">
+          <strong id="imageEditTitle">精准编辑</strong>
+          <span id="imageEditSourceMeta"></span>
+        </span>
+      </div>
+      <button class="image-edit-close" id="imageEditCloseBtn" type="button" onclick="closeImageEdit()" aria-label="关闭"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+    </div>
+    <div class="image-edit-preview"><img id="imageEditPreview" alt="待编辑图片"></div>
+    <div class="image-edit-form">
+      <div class="image-edit-form-scroll">
+        <div class="image-edit-field">
+          <span class="image-edit-field-label">编辑范围</span>
+          <div class="image-edit-targets" role="group" aria-label="编辑范围">
+            <button class="image-edit-target active" type="button" data-image-edit-target="background" onclick="setImageEditTarget('background')"><i class="fa-regular fa-image" aria-hidden="true"></i>背景</button>
+            <button class="image-edit-target" type="button" data-image-edit-target="outfit" onclick="setImageEditTarget('outfit')"><i class="fa-solid fa-shirt" aria-hidden="true"></i>穿搭</button>
+            <button class="image-edit-target" type="button" data-image-edit-target="hair" onclick="setImageEditTarget('hair')"><i class="fa-solid fa-scissors" aria-hidden="true"></i>发型</button>
+            <button class="image-edit-target" type="button" data-image-edit-target="expression" onclick="setImageEditTarget('expression')"><i class="fa-regular fa-face-smile" aria-hidden="true"></i>表情</button>
+            <button class="image-edit-target" type="button" data-image-edit-target="object" onclick="setImageEditTarget('object')"><i class="fa-solid fa-cube" aria-hidden="true"></i>道具</button>
+            <button class="image-edit-target" type="button" data-image-edit-target="custom" onclick="setImageEditTarget('custom')"><i class="fa-solid fa-sliders" aria-hidden="true"></i>其他</button>
+          </div>
+        </div>
+        <label class="image-edit-field" for="imageEditInstruction">
+          <span class="image-edit-field-label">修改内容</span>
+          <textarea class="image-edit-instruction" id="imageEditInstruction" maxlength="800"></textarea>
+        </label>
+        <label class="image-edit-field" for="imageEditScheduleDescription">
+          <span class="image-edit-field-label">日程说明</span>
+          <input class="image-edit-schedule" id="imageEditScheduleDescription" type="text" maxlength="160" autocomplete="off">
+        </label>
+        <div class="image-edit-lock"><i class="fa-solid fa-lock" aria-hidden="true"></i><span>未指定元素保持原样</span></div>
+      </div>
+      <div class="image-edit-actions">
+        <button class="image-edit-action" type="button" id="imageEditCancelBtn" onclick="closeImageEdit()">取消</button>
+        <button class="image-edit-action primary" type="button" id="imageEditSubmitBtn" onclick="submitImageEdit()"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span>生成并保存</span></button>
+      </div>
+    </div>
+  </div>`;
+document.body.appendChild(imageEditOverlay);
 
 const deleteConfirmOverlay = document.createElement("div");
 deleteConfirmOverlay.className = "delete-confirm-overlay";
@@ -9383,6 +9562,19 @@ function openFullscreenImg(src) {
 }
 
 let currentModalImg = '';
+let imageEditSourceImg = '';
+let imageEditTarget = 'background';
+let imageEditBusy = false;
+let imageEditLastFocus = null;
+let imageEditOriginalScheduleDescription = '';
+const imageEditPlaceholders = {
+  background: '例如：改成雨后的东京街道，保留人物、桌面和前景物品',
+  outfit: '例如：只把上衣改成黑色短款皮夹克',
+  hair: '例如：只把发型改成低双马尾，发色不变',
+  expression: '例如：只改成自然微笑，眼神看向镜头',
+  object: '例如：只把手里的咖啡杯改成透明玻璃杯',
+  custom: '明确写出唯一需要改变的元素'
+};
 function resetModalDetailHeight() {
   const modal = document.getElementById("modalContent");
   if (!modal) return;
@@ -9454,8 +9646,12 @@ function openModal(e) {
     : '--';
   // Schedule
   const schedEl = document.getElementById("modalSchedule");
+  const editContextText = isPrecisionImageEditEntry(e) ? modalSourceContext(e) : "";
+  const editContextHtml = editContextText
+    ? `<div class="sched-item modal-source-item"><span class="sched-label">来源</span><span class="sched-text">${escapeHtml(editContextText)}</span></div>`
+    : "";
   if (e.schedule_time) {
-    schedEl.innerHTML = renderScheduleItemHtml(e.schedule_time, e.image_filename);
+    schedEl.innerHTML = renderScheduleItemHtml(e.schedule_time, e.image_filename) + editContextHtml;
     schedEl.style.display = "block";
   } else if (e.schedule) {
     const parsed = parseSchedule(e.schedule);
@@ -9464,7 +9660,7 @@ function openModal(e) {
         const label = item.time || item.icon;
         const text = label ? `${label} ${item.text || ""}` : item.text;
         return renderScheduleItemHtml(text, e.image_filename);
-      }).join('');
+      }).join('') + editContextHtml;
       schedEl.style.display = "block";
     } else {
       const contextText = modalSourceContext(e);
@@ -9524,6 +9720,113 @@ window.addEventListener("resize", () => {
 	  return allEntries.find(x => x && x.image_filename === currentModalImg)
 	    || (todayData && Array.isArray(todayData.photos) ? todayData.photos.find(x => x && x.image_filename === currentModalImg) : null)
 	    || null;
+	}
+	function setImageEditTarget(target) {
+	  if (!Object.prototype.hasOwnProperty.call(imageEditPlaceholders, target) || imageEditBusy) return;
+	  imageEditTarget = target;
+	  document.querySelectorAll('[data-image-edit-target]').forEach(button => {
+	    const active = button.dataset.imageEditTarget === target;
+	    button.classList.toggle('active', active);
+	    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+	  });
+	  const input = document.getElementById('imageEditInstruction');
+	  if (input) input.placeholder = imageEditPlaceholders[target] || '';
+	}
+	function imageEditScheduleDescription(entry) {
+	  const raw = String((entry && entry.schedule_time) || '').trim();
+	  if (!raw) return '';
+	  const match = raw.match(/^\d{1,2}:\d{2}\s*(.*)$/);
+	  return (match ? match[1] : raw).trim();
+	}
+	function openImageEdit() {
+	  const entry = currentModalEntry();
+	  if (!entry || !entry.image_filename) {
+	    showToast('找不到当前图片');
+	    return;
+	  }
+	  imageEditSourceImg = entry.image_filename;
+	  imageEditLastFocus = document.activeElement;
+	  document.getElementById('imageEditPreview').src = `/images/${encodeURIComponent(entry.image_filename)}`;
+	  document.getElementById('imageEditSourceMeta').textContent = `${formatDate(entry.date)}${entry.time ? ' · ' + entry.time : ''}`;
+	  const input = document.getElementById('imageEditInstruction');
+	  input.value = '';
+	  imageEditOriginalScheduleDescription = imageEditScheduleDescription(entry);
+	  document.getElementById('imageEditScheduleDescription').value = imageEditOriginalScheduleDescription;
+	  setImageEditTarget('background');
+	  imageEditOverlay.classList.add('open');
+	  imageEditOverlay.removeAttribute('aria-hidden');
+	  requestAnimationFrame(() => input.focus({preventScroll:true}));
+	}
+	function closeImageEdit(force = false) {
+	  if (imageEditBusy && !force) return;
+	  imageEditOverlay.classList.remove('open');
+	  imageEditOverlay.setAttribute('aria-hidden', 'true');
+	  imageEditSourceImg = '';
+	  imageEditOriginalScheduleDescription = '';
+	  if (!modalOverlay.classList.contains('open')) document.body.style.overflow = '';
+	  if (imageEditLastFocus && typeof imageEditLastFocus.focus === 'function') {
+	    imageEditLastFocus.focus({preventScroll:true});
+	  }
+	  imageEditLastFocus = null;
+	}
+	function setImageEditBusy(busy) {
+	  imageEditBusy = Boolean(busy);
+	  document.querySelectorAll('[data-image-edit-target]').forEach(button => { button.disabled = imageEditBusy; });
+	  document.getElementById('imageEditInstruction').disabled = imageEditBusy;
+	  document.getElementById('imageEditScheduleDescription').disabled = imageEditBusy;
+	  document.getElementById('imageEditCancelBtn').disabled = imageEditBusy;
+	  document.getElementById('imageEditCloseBtn').disabled = imageEditBusy;
+	  const submit = document.getElementById('imageEditSubmitBtn');
+	  submit.disabled = imageEditBusy;
+	  submit.innerHTML = imageEditBusy
+	    ? '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><span>编辑并保存中</span>'
+	    : '<i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span>生成并保存</span>';
+	}
+	async function submitImageEdit() {
+	  if (imageEditBusy || !imageEditSourceImg) return;
+	  const instruction = document.getElementById('imageEditInstruction').value.trim();
+	  if (!instruction) {
+	    showToast('请输入要修改的内容');
+	    document.getElementById('imageEditInstruction').focus();
+	    return;
+	  }
+	  const scheduleInput = document.getElementById('imageEditScheduleDescription');
+	  const scheduleDescription = scheduleInput.value.replace(/\s+/g, ' ').trim();
+	  if (imageEditOriginalScheduleDescription && !scheduleDescription) {
+	    showToast('日程说明不能为空');
+	    scheduleInput.focus();
+	    return;
+	  }
+	  const scheduleManuallyChanged = scheduleDescription !== imageEditOriginalScheduleDescription;
+	  const originalScheduleDescription = imageEditOriginalScheduleDescription;
+	  const sourceImage = imageEditSourceImg;
+	  setImageEditBusy(true);
+	  showToast('正在精准编辑当前图片...');
+	  try {
+	    const response = await fetch(`${API}/api/images/${encodeURIComponent(sourceImage)}/edit`, {
+	      method: 'POST',
+	      headers: {'Content-Type':'application/json'},
+	      body: JSON.stringify(Object.assign(
+	        {target:imageEditTarget, instruction},
+	        scheduleManuallyChanged ? {schedule_description:scheduleDescription} : {}
+	      ))
+	    });
+	    const data = await response.json().catch(() => ({}));
+	    if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+	    const replacedImage = data.replaced_image_filename || sourceImage;
+	    if (!replaceLocalImage(replacedImage, data)) upsertGeneratedGalleryEntry(data);
+	    renderActivePhotoView();
+	    updateBadges();
+	    window.applyGalleryColumns?.();
+	    const scheduleChanged = imageEditScheduleDescription(data) !== originalScheduleDescription;
+	    closeImageEdit(true);
+	    openModal(data);
+	    showToast(scheduleChanged ? '图片与日程说明已更新' : '精准编辑完成，已替换当前图片');
+	  } catch(error) {
+	    showToast('编辑失败：' + (error && error.message ? error.message : '未知错误'));
+	  } finally {
+	    setImageEditBusy(false);
+	  }
 	}
 	function wardrobeEscapeRegExp(value) {
 	  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -9669,7 +9972,6 @@ window.addEventListener("resize", () => {
 	    showToast("收藏到衣柜失败：" + (e && e.message ? e.message : "未知错误"));
 	  }
 	}
-	function modalShare() { if (currentModalImg) shareImage(currentModalImg); }
 function modalDelete() {
   if (!currentModalImg) return;
   deleteImage(currentModalImg);
@@ -10534,7 +10836,7 @@ async function loadGallery() {
       fetch(`${API}/api/gallery`)
     ]);
     if (todayRes.status === 401 || galleryRes.status === 401) {
-      throw new Error("需要 API Key，请用 ?key=你的密钥 打开页面");
+      throw new Error("需要访问密码，请先登录画廊");
     }
     if (!todayRes.ok || !galleryRes.ok) {
       throw new Error("API 请求失败");
@@ -10592,6 +10894,7 @@ function openSettings() {
   document.body.style.overflow = "hidden";
   setSettingsPanel(activeSettingsPanel || "persona");
   // Clear input fields
+  document.getElementById("skGiteeUrl").value = "";
   document.getElementById("skGiteeKey").value = "";
   document.getElementById("skGptKey").value = "";
   document.getElementById("skGptBaseUrl").value = "";
@@ -12026,7 +12329,9 @@ loadVersion();
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
     closeScheduleSendMenu();
-    if (document.getElementById("eggStyleOverlay").classList.contains("open")) {
+    if (imageEditOverlay.classList.contains("open")) {
+      closeImageEdit();
+    } else if (document.getElementById("eggStyleOverlay").classList.contains("open")) {
       closeOutfitStyleDialog();
     } else if (document.getElementById("imgFullscreen").classList.contains("open")) {
       document.getElementById("imgFullscreen").classList.remove("open");

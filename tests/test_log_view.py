@@ -45,6 +45,19 @@ class LogViewFormattingTest(unittest.TestCase):
         self.assertTrue(access_filter.filter(missing_api))
         self.assertFalse(access_filter.filter(favicon_probe))
 
+    def test_access_filter_redacts_sensitive_query_values(self):
+        access_filter = _UsefulAccessLogFilter()
+        failure = logging.LogRecord(
+            "aiohttp.access", logging.INFO, "", 0,
+            '192.168.1.50 "GET /api/missing?api_key=sentinel-secret&mode=raw HTTP/1.1" 404 120',
+            (), None,
+        )
+
+        self.assertTrue(access_filter.filter(failure))
+        rendered = failure.getMessage()
+        self.assertIn("api_key=[REDACTED]", rendered)
+        self.assertNotIn("sentinel-secret", rendered)
+
     def test_structured_logs_hide_access_and_collapse_repeated_noise(self):
         text = "\n".join(
             [
@@ -85,6 +98,30 @@ class LogViewFormattingTest(unittest.TestCase):
 
         self.assertEqual("开始手动发送图片到微信：demo.png。", start)
         self.assertEqual("微信图片发送将在 60.0 秒后重试：下一次为第 2/3 次。", retry)
+
+    def test_reroll_log_hides_redundant_filename_tokens(self):
+        message = GalleryServer._translate_log_message(
+            "重抽沿用原参考图: "
+            "zhuzhu_schedule_2211_1783952093700914000_b0d94705_1783952093.png ref=甜妹风",
+            "INFO",
+            "portrait_gallery",
+        )
+
+        self.assertEqual("重抽沿用原参考图：22:11 计划图，参考：甜妹风。", message)
+        self.assertNotIn("1783952093700914000", message)
+
+    def test_scheduled_generation_log_includes_the_normalized_size(self):
+        message = GalleryServer._translate_log_message(
+            "开始定时生图: theme=morning, size=1536x2048, "
+            "schedule_time=08:25 在书桌前整理购物清单",
+            "INFO",
+            "portrait_gallery",
+        )
+
+        self.assertEqual(
+            "开始定时生图：08:25，尺寸：1536x2048，动作：在书桌前整理购物清单。",
+            message,
+        )
 
     def test_weixin_ret_minus_two_has_an_actionable_explanation(self):
         message = GalleryServer._diagnose_error_text(

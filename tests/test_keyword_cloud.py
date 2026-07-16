@@ -162,9 +162,47 @@ class KeywordCloudTest(unittest.TestCase):
             self.assertIn("软偏好参考", block)
             self.assertIn("用户手动输入", block)
             self.assertIn("收藏衣柜", block)
+            self.assertIn("最多自然采用 1 个", block)
+            self.assertIn("也可以全部忽略", block)
             self.assertIn("蓝色卫衣", block)
             self.assertIn("书店过道", block)
             self.assertNotIn("generated blue hoodie", block)
+            self.assertNotIn("(1)", block)
+
+    def test_schedule_prompt_rotates_and_caps_low_weight_candidates(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir)
+            schedule_data = {
+                f"custom_{index:02d}.png": {
+                    "status": "ok",
+                    "source": "custom",
+                    "image_filename": f"custom_{index:02d}.png",
+                    "custom_prompt": f"偏好词{index:02d}",
+                }
+                for index in range(20)
+            }
+            (data_dir / "schedule_data.json").write_text(
+                json.dumps(schedule_data, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            first = build_schedule_keyword_prompt_block(
+                str(data_dir),
+                limit=20,
+                selection_key="2026-07-15",
+            )
+            second = build_schedule_keyword_prompt_block(
+                str(data_dir),
+                limit=20,
+                selection_key="2026-07-16",
+            )
+
+            first_terms = first.split("可选灵感：", 1)[1].split("、")
+            second_terms = second.split("可选灵感：", 1)[1].split("、")
+            self.assertEqual(5, len(first_terms))
+            self.assertEqual(5, len(second_terms))
+            self.assertNotEqual(first_terms, second_terms)
+            self.assertNotIn("(", first.split("可选灵感：", 1)[1])
 
     def test_keeps_user_supplied_character_traits_as_preferences(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -65,6 +65,26 @@ class GptImageFailureTest(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(1, direct.call_count)
 
+    def test_precision_edit_never_retries_without_reference_image(self):
+        with patch.object(
+            generate_gptimage,
+            "_generate_via_direct_gpt",
+            return_value=None,
+        ) as direct:
+            result = generate_gptimage.generate(
+                "custom",
+                prompt_override="change only the background",
+                ref_image="/tmp/reference.png",
+                prompt_is_final=True,
+                sync_gallery=False,
+                precise_edit=True,
+            )
+
+        self.assertIsNone(result)
+        self.assertEqual(1, direct.call_count)
+        self.assertEqual("/tmp/reference.png", direct.call_args.args[1])
+        self.assertTrue(direct.call_args.kwargs["precise_edit"])
+
     def test_terminal_failure_reason_covers_current_axonhub_errors(self):
         cases = {
             '{"code":"insufficient_quota"}': "GPT Image 图片账号额度已用完",

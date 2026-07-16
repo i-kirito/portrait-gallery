@@ -45,10 +45,15 @@ class WebServerAuthTest(unittest.TestCase):
 
         self.assertFalse(self._make_server()._is_local_request(request))
 
-    def test_localhost_with_private_bridge_remote_is_local(self):
+    def test_localhost_with_private_bridge_remote_is_not_local(self):
         request = DummyRequest("localhost:18889", "172.17.0.1")
 
-        self.assertTrue(self._make_server()._is_local_request(request))
+        self.assertFalse(self._make_server()._is_local_request(request))
+
+    def test_spoofed_localhost_cannot_make_lan_remote_local(self):
+        request = DummyRequest("localhost:18889", "192.168.1.50")
+
+        self.assertFalse(self._make_server()._is_local_request(request))
 
     def test_public_remote_cannot_become_local_by_spoofing_lan_host(self):
         request = DummyRequest("192.168.31.216:18889", "8.8.8.8")
@@ -99,6 +104,23 @@ class WebServerPasswordAuthTest(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(401, response.status)
             self.assertIn("password_setup_required", response.text)
+
+    async def test_spoofed_localhost_cannot_read_private_config(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server = self._make_server(Path(tmpdir))
+            request = DummyRequest(
+                "localhost:18889",
+                "192.168.1.50",
+                path="/api/config/keys",
+            )
+
+            async def handler(_request):
+                return web.json_response({"ok": True})
+
+            with patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+                response = await server.gallery_auth_middleware(request, handler)
+
+            self.assertEqual(401, response.status)
 
     async def test_authorized_nonlocal_ip_can_access_protected_image(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -398,6 +420,48 @@ class WebServerReferenceUploadTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual("手动参考", payload.get("label"))
             self.assertTrue((root / "data" / "references" / "uploads" / payload["filename"]).is_file())
             analyze.assert_called_once()
+
+    async def test_regular_reference_upload_rejects_fake_image_before_analysis(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            form = FormData()
+            form.add_field(
+                "file",
+                io.BytesIO(b"\0" * 1_100_000),
+                filename="fake.jpg",
+                content_type="image/jpeg",
+            )
+
+            with patch("web_server.analyze_reference_image") as analyze:
+                status, payload = await self._post_upload(server, form)
+
+            self.assertEqual(400, status)
+            self.assertEqual("invalid_image", payload.get("error"))
+            analyze.assert_not_called()
+            upload_dir = root / "data" / "references" / "uploads"
+            self.assertEqual([], list(upload_dir.glob("*")))
+
+    async def test_reference_upload_rejects_more_than_ten_megabytes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            form = FormData()
+            form.add_field(
+                "file",
+                io.BytesIO(b"x" * (10 * 1024 * 1024 + 1)),
+                filename="oversized.jpg",
+                content_type="image/jpeg",
+            )
+
+            with patch("web_server.analyze_reference_image") as analyze:
+                status, payload = await self._post_upload(server, form)
+
+            self.assertEqual(413, status)
+            self.assertEqual("image_too_large", payload.get("error"))
+            analyze.assert_not_called()
+            upload_dir = root / "data" / "references" / "uploads"
+            self.assertEqual([], list(upload_dir.glob("*")))
 
 
 if __name__ == "__main__":

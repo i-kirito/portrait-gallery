@@ -22,9 +22,10 @@ _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _APP_DIR not in sys.path:
     sys.path.insert(0, _APP_DIR)
 
-from store import ScheduleStore
+from store import ImageMetadataStore, LockedJsonDictStore, ScheduleStore
 from text_repair import repair_mojibake_text
 from settings import (
+    DEFAULT_GITEE_IMAGE_URL,
     DEFAULT_QUALITY_PREFIX,
     GENERIC_APPEARANCE,
     base_style_label,
@@ -48,8 +49,6 @@ from settings import (
     resolve_reference_dir,
     theme_style_default,
 )
-
-requests.packages.urllib3.disable_warnings()
 
 REQUEST_SESSION = requests.Session()
 
@@ -290,6 +289,18 @@ def get_cpa_chat_url() -> str:
 
 
 def get_image_model(key: str, default: str = "") -> str:
+    if key == "gitee_url" and not default:
+        default = DEFAULT_GITEE_IMAGE_URL
+    env_name = {
+        "gitee_url": "GITEE_API_URL",
+        "gitee_model": "GITEE_IMAGE_MODEL",
+        "gpt_base_url": "GPT_IMAGE_BASE_URL",
+        "gpt_model": "GPT_IMAGE_MODEL",
+    }.get(key, "")
+    if env_name:
+        env_value = str(os.getenv(env_name, "") or "").strip()
+        if env_value:
+            return env_value
     if os.path.exists(_API_KEYS_CONFIG_PATH):
         try:
             with open(_API_KEYS_CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -1076,7 +1087,12 @@ def _fit_image_bytes(img_data: bytes, target_size: Optional[str]) -> bytes:
                 return img_data
             if img.mode not in ("RGB", "RGBA"):
                 img = img.convert("RGBA" if ("transparency" in img.info or "A" in img.getbands()) else "RGB")
-            fitted = img if original_size == parsed else ImageOps.fit(img, parsed, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+            fitted = img if original_size == parsed else ImageOps.fit(
+                img,
+                parsed,
+                method=Image.Resampling.LANCZOS,
+                centering=(0.5, 0.5),
+            )
             out = io.BytesIO()
             fitted.save(out, format="PNG", optimize=True)
             if original_size == parsed:
@@ -1113,7 +1129,8 @@ def save_image(img_data: bytes, theme: str, model_name: str, style: Optional[str
     label = _safe_filename_label(filename_theme or theme)
     style_label = _safe_filename_label(style, "") if style else ""
     style_part = f"_{style_label}" if style_label else ""
-    filename = f"zhuzhu_{label}{style_part}_{time.time_ns()}_{uuid.uuid4().hex[:8]}_{ts}.{ext}"
+    short_id = uuid.uuid4().hex[:6]
+    filename = f"zhuzhu_{label}{style_part}_{short_id}_{ts}.{ext}"
     path = os.path.join(WORKSPACE_MEDIA, filename)
 
     with open(path, "wb") as f:
@@ -1460,65 +1477,46 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
     if generation_mode or requested_generation_mode or ref_image or requested_ref_image or fallback_used:
         entry["fallback_used"] = bool(fallback_used)
 
-    # 3. Load schedule_data.json
+    # 3. Merge into schedule_data.json under one exclusive lock.
     store = ScheduleStore(os.path.dirname(SECRETARY_SCHEDULE_PATH))
-    data = store.load()
 
-    # Ensure date-keyed entry exists for today (holds the daily schedule, shared by all images)
-    if today not in data:
-        data[today] = {"date": today, "schedule": ""}
+    def _merge_gallery_entry(data):
+        if today not in data:
+            data[today] = {"date": today, "schedule": ""}
 
-    # 4. Write to schedule_data.json (with deduplication)
-    
-    # Deduplication: remove any existing entry with the same image_filename
-    # to prevent the gallery from showing the same photo twice
-    keys_to_remove = []
-    for existing_key, existing_entry in data.items():
-        if existing_key == filename:
-            continue
-        if existing_entry.get("image_filename") == filename:
-            keys_to_remove.append(existing_key)
-    for k in keys_to_remove:
-        print(f"🔄 Removing duplicate entry (key={k}, image={filename})", file=sys.stderr)
-        del data[k]
-    
-    # If entry already exists under this filename, merge rather than overwrite
-    if filename in data:
-        existing = data[filename]
-        # Preserve fields that may have been set elsewhere (favorite, etc.)
-        for field in ("favorite", "source", "time", "model_name", "base_style"):
-            if field == "favorite" and field in existing:
-                entry[field] = existing[field]
-            elif field in existing and (field not in entry or not entry.get(field)):
-                entry[field] = existing[field]
-    
-    data[filename] = entry
+        keys_to_remove = []
+        for existing_key, existing_entry in data.items():
+            if existing_key == filename or not isinstance(existing_entry, dict):
+                continue
+            if existing_entry.get("image_filename") == filename:
+                keys_to_remove.append(existing_key)
+        for key in keys_to_remove:
+            print(f"🔄 Removing duplicate entry (key={key}, image={filename})", file=sys.stderr)
+            del data[key]
+
+        existing = data.get(filename)
+        if isinstance(existing, dict):
+            for field in ("favorite", "source", "time", "model_name", "base_style"):
+                if field == "favorite" and field in existing:
+                    entry[field] = existing[field]
+                elif field in existing and (field not in entry or not entry.get(field)):
+                    entry[field] = existing[field]
+
+        data[filename] = entry
+        return data
+
     try:
-        store.save(data)
+        store.update(_merge_gallery_entry)
         print(f"🖼️ Synced to gallery: {filename}", file=sys.stderr)
     except Exception as e:
         print(f"[gallery_sync] Failed: {e}", file=sys.stderr)
 
 
-def _load_metadata(path: str) -> dict:
-    if not os.path.exists(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-def _write_metadata(path: str, metadata: dict):
-    tmp_path = f"{path}.tmp"
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2, ensure_ascii=False)
-        os.replace(tmp_path, path)
-    except Exception as e:
-        print(f"[metadata] Failed to write to {path}: {e}", file=sys.stderr)
+def _metadata_store(path: str):
+    data_dir = os.path.dirname(os.path.abspath(path))
+    if os.path.basename(path) == "image_metadata.json":
+        return ImageMetadataStore(data_dir)
+    return LockedJsonDictStore(path)
 
 
 def update_metadata(filename: str, theme: str, prompt: str, model_name: str, ts: int,
@@ -1541,9 +1539,16 @@ def update_metadata(filename: str, theme: str, prompt: str, model_name: str, ts:
     ]
     
     for p in paths:
-        metadata = _load_metadata(p)
-        metadata[filename] = new_entry
-        _write_metadata(p, metadata)
+        try:
+            def _merge(metadata):
+                existing = dict(metadata.get(filename) or {})
+                existing.update(new_entry)
+                metadata[filename] = existing
+                return metadata
+
+            _metadata_store(p).update(_merge)
+        except Exception as e:
+            print(f"[metadata] Failed to update {p}: {e}", file=sys.stderr)
 
 
 def enhance_prompt(user_input: str, theme: Optional[str] = None) -> str:

@@ -46,7 +46,7 @@ def generate_image_bytes(prompt: str):
     start = time.time()
     for attempt in range(MAX_RETRIES):
         try:
-            resp = REQUEST_SESSION.post(ENGINE_URL, headers=headers, json=payload, timeout=90, verify=False)
+            resp = REQUEST_SESSION.post(ENGINE_URL, headers=headers, json=payload, timeout=90)
             if resp.status_code in RETRYABLE_STATUS:
                 time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
                 continue

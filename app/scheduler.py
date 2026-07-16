@@ -153,6 +153,136 @@ ACCESSORY_MOTIF_LABELS = {
     "gem": "宝石",
 }
 
+# Normalize the parts that make two outfits materially alike. Style names are
+# intentionally excluded so a disliked look does not ban an entire style.
+OUTFIT_GARMENT_ALIASES = {
+    "knit_top": (
+        "针织打底", "针织短袖", "针织上衣", "针织衫", "毛衣",
+        "罗纹上衣", "螺纹上衣", "knit top", "knitted top", "knit shirt",
+        "knit tee", "ribbed top", "sweater", "turtleneck top",
+    ),
+    "shirt": ("衬衫", "衬衣", "blouse", "button-up shirt", "button down shirt"),
+    "t_shirt": (
+        "t恤", "短袖衫", "短袖上衣", "t-shirt", "tee shirt", "ribbed tee", "tee",
+    ),
+    "camisole": ("吊带上衣", "吊带背心", "小背心", "camisole", "tank top"),
+    "tailored_vest": (
+        "西装马甲", "西装背心", "正装马甲", "tailored vest", "suit vest", "waistcoat",
+    ),
+    "blazer": ("西装外套", "西服外套", "blazer", "suit jacket"),
+    "cardigan": ("针织开衫", "开衫", "cardigan"),
+    "jacket": ("夹克", "短外套", "jacket"),
+    "coat": ("大衣", "风衣", "长外套", "coat", "trench coat"),
+    "dress": ("连衣裙", "裙装", "dress", "sundress"),
+    "skirt": ("半身裙", "百褶裙", "短裙", "长裙", "skirt"),
+    "trousers": (
+        "西装裤", "阔腿裤", "直筒裤", "烟管裤", "喇叭裤", "灯笼裤", "锥形裤",
+        "工装裤", "九分裤", "长裤", "裤子",
+        "trousers", "wide-leg pants", "wide leg pants", "straight-leg pants",
+        "straight leg pants", "tailored pants", "palazzo pants", "flared pants",
+        "flare pants", "bell-bottoms", "culottes", "slacks", "pants",
+    ),
+    "jeans": ("牛仔裤", "jeans", "denim pants"),
+    "shorts": ("短裤", "shorts"),
+    "leggings": ("打底裤", "紧身裤", "leggings"),
+    "loafers": ("乐福鞋", "loafers", "loafer shoes"),
+    "sneakers": ("运动鞋", "帆布鞋", "小白鞋", "sneakers", "canvas shoes"),
+    "boots": ("短靴", "长靴", "马丁靴", "boots", "ankle boots"),
+    "heels": ("高跟鞋", "细跟鞋", "heels", "pumps"),
+    "sandals": (
+        "凉鞋", "凉拖", "拖鞋", "穆勒鞋", "sandals", "slides", "slippers", "mules",
+        "mule shoes",
+    ),
+    "flats": ("平底鞋", "芭蕾鞋", "玛丽珍鞋", "flats", "ballet flats", "mary janes"),
+}
+OUTFIT_GARMENT_LABELS = {
+    "knit_top": "针织上衣", "shirt": "衬衫", "t_shirt": "T恤", "camisole": "吊带上衣",
+    "tailored_vest": "西装马甲", "blazer": "西装外套", "cardigan": "开衫",
+    "jacket": "夹克", "coat": "大衣/风衣", "dress": "连衣裙", "skirt": "半身裙",
+    "trousers": "长裤", "jeans": "牛仔裤", "shorts": "短裤", "leggings": "紧身裤",
+    "loafers": "乐福鞋", "sneakers": "运动鞋", "boots": "靴子", "heels": "高跟鞋",
+    "sandals": "凉鞋/凉拖", "flats": "平底鞋",
+}
+OUTFIT_COLOR_ALIASES = {
+    "black": ("黑色", "纯黑", "black"),
+    "white": ("白色", "纯白", "米白", "奶白", "ivory", "white", "off-white"),
+    "gray": ("灰色", "深灰", "浅灰", "炭灰", "charcoal", "gray", "grey"),
+    "beige": ("米色", "杏色", "奶杏", "奶油色", "cream", "beige", "nude"),
+    "brown": ("棕色", "深棕", "咖色", "咖啡色", "brown", "chocolate"),
+    "pink": ("粉色", "浅粉", "灰粉", "pink", "rose pink"),
+    "red": ("红色", "酒红", "砖红", "red", "burgundy"),
+    "blue": ("蓝色", "浅蓝", "深蓝", "藏蓝", "blue", "navy"),
+    "green": ("绿色", "墨绿", "olive", "green"),
+    "purple": ("紫色", "薰衣草色", "purple", "lavender"),
+    "yellow": ("黄色", "鹅黄", "yellow"),
+    "silver": ("银色", "银白", "silver"),
+    "gold": ("金色", "香槟金", "gold", "golden"),
+}
+OUTFIT_COLOR_LABELS = {
+    "black": "黑色", "white": "白色", "gray": "灰色", "beige": "米杏色",
+    "brown": "棕色", "pink": "粉色", "red": "红色", "blue": "蓝色",
+    "green": "绿色", "purple": "紫色", "yellow": "黄色", "silver": "银色",
+    "gold": "金色",
+}
+OUTFIT_MATERIAL_ALIASES = {
+    "knit": ("针织", "毛线", "罗纹", "螺纹", "knit", "knitted", "ribbed", "rib knit"),
+    "suiting": ("西装面料", "西服面料", "suiting fabric", "tailored fabric"),
+    "cotton": ("棉质", "纯棉", "cotton"),
+    "denim": ("牛仔", "denim"),
+    "leather": ("皮质", "皮革", "漆皮", "leather", "patent leather"),
+    "chiffon": ("雪纺", "chiffon"),
+    "satin": ("缎面", "缎质", "satin"),
+    "lace": ("蕾丝", "lace"),
+    "linen": ("亚麻", "linen"),
+    "wool": ("羊毛", "呢料", "wool", "woolen"),
+    "velvet": ("丝绒", "天鹅绒", "velvet"),
+    "silk": ("真丝", "丝质", "silk"),
+    "canvas": ("帆布", "canvas"),
+}
+OUTFIT_MATERIAL_LABELS = {
+    "knit": "针织", "suiting": "西装面料", "cotton": "棉质", "denim": "牛仔",
+    "leather": "皮革", "chiffon": "雪纺", "satin": "缎面", "lace": "蕾丝",
+    "linen": "亚麻", "wool": "羊毛/呢料", "velvet": "丝绒", "silk": "真丝",
+    "canvas": "帆布",
+}
+OUTFIT_SILHOUETTE_ALIASES = {
+    "high_neck": ("高领", "半高领", "立领", "high-neck", "high neck", "turtleneck"),
+    "v_neck": ("v领", "v 领", "v形领", "v形剪裁", "v-neck", "v neck"),
+    "sleeveless": ("无袖", "sleeveless"),
+    "short_sleeve": ("短袖", "short-sleeve", "short sleeve"),
+    "long_sleeve": ("长袖", "long-sleeve", "long sleeve"),
+    "fitted": ("修身", "贴身", "合体", "fitted", "slim fit", "body-hugging"),
+    "cropped": ("短款", "露脐", "九分", "cropped", "crop top", "ankle-length"),
+    "oversized": ("宽松", "宽松廓形", "oversized", "loose fit"),
+    "high_waist": ("高腰", "high-waist", "high waist", "high-rise", "high rise"),
+    "wide_leg": (
+        "阔腿", "喇叭", "wide-leg", "wide leg", "palazzo", "flared", "flare-leg",
+        "bell-bottom",
+    ),
+    "straight_leg": ("直筒", "straight-leg", "straight leg"),
+    "pleated": ("百褶", "压褶", "pleated"),
+    "a_line": ("a字", "a 字", "a-line", "a line"),
+    "structured": ("挺括", "硬挺", "利落廓形", "structured", "crisp tailoring"),
+    "draped": ("垂坠", "垂感", "draped", "flowing"),
+}
+OUTFIT_SILHOUETTE_LABELS = {
+    "high_neck": "高领", "v_neck": "V领", "sleeveless": "无袖", "short_sleeve": "短袖",
+    "long_sleeve": "长袖", "fitted": "修身", "cropped": "短款/九分", "oversized": "宽松",
+    "high_waist": "高腰", "wide_leg": "阔腿", "straight_leg": "直筒", "pleated": "百褶",
+    "a_line": "A字", "structured": "挺括廓形", "draped": "垂坠",
+}
+OUTFIT_HAIR_ALIASES = {
+    "high_ponytail": ("高马尾", "high ponytail"),
+    "low_ponytail": ("低马尾", "low ponytail"),
+    "twin_ponytails": ("双马尾", "twin ponytails", "pigtails"),
+    "bun": ("丸子头", "发髻", "hair bun", "chignon"),
+    "twin_buns": ("双丸子头", "twin buns", "double buns"),
+    "half_up": ("半扎", "half-up", "half up"),
+    "braided": ("编发", "麻花辫", "braid", "braided"),
+    "straight_down": ("中分直发", "顺直长发", "straight hair"),
+    "loose_down": ("自然披散", "披肩长发", "披散", "hair worn down", "loose hair"),
+}
+
 SCHEDULE_DIVERSITY_IDEAS = (
     "晨间：花市买一小束花、楼下取咖啡、整理书桌、去便利店补生活用品、做拉伸、给植物换水、图书馆还书、短途散步。",
     "中午/下午：去咖啡馆写计划、逛文创店、看展、修照片、整理灵感板、练琴/练舞、去书店、做手作、和朋友吃轻食。",
@@ -272,10 +402,20 @@ class DailyScheduler:
     def _entry_outfit_text(entry: dict) -> str:
         if not isinstance(entry, dict):
             return ""
-        parts = [
+        outfit = entry.get("outfit")
+        if isinstance(outfit, dict):
+            outfit_text = "\n".join(
+                f"{key}：{outfit.get(key)}"
+                for key in ("风格", "发型", "穿搭")
+                if str(outfit.get(key) or "").strip()
+            )
+        else:
+            outfit_text = str(outfit or "")
+        parts = [outfit_text]
+        parts.extend(
             str(entry.get(field) or "")
-            for field in ("outfit", "prompt", "outfit_keywords", "reference_query")
-        ]
+            for field in ("prompt", "outfit_keywords", "reference_query")
+        )
         details = entry.get("schedule_details")
         if isinstance(details, list):
             for detail in details:
@@ -286,6 +426,54 @@ class DailyScheduler:
                     for field in ("outfit_en", "hair_en")
                 )
         return "\n".join(part for part in parts if part.strip())
+
+    @staticmethod
+    def _entry_outfit_similarity_texts(entry: dict) -> tuple[str, str]:
+        """Return clothing and hair text without scene/style noise."""
+        if not isinstance(entry, dict):
+            return "", ""
+
+        clothing_parts = []
+        hair_parts = []
+        outfit = entry.get("outfit")
+        if isinstance(outfit, dict):
+            clothing_parts.append(str(outfit.get("穿搭") or ""))
+            hair_parts.append(str(outfit.get("发型") or ""))
+        else:
+            outfit_text = str(outfit or "")
+            found_clothing = False
+            for line in re.split(r"[\r\n]+", outfit_text):
+                match = re.match(r"\s*(发型|穿搭)\s*[：:]\s*(.*)", line, re.IGNORECASE)
+                if not match:
+                    continue
+                if match.group(1) == "发型":
+                    hair_parts.append(match.group(2))
+                else:
+                    clothing_parts.append(match.group(2))
+                    found_clothing = True
+            if outfit_text.strip() and not found_clothing:
+                clothing_parts.append(outfit_text)
+
+        clothing_parts.append(str(entry.get("outfit_keywords") or ""))
+        details = entry.get("schedule_details")
+        if isinstance(details, list):
+            for detail in details:
+                if not isinstance(detail, dict):
+                    continue
+                clothing_parts.append(str(detail.get("outfit_en") or ""))
+                hair_parts.append(str(detail.get("hair_en") or ""))
+
+        if not any(part.strip() for part in clothing_parts):
+            clothing_parts.extend((
+                str(entry.get("prompt") or ""),
+                str(entry.get("reference_query") or ""),
+            ))
+        if not any(part.strip() for part in hair_parts):
+            hair_parts.append(str(entry.get("prompt") or ""))
+        return (
+            "\n".join(part for part in clothing_parts if part.strip()),
+            "\n".join(part for part in hair_parts if part.strip()),
+        )
 
     @staticmethod
     def _text_has_alias(text: str, alias: str) -> bool:
@@ -331,6 +519,147 @@ class DailyScheduler:
                     label += ACCESSORY_CATEGORY_LABELS.get(category, category)
                     features[key] = label
         return features
+
+    @classmethod
+    def _matched_alias_features(cls, text: str, aliases_by_feature: dict) -> set[str]:
+        lowered = str(text or "").lower()
+        if not lowered:
+            return set()
+        return {
+            feature
+            for feature, aliases in aliases_by_feature.items()
+            if any(cls._text_has_alias(lowered, alias) for alias in aliases)
+        }
+
+    @classmethod
+    def _outfit_similarity_features(cls, entry: dict) -> dict[str, set[str]]:
+        clothing_text, hair_text = cls._entry_outfit_similarity_texts(entry)
+        accessory_details = set(cls._accessory_features(clothing_text))
+        return {
+            "garments": cls._matched_alias_features(clothing_text, OUTFIT_GARMENT_ALIASES),
+            "colors": cls._matched_alias_features(clothing_text, OUTFIT_COLOR_ALIASES),
+            "materials": cls._matched_alias_features(clothing_text, OUTFIT_MATERIAL_ALIASES),
+            "silhouettes": cls._matched_alias_features(clothing_text, OUTFIT_SILHOUETTE_ALIASES),
+            "hair": cls._matched_alias_features(hair_text, OUTFIT_HAIR_ALIASES),
+            "accessory_categories": cls._matched_alias_features(
+                clothing_text,
+                ACCESSORY_CATEGORY_ALIASES,
+            ),
+            "accessory_details": accessory_details,
+        }
+
+    @staticmethod
+    def _feature_containment(left: set[str], right: set[str]) -> float:
+        if not left or not right:
+            return 0.0
+        return len(left & right) / min(len(left), len(right))
+
+    @classmethod
+    def _outfit_similarity_from_features(
+        cls,
+        candidate_features: dict[str, set[str]],
+        disliked_features: dict[str, set[str]],
+    ) -> tuple[float, dict[str, set[str]]]:
+        shared = {
+            key: candidate_features[key] & disliked_features[key]
+            for key in candidate_features
+        }
+        overlap = {
+            key: cls._feature_containment(candidate_features[key], disliked_features[key])
+            for key in candidate_features
+        }
+        weights = {
+            "garments": 0.44,
+            "colors": 0.15,
+            "materials": 0.14,
+            "silhouettes": 0.17,
+            "hair": 0.04,
+            "accessory_categories": 0.03,
+            "accessory_details": 0.03,
+        }
+        score = sum(overlap[key] * weight for key, weight in weights.items())
+        return score, shared
+
+    @classmethod
+    def _outfit_similarity(cls, candidate: dict, disliked: dict) -> tuple[float, dict[str, set[str]]]:
+        return cls._outfit_similarity_from_features(
+            cls._outfit_similarity_features(candidate),
+            cls._outfit_similarity_features(disliked),
+        )
+
+    @classmethod
+    def _is_disliked_outfit_similar(cls, candidate: dict, disliked: dict) -> tuple[bool, float, dict[str, set[str]]]:
+        candidate_features = cls._outfit_similarity_features(candidate)
+        disliked_features = cls._outfit_similarity_features(disliked)
+        score, shared = cls._outfit_similarity_from_features(
+            candidate_features,
+            disliked_features,
+        )
+        garment_overlap = cls._feature_containment(
+            candidate_features["garments"],
+            disliked_features["garments"],
+        )
+        garment_matches = len(shared["garments"])
+        detail_overlap = max(
+            cls._feature_containment(candidate_features[key], disliked_features[key])
+            for key in ("colors", "materials", "silhouettes")
+        )
+
+        similar = (
+            (score >= 0.64 and garment_overlap >= 0.50)
+            or (
+                garment_matches >= 3
+                and garment_overlap >= 0.65
+                and score >= 0.54
+            )
+            or (
+                garment_matches >= 2
+                and garment_overlap >= 0.75
+                and detail_overlap >= 0.50
+                and score >= 0.56
+            )
+        )
+        return similar, score, shared
+
+    @staticmethod
+    def _feature_labels(features: set[str], labels: dict[str, str]) -> str:
+        return "、".join(labels.get(feature, feature) for feature in sorted(features))
+
+    def _disliked_outfit_similarity_error(self, candidate: dict, disliked_items: list[dict]) -> str:
+        strongest = None
+        for disliked in disliked_items:
+            if not isinstance(disliked, dict):
+                continue
+            similar, score, shared = self._is_disliked_outfit_similar(candidate, disliked)
+            if similar and (strongest is None or score > strongest[0]):
+                strongest = (score, shared, disliked)
+        if strongest is None:
+            return ""
+
+        score, shared, disliked = strongest
+        matched_parts = []
+        if shared["garments"]:
+            matched_parts.append(
+                "单品 " + self._feature_labels(shared["garments"], OUTFIT_GARMENT_LABELS)
+            )
+        if shared["colors"]:
+            matched_parts.append(
+                "配色 " + self._feature_labels(shared["colors"], OUTFIT_COLOR_LABELS)
+            )
+        if shared["materials"]:
+            matched_parts.append(
+                "材质 " + self._feature_labels(shared["materials"], OUTFIT_MATERIAL_LABELS)
+            )
+        if shared["silhouettes"]:
+            matched_parts.append(
+                "版型 " + self._feature_labels(shared["silhouettes"], OUTFIT_SILHOUETTE_LABELS)
+            )
+        source = str(disliked.get("date") or disliked.get("id") or "历史反馈")
+        return (
+            f"与用户标记不喜欢的穿搭高度相似（{source}，相似度 {score:.0%}）："
+            + "；".join(matched_parts[:4])
+            + "。请更换核心单品组合，并同步改变配色、材质或版型；只改风格名或同义说法不算新穿搭"
+        )
 
     def _recent_outfit_accessories(self, today: date, days: int = 3) -> dict[str, dict]:
         all_data = self._load_schedule_data()
@@ -447,8 +776,16 @@ class DailyScheduler:
             "如果禁词是中文，也要避开对应英文同义词；例如“包”要同时避开 bag、handbag、purse、tote、package、packing 等相关内容。"
         )
 
-    def _schedule_keyword_cloud_prompt_block(self, limit: int = 18) -> str:
-        return build_schedule_keyword_prompt_block(self.data_dir, limit=limit)
+    def _schedule_keyword_cloud_prompt_block(
+        self,
+        limit: int = 5,
+        selection_key: str = "",
+    ) -> str:
+        return build_schedule_keyword_prompt_block(
+            self.data_dir,
+            limit=limit,
+            selection_key=selection_key,
+        )
 
     @staticmethod
     def _schedule_forbidden_variants(keyword: str) -> set[str]:
@@ -531,7 +868,16 @@ class DailyScheduler:
     @staticmethod
     def _thinking_param_error(value) -> bool:
         excerpt = llm_response_excerpt(value, limit=500).lower()
-        return "thinking" in excerpt or "unsupported parameter" in excerpt or "unknown parameter" in excerpt
+        return "thinking" in excerpt and any(
+            marker in excerpt
+            for marker in (
+                "unsupported",
+                "unknown",
+                "unrecognized",
+                "not allowed",
+                "invalid parameter",
+            )
+        )
 
     @staticmethod
     def _should_disable_thinking(model: str) -> bool:
@@ -676,20 +1022,6 @@ class DailyScheduler:
                         None,
                         lambda p=dict(payload): _do_request(chat_url, headers, p, timeout),
                     )
-                    if resp is None and "thinking" in payload:
-                        retry_payload = dict(payload)
-                        retry_payload.pop("thinking", None)
-                        logger.warning(
-                            "LLM model %s request failed with thinking disabled (%s); retrying without it",
-                            model,
-                            request_error or "无响应",
-                        )
-                        resp, request_error = await loop.run_in_executor(
-                            None,
-                            lambda p=retry_payload: _do_request(chat_url, headers, p, timeout),
-                        )
-                        payload = retry_payload
-
                     if resp is not None and resp.status_code == 400:
                         error_body = _response_json(resp)
                         if _model_unavailable(_response_error(resp)):
@@ -784,7 +1116,13 @@ class DailyScheduler:
                     break
         return None
 
-    def _build_schedule_prompt(self, today: date, history: str, schedule_history: str) -> str:
+    def _build_schedule_prompt(
+        self,
+        today: date,
+        history: str,
+        schedule_history: str,
+        disliked_context: Optional[str] = None,
+    ) -> str:
         """构建日程生成 prompt"""
         weekday = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"][today.weekday()]
         day_context = self._day_context(today)
@@ -802,7 +1140,11 @@ class DailyScheduler:
         if not appearance:
             appearance = self._read_config_key("character_appearance")
         favorite_outfits = self._favorite_outfit_context()
-        disliked_outfits = self._disliked_outfit_context()
+        disliked_outfits = (
+            self._disliked_outfit_context(limit=12)
+            if disliked_context is None
+            else disliked_context
+        )
 
         return f"""{JSON_OUTPUT_CONTRACT}
 
@@ -836,12 +1178,12 @@ class DailyScheduler:
 {self._schedule_diversity_prompt_block(schedule_history)}
 
 【历史生图词云参考（软偏好，不是硬约束）】
-{self._schedule_keyword_cloud_prompt_block(limit=18)}
+{self._schedule_keyword_cloud_prompt_block(limit=3, selection_key=today.isoformat())}
 
 【收藏穿搭偏好（用户主动收藏的审美方向；只作为发型/穿搭参考，不是日程、动作或场景参考）】
 {favorite_outfits}
 
-【不喜欢穿搭反馈（用户明确想减少的审美方向；只作为负向发型/穿搭参考，不是硬编码禁用规则）】
+【禁止复现的不喜欢穿搭（硬约束；不能生成高度相似的单品组合）】
 {disliked_outfits}
 
 【日程禁词（最高优先级，用户不想让 LLM 生成的内容）】
@@ -858,7 +1200,8 @@ class DailyScheduler:
 - outfit_style 必须从 [{style_list_text}] 中选择一个，不要使用未启用的风格。
 - reference_query 是给系统选择参考图用的自然语言提示，必须概括今天适合的参考图气质、风格、发型/脸部氛围、服装色系和场景 mood；不要写 cool/girly/sweet 三选一，不要写文件名。
 - 如果存在收藏穿搭偏好，只影响 outfit_style、reference_query、outfit 和 prompt 里的发型/服装部分：参考服装气质、配色、版型、材质和搭配层次，生成相近但新的组合。
-- 如果存在不喜欢穿搭反馈，请由你判断相似度并减少相近方向：避开高度相似的配色、版型、材质、发型、搭配层次和整体气质；不要机械禁用某个大类风格。
+- 如果存在不喜欢穿搭反馈，必须避开高度相似的核心单品组合、配色、材质、版型、发型和配饰；只换风格名、颜色近义词、单品同义词或一件小配饰仍算相似，必须重新设计整套搭配。
+- 不要机械禁用某个大类风格；同风格只有在核心服装、鞋履以及配色/材质/版型明显不同时才可以再次使用。
 - 不要照抄收藏里的完整发型短语、单品组合或旧描述；不要参考、复用或联想收藏里的日程、动作、场景。schedule、schedule_prompt、动作、场景必须根据今日信息重新决定。
 
 ⚠️ outfit 字段必须包含以下五个部分，缺一不可：
@@ -946,7 +1289,13 @@ JSON 格式（字段名固定，value 替换为实际内容）：
     "scene_keywords": "coffee shop, cafe counter, warm ambient light"
 }}"""
 
-    def _build_compact_schedule_prompt(self, today: date, history: str, schedule_history: str) -> str:
+    def _build_compact_schedule_prompt(
+        self,
+        today: date,
+        history: str,
+        schedule_history: str,
+        disliked_context: Optional[str] = None,
+    ) -> str:
         """Build a shorter schedule prompt for providers that choke on the full context."""
         weekday = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"][today.weekday()]
         day_context = self._day_context(today)
@@ -962,6 +1311,11 @@ JSON 格式（字段名固定，value 替换为实际内容）：
         appearance = persona.get("appearance") or self._char.get("appearance", "")
         if not appearance:
             appearance = self._read_config_key("character_appearance")
+        disliked_outfits = (
+            self._disliked_outfit_context(limit=12)
+            if disliked_context is None
+            else disliked_context
+        )
 
         return f"""{JSON_OUTPUT_CONTRACT}
 
@@ -977,14 +1331,15 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 近 3 天穿搭参考（服装、发型、鞋包和首饰都避免重复）：{str(history)[:1200]}
 具体配饰的颜色+图案+类别不能复用；同义改写仍算重复，例如银色十字星锁骨链与银色星形项链视为同一件配饰。
 近期日程避重（不要复刻）：{str(schedule_history)[:900]}
-历史生图词云（软参考）：{self._schedule_keyword_cloud_prompt_block(limit=12)[:700]}
+历史生图词云（低权重软参考）：{self._schedule_keyword_cloud_prompt_block(limit=2, selection_key=today.isoformat())[:700]}
 收藏偏好（只参考穿搭/发型气质）：{self._favorite_outfit_context(limit=2)[:700]}
-不喜欢反馈（减少相似穿搭/发型）：{self._disliked_outfit_context(limit=2)[:500]}
+禁止复现的不喜欢穿搭（硬约束）：{disliked_outfits[:1800]}
 日程禁词（最高优先级，相关活动/道具/场景/配饰都不要生成）：{self._schedule_forbidden_prompt_block()}
 
 硬性要求：
 0. 严格服从真实日历；休息日/节假日禁止写上班、上学、通勤、办公室会议、考试、作业或加班，调休上班日除外。
 0.1. 日程要避开模板化重复：第一条不要赖床/床上刷手机；一天最多 1 条下厨/做饭/准备饭菜；至少 3 条活动离开床/沙发/厨房场景。
+0.2. 不得生成与不喜欢记录高度相似的核心单品组合；不能靠改风格名或同义改写绕过。同风格换成明显不同的服装、鞋履、配色/材质/版型可以使用。
 1. outfit_style 必须从可选穿搭风格中选一个。
 2. outfit 必须是中文，包含「风格：」「发型：」「穿搭：」「动作：」「场景：」五段；穿搭写清上装、下装/裙装、鞋子、配饰、颜色、材质/版型。
 3. schedule 必须是 6-8 行中文，每行「HH:mm 中文活动」，用 \\n 分隔，覆盖 06:00-11:59、12:00-17:59、18:00-23:59；分钟不能是 00，不要安排 03:00-05:59，时间要像 08:12、10:27、13:18、15:42、18:36 这样自然浮动。
@@ -1025,6 +1380,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
         today: date,
         schedule_history: str = "",
         outfit_history: str = "",
+        disliked_context: Optional[str] = None,
     ) -> str:
         """Smallest strict prompt used when an upstream model times out on rich context."""
         weekday = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"][today.weekday()]
@@ -1037,6 +1393,11 @@ JSON 格式（字段名固定，value 替换为实际内容）：
         appearance = persona.get("appearance") or self._char.get("appearance", "")
         if not appearance:
             appearance = self._read_config_key("character_appearance")
+        disliked_outfits = (
+            self._disliked_outfit_context(limit=12)
+            if disliked_context is None
+            else disliked_context
+        )
 
         return f"""{JSON_OUTPUT_CONTRACT}
 
@@ -1048,13 +1409,15 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 禁词约束：{self._schedule_forbidden_prompt_block()}
 近 3 天穿搭避重：{str(outfit_history)[:800]}
 配饰的颜色+图案+类别不得与近 3 天相同，同义改写也算重复。
+禁止复现的不喜欢穿搭：{disliked_outfits[:1200]}
 近期日程避重：{str(schedule_history)[:500]}
-词云软参考：{self._schedule_keyword_cloud_prompt_block(limit=8)[:360]}
+词云低权重软参考：{self._schedule_keyword_cloud_prompt_block(limit=1, selection_key=today.isoformat())[:500]}
 
 只输出 minified JSON，不要换成数组，不要代码块。
 要求：
 - 严格服从真实日历；休息日/节假日禁止写上班、上学、通勤、办公室会议、考试、作业或加班，调休上班日除外。
 - 避免重复模板：第一条不要赖床/床上刷手机；一天最多 1 条下厨/做饭/准备饭菜；午餐和晚餐不要都写做饭；多安排具体地点、道具或兴趣任务。
+- 不得生成与不喜欢记录高度相似的核心单品组合；只改风格名或同义说法仍算重复。同风格的核心服装、鞋履、配色/材质/版型明显不同时可以使用。
 - outfit_style 从可选风格中选。
 - schedule 固定 6 行，时间用 08:12、10:27、13:18、15:42、18:36、22:11，每行中文活动，覆盖早中晚；不要用整点或 03:00-05:59。
 - schedule_prompt 与 schedule 时间一致，纯英文。
@@ -1565,38 +1928,52 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             logger.warning("读取收藏穿搭偏好失败: %s", e)
             return "（无收藏穿搭偏好）"
 
-    def _disliked_outfit_context(self, limit: int = 5) -> str:
-        """读取用户不喜欢的穿搭方案，作为 LLM 的负向偏好参考。"""
+    def _load_disliked_outfits(self) -> list[dict]:
         path = os.path.join(self.data_dir, "disliked_outfits.json")
         if not os.path.exists(path):
-            return "（无不喜欢穿搭反馈）"
+            return []
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             items = data.get("items", data) if isinstance(data, dict) else data
             if not isinstance(items, list):
-                return "（无不喜欢穿搭反馈）"
-
-            lines = []
-            for item in sorted(
-                [x for x in items if isinstance(x, dict)],
-                key=lambda x: x.get("created_at", 0),
-                reverse=True,
-            )[:limit]:
-                outfit = item.get("outfit") if isinstance(item.get("outfit"), dict) else {}
-                parts = []
-                for key in ("风格", "发型", "穿搭"):
-                    value = str(outfit.get(key) or "").strip()
-                    if value:
-                        parts.append(f"{key}：{value[:140]}")
-                if not parts:
-                    continue
-                meta = f"[{item.get('date', '')}] 风格：{item.get('outfit_style', '') or outfit.get('风格', '')}"
-                lines.append(meta + "；" + "；".join(parts))
-            return "\n".join(lines) if lines else "（无不喜欢穿搭反馈）"
+                return []
+            return [item for item in items if isinstance(item, dict)]
         except Exception as e:
             logger.warning("读取不喜欢穿搭反馈失败: %s", e)
-            return "（无不喜欢穿搭反馈）"
+            return []
+
+    def _disliked_outfit_context(
+        self,
+        limit: Optional[int] = 5,
+        items: Optional[list[dict]] = None,
+    ) -> str:
+        """将用户不喜欢的穿搭整理为 LLM 的硬性负向参考。"""
+        source_items = self._load_disliked_outfits() if items is None else items
+        ordered = sorted(
+            [item for item in source_items if isinstance(item, dict)],
+            key=lambda item: item.get("created_at", 0),
+            reverse=True,
+        )
+        if limit is not None:
+            ordered = ordered[:max(0, limit)]
+
+        lines = []
+        for item in ordered:
+            outfit = item.get("outfit") if isinstance(item.get("outfit"), dict) else {}
+            parts = []
+            for key in ("风格", "发型", "穿搭"):
+                value = str(outfit.get(key) or "").strip()
+                if value:
+                    parts.append(f"{key}：{value[:180]}")
+            keywords = str(item.get("outfit_keywords") or "").strip()
+            if keywords:
+                parts.append(f"英文单品：{keywords[:240]}")
+            if not parts:
+                continue
+            meta = f"[{item.get('date', '')}] 风格：{item.get('outfit_style', '') or outfit.get('风格', '')}"
+            lines.append(meta + "；" + "；".join(parts))
+        return "\n".join(lines) if lines else "（无不喜欢穿搭反馈）"
 
     def _parse_llm_response(self, text: str) -> Optional[dict]:
         """从 LLM 回复中解析 JSON"""
@@ -1665,17 +2042,41 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
         schedule_history = self._get_schedule_history(today)
         recent_counts = self._recent_schedule_category_counts(today)
         recent_accessories = self._recent_outfit_accessories(today)
-        prompt = self._build_schedule_prompt(today, history, schedule_history)
-        compact_prompt = self._build_compact_schedule_prompt(today, history, schedule_history)
-        emergency_prompt = self._build_emergency_schedule_prompt(today, schedule_history, history)
+        disliked_items = self._load_disliked_outfits()
+        disliked_context = self._disliked_outfit_context(limit=12, items=disliked_items)
+        prompt = self._build_schedule_prompt(
+            today,
+            history,
+            schedule_history,
+            disliked_context=disliked_context,
+        )
+        compact_prompt = self._build_compact_schedule_prompt(
+            today,
+            history,
+            schedule_history,
+            disliked_context=disliked_context,
+        )
+        emergency_prompt = self._build_emergency_schedule_prompt(
+            today,
+            schedule_history,
+            history,
+            disliked_context=disliked_context,
+        )
         prompt_sequence = [prompt, compact_prompt, emergency_prompt]
+        disliked_rejection_feedback = ""
 
         # 最多重试 3 次
         for attempt in range(3):
             current_prompt = prompt_sequence[attempt]
-            if attempt == 1 and current_prompt == compact_prompt:
+            if disliked_rejection_feedback:
+                current_prompt += (
+                    "\n\n【上一候选已被系统拒绝】\n"
+                    + disliked_rejection_feedback
+                    + "\n这次必须重新设计核心单品组合。"
+                )
+            if attempt == 1:
                 logger.warning("完整日程 prompt 未生成可用 JSON，切换压缩日程 prompt 重试")
-            elif attempt == 2 and current_prompt == emergency_prompt:
+            elif attempt == 2:
                 logger.warning("压缩日程 prompt 未生成可用 JSON，切换极简日程 prompt 重试")
             text = await self._call_llm(current_prompt, json_mode=True)
             if not text:
@@ -1760,6 +2161,19 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             )
             if detail_error:
                 logger.warning(f"schedule_details 不合格 (attempt {attempt+1}): {detail_error}")
+                continue
+            candidate_outfit["schedule_details"] = schedule_details
+            disliked_similarity_error = self._disliked_outfit_similarity_error(
+                candidate_outfit,
+                disliked_items,
+            )
+            if disliked_similarity_error:
+                disliked_rejection_feedback = disliked_similarity_error
+                logger.warning(
+                    "穿搭触发不喜欢相似度硬拦截 (attempt %s): %s",
+                    attempt + 1,
+                    disliked_similarity_error,
+                )
                 continue
             calendar_conflicts = day_context.rest_day_conflicts(
                 schedule_display,

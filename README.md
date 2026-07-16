@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.3.3**
+当前版本：**v1.3.4**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -96,7 +96,7 @@ curl http://localhost:18889/api/health
 如果要使用已经发布到 Docker Hub/GHCR 的镜像，通过 `PORTRAIT_GALLERY_IMAGE` 指定：
 
 ```bash
-PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.3 docker compose up -d
+PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.4 docker compose up -d
 curl http://localhost:18889/api/health
 ```
 
@@ -268,7 +268,12 @@ curl http://localhost:18889/api/config/keys
 # 保存 API 密钥
 curl -X POST http://localhost:18889/api/config/keys \
   -H "Content-Type: application/json" \
-  -d '{"gpt_key": "sk-xxx", "gpt_base_url": "https://your-endpoint/v1/chat/completions"}'
+  -d '{
+    "gitee_url": "https://ai.gitee.com/v1/images/generations",
+    "gitee_key": "gitee-xxx",
+    "gpt_base_url": "https://your-gpt-image-endpoint/v1",
+    "gpt_key": "sk-xxx"
+  }'
 ```
 
 ## 🔑 环境变量
@@ -276,8 +281,10 @@ curl -X POST http://localhost:18889/api/config/keys \
 | 变量 | 说明 |
 |------|------|
 | `CPA_API_KEY` | CPA 代理 API Key（覆盖 config） |
+| `GITEE_API_URL` | Gitee 生图完整端点；默认 `https://ai.gitee.com/v1/images/generations` |
+| `GITEE_API_KEY` | Gitee 生图 API Key（覆盖 Web 配置） |
 | `GPT_IMAGE_API_KEY` | GPT Image API Key（覆盖 config） |
-| `GPT_IMAGE_BASE_URL` | GPT Image 端点（覆盖 config） |
+| `GPT_IMAGE_BASE_URL` | GPT Image 基础地址，通常填写到 `/v1`（覆盖 config） |
 | `GITHUB_PROXY` | GitHub 更新检查/在线更新代理（也可在 Web 设置中填写） |
 | `GITHUB_REPOSITORY` | GitHub Release 检查仓库，格式 `OWNER/REPO` |
 | `GITHUB_RELEASE_API` | GitHub Release API 完整地址，优先级高于 `GITHUB_REPOSITORY` |
@@ -320,6 +327,17 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥、三级 LLM 模型链、Gitee 回退、日程风格和升级选项
 
 ## 🧾 Release Notes
+
+### v1.3.4
+
+- 日程生成接入真实日期上下文与三天内去重校验，识别周末、法定节假日和调休工作日，减少休息日上班/上学以及连续赖床、做饭等模板化安排。
+- 衣柜、收藏穿搭和关键词云继续作为低权重软偏好：每日轮换少量候选，可完全忽略，并结合“不喜欢”反馈避免照搬旧穿搭、旧场景和连续命中同一偏好。
+- 新增画廊精准编辑与原位替换，支持仅修改背景、穿搭、发型、表情或道具；编辑结果重抽会使用当前图片继续图生图，并保留编辑目标、指令和历史。
+- 日程与生图恢复链路增强：启动缺失日程会后台补生成，并发刷新合并为单任务；过期计划不自动补拍但可手动重试，日程图片统一限制为 3:4，图库文件名改用实际时间与活动语义。
+- 微信发送增加串行冷却、限流重试和上下文失效识别，日志会给出可执行提示；局域网域名访问可正常控制 API 和读取日志。
+- 生图配置统一：Gitee 环境变量优先且恢复 HTTPS 证书校验，GPT Image 聊天端点 fallback 与 Gitee fallback 均保持显式开启，默认 URL 与有效覆盖值按最终配置校验。
+- 安全与持久化加固：远程请求不能伪造 `Host: localhost` 绕过保护，参考图上传限制 10 MiB 并校验真实图片，图库/元数据改为锁内原子更新，在线升级会阻止覆盖本地修改，API Key 不再进入 URL 或明文日志。
+- 修复配置写入失败误报成功、DeepSeek 网络错误额外兼容重试，以及单角色图片被误标为群聊等问题。
 
 ### v1.3.3
 

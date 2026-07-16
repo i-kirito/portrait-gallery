@@ -29,7 +29,13 @@ from generate_gitee import MODEL_NAME as GITEE_MODEL_NAME
 from generate_gitee import generate as generate_with_gitee
 from generate_gptimage import GPTIMAGE_DIRECT_MODEL
 from generate_gptimage import generate as generate_with_gptimage
-from settings import llm_choice_text, llm_temperature_param_error, outfit_style_to_prompt_hint, style_reference_filename
+from settings import (
+    apply_schedule_image_framing,
+    llm_choice_text,
+    llm_temperature_param_error,
+    outfit_style_to_prompt_hint,
+    style_reference_filename,
+)
 
 # Gemini image generation always uses the CPA Base URL config.
 _GEMINI_CPA_MODEL = get_image_model("gemini_model", "gemini-3.1-flash-image")
@@ -821,6 +827,7 @@ def generate(
     schedule_detail_json: str = "",
     prompt_final: bool = False,
     no_auto_style: bool = False,
+    precise_edit: bool = False,
 ):
     # If user didn't specify a hairstyle, let LLM pick one
     if prompt_override and not prompt_final and engine == "gptimage" and theme != "sexy":
@@ -886,8 +893,15 @@ def generate(
         print(f"ERROR: prompt is empty for theme={theme}; generation aborted", file=sys.stderr)
         return None
 
+    if source in {"cron", "web"}:
+        resolved_prompt = apply_schedule_image_framing(resolved_prompt)
+        print("📐 Applied adaptive photographic 3:4 framing guard", file=sys.stderr)
+
     # Resolve style to ref_image path (only supported by gptimage engine)
     requested_ref_image = ref_image
+    if precise_edit and (engine != "gptimage" or not requested_ref_image):
+        print("ERROR: precision edit requires GPT Image with a source image", file=sys.stderr)
+        return None
     auto_style = None
     explicit_style = style  # remember if user explicitly set --style
     if style:
@@ -941,11 +955,14 @@ def generate(
             source=source,
             sync_gallery=False,
             schedule_time=schedule_raw,
+            precise_edit=precise_edit,
         )
         if path:
             used_model = GPTIMAGE_DIRECT_MODEL
         if not path:
-            if _gitee_fallback_enabled():
+            if precise_edit:
+                print("Precision edit failed; refusing non-reference fallback", file=sys.stderr)
+            elif _gitee_fallback_enabled():
                 print("GPT Image failed, falling back to Gitee", file=sys.stderr)
                 path = generate_with_gitee(
                     theme,
@@ -1021,8 +1038,8 @@ def generate(
                 send_photo(path, caption_text)
             print(f"CAPTION:{caption_text}")
 
-    # Sync to Docker portrait gallery
-    if path:
+    # Precision edits are merged by the app after reference-mode validation.
+    if path and not precise_edit:
         from core import sync_to_gallery
         sync_to_gallery(path, os.path.basename(path), theme, actual_style,
                         prompt=prompt_override or resolved_prompt,
@@ -1051,6 +1068,7 @@ if __name__ == "__main__":
     parser.add_argument("--schedule-detail-json", type=str, default="", help="当前日程推断明细 JSON，用于即时生图")
     parser.add_argument("--prompt-final", action="store_true", help="prompt 已是完整生图提示词，不再注入画质/人设/发型")
     parser.add_argument("--no-auto-style", action="store_true", help="不自动选择底模参考图，用于纯文/纯图生图")
+    parser.add_argument("--precise-edit", action="store_true", help="严格局部编辑，禁止丢失原图参考后降级")
     args = parser.parse_args()
 
     effective_theme = args.theme or ("custom" if args.prompt else "morning")
@@ -1070,6 +1088,7 @@ if __name__ == "__main__":
         schedule_detail_json=args.schedule_detail_json,
         prompt_final=args.prompt_final,
         no_auto_style=args.no_auto_style,
+        precise_edit=args.precise_edit,
     )
     if not path:
         print("ERROR: generation failed", file=sys.stderr)

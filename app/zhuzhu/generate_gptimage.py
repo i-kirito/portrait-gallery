@@ -372,7 +372,15 @@ def _reference_expression_guard() -> str:
     )
 
 
-def _reference_edit_instruction(ref_image: Optional[str]) -> str:
+def _reference_edit_instruction(ref_image: Optional[str], precise_edit: bool = False) -> str:
+    if precise_edit:
+        return (
+            "\n[CRITICAL] Precision edit mode: the attached image is the immutable source image, not "
+            "a face or style reference. Apply only the explicitly requested local edit. Preserve every "
+            "unnamed person, object, facial feature, garment, pose, hand, camera property, composition, "
+            "crop, and stylistic attribute from the source. Do not reinterpret or regenerate unchanged "
+            "areas, and do not apply the normal face-reference or wardrobe-reference rules."
+        )
     if _is_wardrobe_reference(ref_image):
         return (
             "\n[IMPORTANT] Use the reference image ONLY as an outfit and styling reference. "
@@ -390,7 +398,13 @@ def _reference_edit_instruction(ref_image: Optional[str]) -> str:
     )
 
 
-def _generate_via_images_api(prompt: str, ref_image: Optional[str], size: Optional[str], raw_base_url: str) -> Optional[tuple]:
+def _generate_via_images_api(
+    prompt: str,
+    ref_image: Optional[str],
+    size: Optional[str],
+    raw_base_url: str,
+    precise_edit: bool = False,
+) -> Optional[tuple]:
     """Call OpenAI-compatible /v1/images/generations or /v1/images/edits."""
     images_base = _normalize_gpt_images_base_url(raw_base_url)
     engine_label = _image_engine_label()
@@ -407,7 +421,7 @@ def _generate_via_images_api(prompt: str, ref_image: Optional[str], size: Option
 
     edit_prompt = prompt
     if ref_image:
-        edit_prompt += _reference_edit_instruction(ref_image)
+        edit_prompt += _reference_edit_instruction(ref_image, precise_edit=precise_edit)
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -506,7 +520,12 @@ def _generate_via_images_api(prompt: str, ref_image: Optional[str], size: Option
             return None
 
 
-def _generate_via_chat_gpt(prompt: str, ref_image: Optional[str] = None, size: Optional[str] = None) -> Optional[tuple]:
+def _generate_via_chat_gpt(
+    prompt: str,
+    ref_image: Optional[str] = None,
+    size: Optional[str] = None,
+    precise_edit: bool = False,
+) -> Optional[tuple]:
     """Call the legacy chat-compatible GPT Image endpoint."""
     base_url = _get_gpt_base_url()
     if not base_url:
@@ -522,7 +541,7 @@ def _generate_via_chat_gpt(prompt: str, ref_image: Optional[str] = None, size: O
     if ref_image:
         try:
             compressed_img = _compress_image_for_img2img(ref_image)
-            face_instruction = _reference_edit_instruction(ref_image)
+            face_instruction = _reference_edit_instruction(ref_image, precise_edit=precise_edit)
             content = [
                 {"type": "image_url", "image_url": {"url": compressed_img}},
                 {"type": "text", "text": prompt + face_instruction},
@@ -623,7 +642,12 @@ def _generate_via_chat_gpt(prompt: str, ref_image: Optional[str] = None, size: O
             return None
 
 
-def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size: Optional[str] = None) -> Optional[tuple]:
+def _generate_via_direct_gpt(
+    prompt: str,
+    ref_image: Optional[str] = None,
+    size: Optional[str] = None,
+    precise_edit: bool = False,
+) -> Optional[tuple]:
     """Call the configured GPT Image endpoint (text2img + img2img).
 
     Args:
@@ -645,11 +669,19 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size:
     engine_label = _image_engine_label()
     is_agnes = _is_agnes_model(GPTIMAGE_DIRECT_MODEL)
     if _is_explicit_chat_url(raw_base_url):
+        if precise_edit:
+            return _generate_via_chat_gpt(prompt, ref_image, size, precise_edit=True)
         return _generate_via_chat_gpt(prompt, ref_image, size)
 
     images_api_unsupported = _images_api_known_unsupported(raw_base_url)
     if not images_api_unsupported:
-        result = _generate_via_images_api(prompt, ref_image, size, raw_base_url)
+        result = _generate_via_images_api(
+            prompt,
+            ref_image,
+            size,
+            raw_base_url,
+            precise_edit=precise_edit,
+        )
         if result or _is_explicit_images_url(raw_base_url):
             return result
         if _LAST_TERMINAL_IMAGE_FAILURE:
@@ -675,6 +707,8 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size:
         print("Images API unsupported; using chat-compatible GPT Image endpoint", file=sys.stderr)
     else:
         print("Images API failed; retrying chat-compatible GPT Image endpoint", file=sys.stderr)
+    if precise_edit:
+        return _generate_via_chat_gpt(prompt, ref_image, size, precise_edit=True)
     return _generate_via_chat_gpt(prompt, ref_image, size)
 
 
@@ -682,7 +716,8 @@ def generate(theme: str, send: bool = False, caption: bool = False,
              prompt_override: Optional[str] = None, ref_image: Optional[str] = None,
              style: Optional[str] = None, size: Optional[str] = None,
              prompt_is_final: bool = False, source: str = "chat",
-             sync_gallery: bool = True, schedule_time: str = ""):
+             sync_gallery: bool = True, schedule_time: str = "",
+             precise_edit: bool = False):
     """GPT Image 生成入口 — 使用当前配置的 GPT Image Base URL
 
     Args:
@@ -720,8 +755,8 @@ def generate(theme: str, send: bool = False, caption: bool = False,
     _LAST_TERMINAL_IMAGE_FAILURE = ""
     print(f"🎨 {engine_label} via {endpoint_label} ({requested_mode})...", file=sys.stderr)
 
-    result = _generate_via_direct_gpt(prompt, ref_image, size)
-    if not result and ref_image and not _LAST_TERMINAL_IMAGE_FAILURE:
+    result = _generate_via_direct_gpt(prompt, ref_image, size, precise_edit=precise_edit)
+    if not result and ref_image and not precise_edit and not _LAST_TERMINAL_IMAGE_FAILURE:
         print(f"{engine_label} img2img failed via {endpoint_label}; retrying text2img without reference image", file=sys.stderr)
         fallback_used = True
         final_mode = "text2img"
@@ -766,6 +801,7 @@ def generate(theme: str, send: bool = False, caption: bool = False,
             "fallback_used": fallback_used,
             "fallback_from": "img2img" if fallback_used else "",
             "fallback_to": "text2img" if fallback_used else "",
+            "precise_edit": bool(precise_edit),
         },
     )
 
@@ -810,9 +846,11 @@ if __name__ == "__main__":
     parser.add_argument("--size", type=str, default=None, help="图片尺寸")
     parser.add_argument("--source", choices=["cron", "web", "chat", "custom", "hermes_api"], default="chat", help="来源标识")
     parser.add_argument("--schedule-time", type=str, default="", help="对应的日程时间和活动，如 '11:00 做奶茶'")
+    parser.add_argument("--precise-edit", action="store_true", help="严格局部编辑，禁止无参考图降级")
     args = parser.parse_args()
     path = generate(args.theme, args.send, args.caption, args.prompt, args.ref_image,
-                    size=args.size, source=args.source, schedule_time=args.schedule_time)
+                    size=args.size, source=args.source, schedule_time=args.schedule_time,
+                    precise_edit=args.precise_edit)
     if not path:
         print("ERROR: GPT Image generation failed", file=sys.stderr)
         sys.exit(1)

@@ -120,6 +120,7 @@ class ImageGenerator:
         schedule_time: str = "",
         caption: bool = False,
         image_model: str = "",
+        precise_edit: bool = False,
     ) -> Optional[str]:
         """生成图片，返回图片文件名（相对路径）（异步，不阻塞事件循环）"""
         engine = engine or self.default_engine
@@ -158,6 +159,8 @@ class ImageGenerator:
             cmd.append("--prompt-final")
         if no_auto_style:
             cmd.append("--no-auto-style")
+        if precise_edit:
+            cmd.append("--precise-edit")
         if prompt:
             cmd.extend(["--prompt", prompt])
 
@@ -222,11 +225,13 @@ class ImageGenerator:
         base_style: str = "",
         ref_image: str = "",
         no_auto_style: bool = False,
+        size: str = "",
     ) -> Optional[str]:
         """根据穿搭描述生成图片，参考图由上层选择器决定。"""
         return await self.generate(
             outfit_prompt,
             ref_image=ref_image,
             no_auto_style=no_auto_style,
+            size=size,
             source="cron",
         )

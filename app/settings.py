@@ -13,6 +13,8 @@ import yaml
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_PROJECT_ROOT = APP_DIR.parent
 
+DEFAULT_GITEE_IMAGE_URL = "https://ai.gitee.com/v1/images/generations"
+
 DEFAULT_OUTFIT_STYLES = [
     "冷御风", "甜美风", "元气风", "温柔风", "优雅风",
     "休闲风", "酷飒风", "清新风", "性感风", "复古风",
@@ -87,7 +89,39 @@ DEFAULT_THEME_STYLE_MAP = {
 DEFAULT_CUSTOM_IMAGE_ASPECT = "1:1"
 DEFAULT_CUSTOM_IMAGE_RESOLUTION = "1k"
 DEFAULT_CUSTOM_IMAGE_SIZE = "1024x1024"
+DEFAULT_SCHEDULE_IMAGE_SIZE = "1536x2048"
 DEFAULT_CUSTOM_SHOT_TYPE = "selfie"
+
+LEGACY_SCHEDULE_IMAGE_FRAMING_RULE = (
+    "Mandatory 3:4 full-body environmental framing: pull the camera back and show the entire person "
+    "from the complete top of the hair to both shoes, adapted naturally to the scheduled action. "
+    "Keep clear breathing room above the hair and below the feet, with the head safely inside the upper "
+    "80 percent of the canvas and all limbs, hands, footwear, and important props inside the frame. "
+    "For seated or leaning actions, show the complete head, full seated posture, legs, feet, and surrounding "
+    "activity area. Use an eye-level camera at a comfortable distance; no close-up, medium crop, high-angle "
+    "crop, oversized person, cut-off forehead, missing hair, cropped knees, or cropped shoes. "
+    "Fill the entire 3:4 canvas edge to edge with the photographed scene; no black bars, blurred side panels, "
+    "letterboxing, pillarboxing, frames, borders, or blank margins. "
+    "This complete-subject framing rule overrides any casual or slightly imperfect framing instruction."
+)
+
+SCHEDULE_IMAGE_FRAMING_RULE = (
+    "Professional 3:4 lifestyle photography composition: act as an experienced portrait and documentary "
+    "photographer and choose the most compelling camera distance, angle, and crop for this exact action, prop, "
+    "outfit, and setting. For ordinary daily photos, default to a medium or three-quarter portrait, never a "
+    "head-to-toe view, so the face, hands, important props, and action remain visually clear. Use full-body framing "
+    "only when the scheduled Activity or Action explicitly asks for an OOTD, outfit check, mirror outfit, or clothing "
+    "showcase. Use a wider environmental composition only when the scheduled Activity or Action explicitly centers "
+    "on sharing scenery, a landscape, architecture, or the sense of place. A detailed outfit description, standing, "
+    "walking, visible shoes, or a reference image's crop never counts as an OOTD request and must not trigger a "
+    "full-body frame. Do not copy the reference image's camera distance or crop. Compose "
+    "with natural perspective, visual balance, useful foreground and background layers, and intentional negative "
+    "space. Avoid a stiff centered catalog pose, a tiny subject surrounded by empty floor or ceiling, forced "
+    "head-to-toe framing, arbitrary high angles, and crops through the face, hands, or important props. Fill the "
+    "entire 3:4 canvas edge to edge with the photographed scene; no black bars, blurred side panels, letterboxing, "
+    "pillarboxing, frames, borders, or blank margins. This photographic composition rule overrides any generic "
+    "full-body or slightly imperfect framing instruction."
+)
 
 CUSTOM_IMAGE_FRAMING_RULE = (
     "strict framing rule: preserve the requested camera view and shot type, "
@@ -173,6 +207,8 @@ CUSTOM_IMAGE_ALLOWED_SIZES = {
     for size in by_resolution.values()
 }
 
+SCHEDULE_IMAGE_ALLOWED_SIZES = set(CUSTOM_IMAGE_SIZE_MAP["3:4"].values())
+
 DEFAULT_PERSONA_SOURCE = "custom"
 PERSONA_SOURCE_ALIASES = {
     "custom": "custom",
@@ -256,6 +292,26 @@ def normalize_custom_image_size(size: Any = "", aspect: Any = "", resolution: An
     safe_aspect = normalize_custom_image_aspect(aspect)
     safe_resolution = normalize_custom_image_resolution(resolution)
     return CUSTOM_IMAGE_SIZE_MAP.get(safe_aspect, {}).get(safe_resolution, DEFAULT_CUSTOM_IMAGE_SIZE)
+
+
+def schedule_image_size(config: Any) -> str:
+    """Return the stable 3:4 output size used by gallery schedule photos."""
+    image_config = config.get("image_gen", {}) if isinstance(config, dict) else {}
+    if not isinstance(image_config, dict):
+        image_config = {}
+    configured = image_config.get("schedule_size") or image_config.get("metadata_size")
+    size_text = _non_empty(configured).lower()
+    return size_text if size_text in SCHEDULE_IMAGE_ALLOWED_SIZES else DEFAULT_SCHEDULE_IMAGE_SIZE
+
+
+def apply_schedule_image_framing(prompt: Any) -> str:
+    raw_text = _non_empty(prompt)
+    if not raw_text:
+        return raw_text
+    if "Professional 3:4 lifestyle photography composition:" in raw_text:
+        return raw_text
+    text = raw_text.replace(LEGACY_SCHEDULE_IMAGE_FRAMING_RULE, "").rstrip(" .")
+    return f"{text}. {SCHEDULE_IMAGE_FRAMING_RULE}"
 
 
 def normalize_custom_shot_type(value: Any) -> str:
