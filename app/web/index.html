@@ -1963,21 +1963,23 @@ textarea:focus-visible,
   align-items:center;
   justify-content:center;
   gap:12px;
+  min-height:44px;
   margin:24px auto 4px;
   color:#746c78;
   font-size:13px;
 }
-.gallery-load-more button {
-  min-height:40px;
-  padding:0 18px;
-  border:1px solid #d9d0dc;
-  border-radius:8px;
-  background:#fff;
-  color:#3f3742;
-  cursor:pointer;
+.gallery-load-more-spinner {
+  width:14px;
+  height:14px;
+  border:2px solid #eadfea;
+  border-top-color:#e91e63;
+  border-radius:50%;
+  opacity:0;
 }
-.gallery-load-more button:hover { border-color:#b58eac;background:#faf7fb; }
-.gallery-load-more button:disabled { cursor:wait;opacity:.65; }
+.gallery-load-more.loading .gallery-load-more-spinner {
+  opacity:1;
+  animation:spin .8s linear infinite;
+}
 
 .gallery-card {
   background: #fff;
@@ -5327,8 +5329,7 @@ textarea:focus-visible,
   .cg-size-btn,
   .prompt-copy-btn,
   .prompt-close,
-  .settings-btn,
-  .gallery-load-more button { min-height: 44px; }
+  .settings-btn { min-height: 44px; }
   .prompt-close,
   .settings-btn { min-width: 44px; }
 }
@@ -6305,6 +6306,9 @@ let galleryLoadedTagFilter = null;
 let galleryLoadedFavoritesOnly = false;
 let galleryPageLoading = false;
 let galleryReloadPending = "";
+let galleryLoadMoreObserver = null;
+let galleryLoadMoreFallbackBound = false;
+let galleryLoadMoreRetryTimer = null;
 const galleryDetailRequests = new Map();
 let currentTagFilter = "";
 let showFavoritesOnly = false;
@@ -9104,7 +9108,52 @@ function galleryLoadMoreHtml() {
     entry && entry.image_filename && matchesGalleryTagFilter(entry, currentTagFilter)
   )).length;
   const total = Math.max(loaded, galleryViewTotal || loaded);
-  return `<div class="gallery-load-more"><button type="button" onclick="loadMoreGallery(this)">加载更多</button><span>已载入 ${loaded} / ${total}</span></div>`;
+  return `<div class="gallery-load-more" id="galleryLoadMoreSentinel" role="status" aria-live="polite"><span class="gallery-load-more-spinner" aria-hidden="true"></span><span>已载入 ${loaded} / ${total}</span></div>`;
+}
+
+function maybeAutoLoadGallery() {
+  const sentinel = document.getElementById('galleryLoadMoreSentinel');
+  if (!sentinel || showFavoritesOnly || galleryPageLoading || galleryLoadMoreRetryTimer || !galleryHasMore) return;
+  const rect = sentinel.getBoundingClientRect();
+  if (rect.top <= window.innerHeight + 320 && rect.bottom >= -320) {
+    loadMoreGallery(sentinel);
+  }
+}
+
+function observeGalleryLoadMore() {
+  if (galleryLoadMoreRetryTimer) {
+    clearTimeout(galleryLoadMoreRetryTimer);
+    galleryLoadMoreRetryTimer = null;
+  }
+  if (galleryLoadMoreObserver) {
+    galleryLoadMoreObserver.disconnect();
+    galleryLoadMoreObserver = null;
+  }
+  const sentinel = document.getElementById('galleryLoadMoreSentinel');
+  if (!sentinel || showFavoritesOnly || !galleryHasMore) return;
+  if ('IntersectionObserver' in window) {
+    galleryLoadMoreObserver = new IntersectionObserver(entries => {
+      const entry = entries.find(item => item.target === sentinel);
+      if (!entry || !entry.isIntersecting || galleryPageLoading || !galleryHasMore) return;
+      galleryLoadMoreObserver.unobserve(entry.target);
+      loadMoreGallery(entry.target);
+    }, { root: null, rootMargin: '320px 0px', threshold: 0.01 });
+    galleryLoadMoreObserver.observe(sentinel);
+    return;
+  }
+  if (!galleryLoadMoreFallbackBound) {
+    galleryLoadMoreFallbackBound = true;
+    window.addEventListener('scroll', maybeAutoLoadGallery, { passive: true });
+  }
+  requestAnimationFrame(maybeAutoLoadGallery);
+}
+
+function scheduleGalleryLoadMoreRetry() {
+  if (galleryLoadMoreRetryTimer || showFavoritesOnly || !galleryHasMore) return;
+  galleryLoadMoreRetryTimer = setTimeout(() => {
+    galleryLoadMoreRetryTimer = null;
+    observeGalleryLoadMore();
+  }, 5000);
 }
 
 function alignActiveStyleFilter() {
@@ -9122,6 +9171,7 @@ function renderGallery() {
   const content = document.getElementById("galleryContent");
   if (!allEntries.length && galleryTotal <= 0) {
     content.innerHTML = `<div class="empty-state"><div class="icon">👗</div><p>还没有穿搭记录呢～</p></div>`;
+    observeGalleryLoadMore();
     return;
   }
   
@@ -9227,6 +9277,7 @@ function renderGallery() {
   if (!filtered.length) {
     content.innerHTML = headerHtml + `<div class="empty-state"><div class="icon">🔍</div><p>没有匹配的结果～</p></div>` + galleryLoadMoreHtml();
     alignActiveStyleFilter();
+    observeGalleryLoadMore();
     return;
   }
   
@@ -9329,6 +9380,7 @@ function renderGallery() {
     }</div>`
   );
   content.insertAdjacentHTML('beforeend', galleryLoadMoreHtml());
+  observeGalleryLoadMore();
   alignActiveStyleFilter();
   requestAnimationFrame(() => {
     try {
@@ -11234,7 +11286,7 @@ async function loadGallery(options = {}) {
     todayData = await todayRes.json();
     const galleryPayload = await galleryRes.json();
     if (requestedTagFilter !== currentTagFilter) {
-      galleryReloadPending = true;
+      galleryReloadPending = "gallery";
       return;
     }
     const pageEntries = Array.isArray(galleryPayload)
@@ -11305,18 +11357,18 @@ async function loadGallery(options = {}) {
   }
 }
 
-async function loadMoreGallery(btn) {
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = '加载中';
-  }
+async function loadMoreGallery(sentinel = null) {
+  if (galleryPageLoading || !galleryHasMore || !galleryNextCursor) return;
+  const previousCursor = galleryNextCursor;
+  let advanced = false;
+  if (sentinel) sentinel.classList.add('loading');
   try {
     await loadGallery({ append: true });
+    advanced = !galleryHasMore || galleryNextCursor !== previousCursor;
   } finally {
-    if (btn && document.body.contains(btn)) {
-      btn.disabled = false;
-      btn.textContent = '加载更多';
-    }
+    if (sentinel && document.body.contains(sentinel)) sentinel.classList.remove('loading');
+    if (advanced) observeGalleryLoadMore();
+    else scheduleGalleryLoadMoreRetry();
   }
 }
 

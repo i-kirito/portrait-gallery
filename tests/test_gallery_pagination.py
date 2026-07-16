@@ -244,6 +244,19 @@ class GalleryPaginationFrontendContractTest(unittest.TestCase):
         self.assertIn("galleryViewTotal || loaded", html)
         self.assertIn("galleryLoadedFavoritesOnly || galleryLoadedTagFilter !== currentTagFilter", html)
         self.assertIn("loadGallery({ skipTabSwitch: true });", html)
+        self.assertNotIn("galleryReloadPending = true;", html)
+
+    def test_gallery_automatically_loads_more_at_the_scroll_boundary(self):
+        html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="galleryLoadMoreSentinel"', html)
+        self.assertIn("new IntersectionObserver", html)
+        self.assertIn("rootMargin: '320px 0px'", html)
+        self.assertIn("loadMoreGallery(entry.target)", html)
+        self.assertIn("window.addEventListener('scroll', maybeAutoLoadGallery", html)
+        self.assertIn("function scheduleGalleryLoadMoreRetry()", html)
+        self.assertIn("galleryNextCursor !== previousCursor", html)
+        self.assertNotIn('onclick="loadMoreGallery(this)">加载更多</button>', html)
 
 
 if __name__ == "__main__":
