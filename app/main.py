@@ -38,6 +38,11 @@ from image_editing import (
     replace_image_schedule_description,
     rewrite_image_edit_schedule_description,
 )
+from image_versions import (
+    archive_image_version,
+    delete_image_versions,
+    normalize_image_versions,
+)
 from photo_plan_edit import (
     normalize_schedule_clock,
     replace_schedule_activity,
@@ -1742,6 +1747,30 @@ class PortraitGalleryApp:
                     logger.error("清理无效精准编辑结果失败: image=%s error=%s", filename, e)
             return {"status": "failed", "error": "edit_reference_lost"}
 
+        try:
+            archived_version = archive_image_version(
+                self.data_dir,
+                image_path,
+                original_image_filename=image_filename,
+                archived_at=now.isoformat(timespec="seconds"),
+                target=effective_target,
+                target_label=target_label,
+                instruction=effective_instruction,
+                date=original_date,
+                time=original_time,
+            )
+        except Exception as e:
+            if filename != image_filename:
+                self._delete_replaced_image(filename)
+            logger.error(
+                "归档精准编辑原图失败: image=%s generated=%s error=%s",
+                image_filename,
+                filename,
+                e,
+                exc_info=True,
+            )
+            return {"status": "failed", "error": "version_archive_failed"}
+
         selected_reference = {
             "id": f"edit_source_{image_filename}",
             "filename": image_filename,
@@ -1805,6 +1834,8 @@ class PortraitGalleryApp:
                     "schedule_description": normalized_schedule_description,
                 })
             edit_history.append(history_item)
+            image_versions = normalize_image_versions(current_source.get("image_versions"))
+            image_versions.append(archived_version)
             generated.update({
                 "id": filename,
                 "date": str(current_source.get("date") or original_date),
@@ -1831,6 +1862,8 @@ class PortraitGalleryApp:
                 "edit_target_label": target_label,
                 "edit_instruction": effective_instruction,
                 "edit_history": edit_history,
+                "image_versions": image_versions,
+                "version_count": len(image_versions),
                 "original_image_filename": current_source.get("original_image_filename") or image_filename,
                 "replaced_image_filename": image_filename,
                 "replacement_key": active_replacement_key,
@@ -1854,6 +1887,7 @@ class PortraitGalleryApp:
 
         store.update(_merge_edit)
         if merge_state["source_changed"]:
+            delete_image_versions(self.data_dir, [archived_version])
             self._delete_replaced_image(filename)
             logger.warning(
                 "图片精准编辑结果已丢弃，源卡片在生成期间发生变化: source=%s generated=%s",
@@ -1880,6 +1914,7 @@ class PortraitGalleryApp:
                 "requested_ref_image": image_filename,
                 "requested_ref_image_path": image_path,
                 "selected_reference": selected_reference,
+                "version_count": len(result.get("image_versions") or []),
             })
             if schedule_changed:
                 generated_meta.update({
@@ -2105,6 +2140,31 @@ class PortraitGalleryApp:
 
         original_time = original.get("time") or self._image_time_from_filename(image_filename)
         now_time = self._image_time_from_filename(filename) or self._now().strftime("%H:%M")
+        archived_version = None
+        if is_precision_edit:
+            try:
+                archived_version = archive_image_version(
+                    self.data_dir,
+                    original_ref_image,
+                    original_image_filename=image_filename,
+                    archived_at=self._now().isoformat(timespec="seconds"),
+                    target="reroll",
+                    target_label="重抽",
+                    instruction=edit_instruction,
+                    date=str(original_date),
+                    time=str(original_time or now_time),
+                )
+            except Exception as e:
+                if filename != image_filename:
+                    self._delete_replaced_image(filename)
+                logger.error(
+                    "归档精准编辑重抽原图失败: image=%s generated=%s error=%s",
+                    image_filename,
+                    filename,
+                    e,
+                    exc_info=True,
+                )
+                return {"status": "failed", "error": "version_archive_failed"}
         schedule_context_entry = {}
         if is_scheduled_reroll:
             schedule_context_entry = self._reroll_schedule_context(
@@ -2114,12 +2174,20 @@ class PortraitGalleryApp:
                 reroll_uses_today_schedule,
             )
         result = {}
+        merge_state = {"source_changed": False}
 
         def _merge_reroll(all_data: dict):
+            current_source = original
+            current_key = original_key
+            if is_precision_edit:
+                current_key, current_source = self._find_entry_by_image(all_data, image_filename)
+                if not current_source:
+                    merge_state["source_changed"] = True
+                    return all_data
             generated_key, generated = self._find_entry_by_image(all_data, filename)
             generated_key = generated_key or filename
             generated = dict(generated or {})
-            replacement_key = original_key or image_filename
+            replacement_key = current_key or image_filename
             if re.match(r'^\d{4}-\d{2}-\d{2}$', str(replacement_key)):
                 replacement_key = image_filename
             generated.update({
@@ -2174,6 +2242,8 @@ class PortraitGalleryApp:
                         self._reference_path_for_display(ref_image, selected_reference),
                     )
                 if is_precision_edit:
+                    image_versions = normalize_image_versions(current_source.get("image_versions"))
+                    image_versions.append(archived_version)
                     generated.update({
                         "generation_type": "image_edit",
                         "prompt_mode": "precision_edit",
@@ -2189,6 +2259,8 @@ class PortraitGalleryApp:
                         "edit_target_label": edit_target_label_value,
                         "edit_instruction": edit_instruction,
                         "edit_history": edit_history,
+                        "image_versions": image_versions,
+                        "version_count": len(image_versions),
                         "edited_from": edited_from,
                         "original_image_filename": original_image_filename,
                     })
@@ -2228,6 +2300,15 @@ class PortraitGalleryApp:
             return all_data
 
         store.update(_merge_reroll)
+        if merge_state["source_changed"]:
+            delete_image_versions(self.data_dir, [archived_version])
+            self._delete_replaced_image(filename)
+            logger.warning(
+                "精准编辑重抽结果已丢弃，源卡片在生成期间发生变化: source=%s generated=%s",
+                image_filename,
+                filename,
+            )
+            return {"status": "failed", "error": "reroll_source_changed"}
         if is_precision_edit:
             metadata_updater = getattr(self.web_server, "_update_image_metadata_entry", None)
             if callable(metadata_updater):
@@ -2254,6 +2335,7 @@ class PortraitGalleryApp:
                     "requested_ref_image": image_filename,
                     "requested_ref_image_path": original_ref_image,
                     "selected_reference": selected_reference,
+                    "version_count": len(result.get("image_versions") or []),
                 })
                 try:
                     metadata_updater(filename, generated_meta)

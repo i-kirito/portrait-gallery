@@ -62,6 +62,81 @@ class GroupChatProgressTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual("猪猪", payload["reply_progress"]["character_name"])
             self.assertNotIn("_token", payload["reply_progress"])
 
+    async def test_internal_reasoning_is_not_public_or_reused_as_history(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server = self._make_server(Path(tmpdir))
+            reasoning = (
+                "首先，用户输入是‘我要看照片’，这是群聊中的消息。"
+                "根据指令，我需要只输出 JSON，并设置 image_request 字段。"
+            )
+            messages = [
+                {
+                    "id": "reasoning",
+                    "content": reasoning,
+                    "type": "text",
+                    "sender": {"display_name": "猪猪"},
+                    "metadata": {"auto_reply": True},
+                },
+                {
+                    "id": "image",
+                    "content": "生成图片",
+                    "type": "image",
+                    "sender": {"display_name": "猪猪"},
+                    "metadata": {
+                        "auto_reply": True,
+                        "image_filename": "photo.png",
+                        "image_url": "/images/photo.png",
+                        "prompt": reasoning,
+                    },
+                },
+            ]
+
+            public_messages = server._public_group_messages(messages)
+            history = server._group_chat_history_text(messages)
+
+            self.assertEqual(["image"], [item["id"] for item in public_messages])
+            self.assertNotIn("prompt", public_messages[0]["metadata"])
+            self.assertNotIn("首先，用户输入", history)
+
+    async def test_reply_retries_without_persisting_internal_reasoning(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server = self._make_server(Path(tmpdir))
+            room = self._create_room(server)
+            character = {"id": "hermes", "name": "猪猪", "agent_id": "Hermes Agent"}
+            server._group_chat_reply_targets = lambda _room, _body: [character]
+            outputs = [
+                (
+                    "首先，用户输入是‘我要看jk’，这是群聊中的消息。"
+                    "根据指令，我需要只输出 JSON，并决定 image_request 字段。",
+                    "test-model",
+                ),
+                ('{"message":"好呀，给你看看这套成年时尚造型。","image_request":null}', "test-model"),
+            ]
+            prompts = []
+
+            async def fake_llm(prompt, **_kwargs):
+                prompts.append(prompt)
+                return outputs[len(prompts) - 1]
+
+            server._call_group_chat_llm = fake_llm
+            client = await self._start_client(server)
+            try:
+                response = await client.post(
+                    f"/api/group-chat/rooms/{room['id']}/reply",
+                    json={},
+                )
+                payload = await response.json()
+            finally:
+                await client.close()
+
+            stored = server.group_chat_store.list_messages(room["id"])
+            self.assertEqual(200, response.status)
+            self.assertEqual(2, len(prompts))
+            self.assertIn("上一次返回包含内部分析", prompts[1])
+            self.assertEqual(["好呀，给你看看这套成年时尚造型。"], [item["content"] for item in stored])
+            self.assertEqual("好呀，给你看看这套成年时尚造型。", payload["messages"][0]["content"])
+            self.assertNotIn("首先，用户输入", str(payload))
+
     async def test_image_task_survives_cancelled_waiter_and_clears_progress(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             server = self._make_server(Path(tmpdir))

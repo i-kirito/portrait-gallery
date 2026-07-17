@@ -16,6 +16,9 @@ from main import PortraitGalleryApp  # noqa: E402
 from settings import (  # noqa: E402
     LEGACY_SCHEDULE_IMAGE_FRAMING_RULE,
     SCHEDULE_IMAGE_FRAMING_RULE,
+    SCHEDULE_IMAGE_FRAMING_MARKER,
+    SCHEDULE_IMAGE_OOTD_FRAMING_RULE,
+    SCHEDULE_IMAGE_SCENERY_FRAMING_RULE,
     apply_schedule_image_framing,
     schedule_image_size,
 )
@@ -61,16 +64,49 @@ class ScheduleImageSizeTest(unittest.TestCase):
         prompt = apply_schedule_image_framing("watering plants by the desk")
 
         self.assertIn(SCHEDULE_IMAGE_FRAMING_RULE, prompt)
-        self.assertIn("default to a medium or three-quarter portrait", prompt)
-        self.assertIn("only when the scheduled Activity or Action explicitly asks for an OOTD", prompt)
-        self.assertIn("explicitly centers on sharing scenery", prompt)
-        self.assertIn("A detailed outfit description, standing, walking, visible shoes", prompt)
-        self.assertIn("experienced portrait and documentary photographer", prompt)
-        self.assertIn("Avoid a stiff centered catalog pose", prompt)
+        self.assertIn("FRAMING MODE: ORDINARY DAILY PORTRAIT", prompt)
+        self.assertIn("waist, hips, or mid-thigh", prompt)
+        self.assertIn("feet, shoes, and most of the floor outside the frame", prompt)
+        self.assertIn("50-85mm-equivalent portrait perspective", prompt)
+        self.assertIn("No high-angle, overhead", prompt)
+        self.assertIn("make the subject look small or squat", prompt)
         self.assertIn("no black bars", prompt)
         self.assertIn("no black bars", SCHEDULE_IMAGE_FRAMING_RULE)
         self.assertNotIn("Mandatory 3:4 full-body", prompt)
         self.assertEqual(prompt, apply_schedule_image_framing(prompt))
+
+    def test_schedule_prompt_uses_ordinary_mode_despite_full_outfit_and_standing(self):
+        prompt = apply_schedule_image_framing(
+            "Today's plan: Activity: trim leaves beside the desk. "
+            "Action: stand by the plant and use small scissors. "
+            "Scene: bright study. Outfit: cardigan, midi skirt, and Mary Jane shoes."
+        )
+
+        self.assertIn(SCHEDULE_IMAGE_FRAMING_RULE, prompt)
+        self.assertNotIn(SCHEDULE_IMAGE_OOTD_FRAMING_RULE, prompt)
+        self.assertNotIn(SCHEDULE_IMAGE_SCENERY_FRAMING_RULE, prompt)
+
+    def test_schedule_prompt_uses_full_body_only_for_explicit_ootd_intent(self):
+        prompt = apply_schedule_image_framing(
+            "Today's plan: Activity: photograph an OOTD clothing showcase. "
+            "Action: check and show the complete outfit in a mirror. "
+            "Scene: dressing room. Outfit: coordinated look."
+        )
+
+        self.assertIn(SCHEDULE_IMAGE_OOTD_FRAMING_RULE, prompt)
+        self.assertIn("level, eye-height full-body fashion photograph", prompt)
+        self.assertNotIn(SCHEDULE_IMAGE_FRAMING_RULE, prompt)
+
+    def test_schedule_prompt_uses_environmental_mode_for_explicit_scenery_intent(self):
+        prompt = apply_schedule_image_framing(
+            "Today's plan: Activity: share the city skyline scenery. "
+            "Action: photograph the landscape from an overlook. "
+            "Scene: hilltop viewing deck. Outfit: casual jacket."
+        )
+
+        self.assertIn(SCHEDULE_IMAGE_SCENERY_FRAMING_RULE, prompt)
+        self.assertIn("wider environmental composition", prompt)
+        self.assertNotIn(SCHEDULE_IMAGE_FRAMING_RULE, prompt)
 
     def test_schedule_prompt_replaces_legacy_mandatory_full_body_rule(self):
         legacy_prompt = f"watering plants by the desk. {LEGACY_SCHEDULE_IMAGE_FRAMING_RULE}"
@@ -79,7 +115,20 @@ class ScheduleImageSizeTest(unittest.TestCase):
 
         self.assertNotIn(LEGACY_SCHEDULE_IMAGE_FRAMING_RULE, prompt)
         self.assertIn(SCHEDULE_IMAGE_FRAMING_RULE, prompt)
-        self.assertEqual(1, prompt.count("Professional 3:4 lifestyle photography composition:"))
+        self.assertEqual(1, prompt.count(SCHEDULE_IMAGE_FRAMING_MARKER))
+
+    def test_schedule_prompt_replaces_previous_adaptive_framing_version(self):
+        old_rule = f"{SCHEDULE_IMAGE_FRAMING_MARKER} old conditional framing rule"
+        old_prompt = (
+            "Today's plan: Activity: water plants. Action: trim leaves. "
+            f"Scene: study room. {old_rule}"
+        )
+
+        prompt = apply_schedule_image_framing(old_prompt)
+
+        self.assertNotIn(old_rule, prompt)
+        self.assertIn(SCHEDULE_IMAGE_FRAMING_RULE, prompt)
+        self.assertEqual(1, prompt.count(SCHEDULE_IMAGE_FRAMING_MARKER))
 
 
 class PhotoJobSizeCommandTest(unittest.IsolatedAsyncioTestCase):

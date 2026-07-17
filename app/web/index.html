@@ -147,6 +147,8 @@ button,
 .gallery-card,
 .style-pill,
 .cg-size-btn,
+.cg-size-mode-btn,
+.cg-size-swap-btn,
 .cg-ref-item,
 .ca-btn,
 .tc-btn,
@@ -1743,19 +1745,26 @@ textarea:focus-visible,
 }
 .wardrobe-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 12px;
 }
 .wardrobe-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
-  padding: 13px 14px;
+  padding: 11px;
   border-radius: 8px;
   border: 1px solid rgba(224,210,238,0.9);
   background: rgba(255,255,255,0.94);
   box-shadow: 0 3px 14px rgba(82,45,112,0.07);
+}
+.wardrobe-details {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
 }
 .wardrobe-thumb {
   width: 100%;
@@ -1824,37 +1833,49 @@ textarea:focus-visible,
   font-weight: 700;
 }
 .wardrobe-line {
+  display: -webkit-box;
+  overflow: hidden;
   color: #3f3154;
   font-size: 13px;
   line-height: 1.55;
   overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
 }
+.wardrobe-line.hair { -webkit-line-clamp: 1; }
+.wardrobe-line.wear { -webkit-line-clamp: 3; }
+.wardrobe-line + .wardrobe-line { margin-top: 2px; }
 .wardrobe-line strong {
   color: #8e24aa;
 }
 .wardrobe-copy {
-  flex: 1 1 auto;
-  min-height: 118px;
-  max-height: 230px;
-  overflow-y: auto;
-  padding-right: 4px;
+  flex: 0 0 82px;
+  min-height: 82px;
+  max-height: 82px;
+  overflow: hidden;
+  padding-right: 0;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
 .wardrobe-copy::-webkit-scrollbar { display: none; }
 .wardrobe-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
   margin-top: auto;
   padding-top: 3px;
 }
 .wardrobe-action-btn,
 .wardrobe-remove-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   flex: 1 1 0;
+  width: auto;
   min-width: 0;
-  min-height: 28px;
-  padding: 0 5px;
+  min-height: 32px;
+  padding: 0;
   border: 1px solid rgba(233,30,99,0.2);
   border-radius: 999px;
   background: #fff7fb;
@@ -1866,6 +1887,22 @@ textarea:focus-visible,
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: pointer;
+}
+.wardrobe-action-btn i,
+.wardrobe-remove-btn i {
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+.wardrobe-action-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .wardrobe-action-btn {
   border-color: rgba(139,92,246,0.22);
@@ -1919,25 +1956,13 @@ textarea:focus-visible,
     margin-right: 0;
     transform: translateX(-50%);
   }
-  .wardrobe-grid { gap: 16px; }
+  .wardrobe-grid {
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 14px;
+  }
   .wardrobe-card {
-    gap: 10px;
-    padding: 15px 16px;
-  }
-  .wardrobe-copy {
-    min-height: 190px;
-    max-height: 190px;
-  }
-  .wardrobe-actions {
-    display: flex;
-    flex-wrap: nowrap;
-    gap: 8px;
-  }
-  .wardrobe-action-btn,
-  .wardrobe-remove-btn {
-    min-height: 32px;
-    padding: 0 8px;
-    font-size: 11px;
+    gap: 7px;
+    padding: 11px;
   }
 }
 
@@ -2802,6 +2827,83 @@ textarea:focus-visible,
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
 }
+.cg-dimension-panel {
+  padding: 14px;
+  border: 1px solid #eadfe6;
+  border-radius: 14px;
+  background: #fcfafb;
+}
+.cg-dimension-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 11px;
+}
+.cg-dimension-heading label { margin-bottom: 0; }
+.cg-current-size {
+  min-width: 0;
+  color: #9b9298;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.cg-current-size strong {
+  color: #e91e63;
+  font-size: 13px;
+}
+.cg-size-mode-switch {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: #f1eef0;
+}
+.cg-size-mode-btn {
+  min-width: 0;
+  min-height: 40px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: #777078;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s;
+}
+.cg-size-mode-btn:hover { color: #e91e63; }
+.cg-size-mode-btn.active {
+  border-color: #eadde4;
+  background: #fff;
+  color: #2f2b2e;
+  box-shadow: 0 2px 7px rgba(78, 48, 64, 0.08);
+}
+.cg-size-mode-panel { margin-top: 14px; }
+.cg-size-mode-panel[hidden] { display: none; }
+.cg-size-section + .cg-size-section { margin-top: 14px; }
+.cg-size-section-title {
+  display: block;
+  margin-bottom: 8px;
+  color: #8f878c;
+  font-size: 12px;
+  font-weight: 700;
+}
+.cg-auto-size-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 72px;
+  border: 1px dashed #e2d7dd;
+  border-radius: 10px;
+  background: #fff;
+  color: #81777d;
+  font-size: 13px;
+  font-weight: 700;
+}
+.cg-auto-size-state i { color: #e91e63; }
 .cg-size-btn {
   min-width: 0;
   min-height: 58px;
@@ -2828,6 +2930,107 @@ textarea:focus-visible,
 .cg-resolution-group {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
+.cg-resolution-group .cg-size-btn { min-height: 52px; }
+.cg-aspect-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.cg-aspect-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  min-height: 78px;
+  padding: 8px 5px;
+  border: 1px solid #e0dce0;
+  border-radius: 11px;
+  background: #fff;
+  color: #777178;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s;
+}
+.cg-aspect-btn:hover { border-color: #e91e63; color: #e91e63; }
+.cg-aspect-btn.active {
+  border-color: #e91e63;
+  background: #fce4ec;
+  color: #e91e63;
+}
+.cg-ratio-shape {
+  display: block;
+  width: 26px;
+  height: 26px;
+  border: 2px solid currentColor;
+  border-radius: 4px;
+  color: #aaa5aa;
+}
+.cg-aspect-btn:hover .cg-ratio-shape,
+.cg-aspect-btn.active .cg-ratio-shape { color: currentColor; }
+.cg-ratio-shape.landscape { width: 31px; height: 22px; }
+.cg-ratio-shape.portrait { width: 22px; height: 31px; }
+.cg-ratio-shape.wide { width: 34px; height: 19px; }
+.cg-ratio-shape.tall { width: 19px; height: 34px; }
+.cg-ratio-shape.ultrawide { width: 36px; height: 15px; }
+.cg-custom-size-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px minmax(0, 1fr);
+  align-items: end;
+  gap: 10px;
+}
+.cg-custom-size-control label {
+  margin-bottom: 6px;
+  color: #8f878c;
+  font-size: 12px;
+}
+.cg-custom-size-input-wrap {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  border: 1px solid #ded8dc;
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+}
+.cg-custom-size-input-wrap:focus-within {
+  border-color: #e91e63;
+  box-shadow: 0 0 0 3px rgba(233,30,99,0.08);
+}
+.cg-custom-size-input-wrap input {
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  padding: 0 4px 0 12px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #343034;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+}
+.cg-custom-size-input-wrap span {
+  padding-right: 10px;
+  color: #aaa2a7;
+  font-size: 11px;
+}
+.cg-size-swap-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid #e0d9dd;
+  border-radius: 10px;
+  background: #fff;
+  color: #8f858b;
+  cursor: pointer;
+}
+.cg-size-swap-btn:hover { border-color: #e91e63; color: #e91e63; }
 .cg-shot-group {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -2846,22 +3049,6 @@ textarea:focus-visible,
 .cg-select:focus {
   border-color: #e91e63;
   box-shadow: 0 0 0 3px rgba(233,30,99,0.08);
-}
-.cg-size-hint {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 10px;
-  padding: 9px 12px;
-  border-radius: 12px;
-  background: #fafafa;
-  color: #777;
-  font-size: 13px;
-}
-.cg-size-hint strong {
-  color: #e91e63;
-  font-size: 14px;
 }
 .cg-ref-grid {
   display: flex;
@@ -4517,7 +4704,74 @@ textarea:focus-visible,
   }
   .container { padding: 16px 14px; }
   .wardrobe-head h2 { font-size: 20px; }
-  .wardrobe-card { padding: 12px; }
+  .wardrobe-head { margin-bottom: 10px; }
+  .wardrobe-card {
+    display: grid;
+    grid-template-columns: clamp(92px, 29vw, 112px) minmax(0, 1fr);
+    align-items: stretch;
+    gap: 11px;
+    padding: 10px;
+  }
+  .wardrobe-thumb {
+    align-self: start;
+    border-radius: 7px;
+  }
+  .wardrobe-details {
+    gap: 5px;
+  }
+  .wardrobe-meta {
+    gap: 6px;
+    min-height: 18px;
+  }
+  .wardrobe-style { font-size: 12px; }
+  .wardrobe-date { font-size: 10px; }
+  .wardrobe-copy {
+    flex: 0 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow: hidden;
+    padding-right: 0;
+  }
+  .wardrobe-line {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 11px;
+    line-height: 1.42;
+    -webkit-box-orient: vertical;
+  }
+  .wardrobe-line.hair { -webkit-line-clamp: 1; }
+  .wardrobe-line.wear { -webkit-line-clamp: 3; }
+  .wardrobe-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: auto;
+    padding-top: 2px;
+  }
+  .wardrobe-action-btn,
+  .wardrobe-remove-btn {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    min-height: 32px;
+    padding: 0;
+    border-radius: 999px;
+    overflow: visible;
+  }
+  .wardrobe-action-btn i,
+  .wardrobe-remove-btn i { font-size: 12px; }
+  .wardrobe-status {
+    min-width: 0;
+    min-height: 16px;
+    margin-left: auto;
+    overflow: hidden;
+    color: #7c3aed;
+    font-size: 10px;
+    line-height: 1.35;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .cg-overlay { padding: 12px; }
   .cg-modal {
     width: min(100%, 460px);
@@ -4533,11 +4787,27 @@ textarea:focus-visible,
   .cg-mode-btn { height: 28px; min-width: 38px; padding: 0 10px; font-size: 13px; }
   .cg-field textarea { min-height: 82px; padding: 12px 14px; font-size: 14px; border-radius: 12px; }
   .cg-field .hint { font-size: 12px; line-height: 1.45; }
+  .cg-dimension-panel { padding: 11px; border-radius: 12px; }
+  .cg-dimension-heading { margin-bottom: 9px; }
+  .cg-current-size { font-size: 11px; }
+  .cg-current-size strong { font-size: 12px; }
+  .cg-size-mode-switch { gap: 3px; padding: 3px; border-radius: 10px; }
+  .cg-size-mode-btn { min-height: 38px; padding: 6px 4px; border-radius: 8px; font-size: 12px; }
+  .cg-size-mode-panel { margin-top: 11px; }
+  .cg-size-section + .cg-size-section { margin-top: 11px; }
+  .cg-size-section-title { margin-bottom: 6px; font-size: 11px; }
   .cg-size-group { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
   .cg-size-btn { min-height: 50px; padding: 7px 6px; font-size: 13px; border-radius: 12px; }
   .cg-size-btn small { font-size: 10px; margin-top: 1px; }
+  .cg-aspect-grid { gap: 6px; }
+  .cg-aspect-btn { min-height: 68px; padding: 6px 3px; border-radius: 9px; font-size: 12px; }
+  .cg-ratio-shape { transform: scale(0.9); }
+  .cg-custom-size-grid { grid-template-columns: minmax(0, 1fr) 36px minmax(0, 1fr); gap: 7px; }
+  .cg-size-swap-btn { width: 36px; height: 38px; }
+  .cg-custom-size-input-wrap { min-height: 42px; }
+  .cg-custom-size-input-wrap input { height: 40px; padding-left: 9px; font-size: 13px; }
+  .cg-custom-size-input-wrap span { padding-right: 8px; font-size: 10px; }
   .cg-select { min-height: 40px; font-size: 13px; }
-  .cg-size-hint { margin-top: 7px; padding: 7px 10px; font-size: 12px; }
   .cg-ref-grid { gap: 7px; }
   .cg-ref-item { width: calc((100% - 21px) / 4); border-width: 2px; border-radius: 9px; }
   .cg-upload-hint { flex-direction: column; align-items: stretch !important; gap: 8px !important; }
@@ -5327,6 +5597,8 @@ textarea:focus-visible,
   .egg-photo-action-btn,
   .sk-settings-tab,
   .cg-size-btn,
+  .cg-size-mode-btn,
+  .cg-size-swap-btn,
   .prompt-copy-btn,
   .prompt-close,
   .settings-btn { min-height: 44px; }
@@ -5483,7 +5755,7 @@ textarea:focus-visible,
 
 <div class="header">
   <div class="header-left">
-      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.3.5</span></h1>
+      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.3.6</span></h1>
   </div>
   <div class="tabs">
     <button class="tab has-badge" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="showUnfavoriteGallery(event)"><span class="tab-label"><span class="tab-icon" aria-hidden="true">✨</span><span class="tab-text">全部</span></span><span class="tab-badge" id="badge-all">0</span></button>
@@ -6014,7 +6286,7 @@ textarea:focus-visible,
           <span class="sk-update-title">版本与服务</span>
           <span class="sk-update-desc">检查代码更新，或重新加载当前服务</span>
         </div>
-        <span class="sk-version-text">当前 <strong id="settingsVersion">v1.3.5</strong></span>
+        <span class="sk-version-text">当前 <strong id="settingsVersion">v1.3.6</strong></span>
       </div>
       <div class="sk-update-row">
         <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
@@ -6048,26 +6320,56 @@ textarea:focus-visible,
       <textarea id="cgPrompt" placeholder="描述你想看到的穿搭，比如：穿着粉色JK制服在樱花树下吃团子~" rows="3"></textarea>
       <div class="hint">支持中英文，越详细效果越好哦～</div>
     </div>
-    <div class="cg-field">
-      <label>图片比例</label>
-      <div class="cg-size-group" id="cgAspectGroup">
-        <button class="cg-size-btn active" data-aspect="1:1">1:1 <small>方图</small></button>
-        <button class="cg-size-btn" data-aspect="3:4">3:4 <small>竖图</small></button>
-        <button class="cg-size-btn" data-aspect="4:3">4:3 <small>横图</small></button>
-        <button class="cg-size-btn" data-aspect="2:3">2:3 <small>长竖</small></button>
-        <button class="cg-size-btn" data-aspect="9:16">9:16 <small>手机</small></button>
-      </div>
-    </div>
-    <div class="cg-field">
-      <label>分辨率</label>
-      <div class="cg-size-group cg-resolution-group" id="cgResolutionGroup">
-        <button class="cg-size-btn active" data-resolution="1k">1K <small>默认</small></button>
-        <button class="cg-size-btn" data-resolution="2k">2K <small>高清</small></button>
-        <button class="cg-size-btn" data-resolution="4k">4K <small>超清</small></button>
-      </div>
-      <div class="cg-size-hint">
-        <span>实际尺寸</span>
-        <strong id="cgSizeHint">1024x1024</strong>
+    <div class="cg-field cg-dimension-field">
+      <div class="cg-dimension-panel">
+        <div class="cg-dimension-heading">
+          <label>图像尺寸</label>
+          <span class="cg-current-size">当前：<strong id="cgSizeHint">1024x1024</strong></span>
+        </div>
+        <div class="cg-size-mode-switch" id="cgSizeModeGroup" role="tablist" aria-label="图像尺寸模式">
+          <button class="cg-size-mode-btn" type="button" role="tab" aria-selected="false" data-size-mode="auto">自动</button>
+          <button class="cg-size-mode-btn active" type="button" role="tab" aria-selected="true" data-size-mode="aspect">按比例</button>
+          <button class="cg-size-mode-btn" type="button" role="tab" aria-selected="false" data-size-mode="custom">自定义宽高</button>
+        </div>
+        <div class="cg-size-mode-panel" id="cgAutoSizePanel" data-size-panel="auto" role="tabpanel" hidden>
+          <div class="cg-auto-size-state"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span>模型自动选择</span></div>
+        </div>
+        <div class="cg-size-mode-panel" id="cgAspectSizePanel" data-size-panel="aspect" role="tabpanel">
+          <div class="cg-size-section">
+            <span class="cg-size-section-title">基准分辨率</span>
+            <div class="cg-size-group cg-resolution-group" id="cgResolutionGroup">
+              <button class="cg-size-btn active" type="button" data-resolution="1k" aria-pressed="true">1K <small>默认</small></button>
+              <button class="cg-size-btn" type="button" data-resolution="2k" aria-pressed="false">2K <small>高清</small></button>
+              <button class="cg-size-btn" type="button" data-resolution="4k" aria-pressed="false">4K <small>超清</small></button>
+            </div>
+          </div>
+          <div class="cg-size-section">
+            <span class="cg-size-section-title">图像比例</span>
+            <div class="cg-aspect-grid" id="cgAspectGroup">
+              <button class="cg-aspect-btn cg-size-btn active" type="button" data-aspect="1:1" aria-pressed="true"><span class="cg-ratio-shape" aria-hidden="true"></span><span>1:1</span></button>
+              <button class="cg-aspect-btn cg-size-btn" type="button" data-aspect="3:2" aria-pressed="false"><span class="cg-ratio-shape landscape" aria-hidden="true"></span><span>3:2</span></button>
+              <button class="cg-aspect-btn cg-size-btn" type="button" data-aspect="2:3" aria-pressed="false"><span class="cg-ratio-shape portrait" aria-hidden="true"></span><span>2:3</span></button>
+              <button class="cg-aspect-btn cg-size-btn" type="button" data-aspect="16:9" aria-pressed="false"><span class="cg-ratio-shape wide" aria-hidden="true"></span><span>16:9</span></button>
+              <button class="cg-aspect-btn cg-size-btn" type="button" data-aspect="9:16" aria-pressed="false"><span class="cg-ratio-shape tall" aria-hidden="true"></span><span>9:16</span></button>
+              <button class="cg-aspect-btn cg-size-btn" type="button" data-aspect="4:3" aria-pressed="false"><span class="cg-ratio-shape landscape" aria-hidden="true"></span><span>4:3</span></button>
+              <button class="cg-aspect-btn cg-size-btn" type="button" data-aspect="3:4" aria-pressed="false"><span class="cg-ratio-shape portrait" aria-hidden="true"></span><span>3:4</span></button>
+              <button class="cg-aspect-btn cg-size-btn" type="button" data-aspect="21:9" aria-pressed="false"><span class="cg-ratio-shape ultrawide" aria-hidden="true"></span><span>21:9</span></button>
+            </div>
+          </div>
+        </div>
+        <div class="cg-size-mode-panel" id="cgCustomSizePanel" data-size-panel="custom" role="tabpanel" hidden>
+          <div class="cg-custom-size-grid">
+            <div class="cg-custom-size-control">
+              <label for="cgCustomWidth">宽度</label>
+              <div class="cg-custom-size-input-wrap"><input id="cgCustomWidth" type="number" min="256" max="4096" step="1" inputmode="numeric" value="1024"><span>px</span></div>
+            </div>
+            <button class="cg-size-swap-btn" type="button" id="cgSizeSwapBtn" aria-label="交换宽高" title="交换宽高"><i class="fa-solid fa-right-left" aria-hidden="true"></i></button>
+            <div class="cg-custom-size-control">
+              <label for="cgCustomHeight">高度</label>
+              <div class="cg-custom-size-input-wrap"><input id="cgCustomHeight" type="number" min="256" max="4096" step="1" inputmode="numeric" value="1024"><span>px</span></div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
     <div class="cg-field">
@@ -6351,6 +6653,7 @@ function closeAccessibleDialog(overlay) {
   else if (overlay.id === 'cgOverlay') closeCustomGen();
   else if (overlay.id === 'promptOverlay') closePrompt();
   else if (overlay.id === 'liveLogOverlay') closeLiveLogs();
+  else if (overlay.id === 'imageVersionOverlay') closeImageVersions();
   else if (overlay.id === 'modalOverlay') closeModal();
 }
 
@@ -8635,6 +8938,35 @@ function adjustGalleryFavoriteTotal(previousFavorite, nextFavorite) {
   );
 }
 
+function updateFavoriteButtonState(imgId, isFavorite) {
+  if (!imgId) return;
+  document.querySelectorAll('[data-favorite-img]').forEach(button => {
+    if (button.dataset.favoriteImg !== imgId) return;
+    button.classList.toggle('liked', isFavorite);
+    button.setAttribute('aria-label', isFavorite ? '取消收藏' : '收藏');
+    const icon = button.querySelector('.fa-heart');
+    if (icon) {
+      icon.classList.toggle('fa-solid', isFavorite);
+      icon.classList.toggle('fa-regular', !isFavorite);
+    }
+  });
+}
+
+function favoriteChangeRequiresRerender(previousFavorite, nextFavorite) {
+  if (previousFavorite === nextFavorite) return false;
+  return showFavoritesOnly || showUnfavoritesOnly;
+}
+
+function applyFavoriteViewState(imgId, previousFavorite, nextFavorite, viewportAnchor) {
+  if (favoriteChangeRequiresRerender(previousFavorite, nextFavorite)) {
+    renderActivePhotoView();
+    restoreGalleryViewportAnchor(viewportAnchor);
+  } else {
+    updateFavoriteButtonState(imgId, nextFavorite);
+  }
+  updateBadges();
+}
+
 function removeLocalImage(imgId) {
   const previousTotal = Number.isFinite(galleryTotal) ? galleryTotal : 0;
   const previousViewTotal = Number.isFinite(galleryViewTotal) ? galleryViewTotal : 0;
@@ -9086,7 +9418,7 @@ function renderToday() {
           ${schedHtml ? `<div class="modal-schedule">${schedHtml}</div>` : ""}
           ${captionHtml}
           <div class="modal-actions" onclick="event.stopPropagation()">
-            <button class="mbtn" onclick="event.stopPropagation();toggleFavorite(${todayImageArg});"><i class="${today.favorite ? 'fa-solid' : 'fa-regular'} fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
+            <button class="mbtn ${today.favorite ? 'liked' : ''}" data-favorite-img="${todayImageFilenameAttr}" aria-label="${today.favorite ? '取消收藏' : '收藏'}" onclick="event.stopPropagation();toggleFavorite(${todayImageArg},event)"><i class="${today.favorite ? 'fa-solid' : 'fa-regular'} fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
             <button class="mbtn" onclick="event.stopPropagation();shareImage(${todayImageArg});"><i class="fa-solid fa-share-nodes btn-icon" aria-hidden="true"></i> 分享</button>
             <button class="mbtn" onclick="event.stopPropagation();showPrompt(this)" data-image="${todayImageFilenameAttr}" data-prompt="${encodeURIComponent(today.prompt || '')}"><i class="fa-regular fa-pen-to-square btn-icon" aria-hidden="true"></i> 提示词</button>
             <button class="mbtn danger" onclick="event.stopPropagation();deleteImage(${todayDeleteArg}, event);"><i class="fa-regular fa-trash-can btn-icon" aria-hidden="true"></i> 删除</button>
@@ -9330,7 +9662,7 @@ function renderGallery() {
                 ${renderThoughtBlock(e.caption)}
                 ${periodHtml}
                 <div class="tc-actions">
-                  <button class="tc-btn ${e.favorite ? 'liked' : ''}" onclick="toggleFavorite(${imageFilenameArg}, event)" data-img="${safeImageFilename}"><i class="${e.favorite ? 'fa-solid' : 'fa-regular'} fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
+                  <button class="tc-btn ${e.favorite ? 'liked' : ''}" onclick="toggleFavorite(${imageFilenameArg}, event)" data-img="${safeImageFilename}" data-favorite-img="${safeImageFilename}" aria-label="${e.favorite ? '取消收藏' : '收藏'}"><i class="${e.favorite ? 'fa-solid' : 'fa-regular'} fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
                   <button class="tc-btn" onclick="shareImage(${imageFilenameArg}, event)"><i class="fa-solid fa-share-nodes btn-icon" aria-hidden="true"></i> 分享</button>
                   <button class="tc-btn" onclick="showPrompt(this)" data-image="${safeImageFilename}" data-prompt="${encodeURIComponent(e.prompt || '')}"><i class="fa-regular fa-pen-to-square btn-icon" aria-hidden="true"></i> 提示词</button>
                   <button class="tc-btn danger" onclick="deleteImage(${deleteArg}, event)"><i class="fa-regular fa-trash-can btn-icon" aria-hidden="true"></i> 删除</button>
@@ -9369,7 +9701,7 @@ function renderGallery() {
                 </div>
                 ${metaHtml ? `<div class="card-meta">${metaHtml}</div>` : ''}
                 <div class="card-actions">
-                  <button class="ca-btn ${e.favorite ? 'liked' : ''}" aria-label="${e.favorite ? '取消收藏' : '收藏'}" onclick="event.stopPropagation();toggleFavorite(${imageFilenameArg}, event)" data-img="${imageFilenameAttr}"><i class="${e.favorite ? 'fa-solid' : 'fa-regular'} fa-heart ca-icon" aria-hidden="true"></i><span class="ca-label">收藏</span></button>
+                  <button class="ca-btn ${e.favorite ? 'liked' : ''}" aria-label="${e.favorite ? '取消收藏' : '收藏'}" onclick="event.stopPropagation();toggleFavorite(${imageFilenameArg}, event)" data-img="${imageFilenameAttr}" data-favorite-img="${imageFilenameAttr}"><i class="${e.favorite ? 'fa-solid' : 'fa-regular'} fa-heart ca-icon" aria-hidden="true"></i><span class="ca-label">收藏</span></button>
                   ${renderRerollButton(e, {card: true})}
                   <button class="ca-btn card-edit-btn" aria-label="编辑图片" onclick="event.stopPropagation();openImageEditForImage(${imageFilenameArg})"><i class="fa-solid fa-wand-magic-sparkles ca-icon" aria-hidden="true"></i><span class="ca-label">编辑</span></button>
                   <button class="ca-btn danger" aria-label="删除" onclick="event.stopPropagation();deleteImage(${deleteArg}, event)"><i class="fa-regular fa-trash-can ca-icon" aria-hidden="true"></i><span class="ca-label">删除</span></button>
@@ -9471,12 +9803,22 @@ ms.textContent = `
 .modal-image img { width:100%;height:100%;object-fit:cover;transition:transform 0.4s; }
 .modal-image img:hover { transform:scale(1.03); }
 /* Fullscreen image viewer */
-.img-fullscreen { position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.92);z-index:9999;display:none;align-items:center;justify-content:center;cursor:zoom-out;animation:fadeIn 0.2s; }
+.img-fullscreen { position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.92);z-index:10060;display:none;align-items:center;justify-content:center;cursor:zoom-out;animation:fadeIn 0.2s; }
 .img-fullscreen.open { display:flex; }
 .img-fullscreen img { max-width:92vw;max-height:92vh;object-fit:contain;border-radius:8px;box-shadow:0 0 60px rgba(0,0,0,0.5); }
 .modal-info { flex:1;padding:24px 24px 20px;display:flex;flex-direction:column;gap:10px;background:linear-gradient(180deg,#fcfaff 0%,#fff 100%); }
 .modal-info-top { display:flex;align-items:center;justify-content:space-between;gap:12px; }
+.modal-date-group { min-width:0;display:flex;align-items:center;gap:7px; }
 .modal-date { font-size:15px;color:#999;font-weight:500;letter-spacing:0.3px; }
+.modal-version-btn {
+  width:28px;height:28px;padding:0;border:1px solid #e5dce8;border-radius:50%;background:#fff;color:#8a758e;
+  display:inline-flex;align-items:center;justify-content:center;gap:2px;cursor:pointer;flex:0 0 auto;
+  font-size:12px;line-height:1;box-shadow:0 2px 7px rgba(66,38,73,0.07);transition:all .18s ease;
+}
+.modal-version-btn:hover { color:#d81b60;border-color:#e9a9c0;background:#fff7fa;transform:translateY(-1px); }
+.modal-version-btn[hidden] { display:none; }
+.modal-version-count { font-size:9px;font-weight:800;line-height:1; }
+.modal-version-count:empty { display:none; }
 .modal-style { display:inline-block;background:linear-gradient(135deg,#e91e63,#9c27b0);color:#fff;padding:4px 14px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:0.5px;width:fit-content;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(233,30,99,0.2);flex-shrink:0; }
 .modal-style:hover { opacity:0.9; transform:translateY(-1px); box-shadow:0 4px 12px rgba(233,30,99,0.3); }
 .modal-outfit { display:flex;align-items:center;gap:10px;font-size:15px;line-height:1.8;color:#555;padding:6px 0;flex-wrap:wrap; }
@@ -9682,6 +10024,42 @@ ms.textContent = `
 .image-edit-action.primary { border-color:#d81b60;background:#d81b60;color:#fff;box-shadow:0 8px 20px rgba(216,27,96,.2); }
 .image-edit-action.primary:hover { background:#c2185b;color:#fff; }
 .image-edit-action:disabled { opacity:.55;cursor:default;box-shadow:none; }
+.image-version-overlay {
+  position:fixed;inset:0;z-index:10040;display:none;align-items:center;justify-content:center;
+  padding:24px;background:rgba(24,12,30,0.52);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+}
+.image-version-overlay.open { display:flex; }
+.image-version-dialog {
+  width:min(680px,calc(100vw - 40px));max-height:min(760px,calc(100vh - 48px));overflow:hidden;
+  display:flex;flex-direction:column;background:#fff;border:1px solid rgba(216,27,96,.13);border-radius:8px;
+  box-shadow:0 28px 90px rgba(31,12,39,.32);animation:slideUp .22s cubic-bezier(.16,1,.3,1);
+}
+.image-version-head { display:flex;align-items:center;justify-content:space-between;gap:16px;padding:17px 18px;border-bottom:1px solid #eee7f0; }
+.image-version-title { min-width:0;display:flex;align-items:center;gap:10px;color:#302633; }
+.image-version-title-icon { width:32px;height:32px;border-radius:8px;background:#d81b60;color:#fff;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto; }
+.image-version-title-copy { min-width:0;display:flex;flex-direction:column;gap:1px; }
+.image-version-title-copy strong { font-size:16px;line-height:1.35;letter-spacing:0; }
+.image-version-title-copy span { color:#918394;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.image-version-close { width:34px;height:34px;border:0;border-radius:50%;background:#f4eff5;color:#756778;display:inline-flex;align-items:center;justify-content:center;cursor:pointer; }
+.image-version-close:hover { color:#d81b60;background:#fce4ec; }
+.image-version-list { min-height:180px;overflow-y:auto;padding:0 18px 8px; }
+.image-version-loading,.image-version-empty { min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#8b7c8e;text-align:center;padding:28px; }
+.image-version-empty i { font-size:27px;color:#c9bacd; }
+.image-version-empty strong { color:#5d4d61;font-size:15px; }
+.image-version-empty span { max-width:430px;font-size:13px;line-height:1.65; }
+.image-version-item { width:100%;display:grid;grid-template-columns:96px minmax(0,1fr) 22px;align-items:center;gap:14px;padding:14px 0;border:0;border-bottom:1px solid #f0e8f1;background:#fff;color:inherit;text-align:left;cursor:pointer; }
+.image-version-item:last-of-type { border-bottom:0; }
+.image-version-item:hover .image-version-thumb { transform:scale(1.02);box-shadow:0 7px 18px rgba(57,31,63,.14); }
+.image-version-thumb { width:96px;aspect-ratio:3/4;object-fit:cover;display:block;border-radius:6px;background:#f2edf3;transition:all .18s ease; }
+.image-version-copy { min-width:0;display:flex;flex-direction:column;gap:5px; }
+.image-version-meta { display:flex;align-items:center;gap:8px;flex-wrap:wrap; }
+.image-version-label { font-size:13px;font-weight:800;color:#d81b60; }
+.image-version-time { font-size:12px;color:#988a9b; }
+.image-version-instruction { color:#584c5b;font-size:14px;line-height:1.55;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden; }
+.image-version-size { color:#9b8e9e;font-size:11px; }
+.image-version-arrow { color:#b8aabc;font-size:12px; }
+.image-version-legacy-note { display:flex;align-items:flex-start;gap:8px;margin:4px 0 10px;padding:11px 12px;border-top:1px solid #f0e8f1;color:#8a7b8d;font-size:12px;line-height:1.55; }
+.image-version-legacy-note i { color:#b39ab8;margin-top:2px; }
 .delete-confirm-overlay {
   position:fixed;inset:0;z-index:10020;display:flex;align-items:center;justify-content:center;
   padding:24px;background:rgba(24,12,30,0.36);opacity:0;visibility:hidden;pointer-events:none;
@@ -9744,15 +10122,16 @@ ms.textContent = `
   justify-content: center;
 }
 @keyframes zoomIn { from{opacity:0;transform:scale(0.9)} to{opacity:1;transform:scale(1)} }
-@media(max-width:768px){
-  .modal-overlay.open { align-items:flex-end; }
-  .modal-content { flex-direction:column;align-items:stretch;max-height:calc(100vh - 48px);border-radius:20px; }
-  .modal-image { flex:0 0 auto;width:100%;height:clamp(330px,74vw,500px);min-height:0;max-height:none;border-radius:20px 20px 0 0; }
-  .modal-info { padding:22px 20px 18px; }
-  .modal-content .today-card-info { flex:1 1 auto;min-height:0;gap:16px; }
-	  .modal-content .today-card-info .modal-schedule { margin-top:6px; }
-	  .modal-content .today-card-info .modal-caption.tc-thought { margin-top:8px;padding:17px 16px; }
-	  .modal-content .today-card-info .modal-actions { margin-top:auto; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+	@media(max-width:768px){
+	  .modal-overlay { padding:8px; }
+	  .modal-overlay.open { align-items:flex-end; }
+	  .modal-content { flex-direction:column;align-items:stretch;max-height:calc(100vh - 16px);max-height:calc(100dvh - 16px);border-radius:16px; }
+	  .modal-image { flex:0 0 auto;width:100%;height:clamp(330px,74vw,500px);min-height:0;max-height:none;border-radius:16px 16px 0 0; }
+	  .modal-content .today-card-info { flex:0 0 auto;min-height:auto;padding:16px;gap:12px; }
+	  .modal-content .today-card-info > * { flex-shrink:0; }
+		  .modal-content .today-card-info .modal-schedule { margin-top:4px;max-height:none;overflow:visible;padding:10px 12px; }
+		  .modal-content .today-card-info .modal-caption.tc-thought { margin-top:8px;padding:17px 16px; }
+		  .modal-content .today-card-info .modal-actions { margin-top:0;grid-template-columns:repeat(3,minmax(0,1fr)); }
 	  .image-edit-overlay { padding:10px;align-items:flex-end; }
 	  .image-edit-dialog { width:100%;max-height:calc(100vh - 20px);overflow:auto;grid-template-columns:1fr;grid-template-rows:auto clamp(300px,52vh,500px) auto;border-radius:8px; }
 	  .image-edit-head { grid-column:1;padding:14px 15px; }
@@ -9765,6 +10144,12 @@ ms.textContent = `
 	  .image-edit-instruction { min-height:100px;resize:none; }
 	  .image-edit-schedule { height:40px; }
 	  .image-edit-actions { grid-template-columns:1fr 1.5fr;padding:4px 0 0;border-top:0;box-shadow:none; }
+	  .image-version-overlay { padding:10px;align-items:flex-end; }
+	  .image-version-dialog { width:100%;max-height:calc(100vh - 20px); }
+	  .image-version-head { padding:14px 15px; }
+	  .image-version-list { padding:0 15px 6px; }
+	  .image-version-item { grid-template-columns:82px minmax(0,1fr) 18px;gap:11px;padding:12px 0; }
+	  .image-version-thumb { width:82px; }
 	  .modal-content.modal-fit-detail { height:auto; }
 	}
 	}`;
@@ -9779,10 +10164,13 @@ modalOverlay.onclick = (e) => { if (e.target === modalOverlay) closeModal(); };
 modalOverlay.innerHTML = `
   <div class="modal-content" id="modalContent" role="dialog" aria-modal="true" aria-label="图片详情" tabindex="-1" onclick="event.stopPropagation()">
     <div class="modal-image" id="modalImageWrap"></div>
-    <div class="modal-info today-card-info">
-      <div class="modal-info-top">
-        <span class="modal-date" id="modalDate"></span>
-        <span class="modal-style" id="modalStyle" onclick="event.stopPropagation();filterByTag(this.textContent);"></span>
+	    <div class="modal-info today-card-info">
+	      <div class="modal-info-top">
+	        <span class="modal-date-group">
+	          <span class="modal-date" id="modalDate"></span>
+	          <button class="modal-version-btn" id="modalVersionBtn" type="button" onclick="openImageVersions(event)" title="查看历史版本" aria-label="查看历史版本" hidden><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i><span class="modal-version-count" id="modalVersionCount"></span></button>
+	        </span>
+	        <span class="modal-style" id="modalStyle" onclick="event.stopPropagation();filterByTag(this.textContent);"></span>
       </div>
       <div class="modal-meta" id="modalMeta"></div>
       <div class="modal-outfit" id="modalOutfit"></div>
@@ -9798,6 +10186,27 @@ modalOverlay.innerHTML = `
     </div>
   </div>`;
 document.body.appendChild(modalOverlay);
+
+const imageVersionOverlay = document.createElement("div");
+imageVersionOverlay.className = "image-version-overlay";
+imageVersionOverlay.id = "imageVersionOverlay";
+imageVersionOverlay.setAttribute("aria-hidden", "true");
+imageVersionOverlay.onclick = (event) => { if (event.target === imageVersionOverlay) closeImageVersions(); };
+imageVersionOverlay.innerHTML = `
+  <div class="image-version-dialog" role="dialog" aria-modal="true" aria-labelledby="imageVersionTitle" tabindex="-1" onclick="event.stopPropagation()">
+    <div class="image-version-head">
+      <div class="image-version-title">
+        <span class="image-version-title-icon" aria-hidden="true"><i class="fa-solid fa-clock-rotate-left"></i></span>
+        <span class="image-version-title-copy">
+          <strong id="imageVersionTitle">历史版本</strong>
+          <span id="imageVersionSourceMeta"></span>
+        </span>
+      </div>
+      <button class="image-version-close" id="imageVersionCloseBtn" type="button" onclick="closeImageVersions()" aria-label="关闭"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+    </div>
+    <div class="image-version-list" id="imageVersionList" aria-live="polite"></div>
+  </div>`;
+document.body.appendChild(imageVersionOverlay);
 
 const imageEditOverlay = document.createElement("div");
 imageEditOverlay.className = "image-edit-overlay";
@@ -9871,6 +10280,7 @@ deleteConfirmOverlay.addEventListener("click", () => closeDeleteConfirm(false));
 const imgFs = document.createElement("div");
 imgFs.className = "img-fullscreen";
 imgFs.id = "imgFullscreen";
+imgFs.tabIndex = -1;
 imgFs.onclick = () => { imgFs.classList.remove("open"); };
 document.body.appendChild(imgFs);
 
@@ -9882,6 +10292,7 @@ function openFullscreenImg(src) {
   img.decoding = "async";
   imgFs.appendChild(img);
   imgFs.classList.add("open");
+  imgFs.focus({preventScroll:true});
 }
 
 let currentModalImg = '';
@@ -9890,6 +10301,7 @@ let imageEditTarget = 'background';
 let imageEditBusy = false;
 let imageEditLastFocus = null;
 let imageEditOriginalScheduleDescription = '';
+let imageVersionRequestToken = 0;
 const imageEditPlaceholders = {
   background: '例如：改成雨后的东京街道，保留人物、桌面和前景物品',
   outfit: '例如：只把上衣改成黑色短款皮夹克',
@@ -9898,6 +10310,89 @@ const imageEditPlaceholders = {
   object: '例如：只把手里的咖啡杯改成透明玻璃杯',
   custom: '明确写出唯一需要改变的元素'
 };
+function imageVersionTimestamp(item) {
+  const archivedAt = String((item && item.archived_at) || '').trim();
+  if (archivedAt) {
+    const parsed = new Date(archivedAt);
+    if (!Number.isNaN(parsed.getTime())) {
+      return new Intl.DateTimeFormat('zh-CN', {
+        month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false
+      }).format(parsed);
+    }
+  }
+  const dateText = item && item.date ? formatDate(item.date) : '';
+  const timeText = String((item && item.time) || '').trim();
+  return [dateText, timeText].filter(Boolean).join(' ');
+}
+function renderImageVersions(payload) {
+  const list = document.getElementById('imageVersionList');
+  const items = Array.isArray(payload && payload.items) ? payload.items : [];
+  const unavailableCount = Math.max(0, Number(payload && payload.unavailable_count) || 0);
+  if (!items.length) {
+    const legacyText = unavailableCount > 0
+      ? '这张图在历史版本功能启用前完成过编辑，旧图当时没有保留。'
+      : '没有可查看的历史版本。';
+    list.innerHTML = `<div class="image-version-empty"><i class="fa-regular fa-images" aria-hidden="true"></i><strong>暂无旧图</strong><span>${escapeHtml(legacyText)}</span></div>`;
+    return;
+  }
+  list.innerHTML = items.map((item, index) => {
+    const targetLabel = String(item.target_label || '编辑').trim();
+    const versionLabel = targetLabel === '重抽' ? '重抽前版本' : `${targetLabel}修改前`;
+    const instruction = String(item.instruction || '').trim() || '保留的编辑前图片';
+    const timestamp = imageVersionTimestamp(item);
+    const size = item.width && item.height ? `${item.width} × ${item.height}` : '';
+    return `<button class="image-version-item" type="button" data-version-index="${index}" aria-label="查看${escapeAttr(versionLabel)}">
+      <img class="image-version-thumb" src="${escapeAttr(item.image_url || '')}" alt="${escapeAttr(versionLabel)}" loading="lazy" decoding="async">
+      <span class="image-version-copy">
+        <span class="image-version-meta"><span class="image-version-label">${escapeHtml(versionLabel)}</span><span class="image-version-time">${escapeHtml(timestamp)}</span></span>
+        <span class="image-version-instruction">${escapeHtml(instruction)}</span>
+        ${size ? `<span class="image-version-size">${escapeHtml(size)}</span>` : ''}
+      </span>
+      <i class="fa-solid fa-chevron-right image-version-arrow" aria-hidden="true"></i>
+    </button>`;
+  }).join('') + (unavailableCount > 0
+    ? `<div class="image-version-legacy-note"><i class="fa-solid fa-circle-info" aria-hidden="true"></i><span>另有 ${unavailableCount} 次早期编辑发生在历史版本功能启用前，旧图未保留。</span></div>`
+    : '');
+  list.querySelectorAll('[data-version-index]').forEach(button => {
+    button.addEventListener('click', () => {
+      const item = items[Number(button.dataset.versionIndex)];
+      if (item && item.image_url) openFullscreenImg(item.image_url);
+    });
+  });
+}
+async function openImageVersions(event) {
+  if (event) event.stopPropagation();
+  const imageFilename = String(currentModalImg || '').trim();
+  if (!imageFilename) return;
+  const requestToken = ++imageVersionRequestToken;
+  const entry = currentModalEntry();
+  document.getElementById('imageVersionSourceMeta').textContent = entry
+    ? `${formatDate(entry.date)}${entry.time ? ' · ' + entry.time : ''}`
+    : imageFilename;
+  document.getElementById('imageVersionList').innerHTML = '<div class="image-version-loading"><i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><span>正在读取历史版本</span></div>';
+  imageVersionOverlay.classList.add('open');
+  activateAccessibleDialog(imageVersionOverlay, '#imageVersionCloseBtn', event && event.currentTarget);
+  document.body.style.overflow = 'hidden';
+  try {
+    const response = await fetch(`${API}/api/images/${encodeURIComponent(imageFilename)}/versions`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    if (requestToken !== imageVersionRequestToken || !imageVersionOverlay.classList.contains('open')) return;
+    renderImageVersions(payload);
+  } catch (error) {
+    if (requestToken !== imageVersionRequestToken || !imageVersionOverlay.classList.contains('open')) return;
+    document.getElementById('imageVersionList').innerHTML = '<div class="image-version-empty"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i><strong>读取失败</strong><span>暂时无法加载历史版本。</span></div>';
+    showToast('历史版本读取失败：' + (error && error.message ? error.message : '未知错误'));
+  }
+}
+function closeImageVersions() {
+  imageVersionRequestToken += 1;
+  imageVersionOverlay.classList.remove('open');
+  deactivateAccessibleDialog(imageVersionOverlay);
+  if (!modalOverlay.classList.contains('open') && !imageEditOverlay.classList.contains('open')) {
+    document.body.style.overflow = '';
+  }
+}
 function resetModalDetailHeight() {
   const modal = document.getElementById("modalContent");
   if (!modal) return;
@@ -9943,6 +10438,17 @@ function openModal(e, returnFocusTarget = null) {
   const modalImg = document.querySelector("#modalImageWrap img");
   if (modalImg) modalImg.onload = syncModalDetailHeight;
   document.getElementById("modalDate").textContent = formatDate(e.date) + (e.time ? ' ' + e.time : '');
+  const versionCount = Math.max(0, Number(e.version_count) || 0);
+  const editHistoryCount = Math.max(
+    0,
+    Number(e.edit_history_count) || (Array.isArray(e.edit_history) ? e.edit_history.length : 0)
+  );
+  const hasImageHistory = Boolean(e.has_image_history || versionCount || editHistoryCount);
+  const versionBtn = document.getElementById('modalVersionBtn');
+  versionBtn.hidden = !hasImageHistory;
+  versionBtn.title = versionCount > 0 ? `查看 ${versionCount} 个历史版本` : '查看历史版本';
+  versionBtn.setAttribute('aria-label', versionBtn.title);
+  document.getElementById('modalVersionCount').textContent = versionCount > 0 ? String(versionCount) : '';
   const styleEl = document.getElementById("modalStyle");
   const displayStyle = displayOutfitStyle(e);
   if (displayStyle) { styleEl.textContent = displayStyle; styleEl.style.display = "inline-block"; }
@@ -10023,6 +10529,7 @@ function openModal(e, returnFocusTarget = null) {
 }
 function closeModal() {
   closeScheduleSendMenu();
+  if (imageVersionOverlay.classList.contains('open')) closeImageVersions();
   modalOverlay.classList.remove("open");
   deactivateAccessibleDialog(modalOverlay);
   document.body.style.overflow = "";
@@ -10470,11 +10977,13 @@ async function toggleFavorite(imgId, event) {
   const previousFavorite = entry.favorite === true;
   const optimisticFavorite = !previousFavorite;
   const btn = event && event.currentTarget ? event.currentTarget : null;
+  const viewportAnchor = favoriteChangeRequiresRerender(previousFavorite, optimisticFavorite)
+    ? captureGalleryViewportAnchor(imgId, event)
+    : null;
   if (btn) btn.disabled = true;
   adjustGalleryFavoriteTotal(previousFavorite, optimisticFavorite);
   updateLocalFavorite(imgId, optimisticFavorite);
-  renderActivePhotoView();
-  updateBadges();
+  applyFavoriteViewState(imgId, previousFavorite, optimisticFavorite, viewportAnchor);
   try {
     const res = await fetch(`${API}/api/images/${encodeURIComponent(imgId)}/favorite`, {
       method: "POST",
@@ -10486,17 +10995,15 @@ async function toggleFavorite(imgId, event) {
     const serverFavorite = typeof data.success === "boolean" ? data.success : optimisticFavorite;
     adjustGalleryFavoriteTotal(optimisticFavorite, serverFavorite);
     updateLocalFavorite(imgId, serverFavorite);
-    renderActivePhotoView();
-    updateBadges();
+    applyFavoriteViewState(imgId, optimisticFavorite, serverFavorite, viewportAnchor);
   } catch(e) {
     adjustGalleryFavoriteTotal(optimisticFavorite, previousFavorite);
     updateLocalFavorite(imgId, previousFavorite);
-    renderActivePhotoView();
-    updateBadges();
+    applyFavoriteViewState(imgId, optimisticFavorite, previousFavorite, viewportAnchor);
     showToast("❌ 收藏失败" + (e.message ? ": " + e.message : ""));
   } finally {
     favoriteRequests.delete(imgId);
-    if (btn) btn.disabled = false;
+    if (btn && btn.isConnected) btn.disabled = false;
   }
 }
 
@@ -10651,11 +11158,16 @@ window.addEventListener("scroll", function() {
 // ===== Custom Gen Modal =====
 const CG_SIZE_MAP = {
   "1:1": { "1k": "1024x1024", "2k": "2048x2048", "4k": "4096x4096" },
+  "3:2": { "1k": "1536x1024", "2k": "2048x1365", "4k": "4096x2731" },
+  "2:3": { "1k": "1024x1536", "2k": "1365x2048", "4k": "2731x4096" },
+  "16:9": { "1k": "1366x768", "2k": "2048x1152", "4k": "4096x2304" },
+  "9:16": { "1k": "768x1366", "2k": "1152x2048", "4k": "2304x4096" },
   "3:4": { "1k": "768x1024", "2k": "1536x2048", "4k": "3072x4096" },
   "4:3": { "1k": "1024x768", "2k": "2048x1536", "4k": "4096x3072" },
-  "2:3": { "1k": "1024x1536", "2k": "1365x2048", "4k": "2731x4096" },
-  "9:16": { "1k": "768x1366", "2k": "1152x2048", "4k": "2304x4096" }
+  "21:9": { "1k": "1792x768", "2k": "3584x1536", "4k": "4096x1755" }
 };
+const CG_CUSTOM_SIZE_MIN = 256;
+const CG_CUSTOM_SIZE_MAX = 4096;
 const DEFAULT_STYLE_REF_FALLBACKS = [
   {
     filename: "reference_face.jpg",
@@ -10688,11 +11200,47 @@ function selectedCustomGenValue(groupId, key, fallback) {
   return btn && btn.dataset[key] ? btn.dataset[key] : fallback;
 }
 
+function getCustomSizeMode() {
+  const active = document.querySelector("#cgSizeModeGroup .cg-size-mode-btn.active");
+  const mode = active && active.dataset ? active.dataset.sizeMode : "aspect";
+  return ["auto", "aspect", "custom"].includes(mode) ? mode : "aspect";
+}
+
+function normalizeCustomDimension(value, fallback = 1024) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(CG_CUSTOM_SIZE_MAX, Math.max(CG_CUSTOM_SIZE_MIN, parsed));
+}
+
+function getCustomDimensions() {
+  const widthInput = document.getElementById("cgCustomWidth");
+  const heightInput = document.getElementById("cgCustomHeight");
+  return {
+    width: normalizeCustomDimension(widthInput ? widthInput.value : 1024),
+    height: normalizeCustomDimension(heightInput ? heightInput.value : 1024)
+  };
+}
+
 function getCustomGenSize() {
+  const mode = getCustomSizeMode();
+  if (mode === "auto") {
+    return { mode, aspect: "auto", resolution: "auto", size: "auto" };
+  }
+  if (mode === "custom") {
+    const dimensions = getCustomDimensions();
+    return {
+      mode,
+      aspect: "custom",
+      resolution: "custom",
+      size: `${dimensions.width}x${dimensions.height}`,
+      width: dimensions.width,
+      height: dimensions.height
+    };
+  }
   const aspect = selectedCustomGenValue("cgAspectGroup", "aspect", "1:1");
   const resolution = selectedCustomGenValue("cgResolutionGroup", "resolution", "1k");
   const size = (CG_SIZE_MAP[aspect] && CG_SIZE_MAP[aspect][resolution]) || CG_SIZE_MAP["1:1"]["1k"];
-  return { aspect, resolution, size };
+  return { mode, aspect, resolution, size };
 }
 
 function getCustomShotType() {
@@ -10733,8 +11281,44 @@ function setCustomGenActiveValue(groupId, key, value) {
   const btn = Array.from(group.querySelectorAll(".cg-size-btn"))
     .find(item => item.dataset[key] === value);
   if (!btn) return;
-  group.querySelectorAll(".cg-size-btn").forEach(item => item.classList.remove("active"));
+  group.querySelectorAll(".cg-size-btn").forEach(item => {
+    item.classList.remove("active");
+    item.setAttribute("aria-pressed", "false");
+  });
   btn.classList.add("active");
+  btn.setAttribute("aria-pressed", "true");
+}
+
+function setCustomSizeMode(mode) {
+  mode = ["auto", "aspect", "custom"].includes(mode) ? mode : "aspect";
+  document.querySelectorAll("#cgSizeModeGroup .cg-size-mode-btn").forEach(button => {
+    const active = button.dataset.sizeMode === mode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  document.querySelectorAll("[data-size-panel]").forEach(panel => {
+    panel.hidden = panel.dataset.sizePanel !== mode;
+  });
+}
+
+function sanitizeCustomDimensionInputs() {
+  const dimensions = getCustomDimensions();
+  const widthInput = document.getElementById("cgCustomWidth");
+  const heightInput = document.getElementById("cgCustomHeight");
+  if (widthInput) widthInput.value = String(dimensions.width);
+  if (heightInput) heightInput.value = String(dimensions.height);
+}
+
+function swapCustomDimensions() {
+  const widthInput = document.getElementById("cgCustomWidth");
+  const heightInput = document.getElementById("cgCustomHeight");
+  if (!widthInput || !heightInput) return;
+  const width = widthInput.value;
+  widthInput.value = heightInput.value;
+  heightInput.value = width;
+  sanitizeCustomDimensionInputs();
+  updateCustomSizeHint();
+  saveCustomGenState();
 }
 
 function setCustomImageModel(value) {
@@ -10809,10 +11393,15 @@ function readCustomGenState() {
 
 function saveCustomGenState() {
   const promptEl = document.getElementById("cgPrompt");
+  const customSize = getCustomGenSize();
+  const customDimensions = getCustomDimensions();
   const state = {
     prompt: promptEl ? promptEl.value : "",
-    aspect: getCustomGenSize().aspect,
-    resolution: getCustomGenSize().resolution,
+    sizeMode: customSize.mode,
+    aspect: customSize.mode === "aspect" ? customSize.aspect : selectedCustomGenValue("cgAspectGroup", "aspect", "1:1"),
+    resolution: customSize.mode === "aspect" ? customSize.resolution : selectedCustomGenValue("cgResolutionGroup", "resolution", "1k"),
+    customWidth: customDimensions.width,
+    customHeight: customDimensions.height,
     shot: getCustomShotType(),
     model: getCustomImageModel(),
     pure: getCustomPureMode(),
@@ -10828,6 +11417,11 @@ function restoreCustomGenState() {
   setCustomGenActiveValue("cgAspectGroup", "aspect", state.aspect);
   setCustomGenActiveValue("cgResolutionGroup", "resolution", state.resolution);
   setCustomGenActiveValue("cgShotGroup", "shot", state.shot);
+  const widthInput = document.getElementById("cgCustomWidth");
+  const heightInput = document.getElementById("cgCustomHeight");
+  if (widthInput) widthInput.value = String(normalizeCustomDimension(state.customWidth, 1024));
+  if (heightInput) heightInput.value = String(normalizeCustomDimension(state.customHeight, 1024));
+  setCustomSizeMode(state.sizeMode || "aspect");
   setCustomImageModel(state.model);
   setCustomPureMode(state.pure === true || state.pure === 1 || String(state.pure || "").toLowerCase() === "true" || state.pure === "1");
   updateCustomSizeHint();
@@ -10837,7 +11431,7 @@ function updateCustomSizeHint() {
   const hint = document.getElementById("cgSizeHint");
   if (!hint) return;
   const selected = getCustomGenSize();
-  hint.textContent = selected.size;
+  hint.textContent = selected.mode === "auto" ? "自动" : selected.size;
 }
 
 function bindCustomGenOptionGroup(groupId) {
@@ -10846,11 +11440,43 @@ function bindCustomGenOptionGroup(groupId) {
   group.addEventListener("click", e => {
     const btn = e.target.closest(".cg-size-btn");
     if (!btn) return;
-    group.querySelectorAll(".cg-size-btn").forEach(b => b.classList.remove("active"));
+    group.querySelectorAll(".cg-size-btn").forEach(b => {
+      b.classList.remove("active");
+      b.setAttribute("aria-pressed", "false");
+    });
     btn.classList.add("active");
+    btn.setAttribute("aria-pressed", "true");
     updateCustomSizeHint();
     saveCustomGenState();
   });
+}
+
+function bindCustomSizeControls() {
+  const modeGroup = document.getElementById("cgSizeModeGroup");
+  if (modeGroup) {
+    modeGroup.addEventListener("click", event => {
+      const button = event.target.closest(".cg-size-mode-btn");
+      if (!button) return;
+      setCustomSizeMode(button.dataset.sizeMode || "aspect");
+      updateCustomSizeHint();
+      saveCustomGenState();
+    });
+  }
+  ["cgCustomWidth", "cgCustomHeight"].forEach(id => {
+    const input = document.getElementById(id);
+    if (!input) return;
+    input.addEventListener("input", () => {
+      updateCustomSizeHint();
+      saveCustomGenState();
+    });
+    input.addEventListener("change", () => {
+      sanitizeCustomDimensionInputs();
+      updateCustomSizeHint();
+      saveCustomGenState();
+    });
+  });
+  const swapButton = document.getElementById("cgSizeSwapBtn");
+  if (swapButton) swapButton.addEventListener("click", swapCustomDimensions);
 }
 
 function restoreCustomRefSelection(grid, refValue) {
@@ -10871,6 +11497,7 @@ function currentCustomGenPayload(refImageOverride = "") {
   const refImage = refImageOverride || (refItem ? refItem.dataset.ref : "");
   const body = {
     prompt,
+    size_mode: customSize.mode,
     aspect: customSize.aspect,
     resolution: customSize.resolution,
     size: customSize.size,
@@ -10920,6 +11547,7 @@ function closeCustomGen() {
   document.body.style.overflow = "";
 }
 document.addEventListener("DOMContentLoaded", () => {
+  bindCustomSizeControls();
   bindCustomGenOptionGroup("cgAspectGroup");
   bindCustomGenOptionGroup("cgResolutionGroup");
   bindCustomGenOptionGroup("cgShotGroup");
@@ -12840,6 +13468,8 @@ document.addEventListener("keydown", e => {
       closeOutfitStyleDialog();
     } else if (document.getElementById("imgFullscreen").classList.contains("open")) {
       document.getElementById("imgFullscreen").classList.remove("open");
+    } else if (imageVersionOverlay.classList.contains("open")) {
+      closeImageVersions();
     } else if (modalOverlay.classList.contains("open")) {
       closeModal();
     } else if (document.getElementById("manualCharacterOverlay").classList.contains("open")) {
@@ -13612,25 +14242,28 @@ function renderWardrobeItem(item) {
   html += hasWardrobeImage
     ? '<button class="wardrobe-thumb wardrobe-thumb-btn" type="button" onclick="openFullscreenImg(' + jsStringArg(wardrobeImageSrc) + ')" title="放大查看" aria-label="放大查看 ' + escapeAttr(style) + ' 衣架图"><img src="' + escapeAttr(wardrobeImageSrc) + '" alt="' + escapeAttr(style + ' 衣架图') + '" loading="lazy" decoding="async"></button>'
     : '<div class="wardrobe-thumb"><div class="wardrobe-thumb-empty"><i class="fa-solid fa-shirt" aria-hidden="true"></i><span>' + emptyText + '</span></div></div>';
+  html += '<div class="wardrobe-details">';
   html += '<div class="wardrobe-meta"><span class="wardrobe-style">' + escapeHtml(style) + '</span><span class="wardrobe-date">' + escapeHtml(dateText) + '</span></div>';
   html += '<div class="wardrobe-copy">';
-  if (hair) html += '<div class="wardrobe-line"><strong>发型：</strong>' + escapeHtml(hair) + '</div>';
-  if (wear) html += '<div class="wardrobe-line"><strong>穿搭：</strong>' + escapeHtml(wear) + '</div>';
+  if (hair) html += '<div class="wardrobe-line hair" title="' + escapeAttr('发型：' + hair) + '"><strong>发型：</strong>' + escapeHtml(hair) + '</div>';
+  if (wear) html += '<div class="wardrobe-line wear" title="' + escapeAttr('穿搭：' + wear) + '"><strong>穿搭：</strong>' + escapeHtml(wear) + '</div>';
   if (!hair && !wear) html += '<div class="wardrobe-line">这套方案没有可展示的发型/穿搭内容</div>';
   html += '</div>';
   html += '<div class="wardrobe-actions">';
-  html += '<button class="wardrobe-action-btn wardrobe-generate-btn" type="button" data-wardrobe-action="generate" data-outfit-id="' + escapeAttr(outfitId) + '"' + (wardrobeGenerating ? ' disabled' : '') + '>' + (wardrobeGenerating ? '生成中' : (hasWardrobeImage ? '重生衣架图' : '生成衣架图')) + '</button>';
-  html += '<button class="wardrobe-action-btn" type="button" data-wardrobe-action="edit" data-outfit-id="' + escapeAttr(outfitId) + '">编辑</button>';
+  var generateLabel = wardrobeGenerating ? '生成中' : (hasWardrobeImage ? '重生衣架图' : '生成衣架图');
+  html += '<button class="wardrobe-action-btn wardrobe-generate-btn" type="button" data-wardrobe-action="generate" data-outfit-id="' + escapeAttr(outfitId) + '" title="' + generateLabel + '" aria-label="' + generateLabel + '"' + (wardrobeGenerating ? ' disabled' : '') + '><i class="fa-solid fa-rotate" aria-hidden="true"></i><span class="wardrobe-action-label">' + generateLabel + '</span></button>';
+  html += '<button class="wardrobe-action-btn" type="button" data-wardrobe-action="edit" data-outfit-id="' + escapeAttr(outfitId) + '" title="编辑穿搭" aria-label="编辑穿搭"><i class="fa-solid fa-pen" aria-hidden="true"></i><span class="wardrobe-action-label">编辑</span></button>';
   if (hasWardrobeImage) {
-    html += '<button class="wardrobe-action-btn" type="button" data-wardrobe-action="use-ref" data-ref="' + escapeAttr(wardrobeImageUrl) + '" data-ref-label="' + escapeAttr('衣柜 · ' + style) + '">用它生图</button>';
+    html += '<button class="wardrobe-action-btn" type="button" data-wardrobe-action="use-ref" data-ref="' + escapeAttr(wardrobeImageUrl) + '" data-ref-label="' + escapeAttr('衣柜 · ' + style) + '" title="用它生图" aria-label="用它生图"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span class="wardrobe-action-label">用它生图</span></button>';
   }
-  html += '<button class="wardrobe-remove-btn" type="button" data-payload="' + removePayloadAttr + '" onclick="removeFavoriteOutfitPlan(this)">取消收藏</button>';
+  html += '<button class="wardrobe-remove-btn" type="button" data-payload="' + removePayloadAttr + '" onclick="removeFavoriteOutfitPlan(this)" title="取消收藏" aria-label="取消收藏"><i class="fa-solid fa-heart-circle-xmark" aria-hidden="true"></i><span class="wardrobe-action-label">取消收藏</span></button>';
   if (wardrobeGenerating || wardrobeFailed) {
     var statusText = wardrobeFailed
       ? (wardrobeStatus.message || wardrobeStatus.error || '衣架图生成失败')
       : (wardrobeStatus.message || '衣架图生成中');
     html += '<div class="wardrobe-status' + (wardrobeFailed ? ' error' : '') + '">' + escapeHtml(statusText) + '</div>';
   }
+  html += '</div>';
   html += '</div>';
   html += '</article>';
   return html;
@@ -13926,6 +14559,16 @@ function setWardrobeCardBusy(btn, busy, text) {
   if (status) status.textContent = busy ? (text || '生成中...') : '';
 }
 
+function setWardrobeGenerateButtonLabel(btn, label) {
+  if (!btn) return;
+  label = String(label || '').trim();
+  var labelEl = btn.querySelector('.wardrobe-action-label');
+  if (labelEl) labelEl.textContent = label;
+  else btn.textContent = label;
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+}
+
 async function generateWardrobeImage(btn) {
   if (!btn || btn.disabled) return;
   const outfitId = String(btn.dataset.outfitId || '').trim();
@@ -13933,13 +14576,13 @@ async function generateWardrobeImage(btn) {
     showToast('❌ 找不到这套收藏方案');
     return;
   }
-  const originalText = btn.textContent;
+  const originalLabel = String(btn.querySelector('.wardrobe-action-label')?.textContent || btn.title || btn.textContent || '').trim();
   const startedAt = Date.now();
   let rendered = false;
   const updateBusyText = function() {
     const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
     const label = elapsed < 60 ? ('生成中 ' + elapsed + 's') : ('生成中 ' + Math.floor(elapsed / 60) + 'm' + String(elapsed % 60).padStart(2, '0') + 's');
-    btn.textContent = label;
+    setWardrobeGenerateButtonLabel(btn, label);
     setWardrobeCardBusy(btn, true, '衣架图生成中，通常需要 1-2 分钟');
   };
   updateBusyText();
@@ -13970,7 +14613,7 @@ async function generateWardrobeImage(btn) {
   } finally {
     clearInterval(busyTimer);
     if (!rendered) {
-      btn.textContent = originalText;
+      setWardrobeGenerateButtonLabel(btn, originalLabel);
       setWardrobeCardBusy(btn, false, '');
     }
   }

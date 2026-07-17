@@ -54,6 +54,12 @@ from image_editing import (
     normalize_image_edit_schedule_description,
     normalize_image_edit_target,
 )
+from image_versions import (
+    delete_image_versions,
+    find_image_version,
+    image_version_path,
+    normalize_image_versions,
+)
 from outfit_plan_edit import (
     MAX_OUTFIT_PLAN_EDIT_LENGTH,
     normalize_outfit_plan_field,
@@ -233,6 +239,20 @@ GROUP_CHAT_REPLY_PLACEHOLDERS = {
     "这个角色要发送到群聊的一条中文消息",
     "这个角色要发送到群聊的一条中文消息。",
 }
+GROUP_CHAT_INTERNAL_REASONING_HARD_PATTERNS = (
+    r"^\s*(?:首先|先来|先分析|分析一下)[，,:：]?\s*(?:用户|这条|当前|问题)",
+    r"(?:现在|接下来)[，,:：]?\s*(?:构思|分析|推理|规划)(?:回复|回答|输出)?",
+    r"^\s*(?:<think>|analysis\s*:|reasoning\s*:|we need to\s+(?:analy[sz]e|reason))",
+)
+GROUP_CHAT_INTERNAL_REASONING_SOFT_PATTERNS = (
+    r"(?:系统|上文|指令|提示词)(?:中|里)?(?:说|要求|规定|明确)",
+    r"(?:我需要|需要我).{0,50}(?:回复|输出|生成|调用|JSON|image_request)",
+    r"(?:只输出|输出为|输出).{0,12}(?:JSON|json)",
+    r"\bimage_request\b.{0,50}(?:字段|对象|默认为|必须|不能|包含)",
+    r"\bmessage\b.{0,30}(?:字段|内容|应该|必须)",
+    r"\b(?:i need to|let'?s)\s+(?:analy[sz]e|craft|respond|output)\b",
+    r"\bthe user (?:asks|input|said|wants)\b",
+)
 TODAY_PHOTO_SOURCES = {"cron", "web"}
 FAILED_SCHEDULE_TEXT = "生成失败"
 REFERENCE_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
@@ -645,6 +665,11 @@ class GalleryServer:
         self.app.router.add_post("/api/group-chat/rooms/{room_id}/reply", self.handle_group_chat_reply)
         self.app.router.add_post("/api/group-chat/rooms/{room_id}/bind-agent", self.handle_group_chat_bind_agent)
         self.app.router.add_post("/api/images/cleanup", self.handle_cleanup_images)
+        self.app.router.add_get("/api/images/{img_id}/versions", self.handle_image_versions)
+        self.app.router.add_get(
+            "/api/images/{img_id}/versions/{version_id}",
+            self.handle_image_version_file,
+        )
         self.app.router.add_get("/api/images/{img_id}", self.handle_image_detail)
         self.app.router.add_post("/api/images/{img_id}/reroll", self.handle_reroll_image)
         self.app.router.add_post("/api/images/{img_id}/edit", self.handle_edit_image)
@@ -3045,6 +3070,7 @@ class GalleryServer:
         deleted_file_count, errors = self._delete_image_files(img_id)
 
         removed_entry_count = 0
+        version_records = []
         store = ScheduleStore(self.data_dir)
 
         def _delete_entries(all_data):
@@ -3056,6 +3082,10 @@ class GalleryServer:
                     isinstance(entry, dict)
                     and entry.get("image_filename") == img_id
                 ):
+                    if isinstance(entry, dict):
+                        version_records.extend(
+                            normalize_image_versions(entry.get("image_versions"))
+                        )
                     del all_data[key]
                     removed_entry_count += 1
             return all_data
@@ -3072,12 +3102,18 @@ class GalleryServer:
             return metadata
 
         ImageMetadataStore(self.data_dir).update(_delete_metadata)
+        deleted_version_count, version_errors = delete_image_versions(
+            self.data_dir,
+            version_records,
+        )
+        errors.extend(version_errors)
 
         return {
             "image_filename": img_id,
             "deleted_file_count": deleted_file_count,
             "removed_entry_count": removed_entry_count,
             "metadata_deleted": metadata_deleted,
+            "deleted_version_count": deleted_version_count,
             "errors": errors,
         }
 
@@ -3090,6 +3126,82 @@ class GalleryServer:
         if not path:
             raise web.HTTPNotFound()
         return web.FileResponse(path)
+
+    def _image_version_records_for_image(self, img_id: str) -> tuple[dict, list[dict]]:
+        entry = self._gallery_entry_for_image(img_id)
+        if not entry:
+            return {}, []
+        return entry, normalize_image_versions(entry.get("image_versions"))
+
+    @staticmethod
+    def _public_image_version(img_id: str, record: dict, position: int) -> dict:
+        payload = {
+            "id": record["id"],
+            "image_url": f"/api/images/{quote(img_id, safe='')}/versions/{record['id']}",
+            "position": position,
+            "archived_at": record.get("archived_at", ""),
+            "target": record.get("target", ""),
+            "target_label": record.get("target_label", "") or "编辑",
+            "instruction": record.get("instruction", ""),
+            "date": record.get("date", ""),
+            "time": record.get("time", ""),
+        }
+        for field in ("width", "height", "file_size_bytes"):
+            if record.get(field):
+                payload[field] = record[field]
+        return payload
+
+    async def handle_image_versions(self, request: web.Request):
+        """List the available private versions for one gallery card."""
+        try:
+            img_id = self._normalize_gallery_image_filename(
+                request.match_info.get("img_id", "")
+            )
+        except ValueError:
+            return web.json_response({"error": "invalid_filename"}, status=400)
+
+        entry, records = self._image_version_records_for_image(img_id)
+        if not entry:
+            return web.json_response({"error": "not_found"}, status=404)
+
+        available = []
+        for position, record in enumerate(records, start=1):
+            path = image_version_path(self.data_dir, record)
+            if path and path.is_file():
+                available.append(self._public_image_version(img_id, record, position))
+        available.reverse()
+        edit_history = entry.get("edit_history")
+        edit_count = len(edit_history) if isinstance(edit_history, list) else 0
+        return web.json_response({
+            "image_filename": img_id,
+            "version_count": len(available),
+            "unavailable_count": max(0, edit_count - len(available)),
+            "items": available,
+        })
+
+    async def handle_image_version_file(self, request: web.Request):
+        """Serve one archived version only when it belongs to the current card."""
+        try:
+            img_id = self._normalize_gallery_image_filename(
+                request.match_info.get("img_id", "")
+            )
+        except ValueError:
+            raise web.HTTPNotFound()
+        entry, records = self._image_version_records_for_image(img_id)
+        if not entry:
+            raise web.HTTPNotFound()
+        resolved = find_image_version(
+            self.data_dir,
+            records,
+            request.match_info.get("version_id", ""),
+        )
+        if not resolved:
+            raise web.HTTPNotFound()
+        _, path = resolved
+        return web.FileResponse(
+            path,
+            headers={"Cache-Control": "private, max-age=31536000, immutable"},
+        )
 
     def _gallery_entry_for_image(self, img_id: str) -> dict:
         img_id = str(img_id or "").strip()
@@ -4463,6 +4575,12 @@ class GalleryServer:
         if not isinstance(entry, dict):
             return entry
         normalized = dict(entry)
+        image_versions = normalize_image_versions(normalized.pop("image_versions", None))
+        edit_history = normalized.get("edit_history")
+        edit_history_count = len(edit_history) if isinstance(edit_history, list) else 0
+        normalized["version_count"] = len(image_versions)
+        normalized["edit_history_count"] = edit_history_count
+        normalized["has_image_history"] = bool(image_versions or edit_history_count)
         img_file = normalized.get("image_filename", "")
         if img_file:
             for field in ("schedule", "schedule_prompt", "schedule_details"):
@@ -7402,6 +7520,21 @@ class GalleryServer:
         )
 
     @staticmethod
+    def _is_group_chat_internal_reasoning(value: str) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return False
+        flags = re.IGNORECASE | re.DOTALL
+        if any(re.search(pattern, text, flags) for pattern in GROUP_CHAT_INTERNAL_REASONING_HARD_PATTERNS):
+            return True
+        signal_count = sum(
+            1
+            for pattern in GROUP_CHAT_INTERNAL_REASONING_SOFT_PATTERNS
+            if re.search(pattern, text, flags)
+        )
+        return signal_count >= 2
+
+    @staticmethod
     def _group_chat_message_sender_name(message: dict) -> str:
         if not isinstance(message, dict):
             return "消息"
@@ -7418,6 +7551,8 @@ class GalleryServer:
         lines = []
         for message in messages[-MAX_GROUP_CHAT_REPLY_CONTEXT:]:
             if not isinstance(message, dict):
+                continue
+            if self._should_hide_public_group_message(message):
                 continue
             name = self._group_chat_message_sender_name(message)
             content = self._group_chat_text(message.get("content", ""), limit=600)
@@ -7448,6 +7583,7 @@ class GalleryServer:
         return (
             f"你正在扮演群聊《{room_name}》里的角色「{name}」。\n"
             "只输出 JSON，不要 Markdown，不要代码块，不要额外解释。\n"
+            "绝对不要输出分析过程、推理、计划、指令复述、字段说明或角色设定解读；这些内容不得出现在 message 或 image_request.prompt 中。\n"
             "JSON 必须包含两个字段：message 和 image_request。\n"
             "message 必须填写这个角色真实要发送到当前对话里的中文聊天内容，禁止填写字段说明、模板文案或占位句。\n"
             "image_request 默认为 null。\n"
@@ -7632,6 +7768,8 @@ class GalleryServer:
         if not data:
             if self._is_group_chat_placeholder_reply(raw_text):
                 return "", None
+            if self._is_group_chat_internal_reasoning(raw_text):
+                return "", None
             inferred = self._group_chat_infer_image_request(raw_text, character_name)
             return raw_text, inferred
 
@@ -7643,7 +7781,7 @@ class GalleryServer:
             or "",
             limit=MAX_GROUP_CHAT_MESSAGE_CHARS,
         )
-        if self._is_group_chat_placeholder_reply(message):
+        if self._is_group_chat_placeholder_reply(message) or self._is_group_chat_internal_reasoning(message):
             message = ""
         image_request = data.get("image_request")
         if image_request is None:
@@ -7662,9 +7800,12 @@ class GalleryServer:
                         break
 
         image_payload = self._group_chat_tool_args(image_request)
+        image_prompt = self._group_chat_text(image_payload.get("prompt", ""), limit=1400)
+        if image_prompt and self._is_group_chat_internal_reasoning(image_prompt):
+            image_payload = {}
         if not image_payload:
-            image_payload = self._group_chat_infer_image_request(message or raw_text, character_name)
-        return message or raw_text, image_payload or None
+            image_payload = self._group_chat_infer_image_request(message, character_name)
+        return message, image_payload or None
 
     @staticmethod
     def _group_chat_infer_image_request(message: str, character_name: str = "") -> Optional[dict]:
@@ -7989,10 +8130,20 @@ class GalleryServer:
             for model in models:
                 payload = {
                     "model": model,
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "你是群聊角色回复器。只返回一个 JSON 对象，禁止输出分析、推理、计划、"
+                                "指令复述、Markdown 或 JSON 之外的任何文字。"
+                            ),
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
                     "max_tokens": 700,
                     "temperature": 0.72,
                     "stream": False,
+                    "response_format": {"type": "json_object"},
                 }
                 if self._should_disable_llm_thinking(model):
                     payload["thinking"] = {"type": "disabled"}
@@ -8005,6 +8156,9 @@ class GalleryServer:
                             changed = False
                             if "temperature" in retry_payload and llm_temperature_param_error(data):
                                 retry_payload.pop("temperature", None)
+                                changed = True
+                            if "response_format" in retry_payload:
+                                retry_payload.pop("response_format", None)
                                 changed = True
                             if "thinking" in retry_payload and "thinking" in llm_response_excerpt(data, 500).lower():
                                 retry_payload.pop("thinking", None)
@@ -8120,6 +8274,7 @@ class GalleryServer:
         if is_image:
             clean_metadata = dict(metadata)
             clean_metadata["caption"] = ""
+            clean_metadata.pop("prompt", None)
             item["type"] = "image"
             item["content"] = "生成图片"
             item["metadata"] = clean_metadata
@@ -8131,6 +8286,8 @@ class GalleryServer:
             return True
         metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
         if metadata.get("auto_reply") and cls._is_group_chat_placeholder_reply(message.get("content", "")):
+            return True
+        if metadata.get("auto_reply") and cls._is_group_chat_internal_reasoning(message.get("content", "")):
             return True
         return False
 
@@ -8157,6 +8314,22 @@ class GalleryServer:
         public_room["title"] = public_room.get("name", "")
         public_room["reply_progress"] = self._public_group_chat_reply_progress(room_id)
         return public_room
+
+    def _public_group_store_payload(
+        self,
+        payload: Optional[dict],
+        public_room: Optional[dict] = None,
+        message_limit: int = 50,
+    ) -> Optional[dict]:
+        if not isinstance(payload, dict):
+            return None
+        safe_payload = dict(payload)
+        safe_payload["messages"] = self._public_group_messages(payload.get("messages", []))
+        safe_payload["room"] = public_room or self._public_group_room_payload(
+            payload.get("room") or {},
+            message_limit=message_limit,
+        )
+        return safe_payload
 
     async def handle_group_chat_rooms(self, request: web.Request):
         """List or create local group-chat rooms."""
@@ -8269,7 +8442,7 @@ class GalleryServer:
                     "success": True,
                     "removed_count": result.get("removed_count", 0),
                     "room": public_room,
-                    "room_payload": payload,
+                    "room_payload": self._public_group_store_payload(payload, public_room),
                 })
 
             body = await request.json()
@@ -8302,7 +8475,11 @@ class GalleryServer:
             payload = self.group_chat_store.room_payload(room_id, message_limit=50)
             public_message = self._public_group_message(message)
             public_room = self._public_group_room_payload((payload or {}).get("room") or {}, message_limit=50) if payload else None
-            return web.json_response({"message": public_message, "room": public_room, "room_payload": payload}, status=201)
+            return web.json_response({
+                "message": public_message,
+                "room": public_room,
+                "room_payload": self._public_group_store_payload(payload, public_room),
+            }, status=201)
         except KeyError:
             return web.json_response({"error": "room_not_found"}, status=404)
         except Exception as e:
@@ -8360,7 +8537,7 @@ class GalleryServer:
                 "gallery_cleanup": gallery_cleanup,
                 "gallery_error": gallery_error,
                 "room": public_room,
-                "room_payload": payload,
+                "room_payload": self._public_group_store_payload(payload, public_room),
             })
         except KeyError:
             return web.json_response({"error": "room_not_found"}, status=404)
@@ -8470,7 +8647,7 @@ class GalleryServer:
                             "restored": True,
                         },
                         "room": self._public_group_room_payload((payload or {}).get("room") or room, message_limit=50) if payload else None,
-                        "room_payload": payload,
+                        "room_payload": self._public_group_store_payload(payload),
                     })
                 return web.json_response(response, status=400)
 
@@ -8506,12 +8683,32 @@ class GalleryServer:
                         messages + generated,
                         regenerate_hint=str(body.get("_regenerate_hint") or ""),
                     )
-                    raw_content, used_model = await self._call_group_chat_llm(
-                        prompt,
-                        preferred_model=preferred_model,
-                        timeout_seconds=timeout_seconds,
-                    )
-                    content, image_request = self._group_chat_parse_reply_output(raw_content, character_name)
+                    content = ""
+                    image_request = None
+                    used_model = ""
+                    for output_attempt in range(2):
+                        request_prompt = prompt
+                        if output_attempt:
+                            request_prompt += (
+                                "\n上一次返回包含内部分析或不是有效的公开回复。"
+                                "这次必须直接返回完整 JSON，不得解释思考过程。"
+                            )
+                        raw_content, used_model = await self._call_group_chat_llm(
+                            request_prompt,
+                            preferred_model=preferred_model,
+                            timeout_seconds=timeout_seconds,
+                        )
+                        content, image_request = self._group_chat_parse_reply_output(raw_content, character_name)
+                        if content or image_request:
+                            break
+                        logger.warning(
+                            "Group chat LLM returned non-public reasoning or invalid output: "
+                            "room=%s character=%s model=%s attempt=%s",
+                            room_id,
+                            character_id,
+                            used_model,
+                            output_attempt + 1,
+                        )
                     force_image_request = body.get("_force_image_request") if isinstance(body.get("_force_image_request"), dict) else {}
                     if force_image_request:
                         if not isinstance(image_request, dict):
@@ -8639,7 +8836,7 @@ class GalleryServer:
                             "restored": rewind_restored,
                         },
                         "room": public_room,
-                        "room_payload": payload,
+                        "room_payload": self._public_group_store_payload(payload, public_room),
                     })
                 return web.json_response(response, status=502)
             return web.json_response({
@@ -8650,7 +8847,7 @@ class GalleryServer:
                     "removed_count": (rewind_result or {}).get("removed_count", 0),
                 } if rewind_message_id else None,
                 "room": public_room,
-                "room_payload": payload,
+                "room_payload": self._public_group_store_payload(payload, public_room),
             })
         except Exception as e:
             try:
@@ -8690,7 +8887,11 @@ class GalleryServer:
             )
             payload = self.group_chat_store.room_payload(room_id, message_limit=50)
             public_room = self._public_group_room_payload((payload or {}).get("room") or {}, message_limit=50) if payload else None
-            return web.json_response({"participant": participant, "room": public_room, "room_payload": payload})
+            return web.json_response({
+                "participant": participant,
+                "room": public_room,
+                "room_payload": self._public_group_store_payload(payload, public_room),
+            })
         except KeyError:
             return web.json_response({"error": "room_not_found"}, status=404)
         except ValueError as e:
@@ -9710,15 +9911,24 @@ JSON 格式：
                 deleted_filenames.append(filename)
 
             deleted_set = set(deleted_filenames)
+            deleted_version_count = 0
             if deleted_set:
                 store = ScheduleStore(self.data_dir)
+                version_records = []
 
                 def _remove_deleted_entries(all_data):
                     for key, entry in list(all_data.items()):
                         if key in deleted_set:
+                            if isinstance(entry, dict):
+                                version_records.extend(
+                                    normalize_image_versions(entry.get("image_versions"))
+                                )
                             del all_data[key]
                             continue
                         if isinstance(entry, dict) and entry.get("image_filename") in deleted_set:
+                            version_records.extend(
+                                normalize_image_versions(entry.get("image_versions"))
+                            )
                             del all_data[key]
                     return all_data
 
@@ -9730,12 +9940,18 @@ JSON 格式：
                     return metadata
 
                 ImageMetadataStore(self.data_dir).update(_remove_deleted_metadata)
+                deleted_version_count, version_errors = delete_image_versions(
+                    self.data_dir,
+                    version_records,
+                )
+                errors.extend(version_errors)
 
             return web.json_response({
                 "success": True,
                 "dry_run": False,
                 **plan,
                 "deleted_count": len(deleted_filenames),
+                "deleted_version_count": deleted_version_count,
                 "deleted": deleted_filenames,
                 "errors": errors,
             })
@@ -9767,10 +9983,13 @@ JSON 格式：
         try:
             entry = await self.on_reroll_image(img_id)
             if not entry or entry.get("status") != "ok":
-                return web.json_response(
-                    {"error": (entry or {}).get("error") or "generate_failed"},
-                    status=500 if (entry or {}).get("error") != "not_found" else 404,
+                error = (entry or {}).get("error") or "generate_failed"
+                status = (
+                    404 if error == "not_found"
+                    else 409 if error == "reroll_source_changed"
+                    else 500
                 )
+                return web.json_response({"error": error}, status=status)
             metadata = self._load_image_metadata()
             normalized = self._enrich_photo_schedule_time(entry, metadata)
             return web.json_response(normalized)
@@ -9849,6 +10068,7 @@ JSON 格式：
                     "edit_reference_lost": "编辑结果未保留原图，已拒绝该结果",
                     "edit_generate_failed": "GPT Image 未能完成本次精准编辑",
                     "edit_source_changed": "原图片在编辑期间已被删除或替换，本次结果未保存",
+                    "version_archive_failed": "旧版本保存失败，本次编辑未替换原图",
                     "edit_instruction_required": "请输入修改内容或调整日程说明",
                     "schedule_description_required": "日程说明不能为空",
                     "schedule_description_too_long": "日程说明不能超过 160 字",

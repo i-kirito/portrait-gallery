@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.3.5**
+当前版本：**v1.3.6**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -96,7 +96,7 @@ curl http://localhost:18889/api/health
 如果要使用已经发布到 Docker Hub/GHCR 的镜像，通过 `PORTRAIT_GALLERY_IMAGE` 指定：
 
 ```bash
-PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.5 docker compose up -d
+PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.6 docker compose up -d
 curl http://localhost:18889/api/health
 ```
 
@@ -332,6 +332,15 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥、三级 LLM 模型链、Gitee 回退、日程风格和升级选项
 
 ## 🧾 Release Notes
+
+### v1.3.6
+
+- 全部画廊改为滚动接近底部时自动加载下一页，并加入旧浏览器滚动回退与网络失败冷却，避免重复请求风暴。
+- 精准编辑与编辑后重抽会保留被替换的旧图；卡片详情可查看历史图片版本，删除卡片时同步清理对应归档文件。
+- 自定义生图新增自动、常用比例和自定义宽高三种尺寸模式，扩充 3:2、16:9、21:9 等比例并统一前后端边界校验。
+- 日程图片按活动意图选择普通人像、明确 OOTD 或风景构图，普通生活照更稳定地避免高机位、远景和无意全身构图。
+- 收藏按钮可在当前列表内即时同步状态；衣柜卡片和操作按钮针对手机端重新排布，长穿搭说明不再挤压操作区。
+- 群聊回复增加内部推理文本识别与兼容重试，生图进度状态补充失败后的最终错误信息。
 
 ### v1.3.5
 

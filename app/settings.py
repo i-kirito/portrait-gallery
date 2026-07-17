@@ -148,22 +148,64 @@ LEGACY_SCHEDULE_IMAGE_FRAMING_RULE = (
     "This complete-subject framing rule overrides any casual or slightly imperfect framing instruction."
 )
 
+SCHEDULE_IMAGE_FRAMING_MARKER = "Professional 3:4 lifestyle photography composition:"
+
 SCHEDULE_IMAGE_FRAMING_RULE = (
-    "Professional 3:4 lifestyle photography composition: act as an experienced portrait and documentary "
-    "photographer and choose the most compelling camera distance, angle, and crop for this exact action, prop, "
-    "outfit, and setting. For ordinary daily photos, default to a medium or three-quarter portrait, never a "
-    "head-to-toe view, so the face, hands, important props, and action remain visually clear. Use full-body framing "
-    "only when the scheduled Activity or Action explicitly asks for an OOTD, outfit check, mirror outfit, or clothing "
-    "showcase. Use a wider environmental composition only when the scheduled Activity or Action explicitly centers "
-    "on sharing scenery, a landscape, architecture, or the sense of place. A detailed outfit description, standing, "
-    "walking, visible shoes, or a reference image's crop never counts as an OOTD request and must not trigger a "
-    "full-body frame. Do not copy the reference image's camera distance or crop. Compose "
-    "with natural perspective, visual balance, useful foreground and background layers, and intentional negative "
-    "space. Avoid a stiff centered catalog pose, a tiny subject surrounded by empty floor or ceiling, forced "
-    "head-to-toe framing, arbitrary high angles, and crops through the face, hands, or important props. Fill the "
-    "entire 3:4 canvas edge to edge with the photographed scene; no black bars, blurred side panels, letterboxing, "
-    "pillarboxing, frames, borders, or blank margins. This photographic composition rule overrides any generic "
-    "full-body or slightly imperfect framing instruction."
+    f"{SCHEDULE_IMAGE_FRAMING_MARKER} FRAMING MODE: ORDINARY DAILY PORTRAIT (mandatory). "
+    "Use an eye-level medium or medium-long portrait cropped from the complete head to the waist, hips, or mid-thigh; "
+    "never use a head-to-toe view. Keep knees, lower legs, feet, shoes, and most of the floor outside the frame; they "
+    "do not need to be visible even when the outfit description lists them or the subject is standing or walking. "
+    "For a desk, table, cooking, craft, plant-care, or handheld-object activity, prioritize the face, both hands, the "
+    "tool or prop, and the immediate work surface. The subject should fill roughly 70 to 90 percent of the frame height "
+    "without cutting the hair, face, hands, or important props. Place the camera at the subject's eye or upper-torso "
+    "height with a level horizon and a natural 50-85mm-equivalent portrait perspective. No high-angle, overhead, "
+    "downward-looking, wide-angle, ultra-wide, distant-camera, or surveillance-like view. Do not foreshorten the body, "
+    "enlarge the head relative to the body, shorten the legs, or make the subject look small or squat. Preserve elegant, "
+    "natural human proportions and use the immediate environment only to support the action. Do not copy a reference "
+    "image's camera distance or crop. Fill the entire 3:4 canvas edge to edge with the photographed scene; no black "
+    "bars, blurred side panels, letterboxing, pillarboxing, frames, borders, or blank margins. This mandatory framing "
+    "mode overrides any outfit details, visible-shoes request, generic full-body wording, or slightly imperfect framing."
+)
+
+SCHEDULE_IMAGE_OOTD_FRAMING_RULE = (
+    f"{SCHEDULE_IMAGE_FRAMING_MARKER} FRAMING MODE: EXPLICIT OOTD OR CLOTHING SHOWCASE. "
+    "Use a level, eye-height full-body fashion photograph only because the scheduled Activity or Action explicitly "
+    "centers on showing the complete outfit. Keep the complete hair and both shoes inside the frame with restrained "
+    "breathing room, use a natural 50-70mm-equivalent perspective, and preserve long, realistic body proportions. "
+    "No high-angle, overhead, downward-looking, ultra-wide, distorted, or distant catalog view. The subject must remain "
+    "the clear visual focus. Fill the entire 3:4 canvas edge to edge; no black bars, blurred panels, frames, borders, or "
+    "blank margins. Do not copy the reference image's camera distance or crop."
+)
+
+SCHEDULE_IMAGE_SCENERY_FRAMING_RULE = (
+    f"{SCHEDULE_IMAGE_FRAMING_MARKER} FRAMING MODE: EXPLICIT SCENERY OR SENSE-OF-PLACE PHOTO. "
+    "Use a wider environmental composition because the scheduled Activity or Action explicitly centers on sharing or "
+    "photographing the scenery, landscape, architecture, skyline, or view. Keep a level natural camera, undistorted "
+    "human proportions, and a readable relationship between the person and place; full-body visibility is optional, "
+    "not mandatory. Avoid high-angle, overhead, ultra-wide distortion, excessive empty floor or ceiling, and a tiny "
+    "incidental subject. Fill the entire 3:4 canvas edge to edge; no black bars, blurred panels, frames, borders, or "
+    "blank margins. Do not copy the reference image's camera distance or crop."
+)
+
+SCHEDULE_OOTD_INTENT_RE = re.compile(
+    r"(?:\bootd\b|(?:showcase|show|check|style|photograph|share)\b.{0,40}\b(?:outfit|look|clothing)\b|"
+    r"(?:outfit|look|clothing)\b.{0,40}\b(?:showcase|check|photo)|"
+    r"(?:展示|分享|拍摄|检查|试穿|搭配).{0,12}(?:穿搭|造型|服装)|"
+    r"(?:穿搭|造型|服装).{0,12}(?:展示|分享|拍摄|检查|试穿))",
+    re.IGNORECASE | re.DOTALL,
+)
+
+SCHEDULE_SCENERY_INTENT_RE = re.compile(
+    r"(?:\b(?:share|photograph|capture|admire|show)\b.{0,50}\b"
+    r"(?:scenery|landscape|architecture|skyline|panorama|seascape|mountain view|city view)\b|"
+    r"(?:分享|拍摄|记录|欣赏).{0,12}(?:风景|景色|建筑|天际线|全景|山景|海景|夜景))",
+    re.IGNORECASE | re.DOTALL,
+)
+
+SCHEDULE_ACTIVITY_ACTION_RE = re.compile(
+    r"\bActivity:\s*(?P<activity>.*?)\s+Action:\s*(?P<action>.*?)"
+    r"(?=\s+(?:Scene|Outfit|Hair|Props|Lighting|Time):|(?:\.\s*)?Style:|$)",
+    re.IGNORECASE | re.DOTALL,
 )
 
 CUSTOM_IMAGE_FRAMING_RULE = (
@@ -222,6 +264,26 @@ CUSTOM_IMAGE_SIZE_MAP = {
         "2k": "2048x2048",
         "4k": "4096x4096",
     },
+    "3:2": {
+        "1k": "1536x1024",
+        "2k": "2048x1365",
+        "4k": "4096x2731",
+    },
+    "2:3": {
+        "1k": "1024x1536",
+        "2k": "1365x2048",
+        "4k": "2731x4096",
+    },
+    "16:9": {
+        "1k": "1366x768",
+        "2k": "2048x1152",
+        "4k": "4096x2304",
+    },
+    "9:16": {
+        "1k": "768x1366",
+        "2k": "1152x2048",
+        "4k": "2304x4096",
+    },
     "3:4": {
         "1k": "768x1024",
         "2k": "1536x2048",
@@ -232,17 +294,16 @@ CUSTOM_IMAGE_SIZE_MAP = {
         "2k": "2048x1536",
         "4k": "4096x3072",
     },
-    "2:3": {
-        "1k": "1024x1536",
-        "2k": "1365x2048",
-        "4k": "2731x4096",
-    },
-    "9:16": {
-        "1k": "768x1366",
-        "2k": "1152x2048",
-        "4k": "2304x4096",
+    "21:9": {
+        "1k": "1792x768",
+        "2k": "3584x1536",
+        "4k": "4096x1755",
     },
 }
+
+CUSTOM_IMAGE_MIN_DIMENSION = 256
+CUSTOM_IMAGE_MAX_DIMENSION = 4096
+CUSTOM_IMAGE_MAX_PIXELS = CUSTOM_IMAGE_MAX_DIMENSION * CUSTOM_IMAGE_MAX_DIMENSION
 
 CUSTOM_IMAGE_ALLOWED_SIZES = {
     size
@@ -322,6 +383,21 @@ def normalize_custom_image_resolution(value: Any) -> str:
     return DEFAULT_CUSTOM_IMAGE_RESOLUTION
 
 
+def _normalize_custom_image_dimensions(value: Any) -> str:
+    text = _non_empty(value).lower().replace("×", "x")
+    match = re.fullmatch(r"\s*(\d{2,5})\s*x\s*(\d{2,5})\s*", text)
+    if not match:
+        return ""
+    width, height = int(match.group(1)), int(match.group(2))
+    if not (
+        CUSTOM_IMAGE_MIN_DIMENSION <= width <= CUSTOM_IMAGE_MAX_DIMENSION
+        and CUSTOM_IMAGE_MIN_DIMENSION <= height <= CUSTOM_IMAGE_MAX_DIMENSION
+        and width * height <= CUSTOM_IMAGE_MAX_PIXELS
+    ):
+        return ""
+    return f"{width}x{height}"
+
+
 def normalize_custom_image_size(size: Any = "", aspect: Any = "", resolution: Any = "") -> str:
     aspect_text = _non_empty(aspect).replace("：", ":")
     resolution_text = _non_empty(resolution).lower()
@@ -331,6 +407,15 @@ def normalize_custom_image_size(size: Any = "", aspect: Any = "", resolution: An
     size_text = _non_empty(size).lower()
     if size_text in CUSTOM_IMAGE_ALLOWED_SIZES:
         return size_text
+    if "auto" in {size_text, aspect_text.lower(), resolution_text} or "自动" in {
+        size_text,
+        aspect_text,
+        resolution_text,
+    }:
+        return ""
+    custom_size = _normalize_custom_image_dimensions(size_text)
+    if custom_size:
+        return custom_size
 
     safe_aspect = normalize_custom_image_aspect(aspect)
     safe_resolution = normalize_custom_image_resolution(resolution)
@@ -347,14 +432,39 @@ def schedule_image_size(config: Any) -> str:
     return size_text if size_text in SCHEDULE_IMAGE_ALLOWED_SIZES else DEFAULT_SCHEDULE_IMAGE_SIZE
 
 
+def _schedule_activity_action_text(prompt: str) -> str:
+    matches = list(SCHEDULE_ACTIVITY_ACTION_RE.finditer(prompt or ""))
+    if not matches:
+        return ""
+    match = matches[-1]
+    return " ".join(
+        part.strip()
+        for part in (match.group("activity"), match.group("action"))
+        if part and part.strip()
+    )
+
+
+def schedule_image_framing_rule(prompt: Any) -> str:
+    activity_action = _schedule_activity_action_text(_non_empty(prompt))
+    if activity_action and SCHEDULE_OOTD_INTENT_RE.search(activity_action):
+        return SCHEDULE_IMAGE_OOTD_FRAMING_RULE
+    if activity_action and SCHEDULE_SCENERY_INTENT_RE.search(activity_action):
+        return SCHEDULE_IMAGE_SCENERY_FRAMING_RULE
+    return SCHEDULE_IMAGE_FRAMING_RULE
+
+
 def apply_schedule_image_framing(prompt: Any) -> str:
     raw_text = _non_empty(prompt)
     if not raw_text:
         return raw_text
-    if "Professional 3:4 lifestyle photography composition:" in raw_text:
+    framing_rule = schedule_image_framing_rule(raw_text)
+    if raw_text.endswith(framing_rule):
         return raw_text
     text = raw_text.replace(LEGACY_SCHEDULE_IMAGE_FRAMING_RULE, "").rstrip(" .")
-    return f"{text}. {SCHEDULE_IMAGE_FRAMING_RULE}"
+    marker_index = text.find(SCHEDULE_IMAGE_FRAMING_MARKER)
+    if marker_index >= 0:
+        text = text[:marker_index].rstrip(" .")
+    return f"{text}. {framing_rule}"
 
 
 def normalize_custom_shot_type(value: Any) -> str:

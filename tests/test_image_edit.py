@@ -25,6 +25,7 @@ from image_editing import (  # noqa: E402
     rewrite_image_edit_schedule_description,
 )
 from image_gen import ImageGenerator  # noqa: E402
+from image_versions import image_version_path  # noqa: E402
 from main import PortraitGalleryApp  # noqa: E402
 from store import ScheduleStore  # noqa: E402
 from web_server import GalleryServer  # noqa: E402
@@ -217,6 +218,15 @@ class PortraitGalleryImageEditTest(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual("image_edit", replacement["schedule_edit_source"])
             self.assertEqual(1, len(replacement["edit_history"]))
+            self.assertEqual(1, replacement["version_count"])
+            self.assertEqual(1, len(replacement["image_versions"]))
+            archived_path = image_version_path(
+                str(data_dir),
+                replacement["image_versions"][0],
+            )
+            self.assertIsNotNone(archived_path)
+            self.assertTrue(archived_path.is_file())
+            self.assertEqual(original_path.read_bytes(), archived_path.read_bytes())
             self.assertEqual(
                 "10:27 坐在市场旁边的阳光咖啡馆，一边喝拿铁一边在平板上绘制服装设计草图",
                 replacement["edit_history"][0]["previous_schedule_time"],
@@ -345,6 +355,8 @@ class PortraitGalleryImageEditTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual("rerolled.png", store.load()["card"]["image_filename"])
             update_metadata.assert_not_called()
             delete_image_files.assert_called_once_with("edited.png")
+            version_dir = data_dir / "image_versions"
+            self.assertFalse(version_dir.exists() and any(version_dir.iterdir()))
 
     async def test_reroll_precision_edit_uses_current_image_as_edit_source(self):
         with tempfile.TemporaryDirectory(prefix="portrait-gallery-edit-reroll-") as temp_dir:
@@ -417,6 +429,11 @@ class PortraitGalleryImageEditTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual("precision_edit", result["prompt_mode"])
             self.assertEqual("background", result["edit_target"])
             self.assertEqual(edit_history, result["edit_history"])
+            self.assertEqual(1, result["version_count"])
+            self.assertEqual(1, len(result["image_versions"]))
+            self.assertTrue(
+                image_version_path(str(data_dir), result["image_versions"][0]).is_file()
+            )
             self.assertEqual(current_filename, result["requested_ref_image"])
             self.assertEqual(current_filename, result["rerolled_from"])
             self.assertTrue(saved_metadata["rerolled.png"]["precise_edit"])
@@ -548,6 +565,19 @@ class ImageEditFrontendContractTest(unittest.TestCase):
         self.assertIn("/edit`", html)
         self.assertIn('data-image-edit-target="background"', html)
         self.assertIn('id="imageEditScheduleDescription"', html)
+        self.assertIn('id="modalVersionBtn"', html)
+        self.assertIn('fa-clock-rotate-left', html)
+        self.assertIn('imageVersionOverlay.id = "imageVersionOverlay"', html)
+        self.assertIn('async function openImageVersions(event)', html)
+        self.assertIn('/versions`', html)
+        self.assertIn(
+            '.modal-content .today-card-info { flex:0 0 auto;min-height:auto;',
+            html,
+        )
+        self.assertIn(
+            '.modal-content .today-card-info > * { flex-shrink:0; }',
+            html,
+        )
         self.assertNotIn("function modalShare()", html)
         submit_start = html.index("async function submitImageEdit()")
         submit_end = html.index("function wardrobeEscapeRegExp", submit_start)
