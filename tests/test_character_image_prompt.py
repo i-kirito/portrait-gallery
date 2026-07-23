@@ -7,10 +7,12 @@ APP_DIR = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP_DIR))
 
 from characters import (  # noqa: E402
+    NATURAL_FACE_SHAPE_GUARD,
     build_character_image_prompt,
     build_group_image_prompt,
     sanitize_image_prompt,
 )
+from settings import DEFAULT_STYLE_REFERENCE_PROMPTS  # noqa: E402
 
 
 class CharacterImagePromptTest(unittest.TestCase):
@@ -36,11 +38,12 @@ class CharacterImagePromptTest(unittest.TestCase):
         self.assertIn("deep-set dark brown eyes", lowered)
         self.assertIn("reference image hint", lowered)
         self.assertIn("adults aged 21 or older", lowered)
+        self.assertIn("18-year-old", lowered)
+        self.assertIn("chinese girl", lowered)
         for forbidden in (
             "identity and persona",
             "voice or mood",
             "主人",
-            "18-year-old",
             "breasts",
             "seductive",
             "魅魔",
@@ -49,19 +52,47 @@ class CharacterImagePromptTest(unittest.TestCase):
         ):
             self.assertNotIn(forbidden.lower(), lowered)
 
-    def test_scene_prompt_is_rewritten_as_adult_everyday_photography(self):
+    def test_scene_prompt_preserves_explicit_age_without_conversion(self):
         prompt = sanitize_image_prompt(
-            "18-year-old Chinese girl in a classic Japanese JK school uniform, "
+            "18-year-old Chinese girl with delicate features in a classic Japanese JK school uniform, "
             "large natural breasts, playful seductive smile."
         )
         lowered = prompt.lower()
 
-        self.assertIn("age 21 or older", lowered)
-        self.assertIn("adult woman", lowered)
+        self.assertIn("18-year-old", lowered)
+        self.assertNotIn("age 21 or older", lowered)
+        self.assertIn("chinese girl", lowered)
+        self.assertNotIn("adult woman", lowered)
+        self.assertIn("natural facial features", lowered)
         self.assertIn("sailor-inspired fashion outfit", lowered)
         self.assertIn("warm and confident smile", lowered)
-        for forbidden in ("18-year-old", "school uniform", "breasts", "seductive"):
+        for forbidden in ("delicate features", "school uniform", "breasts", "seductive"):
             self.assertNotIn(forbidden, lowered)
+
+    def test_character_prompt_preserves_natural_face_shape_without_slimming(self):
+        character = dict(self.character)
+        character["appearance"] = (
+            "adult Chinese woman with delicate features, dusty rose pink hair, "
+            "large round dark brown eyes"
+        )
+
+        prompt = build_character_image_prompt(character)
+        lowered = prompt.lower()
+
+        self.assertNotIn("delicate features", lowered)
+        self.assertIn("natural facial features", lowered)
+        self.assertIn("naturally observed facial width", lowered)
+        self.assertIn("cheek volume", lowered)
+        self.assertIn("do not beautify by narrowing or lengthening the face", lowered)
+        self.assertIn("pointed v-shaped chin", lowered)
+        self.assertEqual(1, prompt.count(NATURAL_FACE_SHAPE_GUARD))
+
+    def test_cool_reference_label_does_not_request_sharpened_face_structure(self):
+        prompt = DEFAULT_STYLE_REFERENCE_PROMPTS["cool"].lower()
+
+        self.assertNotIn("sharp", prompt)
+        self.assertNotIn("refined facial structure", prompt)
+        self.assertIn("natural facial proportions", prompt)
 
     def test_group_image_prompt_omits_configured_relationship_and_voice(self):
         second = {

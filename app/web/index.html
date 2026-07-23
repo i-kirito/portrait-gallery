@@ -2761,44 +2761,12 @@ textarea:focus-visible,
   margin-bottom: 20px;
 }
 .cg-field { margin-bottom: 20px; }
-.cg-label-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
-}
 .cg-field label {
   display: block;
   font-size: 16px;
   font-weight: 600;
   color: #555;
   margin-bottom: 8px;
-}
-.cg-label-row label { margin-bottom: 0; }
-.cg-mode-btn {
-  flex: 0 0 auto;
-  min-width: 40px;
-  height: 30px;
-  padding: 0 12px;
-  border-radius: 15px;
-  border: 1px solid #e0e0e0;
-  background: #fff;
-  color: #888;
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.cg-mode-btn:hover {
-  border-color: #e91e63;
-  color: #e91e63;
-}
-.cg-mode-btn.active {
-  border-color: #e91e63;
-  background: #fce4ec;
-  color: #e91e63;
 }
 .cg-field textarea {
   width: 100%;
@@ -3068,6 +3036,15 @@ textarea:focus-visible,
 }
 .cg-ref-item:hover { border-color: rgba(233,30,99,0.4); }
 .cg-ref-item.active { border-color: #e91e63; }
+.cg-ref-item.selected { border-color: #a855f7; box-shadow: 0 0 0 2px rgba(168,85,247,0.25); }
+.cg-ref-item .cg-ref-order {
+  position:absolute; top:4px; left:4px; min-width:18px; height:18px; padding:0 4px;
+  border-radius:999px; background:linear-gradient(135deg,#a855f7,#ec4899); color:#fff;
+  font-size:10px; font-weight:800; display:none; align-items:center; justify-content:center;
+  z-index:2;
+}
+.cg-ref-item.selected .cg-ref-order { display:inline-flex; }
+
 .cg-ref-item[role="button"]:focus-visible {
   outline: 3px solid rgba(233,30,99,0.2);
   outline-offset: 2px;
@@ -4378,6 +4355,76 @@ textarea:focus-visible,
   padding: 0 18px;
   border-radius: 12px;
 }
+#groupChatSendBtn {
+  position: relative;
+  overflow: hidden;
+  border: 0;
+  background: linear-gradient(135deg, #f43f7f 0%, #d31569 52%, #a21caf 100%);
+  color: #fff;
+  box-shadow: 0 8px 20px rgba(211,21,105,0.24);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  letter-spacing: .3px;
+  transition: transform .16s ease, box-shadow .16s ease, filter .16s ease;
+}
+#groupChatSendBtn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, rgba(255,255,255,.24), transparent 42%);
+  pointer-events: none;
+}
+#groupChatSendBtn > * { position: relative; z-index: 1; }
+#groupChatSendBtn:hover {
+  filter: brightness(1.04);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(211,21,105,0.3);
+}
+#groupChatSendBtn:active {
+  transform: translateY(0) scale(.97);
+  box-shadow: 0 5px 14px rgba(211,21,105,0.22);
+}
+#groupChatSendBtn:disabled {
+  filter: grayscale(.18);
+  transform: none;
+  box-shadow: none;
+}
+@media (min-width: 701px) {
+  .chat-composer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 9px 10px;
+    padding: 12px 14px 14px;
+  }
+  .chat-sender-row {
+    grid-column: 1 / -1;
+    margin-bottom: 0;
+  }
+  .chat-composer textarea {
+    grid-column: 1;
+    min-height: 72px;
+    height: 72px;
+    resize: none;
+    border-radius: 15px;
+    padding: 13px 15px;
+    background: linear-gradient(180deg, #fff 0%, #fffafd 100%);
+  }
+  .chat-composer-actions {
+    grid-column: 2;
+    align-items: stretch;
+    margin-top: 0;
+  }
+  .chat-composer-actions .btn {
+    min-width: 88px;
+    min-height: 72px;
+    height: 72px;
+    padding: 0 18px;
+    border-radius: 17px;
+    font-size: 14px;
+  }
+}
 .cg-upload-label { cursor: pointer; display: inline-flex; }
 .cg-ref-item .upload-badge {
   position: absolute; bottom: 0; left: 0; right: 0;
@@ -4453,6 +4500,64 @@ textarea:focus-visible,
   align-items: center;
   min-height: 22px;
   line-height: 1.2;
+}
+.meta-ref-tag {
+  position: relative;
+  overflow: visible !important;
+  cursor: default;
+}
+.meta-ref-tag.has-preview {
+  cursor: zoom-in;
+}
+.meta-ref-preview {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 120px;
+  height: 120px;
+  padding: 2px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(233, 30, 99, 0.14);
+  box-shadow: 0 8px 20px rgba(40, 20, 50, 0.16);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.14s ease, visibility 0.14s ease;
+  z-index: 10080;
+  overflow: hidden;
+  transform: none;
+}
+.meta-ref-preview.is-open {
+  opacity: 1;
+  visibility: visible;
+}
+.meta-ref-preview::after {
+  content: "";
+  position: absolute;
+  left: var(--ref-arrow-x, 50%);
+  top: 100%;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  margin-top: -7px;
+  background: rgba(255, 255, 255, 0.98);
+  border-right: 1px solid rgba(233, 30, 99, 0.16);
+  border-bottom: 1px solid rgba(233, 30, 99, 0.16);
+  transform: rotate(45deg);
+}
+.meta-ref-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 8px;
+  display: block;
+  background: #f3eef6;
+}
+.modal-meta,
+.card-meta,
+.tc-meta-row {
+  overflow: visible;
 }
 .modal-reroll-btn {
   width: 32px;
@@ -4782,9 +4887,6 @@ textarea:focus-visible,
   .cg-modal h2 { font-size: 22px; margin-bottom: 14px; }
   .cg-field { margin-bottom: 13px; }
   .cg-field label { font-size: 14px; margin-bottom: 7px; }
-  .cg-label-row { margin-bottom: 7px; }
-  .cg-label-row label { margin-bottom: 0; }
-  .cg-mode-btn { height: 28px; min-width: 38px; padding: 0 10px; font-size: 13px; }
   .cg-field textarea { min-height: 82px; padding: 12px 14px; font-size: 14px; border-radius: 12px; }
   .cg-field .hint { font-size: 12px; line-height: 1.45; }
   .cg-dimension-panel { padding: 11px; border-radius: 12px; }
@@ -4861,17 +4963,24 @@ textarea:focus-visible,
     padding: 2px 0;
   }
   .group-chat-title-line {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
+    display: flex;
     align-items: center;
     gap: 8px;
     width: auto;
+    min-height: 44px;
   }
   .group-chat-title-line h2 {
+    height: 40px;
+    margin: 0;
     font-size: 18px;
+    line-height: 1;
     white-space: nowrap;
+    display: flex;
+    align-items: center;
   }
   .group-character-avatars.character-picker {
+    flex: 1 1 auto;
+    min-width: 0;
     flex-wrap: nowrap;
     overflow-x: auto;
     overscroll-behavior-x: contain;
@@ -5066,16 +5175,46 @@ textarea:focus-visible,
     margin-top: 0;
   }
   .chat-composer-actions .btn {
-    min-width: 64px;
+    min-width: 72px;
     min-height: 54px;
     height: 54px;
-    padding: 0 14px;
-    border-radius: 12px;
+    padding: 0 13px;
+    border-radius: 15px;
   }
 }
 @media (max-width: 560px) {
   .group-chat-layout[data-mobile-view="chat"] .chat-main {
     height: max(440px, calc(100svh - 280px));
+  }
+  .chat-message-actions {
+    gap: 8px;
+    margin-top: 0;
+    padding-left: 2px;
+  }
+  .chat-message-action {
+    min-height: 28px;
+    padding: 4px 7px;
+    border: 1px solid rgba(233,30,99,0.12);
+    border-radius: 8px;
+    background: rgba(255,255,255,0.72);
+    font-size: 10.5px;
+  }
+  .chat-message.user .chat-message-actions {
+    padding-right: 2px;
+  }
+  #gallerySection #galleryContent {
+    padding-bottom: 112px;
+  }
+  #colSliderWrap {
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    transform: scale(.92);
+    transform-origin: right bottom;
+  }
+  #galleryScrollNav {
+    right: 16px;
+    bottom: calc(78px + env(safe-area-inset-bottom));
+    gap: 8px;
   }
 }
 @media (max-width: 340px) {
@@ -5755,7 +5894,7 @@ textarea:focus-visible,
 
 <div class="header">
   <div class="header-left">
-      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.3.6</span></h1>
+      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.3.7</span></h1>
   </div>
   <div class="tabs">
     <button class="tab has-badge" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="showUnfavoriteGallery(event)"><span class="tab-label"><span class="tab-icon" aria-hidden="true">✨</span><span class="tab-text">全部</span></span><span class="tab-badge" id="badge-all">0</span></button>
@@ -5943,7 +6082,7 @@ textarea:focus-visible,
             </div>
             <textarea id="groupChatMessageInput" rows="3" placeholder="输入要发到当前房间的消息" onkeydown="handleGroupChatComposerKeydown(event)"></textarea>
             <div class="chat-composer-actions">
-              <button class="btn btn-primary" type="button" id="groupChatSendBtn" onclick="sendGroupChatMessage()">发送</button>
+              <button class="btn btn-primary" type="button" id="groupChatSendBtn" onclick="sendGroupChatMessage()"><i class="fa-solid fa-paper-plane" aria-hidden="true"></i><span>发送</span></button>
             </div>
           </div>
         </section>
@@ -6286,7 +6425,7 @@ textarea:focus-visible,
           <span class="sk-update-title">版本与服务</span>
           <span class="sk-update-desc">检查代码更新，或重新加载当前服务</span>
         </div>
-        <span class="sk-version-text">当前 <strong id="settingsVersion">v1.3.6</strong></span>
+        <span class="sk-version-text">当前 <strong id="settingsVersion">v1.3.7</strong></span>
       </div>
       <div class="sk-update-row">
         <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
@@ -6313,10 +6452,7 @@ textarea:focus-visible,
   <div class="cg-modal" role="dialog" aria-modal="true" aria-labelledby="cgDialogTitle" tabindex="-1" onclick="event.stopPropagation()">
     <h2 id="cgDialogTitle">🎀 穿搭生成</h2>
     <div class="cg-field">
-      <div class="cg-label-row">
-        <label for="cgPrompt">穿搭描述</label>
-        <button class="cg-mode-btn" type="button" id="cgPureBtn" aria-pressed="false" aria-label="纯模式" title="不注入外貌提示词" onclick="toggleCustomPureMode()">纯</button>
-      </div>
+      <label for="cgPrompt">穿搭描述</label>
       <textarea id="cgPrompt" placeholder="描述你想看到的穿搭，比如：穿着粉色JK制服在樱花树下吃团子~" rows="3"></textarea>
       <div class="hint">支持中英文，越详细效果越好哦～</div>
     </div>
@@ -6390,7 +6526,7 @@ textarea:focus-visible,
       <div class="hint" id="cgModelHint">默认模型</div>
     </div>
     <div class="cg-field">
-      <label>参考图（可选，用于图生图）</label>
+      <label>参考图（可选，可多选；第1张锁动作/场景/穿搭，第2张起换脸/发色）</label>
       <div class="cg-ref-grid" id="cgRefGrid">
         <div class="cg-ref-item active" data-ref="">
           <div class="cg-ref-none">📸</div>
@@ -6654,6 +6790,7 @@ function closeAccessibleDialog(overlay) {
   else if (overlay.id === 'promptOverlay') closePrompt();
   else if (overlay.id === 'liveLogOverlay') closeLiveLogs();
   else if (overlay.id === 'imageVersionOverlay') closeImageVersions();
+  else if (overlay.id === 'wardrobeVersionOverlay') closeWardrobeVersions();
   else if (overlay.id === 'modalOverlay') closeModal();
 }
 
@@ -6911,16 +7048,126 @@ function referenceDisplayName(e, selected, refImage) {
   return "";
 }
 
+function referenceImageUrl(e) {
+  if (!e) return "";
+  const selected = e.selected_reference && typeof e.selected_reference === "object" ? e.selected_reference : {};
+  const candidates = [
+    selected.url,
+    selected.path,
+    e.ref_image_path,
+    e.requested_ref_image_path,
+    selected.filename,
+    e.ref_image,
+    e.requested_ref_image
+  ];
+  for (const raw of candidates) {
+    const value = String(raw || "").trim();
+    if (!value) continue;
+    if (/^(https?:\/\/|data:image\/|blob:)/i.test(value)) return value;
+    if (value.startsWith("/images/") || value.startsWith("/refs/") || value.startsWith("/local-refs/")) return value;
+    if (value.startsWith("images/") || value.startsWith("refs/") || value.startsWith("local-refs/")) return `/${value}`;
+    const fileName = value.split(/[\/]/).pop().split("?")[0];
+    if (fileName && /\.(png|jpe?g|webp|gif)$/i.test(fileName)) {
+      if (REFERENCE_FILE_LABELS[fileName]) return `/refs/${encodeURIComponent(fileName)}`;
+      return `/images/${encodeURIComponent(fileName)}`;
+    }
+  }
+  return "";
+}
+
 function displayReferenceMeta(e) {
   if (!e) return "";
   const mode = String(e.generation_mode || "").trim().toLowerCase();
   const refImage = String(e.ref_image || e.ref_image_path || e.requested_ref_image || e.requested_ref_image_path || "").trim();
-  const isActualImg2Img = mode === "img2img" || mode === "image-to-image" || !!refImage;
-  if (!isActualImg2Img) return "";
   const selected = e.selected_reference && typeof e.selected_reference === "object" ? e.selected_reference : {};
-  const label = referenceDisplayName(e, selected, refImage);
-  return label ? `🖼 参考像 · ${label}` : "🖼 参考像";
+  const hasSelected = !!(selected.url || selected.path || selected.filename || selected.label);
+  const isActualImg2Img = mode === "img2img" || mode === "image-to-image" || !!refImage || hasSelected;
+  if (!isActualImg2Img) return "";
+  return "🖼 参考像";
 }
+
+function renderReferenceMetaTag(e, className = "meta-tag") {
+  const label = displayReferenceMeta(e);
+  if (!label) return "";
+  const src = referenceImageUrl(e);
+  const classes = `${className} meta-ref-tag${src ? " has-preview" : ""}`.trim();
+  if (!src) {
+    return `<span class="${escapeAttr(classes)}">${escapeHtml(label)}</span>`;
+  }
+  return `<span class="${escapeAttr(classes)}" tabindex="0" aria-label="${escapeAttr(label)}" data-ref-preview="1"><span class="meta-ref-label">${escapeHtml(label)}</span><span class="meta-ref-preview" role="img" aria-label="参考像预览"><img src="${escapeAttr(src)}" alt="参考像预览" loading="lazy" decoding="async"></span></span>`;
+}
+
+function positionReferencePreview(tag) {
+  if (!tag) return;
+  const preview = tag.querySelector(".meta-ref-preview");
+  if (!preview) return;
+  const rect = tag.getBoundingClientRect();
+  const gap = 12;
+  const width = preview.offsetWidth || 120;
+  const height = preview.offsetHeight || 120;
+  let left = rect.left + rect.width / 2 - width / 2;
+  left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
+  // Always prefer above the tag.
+  let top = rect.top - height - gap;
+  if (top < 8) {
+    // If viewport top is too tight, keep above the tag as much as possible
+    // by clamping inside the viewport rather than flipping below.
+    top = 8;
+  }
+  preview.style.left = `${Math.round(left)}px`;
+  preview.style.top = `${Math.round(top)}px`;
+  const arrowX = rect.left + rect.width / 2 - left;
+  preview.style.setProperty("--ref-arrow-x", `${Math.round(arrowX)}px`);
+  preview.classList.add("is-open");
+}
+
+function hideReferencePreview(tag) {
+  if (!tag) return;
+  const preview = tag.querySelector(".meta-ref-preview");
+  if (!preview) return;
+  preview.classList.remove("is-open");
+}
+
+function bindReferencePreviewHover() {
+  if (window.__refPreviewBound) return;
+  window.__refPreviewBound = true;
+  let activeTag = null;
+  const show = (event) => {
+    const tag = event.target && event.target.closest
+      ? event.target.closest(".meta-ref-tag.has-preview")
+      : null;
+    if (!tag) return;
+    if (activeTag && activeTag !== tag) hideReferencePreview(activeTag);
+    activeTag = tag;
+    positionReferencePreview(tag);
+  };
+  const hide = (event) => {
+    const tag = event.target && event.target.closest
+      ? event.target.closest(".meta-ref-tag.has-preview")
+      : null;
+    if (!tag) return;
+    const next = event.relatedTarget;
+    if (next && tag.contains(next)) return;
+    if (activeTag === tag) activeTag = null;
+    hideReferencePreview(tag);
+  };
+  // pointerover/out bubble; pointerenter/leave do not, so delegation needs over/out.
+  document.addEventListener("pointerover", show, true);
+  document.addEventListener("pointerout", hide, true);
+  document.addEventListener("focusin", show, true);
+  document.addEventListener("focusout", hide, true);
+  const reposition = () => {
+    if (!activeTag || !document.contains(activeTag)) {
+      activeTag = null;
+      return;
+    }
+    positionReferencePreview(activeTag);
+  };
+  window.addEventListener("scroll", reposition, true);
+  window.addEventListener("resize", reposition);
+}
+
+bindReferencePreviewHover();
 
 function displayImageSizeMeta(e) {
   const size = String((e && e.size) || "").trim().toLowerCase();
@@ -7786,12 +8033,37 @@ function generatedEntryImageFilename(entry) {
   return path.split("/").pop().trim();
 }
 
+function imageRevisionToken(value) {
+  if (value === undefined || value === null) return "";
+  return String(value).trim();
+}
+
+function withImageRevision(url, revision) {
+  const rawUrl = String(url || "").trim();
+  const token = imageRevisionToken(revision);
+  if (!rawUrl || !token || !/^\/images\//i.test(rawUrl)) return rawUrl;
+  const hashIndex = rawUrl.indexOf("#");
+  const hash = hashIndex >= 0 ? rawUrl.slice(hashIndex) : "";
+  let base = hashIndex >= 0 ? rawUrl.slice(0, hashIndex) : rawUrl;
+  const encoded = encodeURIComponent(token);
+  if (/([?&])v=[^&]*/.test(base)) {
+    base = base.replace(/([?&])v=[^&]*/, `$1v=${encoded}`);
+  } else {
+    base += `${base.includes("?") ? "&" : "?"}v=${encoded}`;
+  }
+  return base + hash;
+}
+
 function generatedEntryImageUrl(entry) {
   if (!entry || typeof entry !== "object") return "";
   const rawUrl = String(entry.image_url || entry.image_path || entry.url || "").trim();
-  if (/^(https?:\/\/|data:image\/|\/images\/)/i.test(rawUrl)) return rawUrl;
+  if (/^(https?:\/\/|data:image\/|\/images\/)/i.test(rawUrl)) {
+    return withImageRevision(rawUrl, entry.image_revision);
+  }
   const filename = generatedEntryImageFilename(entry);
-  return filename ? `/images/${filename}` : "";
+  return filename
+    ? withImageRevision(`/images/${filename}`, entry.image_revision)
+    : "";
 }
 
 function truncateGroupChatMetadataText(value, limit = 900) {
@@ -9147,8 +9419,12 @@ async function triggerGenerate() {
       headers: {"Content-Type": "application/json"},
     });
     const data = await res.json();
-    if (data.error) {
-      showToast("❌ " + (data.message || data.error));
+    if (data.error || data.status === "limit_reached") {
+      if (data.error === "limit_reached" || data.status === "limit_reached") {
+        showToast("⚠️ " + (data.message || "今日生图计划已达上限"));
+      } else {
+        showToast("❌ " + (data.message || data.error));
+      }
     } else {
       showToast("✨ 新图生成完成～");
       await loadGallery();
@@ -9369,7 +9645,9 @@ function renderToday() {
     const timeLabel = today.time || "";
     const todayImageFilename = String(today.image_filename || "");
     const todayImageFilenameAttr = escapeAttr(todayImageFilename);
-    const todayImageSrcArg = jsStringArg("/images/" + todayImageFilename);
+    const todayImageSrc = generatedEntryImageUrl(today) || ("/images/" + todayImageFilename);
+    const todayImageSrcAttr = escapeAttr(todayImageSrc);
+    const todayImageSrcArg = jsStringArg(todayImageSrc);
     const todayImageArg = jsStringArg(todayImageFilename);
     const todayDeleteArg = jsStringArg(todayImageFilename || today.date || "");
 
@@ -9399,12 +9677,12 @@ function renderToday() {
 
     const captionHtml = renderThoughtBlock(today.caption, "modal-caption tc-thought");
     const todayStyle = displayOutfitStyle(today);
-    const metaHtml = `${today.model_name ? `<span class="meta-tag">🤖 ${escapeHtml(today.model_name)}</span>` : ""}${displayReferenceMeta(today) ? `<span class="meta-tag">${escapeHtml(displayReferenceMeta(today))}</span>` : ""}${displayImageSizeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayImageSizeMeta(today))}</span>` : ""}${displayFileSizeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayFileSizeMeta(today))}</span>` : ""}${displayGenerationTimeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayGenerationTimeMeta(today))}</span>` : ""}${renderRerollButton(today)}`;
+    const metaHtml = `${today.model_name ? `<span class="meta-tag">🤖 ${escapeHtml(today.model_name)}</span>` : ""}${renderReferenceMetaTag(today)}${displayImageSizeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayImageSizeMeta(today))}</span>` : ""}${displayFileSizeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayFileSizeMeta(today))}</span>` : ""}${displayGenerationTimeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayGenerationTimeMeta(today))}</span>` : ""}${renderRerollButton(today)}`;
 
     html += `
       <div class="today-compact" data-gallery-img="${todayImageFilenameAttr}" style="cursor:default;">
         <div class="tc-image">
-          <img src="/images/${todayImageFilenameAttr}" alt="今日穿搭" decoding="async" onclick="openViewer(${todayImageSrcArg})" style="cursor:pointer;">
+          <img src="${todayImageSrcAttr}" alt="今日穿搭" decoding="async" onclick="openViewer(${todayImageSrcArg})" style="cursor:pointer;">
         </div>
         <div class="modal-info today-card-info">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
@@ -9618,17 +9896,18 @@ function renderGallery() {
         filtered.map(e => {
           const safeImageFilename = escapeAttr(e.image_filename || "");
           const imageFilenameArg = jsStringArg(e.image_filename || "");
-          const imageSrcArg = jsStringArg("/images/" + (e.image_filename || ""));
+          const imageUrl = generatedEntryImageUrl(e) || ("/images/" + (e.image_filename || ""));
+          const imageUrlAttr = escapeAttr(imageUrl);
+          const imageSrcArg = jsStringArg(imageUrl);
           const deleteArg = jsStringArg(e.image_filename || e.date || "");
           const displayStyle = displayOutfitStyle(e);
           const imgHtml = e.image_filename
-            ? `<img src="/images/${safeImageFilename}" alt="${escapeAttr(e.date || '')}" loading="lazy" decoding="async">`
+            ? `<img src="${imageUrlAttr}" alt="${escapeAttr(e.date || '')}" loading="lazy" decoding="async">`
             : `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#ddd;font-size:32px;">📸</div>`;
           const timeDisplay = e.time ? e.time : "";
           let metaHtml = "";
           if (e.model_name) metaHtml += `<span class="tc-meta-tag">🤖 ${escapeHtml(e.model_name)}</span>`;
-          const referenceLabel = displayReferenceMeta(e);
-          if (referenceLabel) metaHtml += `<span class="tc-meta-tag">${escapeHtml(referenceLabel)}</span>`;
+          metaHtml += renderReferenceMetaTag(e, "tc-meta-tag");
           const sizeLabel = displayImageSizeMeta(e);
           if (sizeLabel) metaHtml += `<span class="tc-meta-tag">${escapeHtml(sizeLabel)}</span>`;
           const fileSizeLabel = displayFileSizeMeta(e);
@@ -9676,17 +9955,18 @@ function renderGallery() {
           const imageFilename = String(e.image_filename || "");
           const imageFilenameAttr = escapeAttr(imageFilename);
           const imageFilenameArg = jsStringArg(imageFilename);
+          const imageUrl = generatedEntryImageUrl(e) || ("/images/" + imageFilename);
+          const imageUrlAttr = escapeAttr(imageUrl);
           const deleteArg = jsStringArg(imageFilename || e.date || "");
           const imgHtml = e.image_filename
-            ? `<img src="/images/${imageFilenameAttr}" alt="${escapeAttr(e.date || '')}" loading="lazy" decoding="async">`
+            ? `<img src="${imageUrlAttr}" alt="${escapeAttr(e.date || '')}" loading="lazy" decoding="async">`
             : `<div class="img-placeholder">📸</div>`;
           const displayStyle = displayOutfitStyle(e);
           const styleTag = displayStyle ? `<span class="card-style-tag" title="${escapeAttr(displayStyle)}" onclick="event.stopPropagation();filterByTag(${jsStringArg(displayStyle)});">${escapeHtml(displayStyle)}</span>` : "";
           const timeDisplay = e.time ? e.time : "";
           let metaHtml = "";
           if (e.model_name) metaHtml += `<span class="meta-tag meta-model">🤖 ${escapeHtml(e.model_name)}</span>`;
-          const referenceLabel = displayReferenceMeta(e);
-          if (referenceLabel) metaHtml += `<span class="meta-tag meta-ref">${escapeHtml(referenceLabel)}</span>`;
+          metaHtml += renderReferenceMetaTag(e, "meta-tag meta-ref");
           return `
             <div class="gallery-card" data-gallery-img="${imageFilenameAttr}" onclick="event.stopPropagation();openModal(allEntries.find(x=>x.image_filename===${imageFilenameArg}),this.querySelector('.card-edit-btn'))">
               <div class="card-img-wrap">
@@ -9811,14 +10091,13 @@ ms.textContent = `
 .modal-date-group { min-width:0;display:flex;align-items:center;gap:7px; }
 .modal-date { font-size:15px;color:#999;font-weight:500;letter-spacing:0.3px; }
 .modal-version-btn {
-  width:28px;height:28px;padding:0;border:1px solid #e5dce8;border-radius:50%;background:#fff;color:#8a758e;
-  display:inline-flex;align-items:center;justify-content:center;gap:2px;cursor:pointer;flex:0 0 auto;
-  font-size:12px;line-height:1;box-shadow:0 2px 7px rgba(66,38,73,0.07);transition:all .18s ease;
+  width:30px;height:30px;padding:0;border:1px solid #f2bfd0;border-radius:8px;background:#fff7fa;color:#d81b60;
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex:0 0 auto;
+  font-size:13px;line-height:1;box-shadow:none;transition:all .18s ease;
 }
-.modal-version-btn:hover { color:#d81b60;border-color:#e9a9c0;background:#fff7fa;transform:translateY(-1px); }
+.modal-version-btn:hover { color:#ad1457;border-color:#e68dac;background:#fce4ec;transform:translateY(-1px); }
+.modal-version-btn i { line-height:1; }
 .modal-version-btn[hidden] { display:none; }
-.modal-version-count { font-size:9px;font-weight:800;line-height:1; }
-.modal-version-count:empty { display:none; }
 .modal-style { display:inline-block;background:linear-gradient(135deg,#e91e63,#9c27b0);color:#fff;padding:4px 14px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:0.5px;width:fit-content;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(233,30,99,0.2);flex-shrink:0; }
 .modal-style:hover { opacity:0.9; transform:translateY(-1px); box-shadow:0 4px 12px rgba(233,30,99,0.3); }
 .modal-outfit { display:flex;align-items:center;gap:10px;font-size:15px;line-height:1.8;color:#555;padding:6px 0;flex-wrap:wrap; }
@@ -10047,9 +10326,10 @@ ms.textContent = `
 .image-version-empty i { font-size:27px;color:#c9bacd; }
 .image-version-empty strong { color:#5d4d61;font-size:15px; }
 .image-version-empty span { max-width:430px;font-size:13px;line-height:1.65; }
-.image-version-item { width:100%;display:grid;grid-template-columns:96px minmax(0,1fr) 22px;align-items:center;gap:14px;padding:14px 0;border:0;border-bottom:1px solid #f0e8f1;background:#fff;color:inherit;text-align:left;cursor:pointer; }
+.image-version-item { width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid #f0e8f1;background:#fff;color:inherit; }
 .image-version-item:last-of-type { border-bottom:0; }
-.image-version-item:hover .image-version-thumb { transform:scale(1.02);box-shadow:0 7px 18px rgba(57,31,63,.14); }
+.image-version-preview { min-width:0;display:grid;grid-template-columns:96px minmax(0,1fr) 22px;align-items:center;gap:14px;padding:0;border:0;background:transparent;color:inherit;text-align:left;cursor:zoom-in; }
+.image-version-preview:hover .image-version-thumb { transform:scale(1.02);box-shadow:0 7px 18px rgba(57,31,63,.14); }
 .image-version-thumb { width:96px;aspect-ratio:3/4;object-fit:cover;display:block;border-radius:6px;background:#f2edf3;transition:all .18s ease; }
 .image-version-copy { min-width:0;display:flex;flex-direction:column;gap:5px; }
 .image-version-meta { display:flex;align-items:center;gap:8px;flex-wrap:wrap; }
@@ -10058,8 +10338,119 @@ ms.textContent = `
 .image-version-instruction { color:#584c5b;font-size:14px;line-height:1.55;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden; }
 .image-version-size { color:#9b8e9e;font-size:11px; }
 .image-version-arrow { color:#b8aabc;font-size:12px; }
+.image-version-activate { min-height:34px;padding:0 11px;border:1px solid #efb8ca;border-radius:8px;background:#fff7fa;color:#c2185b;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:12px;font-weight:800;white-space:nowrap;cursor:pointer;transition:all .18s ease; }
+.image-version-activate:hover { border-color:#df7ba0;background:#fce4ec;color:#9c124b; }
+.image-version-activate:disabled { opacity:.58;cursor:wait; }
 .image-version-legacy-note { display:flex;align-items:flex-start;gap:8px;margin:4px 0 10px;padding:11px 12px;border-top:1px solid #f0e8f1;color:#8a7b8d;font-size:12px;line-height:1.55; }
 .image-version-legacy-note i { color:#b39ab8;margin-top:2px; }
+.wardrobe-version-dialog {
+  width:min(640px,calc(100vw - 40px));
+  border-radius:16px;
+  border:1px solid rgba(139,92,246,.14);
+  box-shadow:0 28px 90px rgba(61,22,88,.28);
+  background:linear-gradient(180deg,#fffdfb 0%,#ffffff 42%);
+}
+.wardrobe-version-dialog .image-version-head {
+  padding:18px 20px;
+  border-bottom:1px solid rgba(236,228,245,.95);
+  background:linear-gradient(180deg,rgba(250,245,255,.95),rgba(255,255,255,.6));
+}
+.wardrobe-version-title-icon,
+.wardrobe-version-dialog .image-version-title-icon {
+  background:linear-gradient(135deg,#a855f7,#ec4899);
+  box-shadow:0 8px 18px rgba(168,85,247,.28);
+  border-radius:12px;
+}
+.wardrobe-version-dialog .image-version-title-copy strong {
+  font-size:17px;
+  font-weight:800;
+  letter-spacing:.2px;
+  color:#3b2744;
+}
+.wardrobe-version-dialog .image-version-title-copy span {
+  color:#9a85a8;
+  font-size:12.5px;
+}
+.wardrobe-version-dialog .image-version-close {
+  width:36px;
+  height:36px;
+  border-radius:12px;
+  background:#f7f1fb;
+  color:#8a7397;
+}
+.wardrobe-version-dialog .image-version-close:hover {
+  color:#c2185b;
+  background:#fce4ec;
+}
+.wardrobe-version-dialog .image-version-list {
+  min-height:260px;
+  padding:8px 18px 16px;
+}
+.wardrobe-version-empty {
+  gap:12px;
+  padding:36px 28px 32px;
+  min-height:280px;
+}
+.wardrobe-version-empty-icon {
+  width:64px;
+  height:64px;
+  border-radius:20px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  color:#fff;
+  font-size:24px;
+  background:linear-gradient(135deg,#c084fc 0%,#f472b6 55%,#fb7185 100%);
+  box-shadow:0 14px 30px rgba(236,72,153,.22);
+  margin-bottom:2px;
+}
+.wardrobe-version-empty strong {
+  color:#4a3357;
+  font-size:16px;
+  font-weight:800;
+}
+.wardrobe-version-empty span {
+  max-width:360px;
+  color:#8d7a96;
+  font-size:13.5px;
+  line-height:1.7;
+}
+.wardrobe-version-empty-tip {
+  display:inline-flex;
+  align-items:flex-start;
+  gap:8px;
+  max-width:380px;
+  margin-top:6px;
+  padding:10px 12px;
+  border-radius:12px;
+  background:linear-gradient(135deg,rgba(250,245,255,.95),rgba(255,241,247,.95));
+  border:1px solid rgba(216,180,254,.35);
+  color:#7c6890;
+  font-size:12px;
+  line-height:1.55;
+  text-align:left;
+}
+.wardrobe-version-empty-tip i {
+  color:#c026d3;
+  margin-top:2px;
+  font-size:12px;
+}
+.wardrobe-version-dialog .image-version-item {
+  border-bottom-color:#f3ebf8;
+}
+.wardrobe-version-dialog .image-version-label {
+  color:#a21caf;
+}
+.wardrobe-version-dialog .image-version-activate {
+  border-color:#e9d5ff;
+  background:linear-gradient(180deg,#fdf4ff,#faf5ff);
+  color:#9333ea;
+}
+.wardrobe-version-dialog .image-version-activate:hover {
+  border-color:#d8b4fe;
+  background:#f3e8ff;
+  color:#7e22ce;
+}
 .delete-confirm-overlay {
   position:fixed;inset:0;z-index:10020;display:flex;align-items:center;justify-content:center;
   padding:24px;background:rgba(24,12,30,0.36);opacity:0;visibility:hidden;pointer-events:none;
@@ -10148,8 +10539,10 @@ ms.textContent = `
 	  .image-version-dialog { width:100%;max-height:calc(100vh - 20px); }
 	  .image-version-head { padding:14px 15px; }
 	  .image-version-list { padding:0 15px 6px; }
-	  .image-version-item { grid-template-columns:82px minmax(0,1fr) 18px;gap:11px;padding:12px 0; }
+	  .image-version-item { grid-template-columns:minmax(0,1fr);gap:8px;padding:12px 0; }
+	  .image-version-preview { grid-template-columns:82px minmax(0,1fr) 18px;gap:11px; }
 	  .image-version-thumb { width:82px; }
+	  .image-version-activate { justify-self:end; }
 	  .modal-content.modal-fit-detail { height:auto; }
 	}
 	}`;
@@ -10168,7 +10561,7 @@ modalOverlay.innerHTML = `
 	      <div class="modal-info-top">
 	        <span class="modal-date-group">
 	          <span class="modal-date" id="modalDate"></span>
-	          <button class="modal-version-btn" id="modalVersionBtn" type="button" onclick="openImageVersions(event)" title="查看历史版本" aria-label="查看历史版本" hidden><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i><span class="modal-version-count" id="modalVersionCount"></span></button>
+	          <button class="modal-version-btn" id="modalVersionBtn" type="button" onclick="openImageVersions(event)" title="查看历史版本" aria-label="查看历史版本" hidden><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i></button>
 	        </span>
 	        <span class="modal-style" id="modalStyle" onclick="event.stopPropagation();filterByTag(this.textContent);"></span>
       </div>
@@ -10302,6 +10695,7 @@ let imageEditBusy = false;
 let imageEditLastFocus = null;
 let imageEditOriginalScheduleDescription = '';
 let imageVersionRequestToken = 0;
+let imageVersionSwitchBusy = false;
 const imageEditPlaceholders = {
   background: '例如：改成雨后的东京街道，保留人物、桌面和前景物品',
   outfit: '例如：只把上衣改成黑色短款皮夹克',
@@ -10337,28 +10731,117 @@ function renderImageVersions(payload) {
   }
   list.innerHTML = items.map((item, index) => {
     const targetLabel = String(item.target_label || '编辑').trim();
-    const versionLabel = targetLabel === '重抽' ? '重抽前版本' : `${targetLabel}修改前`;
-    const instruction = String(item.instruction || '').trim() || '保留的编辑前图片';
+    const versionLabel = item.target === 'version_switch'
+      ? '切换前当前版本'
+      : (targetLabel === '重抽' ? '重抽前版本' : `${targetLabel}修改前`);
+    const rawInstruction = String(item.instruction || '').trim();
+    // Hide boilerplate archive notes; the version label already explains the source.
+    const boilerplate = new Set([
+      '重抽前的当前图片',
+      '切换时自动保留的当前图片',
+      '保留的编辑前图片',
+      '切换前当前版本',
+    ]);
+    const instruction = (
+      rawInstruction
+      && !boilerplate.has(rawInstruction)
+      && item.target !== 'reroll'
+      && item.target !== 'version_switch'
+    ) ? rawInstruction : '';
     const timestamp = imageVersionTimestamp(item);
     const size = item.width && item.height ? `${item.width} × ${item.height}` : '';
-    return `<button class="image-version-item" type="button" data-version-index="${index}" aria-label="查看${escapeAttr(versionLabel)}">
-      <img class="image-version-thumb" src="${escapeAttr(item.image_url || '')}" alt="${escapeAttr(versionLabel)}" loading="lazy" decoding="async">
-      <span class="image-version-copy">
-        <span class="image-version-meta"><span class="image-version-label">${escapeHtml(versionLabel)}</span><span class="image-version-time">${escapeHtml(timestamp)}</span></span>
-        <span class="image-version-instruction">${escapeHtml(instruction)}</span>
-        ${size ? `<span class="image-version-size">${escapeHtml(size)}</span>` : ''}
-      </span>
-      <i class="fa-solid fa-chevron-right image-version-arrow" aria-hidden="true"></i>
-    </button>`;
+    return `<article class="image-version-item">
+      <button class="image-version-preview" type="button" data-version-preview-index="${index}" aria-label="预览${escapeAttr(versionLabel)}">
+        <img class="image-version-thumb" src="${escapeAttr(item.image_url || '')}" alt="${escapeAttr(versionLabel)}" loading="lazy" decoding="async">
+        <span class="image-version-copy">
+          <span class="image-version-meta"><span class="image-version-label">${escapeHtml(versionLabel)}</span><span class="image-version-time">${escapeHtml(timestamp)}</span></span>
+          ${instruction ? `<span class="image-version-instruction">${escapeHtml(instruction)}</span>` : ''}
+          ${size ? `<span class="image-version-size">${escapeHtml(size)}</span>` : ''}
+        </span>
+        <i class="fa-solid fa-up-right-and-down-left-from-center image-version-arrow" aria-hidden="true"></i>
+      </button>
+      <button class="image-version-activate" type="button" data-version-activate-index="${index}" aria-label="将${escapeAttr(versionLabel)}设为当前版本"><i class="fa-solid fa-arrow-right-arrow-left" aria-hidden="true"></i><span>设为当前</span></button>
+    </article>`;
   }).join('') + (unavailableCount > 0
     ? `<div class="image-version-legacy-note"><i class="fa-solid fa-circle-info" aria-hidden="true"></i><span>另有 ${unavailableCount} 次早期编辑发生在历史版本功能启用前，旧图未保留。</span></div>`
     : '');
-  list.querySelectorAll('[data-version-index]').forEach(button => {
+  list.querySelectorAll('[data-version-preview-index]').forEach(button => {
     button.addEventListener('click', () => {
-      const item = items[Number(button.dataset.versionIndex)];
+      const item = items[Number(button.dataset.versionPreviewIndex)];
       if (item && item.image_url) openFullscreenImg(item.image_url);
     });
   });
+  list.querySelectorAll('[data-version-activate-index]').forEach(button => {
+    button.addEventListener('click', () => {
+      const item = items[Number(button.dataset.versionActivateIndex)];
+      if (item) activateImageVersion(item, button);
+    });
+  });
+}
+async function activateImageVersion(item, button) {
+  if (imageVersionSwitchBusy) return;
+  const imageFilename = String(currentModalImg || '').trim();
+  const versionId = String((item && item.id) || '').trim();
+  if (!imageFilename || !versionId) return;
+  imageVersionSwitchBusy = true;
+  const controls = Array.from(document.querySelectorAll('#imageVersionList .image-version-activate'));
+  const originalHtml = button ? button.innerHTML : '';
+  controls.forEach(control => { control.disabled = true; });
+  if (button) button.innerHTML = '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><span>切换中</span>';
+  try {
+    const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const timeoutId = controller ? setTimeout(() => controller.abort(), 20000) : 0;
+    let response;
+    try {
+      response = await fetch(`${API}/api/images/${encodeURIComponent(imageFilename)}/versions/${encodeURIComponent(versionId)}/activate`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({}),
+        signal: controller ? controller.signal : undefined
+      });
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    const freshFilename = String(data.image_filename || imageFilename);
+    const revision = imageRevisionToken(data.image_revision) || String(Date.now());
+    const freshImageUrl = withImageRevision(
+      `/images/${encodeURIComponent(freshFilename)}`,
+      revision
+    );
+    const fresh = Object.assign({}, data, {
+      image_filename: freshFilename,
+      image_url: freshImageUrl,
+      image_path: freshImageUrl
+    });
+    if (!replaceLocalImage(imageFilename, fresh)) upsertGeneratedGalleryEntry(fresh);
+    renderActivePhotoView();
+    updateBadges();
+    window.applyGalleryColumns?.();
+    closeImageVersions();
+    openModal(fresh);
+    showToast('已切换当前版本，原图片已保留在历史中');
+  } catch (error) {
+    let message = error && error.message ? error.message : '未知错误';
+    if (error && error.name === 'AbortError') {
+      message = '切换超时，请稍后重试';
+    }
+    const displayMessage = message === 'version_not_found'
+      ? '该历史版本已变化，请重新打开'
+      : (message === 'version_source_changed'
+        ? '当前图片已发生变化，请重试'
+        : (message === 'image_busy'
+          ? '当前图片正在重抽或编辑，请稍后再切换版本'
+          : message));
+    showToast('版本切换失败：' + displayMessage);
+  } finally {
+    imageVersionSwitchBusy = false;
+    controls.forEach(control => {
+      if (control.isConnected) control.disabled = false;
+    });
+    if (button && button.isConnected) button.innerHTML = originalHtml;
+  }
 }
 async function openImageVersions(event) {
   if (event) event.stopPropagation();
@@ -10432,9 +10915,10 @@ function openModal(e, returnFocusTarget = null) {
   if (!e.image_filename) return;
   currentModalImg = e.image_filename;
   resetModalDetailHeight();
-  const modalImgFilename = escapeAttr(e.image_filename);
+  const modalImageUrl = generatedEntryImageUrl(e) || ('/images/' + e.image_filename);
+  const modalImageUrlAttr = escapeAttr(modalImageUrl);
   const modalAltText = escapeAttr(e.caption || appDisplay.shareTitle);
-  document.getElementById("modalImageWrap").innerHTML = `<img src="/images/${modalImgFilename}" alt="${modalAltText}" decoding="async" onclick="openFullscreenImg(${jsStringArg('/images/' + e.image_filename)})">`;
+  document.getElementById("modalImageWrap").innerHTML = `<img src="${modalImageUrlAttr}" alt="${modalAltText}" decoding="async" onclick="openFullscreenImg(${jsStringArg(modalImageUrl)})">`;
   const modalImg = document.querySelector("#modalImageWrap img");
   if (modalImg) modalImg.onload = syncModalDetailHeight;
   document.getElementById("modalDate").textContent = formatDate(e.date) + (e.time ? ' ' + e.time : '');
@@ -10448,7 +10932,6 @@ function openModal(e, returnFocusTarget = null) {
   versionBtn.hidden = !hasImageHistory;
   versionBtn.title = versionCount > 0 ? `查看 ${versionCount} 个历史版本` : '查看历史版本';
   versionBtn.setAttribute('aria-label', versionBtn.title);
-  document.getElementById('modalVersionCount').textContent = versionCount > 0 ? String(versionCount) : '';
   const styleEl = document.getElementById("modalStyle");
   const displayStyle = displayOutfitStyle(e);
   if (displayStyle) { styleEl.textContent = displayStyle; styleEl.style.display = "inline-block"; }
@@ -10456,8 +10939,7 @@ function openModal(e, returnFocusTarget = null) {
   // Meta tags (model + base_style)
   let metaHtml = "";
   if (e.model_name) metaHtml += `<span class="meta-tag">🤖 ${escapeHtml(e.model_name)}</span>`;
-  const referenceLabel = displayReferenceMeta(e);
-  if (referenceLabel) metaHtml += `<span class="meta-tag">${escapeHtml(referenceLabel)}</span>`;
+  metaHtml += renderReferenceMetaTag(e);
   const sizeLabel = displayImageSizeMeta(e);
   if (sizeLabel) metaHtml += `<span class="meta-tag">${escapeHtml(sizeLabel)}</span>`;
   const fileSizeLabel = displayFileSizeMeta(e);
@@ -10583,7 +11065,8 @@ window.addEventListener("resize", () => {
 	  }
 	  imageEditSourceImg = entry.image_filename;
 	  imageEditLastFocus = document.activeElement;
-	  document.getElementById('imageEditPreview').src = `/images/${encodeURIComponent(entry.image_filename)}`;
+	  document.getElementById('imageEditPreview').src = generatedEntryImageUrl(entry)
+	    || `/images/${encodeURIComponent(entry.image_filename)}`;
 	  document.getElementById('imageEditSourceMeta').textContent = `${formatDate(entry.date)}${entry.time ? ' · ' + entry.time : ''}`;
 	  const input = document.getElementById('imageEditInstruction');
 	  input.value = '';
@@ -10901,8 +11384,20 @@ async function rerollImage(imgId, event, btn, options = {}) {
       showToast("❌ 抽卡失败" + (data.error ? ": " + data.error : ""));
       return;
     }
-    const fresh = data;
     const oldImgId = data.replaced_image_filename || imgId;
+    // Reroll replaces the same card filename. Add a revision query so the
+    // browser fetches the new bytes instead of showing its cached old image.
+    const revision = imageRevisionToken(data.image_revision) || String(Date.now());
+    const stableImageUrl = withImageRevision(
+      `/images/${encodeURIComponent(oldImgId)}`,
+      revision
+    );
+    const fresh = Object.assign({}, data, {
+      image_filename: oldImgId,
+      image_url: stableImageUrl,
+      image_path: stableImageUrl,
+      id: oldImgId
+    });
     replaceLocalImage(oldImgId, fresh);
     renderActivePhotoView();
     updateBadges();
@@ -11258,23 +11753,6 @@ function getCustomImageModel() {
   return normalizeCustomImageModel(select ? select.value : "");
 }
 
-function getCustomPureMode() {
-  const btn = document.getElementById("cgPureBtn");
-  return !!(btn && btn.classList.contains("active"));
-}
-
-function setCustomPureMode(enabled) {
-  const btn = document.getElementById("cgPureBtn");
-  if (!btn) return;
-  btn.classList.toggle("active", !!enabled);
-  btn.setAttribute("aria-pressed", enabled ? "true" : "false");
-}
-
-function toggleCustomPureMode() {
-  setCustomPureMode(!getCustomPureMode());
-  saveCustomGenState();
-}
-
 function setCustomGenActiveValue(groupId, key, value) {
   const group = document.getElementById(groupId);
   if (!group || !value) return;
@@ -11404,7 +11882,6 @@ function saveCustomGenState() {
     customHeight: customDimensions.height,
     shot: getCustomShotType(),
     model: getCustomImageModel(),
-    pure: getCustomPureMode(),
     ref: (document.querySelector("#cgRefGrid .cg-ref-item.active") || {}).dataset?.ref || ""
   };
   window.galleryStorageSet("custom_gen_state", JSON.stringify(state));
@@ -11423,7 +11900,6 @@ function restoreCustomGenState() {
   if (heightInput) heightInput.value = String(normalizeCustomDimension(state.customHeight, 1024));
   setCustomSizeMode(state.sizeMode || "aspect");
   setCustomImageModel(state.model);
-  setCustomPureMode(state.pure === true || state.pure === 1 || String(state.pure || "").toLowerCase() === "true" || state.pure === "1");
   updateCustomSizeHint();
 }
 
@@ -11488,13 +11964,47 @@ function restoreCustomRefSelection(grid, refValue) {
   target.classList.add("active");
 }
 
+function getSelectedCustomRefImages() {
+  const grid = document.getElementById("cgRefGrid");
+  if (!grid) return [];
+  const selected = Array.from(grid.querySelectorAll(".cg-ref-item.selected"))
+    .sort((a, b) => Number(a.dataset.selectedAt || 0) - Number(b.dataset.selectedAt || 0))
+    .map((item) => String(item.dataset.ref || "").trim())
+    .filter(Boolean);
+  if (selected.length) return selected;
+  const active = grid.querySelector(".cg-ref-item.active");
+  const one = active ? String(active.dataset.ref || "").trim() : "";
+  return one ? [one] : [];
+}
+
+function refreshCustomRefOrderBadges() {
+  const grid = document.getElementById("cgRefGrid");
+  if (!grid) return;
+  const selected = Array.from(grid.querySelectorAll(".cg-ref-item.selected"))
+    .sort((a, b) => Number(a.dataset.selectedAt || 0) - Number(b.dataset.selectedAt || 0));
+  selected.forEach((item, index) => {
+    let badge = item.querySelector(".cg-ref-order");
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "cg-ref-order";
+      item.appendChild(badge);
+    }
+    badge.textContent = String(index + 1);
+  });
+  grid.querySelectorAll(".cg-ref-item:not(.selected) .cg-ref-order").forEach((el) => el.remove());
+}
+
 function currentCustomGenPayload(refImageOverride = "") {
   const promptEl = document.getElementById("cgPrompt");
   const prompt = promptEl ? promptEl.value.trim() : "";
   if (!prompt) return { error: "prompt_required" };
   const customSize = getCustomGenSize();
-  const refItem = document.querySelector("#cgRefGrid .cg-ref-item.active");
-  const refImage = refImageOverride || (refItem ? refItem.dataset.ref : "");
+  let refs = [];
+  if (refImageOverride) {
+    refs = [String(refImageOverride).trim()].filter(Boolean);
+  } else {
+    refs = getSelectedCustomRefImages();
+  }
   const body = {
     prompt,
     size_mode: customSize.mode,
@@ -11502,12 +12012,12 @@ function currentCustomGenPayload(refImageOverride = "") {
     resolution: customSize.resolution,
     size: customSize.size,
     shot_type: getCustomShotType(),
-    pure: getCustomPureMode(),
     source: "custom_ui"
   };
   const imageModel = getCustomImageModel();
   if (imageModel) body.model = imageModel;
-  if (refImage) body.ref_image = refImage;
+  if (refs[0]) body.ref_image = refs[0];
+  if (refs.length > 1) body.ref_images = refs;
   return { body };
 }
 
@@ -11590,8 +12100,39 @@ function bindReferenceGridSelection(grid) {
         requestDefaultStyleUpload(uploadStyle);
         return;
       }
+      const ref = String(item.dataset.ref || "").trim();
+      // empty tile clears all references
+      if (!ref) {
+        grid.querySelectorAll(".cg-ref-item").forEach(x => {
+          x.classList.remove("active", "selected");
+        });
+        item.classList.add("active");
+        refreshCustomRefOrderBadges();
+        saveCustomGenState();
+        return;
+      }
+      // multi-select toggle for real refs; preserve selection order via DOM order of .selected append
+      const noneTile = grid.querySelector('.cg-ref-item[data-ref=""]');
+      if (noneTile) noneTile.classList.remove("active");
+      if (item.classList.contains("selected")) {
+        item.classList.remove("selected", "active");
+      } else {
+        item.classList.add("selected", "active");
+        // move selected item to end among selected markers by re-appending class order via data-order timestamp
+        item.dataset.selectedAt = String(Date.now());
+      }
+      // normalize active to first selected for legacy single-ref UI bits
+      const selected = Array.from(grid.querySelectorAll(".cg-ref-item.selected"))
+        .sort((a, b) => Number(a.dataset.selectedAt || 0) - Number(b.dataset.selectedAt || 0));
       grid.querySelectorAll(".cg-ref-item").forEach(x => x.classList.remove("active"));
-      item.classList.add("active");
+      if (selected.length) {
+        // re-apply selected class in click order
+        selected.forEach(x => x.classList.add("selected"));
+        selected[0].classList.add("active");
+      } else if (noneTile) {
+        noneTile.classList.add("active");
+      }
+      refreshCustomRefOrderBadges();
       saveCustomGenState();
     });
     if (item.getAttribute("role") === "button") {
@@ -13468,6 +14009,8 @@ document.addEventListener("keydown", e => {
       closeOutfitStyleDialog();
     } else if (document.getElementById("imgFullscreen").classList.contains("open")) {
       document.getElementById("imgFullscreen").classList.remove("open");
+    } else if (wardrobeVersionOverlay.classList.contains("open")) {
+      closeWardrobeVersions();
     } else if (imageVersionOverlay.classList.contains("open")) {
       closeImageVersions();
     } else if (modalOverlay.classList.contains("open")) {
@@ -14211,6 +14754,8 @@ function wardrobeItemSignature(item) {
     wardrobeImage.url || '',
     wardrobeImage.filename || '',
     wardrobeImage.created_at || '',
+    wardrobeImage.version_count || 0,
+    wardrobeImage.has_versions || false,
     status.status || '',
     status.message || '',
     status.error || '',
@@ -14255,6 +14800,9 @@ function renderWardrobeItem(item) {
   html += '<button class="wardrobe-action-btn" type="button" data-wardrobe-action="edit" data-outfit-id="' + escapeAttr(outfitId) + '" title="编辑穿搭" aria-label="编辑穿搭"><i class="fa-solid fa-pen" aria-hidden="true"></i><span class="wardrobe-action-label">编辑</span></button>';
   if (hasWardrobeImage) {
     html += '<button class="wardrobe-action-btn" type="button" data-wardrobe-action="use-ref" data-ref="' + escapeAttr(wardrobeImageUrl) + '" data-ref-label="' + escapeAttr('衣柜 · ' + style) + '" title="用它生图" aria-label="用它生图"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span class="wardrobe-action-label">用它生图</span></button>';
+    var versionCount = Number(wardrobeImage.version_count || 0);
+    var historyLabel = versionCount > 0 ? ('历史 ' + versionCount) : '历史';
+    html += '<button class="wardrobe-action-btn" type="button" data-wardrobe-action="versions" data-outfit-id="' + escapeAttr(outfitId) + '" title="衣架图历史版本" aria-label="衣架图历史版本"' + (versionCount > 0 ? '' : '') + '><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i><span class="wardrobe-action-label">' + historyLabel + '</span></button>';
   }
   html += '<button class="wardrobe-remove-btn" type="button" data-payload="' + removePayloadAttr + '" onclick="removeFavoriteOutfitPlan(this)" title="取消收藏" aria-label="取消收藏"><i class="fa-solid fa-heart-circle-xmark" aria-hidden="true"></i><span class="wardrobe-action-label">取消收藏</span></button>';
   if (wardrobeGenerating || wardrobeFailed) {
@@ -14635,6 +15183,10 @@ document.addEventListener('click', function(event) {
     event.preventDefault();
     event.stopPropagation();
     openCustomGenFromWardrobe(btn);
+  } else if (action === 'versions') {
+    event.preventDefault();
+    event.stopPropagation();
+    openWardrobeVersions(btn);
   }
 });
 
@@ -14643,6 +15195,159 @@ window.openCustomGenFromWardrobe = openCustomGenFromWardrobe;
 window.openWardrobeEdit = openWardrobeEdit;
 window.closeWardrobeEdit = closeWardrobeEdit;
 window.saveWardrobeEdit = saveWardrobeEdit;
+
+// --- Wardrobe hanger image history versions ---
+const wardrobeVersionOverlay = document.createElement("div");
+wardrobeVersionOverlay.className = "image-version-overlay";
+wardrobeVersionOverlay.id = "wardrobeVersionOverlay";
+wardrobeVersionOverlay.setAttribute("aria-hidden", "true");
+wardrobeVersionOverlay.onclick = (event) => { if (event.target === wardrobeVersionOverlay) closeWardrobeVersions(); };
+wardrobeVersionOverlay.innerHTML = `
+  <div class="image-version-dialog wardrobe-version-dialog" role="dialog" aria-modal="true" aria-labelledby="wardrobeVersionTitle" tabindex="-1" onclick="event.stopPropagation()">
+    <div class="image-version-head">
+      <div class="image-version-title">
+        <span class="image-version-title-icon wardrobe-version-title-icon" aria-hidden="true"><i class="fa-solid fa-shirt"></i></span>
+        <span class="image-version-title-copy">
+          <strong id="wardrobeVersionTitle">衣架图历史版本</strong>
+          <span id="wardrobeVersionSourceMeta"></span>
+        </span>
+      </div>
+      <button class="image-version-close" id="wardrobeVersionCloseBtn" type="button" onclick="closeWardrobeVersions()" aria-label="关闭"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+    </div>
+    <div class="image-version-list" id="wardrobeVersionList" aria-live="polite"></div>
+  </div>
+`;
+document.body.appendChild(wardrobeVersionOverlay);
+
+let wardrobeVersionRequestToken = 0;
+let wardrobeVersionSwitchBusy = false;
+let currentWardrobeVersionOutfitId = "";
+
+function closeWardrobeVersions() {
+  wardrobeVersionRequestToken += 1;
+  wardrobeVersionOverlay.classList.remove("open");
+  wardrobeVersionOverlay.setAttribute("aria-hidden", "true");
+  currentWardrobeVersionOutfitId = "";
+  if (typeof deactivateAccessibleDialog === "function") {
+    deactivateAccessibleDialog(wardrobeVersionOverlay);
+  }
+}
+
+function renderWardrobeVersions(payload) {
+  const list = document.getElementById("wardrobeVersionList");
+  const items = Array.isArray(payload && payload.items) ? payload.items : [];
+  if (!items.length) {
+    list.innerHTML = `<div class="image-version-empty wardrobe-version-empty">
+      <div class="wardrobe-version-empty-icon" aria-hidden="true"><i class="fa-solid fa-shirt"></i></div>
+      <strong>还没有历史版本</strong>
+      <span>这套衣架图目前只有当前这一张。<br>下次点击「重生衣架图」时，会自动把旧图保存到这里，方便回退对比。</span>
+      <div class="wardrobe-version-empty-tip"><i class="fa-solid fa-lightbulb" aria-hidden="true"></i><span>提示：历史从现在起生效，以前已覆盖的旧图无法恢复。</span></div>
+    </div>`;
+    return;
+  }
+  list.innerHTML = items.map((item, index) => {
+    const targetLabel = String(item.target_label || "重生衣架图").trim();
+    const versionLabel = item.target === "version_switch" ? "切换前当前版本" : (targetLabel || "重生前版本");
+    const timestamp = imageVersionTimestamp(item);
+    const size = item.width && item.height ? `${item.width} × ${item.height}` : "";
+    return `<article class="image-version-item">
+      <button class="image-version-preview" type="button" data-wardrobe-version-preview-index="${index}" aria-label="预览${escapeAttr(versionLabel)}">
+        <img class="image-version-thumb" src="${escapeAttr(item.image_url || "")}" alt="${escapeAttr(versionLabel)}" loading="lazy" decoding="async">
+        <span class="image-version-copy">
+          <span class="image-version-meta"><span class="image-version-label">${escapeHtml(versionLabel)}</span><span class="image-version-time">${escapeHtml(timestamp)}</span></span>
+          ${size ? `<span class="image-version-size">${escapeHtml(size)}</span>` : ""}
+        </span>
+        <i class="fa-solid fa-up-right-and-down-left-from-center image-version-arrow" aria-hidden="true"></i>
+      </button>
+      <button class="image-version-activate" type="button" data-wardrobe-version-activate-index="${index}" aria-label="将${escapeAttr(versionLabel)}设为当前衣架图"><i class="fa-solid fa-arrow-right-arrow-left" aria-hidden="true"></i><span>设为当前</span></button>
+    </article>`;
+  }).join("");
+  list.querySelectorAll("[data-wardrobe-version-preview-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = items[Number(button.dataset.wardrobeVersionPreviewIndex)];
+      if (item && item.image_url) openFullscreenImg(item.image_url);
+    });
+  });
+  list.querySelectorAll("[data-wardrobe-version-activate-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = items[Number(button.dataset.wardrobeVersionActivateIndex)];
+      if (item) activateWardrobeVersion(item, button);
+    });
+  });
+}
+
+async function activateWardrobeVersion(item, button) {
+  if (wardrobeVersionSwitchBusy) return;
+  const outfitId = String(currentWardrobeVersionOutfitId || "").trim();
+  const versionId = String((item && item.id) || "").trim();
+  if (!outfitId || !versionId) return;
+  wardrobeVersionSwitchBusy = true;
+  const controls = Array.from(document.querySelectorAll("#wardrobeVersionList .image-version-activate"));
+  const originalHtml = button ? button.innerHTML : "";
+  controls.forEach((control) => { control.disabled = true; });
+  if (button) button.innerHTML = '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><span>切换中</span>';
+  try {
+    const res = await fetch(`/api/favorite-outfits/${encodeURIComponent(outfitId)}/wardrobe-image/versions/${encodeURIComponent(versionId)}/activate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.message || data.error || (`HTTP ${res.status}`));
+    if (data.wardrobe_image && updateWardrobeItemWardrobeImage(outfitId, data.wardrobe_image)) {
+      renderWardrobeFromCache();
+    } else {
+      await refreshWardrobeAfterFavoriteChange({ silent: true });
+    }
+    closeWardrobeVersions();
+    showToast("已切换衣架图版本，原图已保留在历史中");
+  } catch (error) {
+    let message = error && error.message ? error.message : "未知错误";
+    if (message === "version_not_found") message = "该历史版本已变化，请重新打开";
+    if (message === "wardrobe_image_generating") message = "衣架图正在生成中，请稍后再切换";
+    showToast("衣架图版本切换失败：" + message);
+  } finally {
+    wardrobeVersionSwitchBusy = false;
+    controls.forEach((control) => {
+      if (control.isConnected) control.disabled = false;
+    });
+    if (button && button.isConnected) button.innerHTML = originalHtml;
+  }
+}
+
+async function openWardrobeVersions(btnOrId) {
+  const outfitId = typeof btnOrId === "string"
+    ? String(btnOrId || "").trim()
+    : String((btnOrId && btnOrId.dataset && btnOrId.dataset.outfitId) || "").trim();
+  if (!outfitId) {
+    showToast("❌ 找不到这套收藏方案");
+    return;
+  }
+  const item = (wardrobeItems || []).find((x) => String(x && x.id || "") === outfitId) || {};
+  const style = (item.outfit && item.outfit["风格"]) || item.outfit_style || "收藏方案";
+  currentWardrobeVersionOutfitId = outfitId;
+  const requestToken = ++wardrobeVersionRequestToken;
+  document.getElementById("wardrobeVersionSourceMeta").textContent = style + (item.date ? ` · ${item.date}` : "");
+  document.getElementById("wardrobeVersionList").innerHTML = '<div class="image-version-loading"><i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><span>正在读取历史版本</span></div>';
+  wardrobeVersionOverlay.classList.add("open");
+  wardrobeVersionOverlay.setAttribute("aria-hidden", "false");
+  if (typeof activateAccessibleDialog === "function") {
+    activateAccessibleDialog(wardrobeVersionOverlay, "#wardrobeVersionCloseBtn", btnOrId && btnOrId.currentTarget ? btnOrId.currentTarget : btnOrId);
+  }
+  try {
+    const res = await fetch(`/api/favorite-outfits/${encodeURIComponent(outfitId)}/wardrobe-image/versions`);
+    const data = await res.json().catch(() => ({}));
+    if (requestToken !== wardrobeVersionRequestToken || !wardrobeVersionOverlay.classList.contains("open")) return;
+    if (!res.ok || data.error) throw new Error(data.message || data.error || (`HTTP ${res.status}`));
+    renderWardrobeVersions(data);
+  } catch (error) {
+    if (requestToken !== wardrobeVersionRequestToken || !wardrobeVersionOverlay.classList.contains("open")) return;
+    document.getElementById("wardrobeVersionList").innerHTML = '<div class="image-version-empty"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i><strong>读取失败</strong><span>暂时无法加载衣架图历史版本。</span></div>';
+  }
+}
+
+window.openWardrobeVersions = openWardrobeVersions;
+window.closeWardrobeVersions = closeWardrobeVersions;
 window.deleteGroupChatMessage = deleteGroupChatMessage;
 window.clearGroupChatContext = clearGroupChatContext;
 

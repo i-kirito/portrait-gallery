@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import tempfile
 import unittest
@@ -14,6 +15,7 @@ from image_versions import (  # noqa: E402
     archive_image_version,
     image_version_path,
     normalize_image_versions,
+    replace_image_from_version,
 )
 from store import ScheduleStore  # noqa: E402
 from web_server import GalleryServer  # noqa: E402
@@ -44,6 +46,20 @@ class ImageVersionStorageTest(unittest.TestCase):
             self.assertEqual([], normalize_image_versions([tampered]))
             self.assertIsNone(image_version_path(str(data_dir), tampered))
 
+    def test_version_replacement_keeps_target_format_and_dimensions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "old.jpg"
+            target = Path(tmpdir) / "current.png"
+            Image.new("RGB", (36, 24), (20, 80, 140)).save(source, quality=95)
+            Image.new("RGB", (20, 30), (220, 210, 200)).save(target)
+
+            info = replace_image_from_version(source, target)
+
+            self.assertEqual((36, 24), (info["width"], info["height"]))
+            with Image.open(target) as image:
+                self.assertEqual("PNG", image.format)
+                self.assertEqual((36, 24), image.size)
+
 
 class ImageVersionEndpointTest(unittest.IsolatedAsyncioTestCase):
     @staticmethod
@@ -57,6 +73,96 @@ class ImageVersionEndpointTest(unittest.IsolatedAsyncioTestCase):
             str(root / "data"),
             str(config_path),
         )
+
+    async def _assert_activation_waits_for_mutation(self, operation: str):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            filename = f"serialized-{operation}.png"
+            current_path = Path(server.image_dir) / filename
+            Image.new("RGB", (48, 64), (230, 210, 190)).save(current_path)
+            current_bytes = current_path.read_bytes()
+            old_path = root / "old.png"
+            Image.new("RGB", (36, 54), (70, 100, 150)).save(old_path)
+            old_bytes = old_path.read_bytes()
+            old_version = archive_image_version(
+                server.data_dir,
+                str(old_path),
+                original_image_filename=filename,
+                target="custom",
+                target_label="其他",
+                instruction="切换并发测试",
+            )
+            stored_entry = {
+                "id": filename,
+                "date": "2026-07-18",
+                "time": "13:42",
+                "image_filename": filename,
+                "image_path": f"/images/{filename}",
+                "status": "ok",
+                "image_versions": [old_version],
+            }
+            ScheduleStore(server.data_dir).save({"card": stored_entry})
+
+            mutation_started = asyncio.Event()
+            release_mutation = asyncio.Event()
+
+            async def blocking_mutation(*_args):
+                mutation_started.set()
+                await release_mutation.wait()
+                return dict(stored_entry)
+
+            if operation == "edit":
+                server.on_edit_image = blocking_mutation
+                mutation_path = f"/api/images/{filename}/edit"
+                mutation_kwargs = {
+                    "json": {"target": "background", "instruction": "改成雨后街道"}
+                }
+            else:
+                server.on_reroll_image = blocking_mutation
+                mutation_path = f"/api/images/{filename}/reroll"
+                mutation_kwargs = {"json": {}}
+
+            test_server = TestServer(server.app)
+            await test_server.start_server(access_log=None)
+            client = TestClient(test_server)
+            mutation_task = None
+            activation_task = None
+            try:
+                mutation_task = asyncio.create_task(
+                    client.post(mutation_path, **mutation_kwargs)
+                )
+                await asyncio.wait_for(mutation_started.wait(), timeout=1)
+                activation_task = asyncio.create_task(client.post(
+                    f"/api/images/{filename}/versions/{old_version['id']}/activate"
+                ))
+                activation_response = await asyncio.wait_for(activation_task, timeout=3)
+                activation_payload = await activation_response.json()
+                # Version switch fails fast while another mutation holds the lock.
+                self.assertEqual(409, activation_response.status)
+                self.assertEqual("image_busy", activation_payload.get("error"))
+                release_mutation.set()
+                mutation_response = await asyncio.wait_for(mutation_task, timeout=1)
+                mutation_payload = await mutation_response.json()
+            finally:
+                release_mutation.set()
+                pending = [
+                    task for task in (mutation_task, activation_task)
+                    if task is not None and not task.done()
+                ]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+                await client.close()
+
+            self.assertEqual(200, mutation_response.status)
+            self.assertEqual(filename, mutation_payload["image_filename"])
+            # Failed activation must not replace the current card while mutation runs.
+            self.assertEqual(current_bytes, current_path.read_bytes())
+            self.assertNotEqual(old_bytes, current_path.read_bytes())
+            self.assertNotIn(filename, server._image_mutation_locks)
+            self.assertNotIn(filename, server._image_mutation_lock_users)
 
     async def test_history_api_hides_archive_name_and_delete_removes_version(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -119,8 +225,13 @@ class ImageVersionEndpointTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(200, gallery_response.status)
             self.assertEqual(1, gallery["items"][0]["version_count"])
             self.assertTrue(gallery["items"][0]["has_image_history"])
+            self.assertTrue(gallery["items"][0]["image_revision"])
             self.assertNotIn("image_versions", gallery["items"][0])
             self.assertEqual(1, detail["version_count"])
+            self.assertEqual(
+                gallery["items"][0]["image_revision"],
+                detail["image_revision"],
+            )
             self.assertNotIn("image_versions", detail)
             self.assertEqual(200, versions_response.status)
             self.assertEqual(1, versions["version_count"])
@@ -165,6 +276,110 @@ class ImageVersionEndpointTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(0, detail["version_count"])
             self.assertEqual(1, versions["unavailable_count"])
             self.assertEqual([], versions["items"])
+
+    async def test_versions_can_switch_back_and_forth_without_creating_a_new_card(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            filename = "switchable.png"
+            current_path = Path(server.image_dir) / filename
+            Image.new("RGB", (48, 64), (230, 210, 190)).save(current_path)
+            current_bytes = current_path.read_bytes()
+            old_path = root / "old.png"
+            Image.new("RGB", (36, 54), (70, 100, 150)).save(old_path)
+            old_bytes = old_path.read_bytes()
+            old_version = archive_image_version(
+                server.data_dir,
+                str(old_path),
+                original_image_filename=filename,
+                archived_at="2026-07-17T13:59:00",
+                target="custom",
+                target_label="其他",
+                instruction="脸上不要有油腻感",
+            )
+            old_archive_path = image_version_path(server.data_dir, old_version)
+            ScheduleStore(server.data_dir).save({
+                "card": {
+                    "id": filename,
+                    "date": "2026-07-17",
+                    "time": "13:42",
+                    "image_filename": filename,
+                    "image_path": f"/images/{filename}",
+                    "status": "ok",
+                    "image_versions": [old_version],
+                },
+            })
+
+            test_server = TestServer(server.app)
+            await test_server.start_server(access_log=None)
+            client = TestClient(test_server)
+            try:
+                first_switch = await client.post(
+                    f"/api/images/{filename}/versions/{old_version['id']}/activate"
+                )
+                first_payload = await first_switch.json()
+                first_versions_response = await client.get(
+                    f"/api/images/{filename}/versions"
+                )
+                first_versions = await first_versions_response.json()
+                first_gallery_response = await client.get("/api/gallery?limit=10")
+                first_gallery = await first_gallery_response.json()
+                new_version_id = first_versions["items"][0]["id"]
+                archived_new_response = await client.get(
+                    first_versions["items"][0]["image_url"]
+                )
+                archived_new_bytes = await archived_new_response.read()
+                first_current_bytes = current_path.read_bytes()
+
+                second_switch = await client.post(
+                    f"/api/images/{filename}/versions/{new_version_id}/activate"
+                )
+                second_payload = await second_switch.json()
+                second_versions_response = await client.get(
+                    f"/api/images/{filename}/versions"
+                )
+                second_versions = await second_versions_response.json()
+                archived_old_response = await client.get(
+                    second_versions["items"][0]["image_url"]
+                )
+                archived_old_bytes = await archived_old_response.read()
+            finally:
+                await client.close()
+
+            self.assertEqual(200, first_switch.status)
+            self.assertEqual(filename, first_payload["image_filename"])
+            self.assertEqual(1, first_payload["version_count"])
+            self.assertTrue(first_payload["image_revision"])
+            self.assertEqual(
+                first_payload["image_revision"],
+                first_gallery["items"][0]["image_revision"],
+            )
+            self.assertEqual((36, 54), (first_payload["width"], first_payload["height"]))
+            self.assertEqual("36x54", first_payload["size"])
+            self.assertEqual(old_bytes, first_current_bytes)
+            self.assertFalse(old_archive_path.exists())
+            self.assertEqual(1, first_versions["version_count"])
+            self.assertNotEqual(old_version["id"], new_version_id)
+            self.assertEqual(current_bytes, archived_new_bytes)
+
+            self.assertEqual(200, second_switch.status)
+            self.assertEqual(filename, second_payload["image_filename"])
+            self.assertEqual(1, second_payload["version_count"])
+            self.assertEqual((48, 64), (second_payload["width"], second_payload["height"]))
+            self.assertEqual("48x64", second_payload["size"])
+            self.assertEqual(current_bytes, current_path.read_bytes())
+            self.assertEqual(1, second_versions["version_count"])
+            self.assertEqual(old_bytes, archived_old_bytes)
+            self.assertEqual("custom", second_versions["items"][0]["target"])
+            self.assertEqual("其他", second_versions["items"][0]["target_label"])
+            self.assertEqual("脸上不要有油腻感", second_versions["items"][0]["instruction"])
+            self.assertEqual("2026-07-17T13:59:00", second_versions["items"][0]["archived_at"])
+
+    async def test_version_activation_waits_for_background_edit(self):
+        await self._assert_activation_waits_for_mutation("edit")
+
+    async def test_version_activation_waits_for_background_reroll(self):
+        await self._assert_activation_waits_for_mutation("reroll")
 
 
 if __name__ == "__main__":

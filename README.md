@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.3.6**
+当前版本：**v1.3.7**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -96,7 +96,7 @@ curl http://localhost:18889/api/health
 如果要使用已经发布到 Docker Hub/GHCR 的镜像，通过 `PORTRAIT_GALLERY_IMAGE` 指定：
 
 ```bash
-PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.6 docker compose up -d
+PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.7 docker compose up -d
 curl http://localhost:18889/api/health
 ```
 
@@ -332,6 +332,16 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥、三级 LLM 模型链、Gitee 回退、日程风格和升级选项
 
 ## 🧾 Release Notes
+
+### v1.3.7
+
+- 自定义生图支持有序多参考图：第一张锁动作/穿搭/场景，后续参考只迁脸与发色；API/UI 均可传 ref_images。
+- 双参考上游失败自动降级为 face-only；multi-ref 对 timeout / Codex images/edits EOF 快速失败，日志带 kind 与 refs。
+- 自定义生图轻量 prompt 路径：场景优先，避免过长 quality 堆叠导致崩图；日程 photo_style_en 由 LLM 按当日氛围判断摄影语言。
+- 「现在生图」受每日计划配额约束；重抽改为替换原卡片并保留历史版本，支持版本回退。
+- 衣柜衣架图支持历史版本归档/切换；参考像标签改为悬停缩略图，不再展示冗长文件名。
+- 日程生成加强近期动作去重（LLM 判断近 3 天），可出现双人互动日程，但生图强制单主体入镜。
+- 图片版本激活、翻译超时与 GPT Image 失败分类（moderation/timeout/EOF）更稳健。
 
 ### v1.3.6
 

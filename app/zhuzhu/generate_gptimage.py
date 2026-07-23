@@ -31,6 +31,7 @@ from core import (
     CONFIG_PATH,
     _API_KEYS_CONFIG_PATH,
 )
+from characters import NATURAL_FACE_SHAPE_GUARD
 
 GPTIMAGE_DIRECT_URL = get_image_model("gpt_base_url")
 
@@ -57,10 +58,11 @@ GPTIMAGE_DIRECT_MODEL = _get_gpt_model()
 
 TEXT2IMG_TIMEOUT = get_image_request_timeout("text2img")
 IMG2IMG_TIMEOUT = get_image_request_timeout("img2img")
-IMG2IMG_MAX_SIZE = get_image_int("img2img_max_size", 512, 64)
-IMG2IMG_QUALITY = get_image_int("img2img_quality", 75, 1, 100)
+IMG2IMG_MAX_SIZE = get_image_int("img2img_max_size", 1024, 64)
+IMG2IMG_QUALITY = get_image_int("img2img_quality", 92, 1, 100)
 _IMAGES_API_UNSUPPORTED_BASES: set[str] = set()
 _LAST_TERMINAL_IMAGE_FAILURE = ""
+_LAST_IMAGE_FAILURE_KIND = ""
 
 
 def _configured_image_base_url(url: str) -> str:
@@ -251,16 +253,26 @@ def _terminal_image_failure_reason(status_code: int, body: str) -> str:
         return "GPT Image 工作区已停用"
     if "no available compatible accounts" in lower:
         return "GPT Image 没有可用的兼容账号"
-    if (
+    # AxonHub/CPA often returns temporary distributor routing failures as
+    # model_not_found + "no available channel". These recover after a short
+    # wait, so do not treat them as terminal.
+    if "model_not_found" in lower and not (
         "no available channel" in lower
         or "无可用渠道" in lower
-        or "model_not_found" in lower
+        or "under group" in lower
+        or "分组" in str(body or "")
     ):
-        return "GPT Image 没有可用渠道"
+        return "GPT Image 模型不可用"
     if status_code in {401, 403}:
         return "GPT Image 凭据无效或无权限"
-    if "content_policy_violation" in lower or "content policy" in lower or "safety system" in lower:
-        return "GPT Image 内容安全策略拒绝了请求"
+    if (
+        "moderation_blocked" in lower
+        or "safety_violations" in lower
+        or "content_policy_violation" in lower
+        or "content policy" in lower
+        or "safety system" in lower
+    ):
+        return "GPT Image 内容安全拦截（moderation）"
     return ""
 
 
@@ -270,6 +282,56 @@ def _set_terminal_image_failure(status_code: int, body: str) -> str:
     if reason:
         _LAST_TERMINAL_IMAGE_FAILURE = reason
     return reason
+
+
+def _note_image_failure_kind(kind: str) -> str:
+    """Remember the latest images-api failure class for dual-ref fallback reason."""
+    global _LAST_IMAGE_FAILURE_KIND
+    value = str(kind or "").strip()
+    if value:
+        _LAST_IMAGE_FAILURE_KIND = value
+    return value
+
+
+def _images_api_failure_kind(
+    status_code: Optional[int] = None,
+    body: str = "",
+    exc: Optional[BaseException] = None,
+) -> str:
+    """Classify timeout / Codex EOF / moderation for explicit operator logs."""
+    text_blob = f"{body or ''} {exc or ''}".lower()
+    if exc is not None and isinstance(exc, (requests.Timeout, TimeoutError)):
+        return "timeout"
+    if "timed out" in text_blob or "timeout" in text_blob or "read timed out" in text_blob:
+        return "timeout"
+    if (
+        "unexpected eof" in text_blob
+        or ("codex/images/edits" in text_blob and "eof" in text_blob)
+        or ("internal_server_error" in text_blob and "images/edits" in text_blob)
+    ):
+        return "codex_edits_eof"
+    if (
+        "moderation_blocked" in text_blob
+        or "safety_violations" in text_blob
+        or "content_policy_violation" in text_blob
+    ):
+        return "moderation"
+    if status_code in {401, 403}:
+        return "auth"
+    if status_code:
+        return f"http_{status_code}"
+    return "error"
+
+
+def _face_only_fallback_instruction() -> str:
+    return (
+        "\n[CRITICAL] Dual-reference upstream failed; face-only fallback mode. "
+        "Use the reference image ONLY for facial identity and requested hair color/style "
+        "(e.g. dusty rose pink hair / wispy air bangs). "
+        "Pose, body posture, hands, outfit, props, scene, background, lighting, camera angle, "
+        "framing, and composition must follow the text description strictly. "
+        "One subject only — never put a second person in frame."
+    )
 
 
 def _is_agnes_model(model: str) -> bool:
@@ -341,7 +403,7 @@ def _compress_image_for_img2img(
 
 
 def _image_bytes_for_edit(image_path: str, max_size: int = IMG2IMG_MAX_SIZE) -> bytes:
-    """Resize reference image to a compact PNG for /v1/images/edits."""
+    """Resize a reference only when it exceeds the configured identity limit."""
     from PIL import Image
 
     img = Image.open(image_path)
@@ -351,6 +413,13 @@ def _image_bytes_for_edit(image_path: str, max_size: int = IMG2IMG_MAX_SIZE) -> 
     buffer = io.BytesIO()
     img.save(buffer, format="PNG", optimize=True)
     return buffer.getvalue()
+
+
+def _request_quality_fields(model: str) -> dict:
+    """Request the highest supported source quality from GPT Image endpoints."""
+    if "gpt-image" not in str(model or "").strip().lower():
+        return {}
+    return {"quality": "high", "output_format": "png"}
 
 
 def _gpt_endpoint_label(url: str = "") -> str:
@@ -372,7 +441,11 @@ def _reference_expression_guard() -> str:
     )
 
 
-def _reference_edit_instruction(ref_image: Optional[str], precise_edit: bool = False) -> str:
+def _reference_edit_instruction(
+    ref_image: Optional[str],
+    precise_edit: bool = False,
+    include_face_shape_guard: bool = True,
+) -> str:
     if precise_edit:
         return (
             "\n[CRITICAL] Precision edit mode: the attached image is the immutable source image, not "
@@ -388,14 +461,84 @@ def _reference_edit_instruction(ref_image: Optional[str], precise_edit: bool = F
             "Do NOT copy any human figure layout from the reference image. The person's face, hairstyle, pose, body posture, hand gestures, gaze direction, camera angle, framing, background, lighting, and expression must follow the text description."
             + _reference_expression_guard()
         )
+    face_shape_guard = f"{NATURAL_FACE_SHAPE_GUARD} " if include_face_shape_guard else ""
     return (
         "\n[IMPORTANT] Use the reference image ONLY as a facial/style reference. "
-        "Focus on matching the face shape, facial structure, and overall facial features to achieve high similarity with the person in the reference image. "
+        "Use stable identity cues such as the eyes, brows, nose, lips, and their relative spacing to keep the person recognizable. "
+        "Treat the reference image's observed facial width, cheek volume, jaw contour, and chin proportions as the neutral baseline rather than an invitation to beautify or exaggerate them. "
+        f"{face_shape_guard}"
         "Do NOT copy or reference the hairstyle, hair color, hair accessories, clothing, outfit, pose, body posture, hand gestures, gaze direction, camera angle, framing, background, lighting, or any other non-facial elements from the reference image. "
         "All non-facial elements must strictly follow the text description. "
         "If the text says the hair must be a specific color or hairstyle, that text is absolute and overrides the reference image completely, even when the reference image shows pink, red, light, or otherwise different hair."
         + _reference_expression_guard()
     )
+
+
+def _normalize_ref_images(
+    ref_image: Optional[str] = None,
+    ref_images: Optional[list] = None,
+) -> list[str]:
+    """Normalize single/multi reference paths into an ordered unique list."""
+    values: list[str] = []
+    if isinstance(ref_images, (list, tuple)):
+        values.extend(str(v or "").strip() for v in ref_images)
+    if ref_image:
+        values.insert(0, str(ref_image).strip())
+    ordered: list[str] = []
+    seen = set()
+    for raw in values:
+        path = str(raw or "").strip()
+        if not path:
+            continue
+        key = os.path.abspath(os.path.expanduser(path))
+        if key in seen:
+            continue
+        if not os.path.isfile(path) and not os.path.isfile(key):
+            # keep original token; caller may resolve later
+            if path in seen:
+                continue
+            seen.add(path)
+            ordered.append(path)
+            continue
+        resolved = key if os.path.isfile(key) else path
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        ordered.append(resolved)
+    return ordered
+
+
+def _multi_reference_edit_instruction(
+    ref_images: list[str],
+    precise_edit: bool = False,
+    include_face_shape_guard: bool = True,
+) -> str:
+    """Build dual/multi-ref instructions.
+
+    Convention:
+    - image 1 = base / pose / outfit / scene lock
+    - image 2+ = face/identity (and optional hair color when requested in text)
+    """
+    refs = [str(x or "").strip() for x in (ref_images or []) if str(x or "").strip()]
+    if not refs:
+        return ""
+    if len(refs) == 1:
+        return _reference_edit_instruction(
+            refs[0],
+            precise_edit=precise_edit,
+            include_face_shape_guard=include_face_shape_guard,
+        )
+
+    face_shape_guard = f"{NATURAL_FACE_SHAPE_GUARD} " if include_face_shape_guard else ""
+    parts = [
+        "[CRITICAL] Multi-reference edit mode with ordered images:",
+        "Image 1 = immutable base photo. Strictly lock pose, body posture, hand gestures, outfit/clothing layers, accessories already worn, props, scene, background, lighting, camera angle, framing, crop, and composition from Image 1. Do not invent a new pose.",
+        "Image 2 (and later face references) = identity/face source only. Transfer facial identity (eyes, brows, nose, lips, facial proportions) onto the person in Image 1.",
+        f"{face_shape_guard}If the text requests a specific hair color or bangs (e.g. dusty rose pink hair / wispy air bangs), apply that hair change while still keeping Image 1 pose and outfit locked.".strip(),
+        "Do NOT copy clothing, pose, hands, camera, background, or body layout from Image 2. Do NOT put a second person in frame. Keep one subject only.",
+        "Change only: face identity + requested hair color/style from text/face refs. Everything else must match Image 1.",
+    ]
+    return chr(10) + chr(10).join(parts) + _reference_expression_guard()
 
 
 def _generate_via_images_api(
@@ -404,6 +547,7 @@ def _generate_via_images_api(
     size: Optional[str],
     raw_base_url: str,
     precise_edit: bool = False,
+    ref_images: Optional[list] = None,
 ) -> Optional[tuple]:
     """Call OpenAI-compatible /v1/images/generations or /v1/images/edits."""
     images_base = _normalize_gpt_images_base_url(raw_base_url)
@@ -412,39 +556,49 @@ def _generate_via_images_api(
         print("ERROR: image_gen.gpt_base_url is required", file=sys.stderr)
         return None
 
-    agnes_img2img = bool(ref_image and _is_agnes_model(GPTIMAGE_DIRECT_MODEL))
-    endpoint = f"{images_base}/images/generations" if (not ref_image or agnes_img2img) else f"{images_base}/images/edits"
+    refs = _normalize_ref_images(ref_image, ref_images)
+    primary_ref = refs[0] if refs else ""
+    multi_ref = len(refs) > 1
+    agnes_img2img = bool(refs and _is_agnes_model(GPTIMAGE_DIRECT_MODEL))
+    endpoint = f"{images_base}/images/generations" if (not refs or agnes_img2img) else f"{images_base}/images/edits"
     endpoint_label = _gpt_endpoint_label(endpoint)
     headers = _gpt_headers()
-    timeout = IMG2IMG_TIMEOUT if ref_image else TEXT2IMG_TIMEOUT
+    timeout = IMG2IMG_TIMEOUT if refs else TEXT2IMG_TIMEOUT
+    # Dual/multi-ref on Codex edits is often slow-fail (EOF/timeout). Do not burn full retries
+    # before face-only fallback; single-ref / text2img keep normal retry budget.
+    max_attempts = 1 if multi_ref else MAX_RETRIES
     start = time.time()
 
     edit_prompt = prompt
-    if ref_image:
-        edit_prompt += _reference_edit_instruction(ref_image, precise_edit=precise_edit)
+    if refs:
+        edit_prompt += _multi_reference_edit_instruction(
+            refs,
+            precise_edit=precise_edit,
+            include_face_shape_guard=NATURAL_FACE_SHAPE_GUARD not in prompt,
+        )
 
-    for attempt in range(MAX_RETRIES):
+    for attempt in range(max_attempts):
         try:
-            if ref_image and agnes_img2img:
+            if refs and agnes_img2img:
                 payload = {
                     "model": GPTIMAGE_DIRECT_MODEL,
                     "prompt": edit_prompt,
                     "n": 1,
                     "extra_body": {
-                        "image": [_compress_image_for_img2img(ref_image)],
+                        "image": [_compress_image_for_img2img(path) for path in refs],
                         "response_format": "url",
                     },
                 }
                 if size:
                     payload["size"] = size
+                payload.update(_request_quality_fields(GPTIMAGE_DIRECT_MODEL))
                 resp = REQUEST_SESSION.post(
                     endpoint,
                     headers={**headers, "Content-Type": "application/json"},
                     json=payload,
                     timeout=timeout,
                 )
-            elif ref_image:
-                image_bytes = _image_bytes_for_edit(ref_image)
+            elif refs:
                 data = {
                     "model": GPTIMAGE_DIRECT_MODEL,
                     "prompt": edit_prompt,
@@ -452,11 +606,22 @@ def _generate_via_images_api(
                 }
                 if size:
                     data["size"] = size
+                data.update(_request_quality_fields(GPTIMAGE_DIRECT_MODEL))
+                # OpenAI-compatible multi-image edits: image[] fields in order.
+                files = []
+                for index, path in enumerate(refs):
+                    image_bytes = _image_bytes_for_edit(path)
+                    files.append(
+                        (
+                            "image[]" if len(refs) > 1 else "image",
+                            (f"reference_{index + 1}.png", image_bytes, "image/png"),
+                        )
+                    )
                 resp = REQUEST_SESSION.post(
                     endpoint,
                     headers=headers,
                     data=data,
-                    files={"image": ("reference.png", image_bytes, "image/png")},
+                    files=files,
                     timeout=timeout,
                 )
             else:
@@ -467,6 +632,7 @@ def _generate_via_images_api(
                 }
                 if size:
                     payload["size"] = size
+                payload.update(_request_quality_fields(GPTIMAGE_DIRECT_MODEL))
                 resp = REQUEST_SESSION.post(
                     endpoint,
                     headers={**headers, "Content-Type": "application/json"},
@@ -482,10 +648,14 @@ def _generate_via_images_api(
                         file=sys.stderr,
                     )
                     return None
+                failure_kind = _note_image_failure_kind(
+                    _images_api_failure_kind(resp.status_code, resp.text)
+                )
                 terminal_reason = _set_terminal_image_failure(resp.status_code, resp.text)
                 print(
-                    f"{engine_label} Images API error {resp.status_code} [{endpoint_label}] "
-                    f"(attempt {attempt + 1}/{MAX_RETRIES}): {resp.text[:240]}",
+                    f"{engine_label} Images API error {resp.status_code} kind={failure_kind} "
+                    f"[{endpoint_label}] refs={len(refs)} "
+                    f"(attempt {attempt + 1}/{max_attempts}): {resp.text[:240]}",
                     file=sys.stderr,
                 )
                 if terminal_reason:
@@ -494,27 +664,80 @@ def _generate_via_images_api(
                         file=sys.stderr,
                     )
                     return None
-                if resp.status_code in RETRYABLE_STATUS and attempt < MAX_RETRIES - 1:
+                if (
+                    multi_ref
+                    and failure_kind in {"timeout", "codex_edits_eof"}
+                ):
+                    print(
+                        f"{engine_label} multi-ref fast-fail kind={failure_kind}; "
+                        f"skip remaining edits retries",
+                        file=sys.stderr,
+                    )
+                    return None
+                if resp.status_code in RETRYABLE_STATUS and attempt < max_attempts - 1:
                     time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
                     continue
                 return None
 
-            img_data = _image_response_bytes(resp.json())
+            payload_json = resp.json()
+            if isinstance(payload_json, dict) and payload_json.get("error"):
+                err_body = json.dumps(payload_json.get("error"), ensure_ascii=False)
+                failure_kind = _note_image_failure_kind(
+                    _images_api_failure_kind(resp.status_code, err_body)
+                )
+                terminal_reason = _set_terminal_image_failure(resp.status_code, err_body)
+                print(
+                    f"{engine_label} Images API business error kind={failure_kind} "
+                    f"[{endpoint_label}] refs={len(refs)} "
+                    f"(attempt {attempt + 1}/{max_attempts}): {err_body[:240]}",
+                    file=sys.stderr,
+                )
+                if terminal_reason:
+                    print(
+                        f"{engine_label} terminal failure [{endpoint_label}]: {terminal_reason}",
+                        file=sys.stderr,
+                    )
+                    return None
+                # Codex dual edits often returns HTTP 200 + unexpected EOF. Fail fast for multi-ref.
+                if multi_ref and failure_kind in {"timeout", "codex_edits_eof"}:
+                    print(
+                        f"{engine_label} multi-ref fast-fail kind={failure_kind}; "
+                        f"skip remaining edits retries",
+                        file=sys.stderr,
+                    )
+                    return None
+                if attempt < max_attempts - 1:
+                    time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+                    continue
+                return None
+            img_data = _image_response_bytes(payload_json)
             if not img_data:
                 print(
                     f"{engine_label} Images API: no image in response [{endpoint_label}] "
-                    f"(attempt {attempt + 1}/{MAX_RETRIES}): {resp.text[:240]}",
+                    f"refs={len(refs)} (attempt {attempt + 1}/{max_attempts}): {resp.text[:240]}",
                     file=sys.stderr,
                 )
-                if attempt < MAX_RETRIES - 1:
+                if attempt < max_attempts - 1:
                     time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
                     continue
                 return None
             return img_data, round(time.time() - start, 2)
 
         except Exception as e:
-            print(f"{engine_label} Images API failed [{endpoint_label}] (attempt {attempt + 1}/{MAX_RETRIES}): {e}", file=sys.stderr)
-            if attempt < MAX_RETRIES - 1:
+            failure_kind = _note_image_failure_kind(_images_api_failure_kind(exc=e))
+            print(
+                f"{engine_label} Images API failed kind={failure_kind} [{endpoint_label}] "
+                f"refs={len(refs)} (attempt {attempt + 1}/{max_attempts}): {e}",
+                file=sys.stderr,
+            )
+            if multi_ref and failure_kind in {"timeout", "codex_edits_eof"}:
+                print(
+                    f"{engine_label} multi-ref fast-fail kind={failure_kind}; "
+                    f"skip remaining edits retries",
+                    file=sys.stderr,
+                )
+                return None
+            if attempt < max_attempts - 1:
                 time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
                 continue
             return None
@@ -525,6 +748,7 @@ def _generate_via_chat_gpt(
     ref_image: Optional[str] = None,
     size: Optional[str] = None,
     precise_edit: bool = False,
+    ref_images: Optional[list] = None,
 ) -> Optional[tuple]:
     """Call the legacy chat-compatible GPT Image endpoint."""
     base_url = _get_gpt_base_url()
@@ -537,15 +761,24 @@ def _generate_via_chat_gpt(
         return None
 
     headers = _gpt_headers(content_type=True)
+    refs = _normalize_ref_images(ref_image, ref_images)
 
-    if ref_image:
+    if refs:
         try:
-            compressed_img = _compress_image_for_img2img(ref_image)
-            face_instruction = _reference_edit_instruction(ref_image, precise_edit=precise_edit)
-            content = [
-                {"type": "image_url", "image_url": {"url": compressed_img}},
-                {"type": "text", "text": prompt + face_instruction},
-            ]
+            face_instruction = _multi_reference_edit_instruction(
+                refs,
+                precise_edit=precise_edit,
+                include_face_shape_guard=NATURAL_FACE_SHAPE_GUARD not in prompt,
+            )
+            content = []
+            for path in refs:
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": _compress_image_for_img2img(path)},
+                    }
+                )
+            content.append({"type": "text", "text": prompt + face_instruction})
         except Exception as e:
             print(f"Failed to compress reference image: {e}", file=sys.stderr)
             return None
@@ -560,7 +793,7 @@ def _generate_via_chat_gpt(
     if size:
         payload["size"] = size
 
-    timeout = IMG2IMG_TIMEOUT if ref_image else TEXT2IMG_TIMEOUT
+    timeout = IMG2IMG_TIMEOUT if refs else TEXT2IMG_TIMEOUT
     start = time.time()
 
     endpoint_label = _gpt_endpoint_label(base_url)
@@ -647,6 +880,7 @@ def _generate_via_direct_gpt(
     ref_image: Optional[str] = None,
     size: Optional[str] = None,
     precise_edit: bool = False,
+    ref_images: Optional[list] = None,
 ) -> Optional[tuple]:
     """Call the configured GPT Image endpoint (text2img + img2img).
 
@@ -670,8 +904,10 @@ def _generate_via_direct_gpt(
     is_agnes = _is_agnes_model(GPTIMAGE_DIRECT_MODEL)
     if _is_explicit_chat_url(raw_base_url):
         if precise_edit:
-            return _generate_via_chat_gpt(prompt, ref_image, size, precise_edit=True)
-        return _generate_via_chat_gpt(prompt, ref_image, size)
+            return _generate_via_chat_gpt(
+                prompt, ref_image, size, precise_edit=True, ref_images=ref_images
+            )
+        return _generate_via_chat_gpt(prompt, ref_image, size, ref_images=ref_images)
 
     images_api_unsupported = _images_api_known_unsupported(raw_base_url)
     if not images_api_unsupported:
@@ -681,6 +917,7 @@ def _generate_via_direct_gpt(
             size,
             raw_base_url,
             precise_edit=precise_edit,
+            ref_images=ref_images,
         )
         if result or _is_explicit_images_url(raw_base_url):
             return result
@@ -708,8 +945,10 @@ def _generate_via_direct_gpt(
     else:
         print("Images API failed; retrying chat-compatible GPT Image endpoint", file=sys.stderr)
     if precise_edit:
-        return _generate_via_chat_gpt(prompt, ref_image, size, precise_edit=True)
-    return _generate_via_chat_gpt(prompt, ref_image, size)
+        return _generate_via_chat_gpt(
+            prompt, ref_image, size, precise_edit=True, ref_images=ref_images
+        )
+    return _generate_via_chat_gpt(prompt, ref_image, size, ref_images=ref_images)
 
 
 def generate(theme: str, send: bool = False, caption: bool = False,
@@ -717,7 +956,7 @@ def generate(theme: str, send: bool = False, caption: bool = False,
              style: Optional[str] = None, size: Optional[str] = None,
              prompt_is_final: bool = False, source: str = "chat",
              sync_gallery: bool = True, schedule_time: str = "",
-             precise_edit: bool = False):
+             precise_edit: bool = False, ref_images: Optional[list] = None):
     """GPT Image 生成入口 — 使用当前配置的 GPT Image Base URL
 
     Args:
@@ -744,20 +983,95 @@ def generate(theme: str, send: bool = False, caption: bool = False,
     if not prompt:
         print(f"ERROR: prompt is empty for theme={theme}; generation aborted", file=sys.stderr)
         return None
-    requested_mode = "img2img" if ref_image else "text2img"
+    refs = _normalize_ref_images(ref_image, ref_images)
+    if refs and not ref_image:
+        ref_image = refs[0]
+    requested_mode = "img2img" if refs else "text2img"
     final_mode = requested_mode
     requested_ref_image = ref_image or ""
     used_ref_image = requested_ref_image
     fallback_used = False
     endpoint_label = _gpt_endpoint_label()
     engine_label = _image_engine_label()
-    global _LAST_TERMINAL_IMAGE_FAILURE
+    global _LAST_TERMINAL_IMAGE_FAILURE, _LAST_IMAGE_FAILURE_KIND
     _LAST_TERMINAL_IMAGE_FAILURE = ""
+    _LAST_IMAGE_FAILURE_KIND = ""
     print(f"🎨 {engine_label} via {endpoint_label} ({requested_mode})...", file=sys.stderr)
+    if len(refs) > 1:
+        print(
+            f"{engine_label} multi-ref ordered count={len(refs)} "
+            f"(base={os.path.basename(refs[0])}, face={os.path.basename(refs[1])})",
+            file=sys.stderr,
+        )
 
-    result = _generate_via_direct_gpt(prompt, ref_image, size, precise_edit=precise_edit)
+    result = _generate_via_direct_gpt(
+        prompt, ref_image, size, precise_edit=precise_edit, ref_images=refs
+    )
+    dual_fallback_used = False
+    dual_fallback_reason = ""
+    # A+B: dual/multi-ref failed (timeout/EOF/unstable edits) -> face-only single ref.
+    # Keep pose lock in text instruction; lock quality may drift but still out-images.
+    _skip_dual_face_fallback = bool(
+        _LAST_TERMINAL_IMAGE_FAILURE
+        and any(
+            marker in _LAST_TERMINAL_IMAGE_FAILURE
+            for marker in (
+                "额度已用完",
+                "凭据无效",
+                "工作区已停用",
+                "没有可用的兼容账号",
+                "模型不可用",
+            )
+        )
+    )
+    if not result and len(refs) > 1 and not precise_edit and not _skip_dual_face_fallback:
+        dual_fallback_reason = (
+            _LAST_IMAGE_FAILURE_KIND
+            or _LAST_TERMINAL_IMAGE_FAILURE
+            or "dual_ref_upstream_failed"
+        )
+        # Convention: refs[0]=base lock, refs[1]=face/identity.
+        face_ref = refs[1] if len(refs) > 1 else refs[-1]
+        print(
+            f"{engine_label} dual/multi-ref failed (kind={dual_fallback_reason}); "
+            f"falling back to face-only ref={os.path.basename(face_ref)} "
+            f"(pose lock via text; action may drift)",
+            file=sys.stderr,
+        )
+        # Allow non-terminal dual failures (timeout/EOF) to retry with single face ref.
+        # Also retry after dual moderation: single face ref often avoids base-image sexual block.
+        _LAST_TERMINAL_IMAGE_FAILURE = ""
+        # Keep kind for metadata; do not wipe so face-only path can still log separately.
+        face_prompt = prompt + _face_only_fallback_instruction()
+        result = _generate_via_direct_gpt(
+            face_prompt,
+            face_ref,
+            size,
+            precise_edit=False,
+            ref_images=[face_ref],
+        )
+        if result:
+            dual_fallback_used = True
+            fallback_used = True
+            final_mode = "img2img_face_only_fallback"
+            used_ref_image = face_ref
+            print(
+                f"{engine_label} face-only fallback succeeded via {endpoint_label}",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"{engine_label} face-only fallback also failed"
+                + (f": {_LAST_TERMINAL_IMAGE_FAILURE}" if _LAST_TERMINAL_IMAGE_FAILURE else ""),
+                file=sys.stderr,
+            )
+
     if not result and ref_image and not precise_edit and not _LAST_TERMINAL_IMAGE_FAILURE:
-        print(f"{engine_label} img2img failed via {endpoint_label}; retrying text2img without reference image", file=sys.stderr)
+        print(
+            f"{engine_label} img2img failed via {endpoint_label}; "
+            f"retrying text2img without reference image",
+            file=sys.stderr,
+        )
         fallback_used = True
         final_mode = "text2img"
         used_ref_image = ""
@@ -792,6 +1106,7 @@ def generate(theme: str, send: bool = False, caption: bool = False,
         {
             "source": source,
             "base_style": style or "",
+            "requested_size": size or "",
             "requested_generation_mode": requested_mode,
             "generation_mode": final_mode,
             "ref_image": os.path.basename(used_ref_image) if used_ref_image else "",
@@ -799,8 +1114,19 @@ def generate(theme: str, send: bool = False, caption: bool = False,
             "requested_ref_image": os.path.basename(requested_ref_image) if requested_ref_image else "",
             "requested_ref_image_path": requested_ref_image,
             "fallback_used": fallback_used,
-            "fallback_from": "img2img" if fallback_used else "",
-            "fallback_to": "text2img" if fallback_used else "",
+            "fallback_from": (
+                "multi_ref_img2img"
+                if dual_fallback_used
+                else ("img2img" if fallback_used else "")
+            ),
+            "fallback_to": (
+                "img2img_face_only"
+                if dual_fallback_used
+                else ("text2img" if fallback_used and final_mode == "text2img" else "")
+            ),
+            "dual_ref_fallback_used": dual_fallback_used,
+            "dual_ref_fallback_reason": dual_fallback_reason if dual_fallback_used else "",
+            "requested_ref_images": [os.path.basename(x) for x in refs],
             "precise_edit": bool(precise_edit),
         },
     )
@@ -843,6 +1169,7 @@ if __name__ == "__main__":
     parser.add_argument("--caption", action="store_true")
     parser.add_argument("--prompt", type=str, default=None, help="自定义 prompt")
     parser.add_argument("--ref-image", type=str, default=None, help="参考图本地路径（图生图/img2img 模式）")
+    parser.add_argument("--ref-images", type=str, default=None, help="多参考图，逗号分隔")
     parser.add_argument("--size", type=str, default=None, help="图片尺寸")
     parser.add_argument("--source", choices=["cron", "web", "chat", "custom", "hermes_api"], default="chat", help="来源标识")
     parser.add_argument("--schedule-time", type=str, default="", help="对应的日程时间和活动，如 '11:00 做奶茶'")
@@ -850,7 +1177,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     path = generate(args.theme, args.send, args.caption, args.prompt, args.ref_image,
                     size=args.size, source=args.source, schedule_time=args.schedule_time,
-                    precise_edit=args.precise_edit)
+                    precise_edit=args.precise_edit,
+                    ref_images=[p.strip() for p in str(args.ref_images or "").split(",") if p.strip()] or None)
     if not path:
         print("ERROR: GPT Image generation failed", file=sys.stderr)
         sys.exit(1)

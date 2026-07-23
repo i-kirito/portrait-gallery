@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 IMAGE_VERSION_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
@@ -171,6 +171,63 @@ def find_image_version(data_dir: str, records, version_id: str) -> tuple[dict, P
             return record, path
         return None
     return None
+
+
+def replace_image_from_version(source_path: str | Path, target_path: str | Path) -> dict:
+    """Atomically replace a current image with a validated archived image."""
+    source = Path(source_path).expanduser().resolve()
+    target = Path(target_path).expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError(source)
+    if target.suffix.lower() not in IMAGE_VERSION_EXTENSIONS:
+        raise ValueError("unsupported_image_extension")
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    temp_fd, temp_name = tempfile.mkstemp(
+        dir=target.parent,
+        prefix=f".{target.stem}.version-",
+        suffix=target.suffix.lower(),
+    )
+    os.close(temp_fd)
+    temp_path = Path(temp_name)
+    try:
+        if source.suffix.lower() == target.suffix.lower():
+            shutil.copy2(source, temp_path)
+        else:
+            with Image.open(source) as opened:
+                image = ImageOps.exif_transpose(opened)
+                extension = target.suffix.lower()
+                if extension in {".jpg", ".jpeg"}:
+                    if image.mode in {"RGBA", "LA"} or "transparency" in image.info:
+                        rgba = image.convert("RGBA")
+                        background = Image.new("RGB", rgba.size, "white")
+                        background.paste(rgba, mask=rgba.getchannel("A"))
+                        image = background
+                    else:
+                        image = image.convert("RGB")
+                    image.save(temp_path, format="JPEG", quality=95, optimize=True)
+                elif extension == ".webp":
+                    image.save(temp_path, format="WEBP", quality=95, method=6)
+                elif extension == ".gif":
+                    image.convert("P", palette=Image.Palette.ADAPTIVE).save(temp_path, format="GIF")
+                else:
+                    image.save(temp_path, format="PNG", optimize=True)
+
+        with Image.open(temp_path) as image:
+            width, height = image.size
+            image.verify()
+        os.replace(temp_path, target)
+        return {
+            "width": width,
+            "height": height,
+            "file_size_bytes": target.stat().st_size,
+        }
+    except Exception:
+        try:
+            temp_path.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def delete_image_versions(data_dir: str, records) -> tuple[int, list[str]]:

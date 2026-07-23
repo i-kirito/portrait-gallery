@@ -23,15 +23,34 @@ DEFAULT_OUTFIT_STYLES = [
 ]
 
 GENERIC_APPEARANCE = (
-    "adult portrait subject with natural facial features, realistic body proportions, "
-    "polished everyday styling, clear face, expressive eyes, and a coherent personal look"
+    "adult woman with natural facial features, realistic body proportions, everyday styling, "
+    "clear face, expressive eyes, and a coherent personal look — photographed as a real person, not a rendered model"
+)
+
+DEFAULT_PHOTO_REALISM_FLOOR = (
+    "Real photographed person. "
+    "Natural skin texture. "
+    "No plastic skin. "
+    "No heavy retouching. "
+    "No AI artifacts."
 )
 
 DEFAULT_QUALITY_PREFIX = (
-    "Candid smartphone photo, natural lighting, real skin texture with visible pores "
-    "and subtle imperfections. Casual composition, slightly imperfect framing as if "
-    "taken by a friend. Warm natural tones, no heavy retouching, no AI artifacts, "
-    "no plastic skin."
+    "Candid real-life smartphone photograph.\n"
+    "Natural ambient light only.\n"
+    "True-to-life color.\n"
+    "Mild optical softness.\n"
+    "Subtle sensor noise.\n"
+    "No HDR glow.\n"
+    "No cinematic color grade.\n\n"
+    "Casual everyday snapshot.\n"
+    "Natural handheld phone camera.\n"
+    "Relaxed candid moment.\n"
+    "Slightly imperfect but natural framing.\n"
+    "No heavy retouching.\n"
+    "No AI artifacts.\n"
+    "No plastic skin.\n"
+    "Natural skin texture."
 )
 
 DEFAULT_STYLE_REFERENCE_FILES = {
@@ -42,8 +61,8 @@ DEFAULT_STYLE_REFERENCE_FILES = {
 
 DEFAULT_STYLE_REFERENCE_PROMPTS = {
     "cool": (
-        "Cool elegant portrait reference: mature, confident, sharp and polished look, "
-        "sleek fashion styling, cool-toned or dark outfit mood, refined facial structure, "
+        "Cool elegant portrait reference: mature, confident, polished look, "
+        "sleek fashion styling, cool-toned or dark outfit mood, natural facial proportions, "
         "calm aloof expression, high-fashion city vibe, suitable for 酷飒风、冷御风、优雅风、复古风 and other chic or edgy schedules."
     ),
     "girly": (
@@ -209,22 +228,31 @@ SCHEDULE_ACTIVITY_ACTION_RE = re.compile(
 )
 
 CUSTOM_IMAGE_FRAMING_RULE = (
-    "strict framing rule: preserve the requested camera view and shot type, "
-    "keep the full head, hairline, face, visible shoulders, hands, held objects, and requested props inside the frame with a little breathing room, "
-    "never crop off any visible or requested body part or important prop, avoid extreme face crops, passport-photo framing, oversized heads, or changing the shot into another view; "
-    "on landscape or wide canvas, recompose with more surrounding background instead of cutting off the subject"
+    "Keep the requested camera distance and main subject fully inside the frame; "
+    "do not crop the head, important hands, held props, or the described action."
 )
 
+# Keep shot guidance short. Long pose menus and weighted tags tend to over-constrain
+# custom generations and make the model ignore the user's scene description.
 CUSTOM_SHOT_TYPE_PROMPTS = {
-    "selfie": "camera view: authentic smartphone selfie mode, (mirror selfie style:1.2) or front-facing selfie, unmistakable self-shot evidence, visible phone, mirror reflection, or extended selfie arm perspective, looking at the phone screen, camera lens, or mirror, realistic phone-screen light reflection on the face, cute natural pose, arm-length selfie with the phone held slightly farther away, slightly pulled-back selfie POV, head, shoulders, upper torso, at least one hand, and room for a small gesture visible, a little surrounding background around her for posing space, complete head and hairline visible with a little margin, not an extreme face crop, not a big-head selfie, not a tight head-and-shoulders crop, not a normal half-body portrait, not a studio portrait, not a distant shot",
-    "half_body": "camera view: default upper body medium shot, waist-up candid portrait photographed by someone else, third-person documentary photo, camera pulled back enough to show head, hair, shoulders, torso, both hands, and any handheld prop, from head to waist or upper hips, natural daily-life framing, outfit upper details clear, (dynamic random pose:1.2), (playful gestures:1.1), if using a phone then the phone is only an activity prop in her hand or lap and both hands must be visible, gaze can be toward the prop or slightly off-camera, not a close-up, not a headshot, not a face-dominant crop, not a selfie, not a mirror selfie, not a front-camera arm-angle shot, not a full-body shot",
-    "full_body": "camera view: full body shot, full-body OOTD, head to toe visible, wide angle, far shot, camera pulled back, complete outfit visible with clear space above hair and below shoes, (dynamic natural pose:1.3), (random candid action:1.2), twirling around, adjusting clothes, reaching for something on shelf, stepping into shoes, checking outfit in mirror, stretching arms up, leaning against a doorframe, playful spinning, tying hair up, bending to pick something up, walking towards camera",
+    "selfie": (
+        "camera view: authentic smartphone selfie, natural arm-length selfie POV, "
+        "head to upper torso visible, soft candid expression"
+    ),
+    "half_body": (
+        "camera view: waist-up candid portrait photographed by someone else, "
+        "head to waist visible, natural everyday framing"
+    ),
+    "full_body": (
+        "camera view: full-body candid photo, head to toe visible, "
+        "camera pulled back enough to show the complete outfit and pose"
+    ),
 }
 
 CUSTOM_SHOT_LANDSCAPE_PROMPTS = {
-    "selfie": "landscape-specific framing: keep the horizontal image clearly recognizable as a selfie by showing the phone, extended arm perspective, or mirror reflection in the composition; use the extra width for background and gesture space, but do not let it become an ordinary third-person seated portrait",
-    "half_body": "landscape-specific framing: make the horizontal image clearly different from selfie mode, as if another person photographed her from outside the action at a comfortable medium distance; no visible selfie-taking arm, no mirror-selfie composition, no phone held up as the camera, no direct front-camera perspective; use the extra width for environment, hands, and props",
-    "full_body": "landscape-specific framing: use the extra width for environment and natural movement while keeping the entire body head-to-toe visible",
+    "selfie": "use the extra width for background while remaining a clear selfie",
+    "half_body": "use the extra width for environment while remaining a third-person waist-up portrait",
+    "full_body": "use the extra width for environment while keeping head-to-toe visibility",
 }
 
 CUSTOM_SHOT_TYPE_LABELS = {

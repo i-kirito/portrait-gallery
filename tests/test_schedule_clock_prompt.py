@@ -18,6 +18,51 @@ from generate import _apply_schedule_clock_render_guard, _schedule_time_constrai
 
 
 class ScheduleClockPromptTest(unittest.TestCase):
+    def test_daily_prompt_is_normalized_to_clearly_adult_everyday_photography(self):
+        with patch.object(
+            zhuzhu_core,
+            "_read_custom_appearance",
+            return_value=(
+                "Chinese girl with delicate features and a youthful doll-like face, "
+                "hourglass figure, slim waist, and large natural breasts"
+            ),
+        ):
+            prompt = zhuzhu_core.build_prompt(
+                "morning",
+                schedule_activity="spray water on balcony plants",
+                outfit_keywords=(
+                    "black lace-trimmed silk camisole, black velvet shorts, "
+                    "charcoal grey cardigan"
+                ),
+                scene_keywords="sunny balcony with potted plants",
+                hair_keywords="low side ponytail with a black ribbon",
+            )
+
+        lowered = prompt.lower()
+        for forbidden in (
+            "18-year-old",
+            "youthful",
+            "doll-like",
+            "delicate features",
+            "hourglass figure",
+            "breasts",
+            "lace-trimmed silk camisole",
+        ):
+            self.assertNotIn(forbidden, lowered)
+        self.assertIn("chinese girl", lowered)
+        self.assertIn("adult woman in her late twenties", lowered)
+        self.assertIn("non-sexual everyday lifestyle photograph", lowered)
+        self.assertEqual(1, lowered.count("non-sexual everyday lifestyle photograph"))
+        self.assertIn("opaque satin square-neck sleeveless top", lowered)
+        self.assertIn("tailored high-waisted black velvet shorts", lowered)
+        self.assertIn("naturally observed facial width", lowered)
+        self.assertIn("cheek volume", lowered)
+        self.assertIn("pointed v-shaped chin", lowered)
+        self.assertEqual(
+            prompt,
+            zhuzhu_core.sanitize_daily_image_prompt(prompt, limit=0),
+        )
+
     def test_time_constraint_uses_period_without_exposing_clock_digits(self):
         constraint = _schedule_time_constraint("09:24 去便利店买气泡水")
 
@@ -68,6 +113,141 @@ class ScheduleClockPromptTest(unittest.TestCase):
             final_prompt = call.kwargs["prompt_override"]
             self.assertNotIn("09:24", final_prompt)
             self.assertIn("schedule clock is metadata only", final_prompt)
+
+    def test_schedule_context_cannot_reintroduce_unsafe_visual_terms(self):
+        unsafe_context = (
+            "Today's plan: Activity: water balcony plants. "
+            "Outfit: black lace-trimmed silk camisole and black velvet shorts. "
+            "Mood: seductive young-looking girl"
+        )
+        with patch.object(
+            unified_generate,
+            "resolve_prompt",
+            return_value="initial prompt",
+        ), patch.object(
+            unified_generate,
+            "_get_schedule_context",
+            return_value=(
+                unsafe_context,
+                "08:24 在阳台给绿植喷水",
+                "black lace-trimmed silk camisole, black velvet shorts",
+                "sunny balcony",
+                "low side ponytail",
+            ),
+        ), patch.object(
+            zhuzhu_core,
+            "_read_custom_appearance",
+            return_value="Chinese girl with a youthful doll-like face",
+        ), patch.object(
+            unified_generate,
+            "generate_with_gptimage",
+            return_value="/tmp/generated.png",
+        ) as gpt_image, patch.object(
+            zhuzhu_core,
+            "sync_to_gallery",
+        ):
+            result = unified_generate.generate(
+                "morning",
+                "gptimage",
+                source="cron",
+                schedule_time="08:24 在阳台给绿植喷水",
+                no_auto_style=True,
+            )
+
+        self.assertEqual("/tmp/generated.png", result)
+        final_prompt = gpt_image.call_args.kwargs["prompt_override"].lower()
+        for forbidden in (
+            "18-year-old",
+            "young-looking",
+            " youthful",
+            " doll-like",
+            "seductive",
+            "lace-trimmed silk camisole",
+        ):
+            self.assertNotIn(forbidden, final_prompt)
+        self.assertIn("adult woman in her late twenties", final_prompt)
+        self.assertIn("opaque satin square-neck sleeveless top", final_prompt)
+        self.assertIn("cheek volume", final_prompt)
+
+    def test_final_daily_reroll_prompt_is_still_safety_normalized(self):
+        unsafe_prompt = (
+            "Chinese girl with a very youthful and innocent face, "
+            "wearing sheer lingerie in an intimate bedroom pose"
+        )
+        with patch.object(
+            unified_generate,
+            "_get_schedule_context",
+            return_value=("", "", "", "", ""),
+        ), patch.object(
+            unified_generate,
+            "generate_with_gptimage",
+            return_value="/tmp/generated.png",
+        ) as gpt_image, patch.object(
+            zhuzhu_core,
+            "sync_to_gallery",
+        ) as sync_gallery:
+            result = unified_generate.generate(
+                "morning",
+                "gptimage",
+                prompt_override=unsafe_prompt,
+                prompt_final=True,
+                no_auto_style=True,
+                source="cron",
+                schedule_time="08:24 历史日程重抽",
+            )
+
+        self.assertEqual("/tmp/generated.png", result)
+        final_prompt = gpt_image.call_args.kwargs["prompt_override"].lower()
+        for forbidden in (
+            "18-year-old",
+            "youthful",
+            "innocent",
+            "sheer",
+            "lingerie",
+            "intimate",
+        ):
+            self.assertNotIn(forbidden, final_prompt)
+        self.assertIn("chinese girl", final_prompt)
+        self.assertIn("adult woman in her late twenties", final_prompt)
+        self.assertIn("non-sexual everyday lifestyle photograph", final_prompt)
+        self.assertIn("cheek volume", final_prompt)
+        self.assertEqual(
+            1,
+            final_prompt.count("non-sexual everyday lifestyle photograph"),
+        )
+        self.assertEqual(final_prompt, sync_gallery.call_args.kwargs["prompt"].lower())
+
+    def test_injected_custom_prompt_is_normalized_without_face_slimming(self):
+        with patch.object(
+            unified_generate,
+            "_get_schedule_context",
+            return_value=("", "", "", "", ""),
+        ), patch.object(
+            unified_generate,
+            "_decide_hairstyle",
+            return_value=None,
+        ), patch.object(
+            unified_generate,
+            "generate_with_gptimage",
+            return_value="/tmp/generated.png",
+        ) as gpt_image, patch.object(
+            zhuzhu_core,
+            "sync_to_gallery",
+        ):
+            result = unified_generate.generate(
+                "custom",
+                "gptimage",
+                prompt_override="adult Chinese woman with delicate features in a cafe",
+                no_auto_style=True,
+                source="custom",
+            )
+
+        self.assertEqual("/tmp/generated.png", result)
+        final_prompt = gpt_image.call_args.kwargs["prompt_override"].lower()
+        self.assertNotIn("delicate features", final_prompt)
+        self.assertIn("natural facial features", final_prompt)
+        self.assertIn("naturally observed facial width", final_prompt)
+        self.assertIn("cheek volume", final_prompt)
 
     def test_caption_is_persisted_before_gallery_sync(self):
         with patch.object(
@@ -141,15 +321,19 @@ class ScheduleClockPromptTest(unittest.TestCase):
             "_GALLERY_CONFIG",
             {"config": {"timezone": "Asia/Shanghai"}},
         ):
-            extracted = zhuzhu_core._extract_time_from_filename(
+            old_name_extracted = zhuzhu_core._extract_time_from_filename(
                 f"zhuzhu_schedule_{timestamp}.png"
+            )
+            new_name_extracted = zhuzhu_core._extract_time_from_filename(
+                f"schedule_0824_a1b2c3_{timestamp}.png"
             )
 
         expected = datetime.fromtimestamp(
             timestamp,
             ZoneInfo("Asia/Shanghai"),
         ).strftime("%H:%M")
-        self.assertEqual(expected, extracted)
+        self.assertEqual(expected, old_name_extracted)
+        self.assertEqual(expected, new_name_extracted)
 
 
 if __name__ == "__main__":

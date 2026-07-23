@@ -104,18 +104,23 @@ _IMAGE_ADULT_GUARD = (
     "All depicted people are clearly adults aged 21 or older. "
     "Non-sexual everyday portrait with age-appropriate styling."
 )
+NATURAL_FACE_SHAPE_GUARD = (
+    "Preserve the subject's recognizable identity and naturally observed facial width, "
+    "cheek volume, jaw contour, and chin proportions. Keep realistic, balanced facial proportions and a soft, "
+    "realistic jawline. Do not beautify by narrowing or lengthening the face, hollowing the cheeks, "
+    "sharpening the jaw, or creating a pointed V-shaped chin."
+)
 _IMAGE_PROMPT_REPLACEMENTS = (
+    (r"(?i)\bdelicate\s+(?:facial\s+)?features\b", "natural facial features"),
     (
         r"(?i)\b(?:classic\s+)?(?:Japanese\s+)?JK(?:\s+school)?\s+uniform\b",
         "Japanese sailor-inspired fashion outfit",
     ),
     (r"(?i)\bschool\s+uniform\b", "preppy sailor-inspired fashion outfit"),
-    (r"(?i)\b(?:1[0-9]|20)[ -]?year[- ]old\b", "clearly adult, age 21 or older"),
     (r"(?i)\b(?:teenage|teenaged|teenager|teen)\b", "adult"),
     (r"(?i)\byoung[- ]looking\b", "adult"),
     (r"(?i)\byoung\s+(?:girl|woman)\b", "adult woman"),
     (r"(?i)\byoung\s+(?:boy|man)\b", "adult man"),
-    (r"(?i)\bgirl\b", "adult woman"),
     (r"(?i)\bboy\b", "adult man"),
     (
         r"(?i)\b(?:large|prominent|voluptuous)(?:\s+natural)?\s+(?:breasts?|bust)\b",
@@ -135,6 +140,33 @@ _IMAGE_PROMPT_REPLACEMENTS = (
     (r"(?:学生妹|高中生|中学生|小学生)", "成年时尚模特"),
     (r"(?:爆乳|巨乳|大胸|丰满胸部|胸部丰满)", "自然成年人体态"),
     (r"(?:性感|色气|色情|情色|诱惑|挑逗|魅魔|涩涩|好色|欲求不满)", "自然"),
+)
+
+_DAILY_IMAGE_PROMPT_REPLACEMENTS = (
+    (r"(?i)\b(?:very\s+)?youthful\b", "mature adult"),
+    (r"(?i)\binnocent\b", "natural"),
+    (r"(?i)\bdoll[- ]like\b", "distinctive"),
+    (
+        r"(?i)\b(?:lace[- ]trimmed\s+)?(?:silk|satin)\s+camisole\b",
+        "opaque satin square-neck sleeveless top with a modest full-coverage neckline",
+    ),
+    (
+        r"(?i)\b(?:silk|satin)\s+slip(?:\s+(?:nightgown|dress))?\b",
+        "opaque relaxed midi lounge dress with a modest neckline",
+    ),
+    (
+        r"(?i)\b(?:sheer|see-through|transparent)\s+(?:lace\s+)?(?:robe|top|dress|garment)\b",
+        "opaque lightweight lounge layer",
+    ),
+    (r"(?i)\b(?:lingerie|bralette|bra|panties|thong)\b", "modest opaque lounge wear"),
+    (r"(?i)\b(?:sheer|see-through|transparent)\b", "opaque"),
+    (r"(?i)\b(?:intimate|alluring|sultry)\b", "relaxed and polished"),
+    (
+        r"(?i)(?<!high-waisted )\bblack\s+velvet\s+shorts\b",
+        "tailored high-waisted black velvet shorts",
+    ),
+    (r"(?:真丝|缎面)?吊带(?:背心|裙)", "不透视方领缎面无袖上衣"),
+    (r"(?:诱人|撩人|妩媚|暧昧)", "成熟利落"),
 )
 
 
@@ -831,6 +863,18 @@ def sanitize_image_prompt(value: Any, limit: int = _PROMPT_LIMIT) -> str:
     return _clean_text(text, limit)
 
 
+def sanitize_daily_image_prompt(value: Any, limit: int = _PROMPT_LIMIT) -> str:
+    """Normalize daily-photo prompts into clearly adult everyday photography."""
+    text = sanitize_image_prompt(value, limit=0)
+    if not text:
+        return ""
+    for pattern, replacement in _DAILY_IMAGE_PROMPT_REPLACEMENTS:
+        text = re.sub(pattern, replacement, text)
+    text = re.sub(r"\s+([,.;:，。；：])", r"\1", text)
+    text = re.sub(r"\s{2,}", " ", text)
+    return _clean_text(text, limit)
+
+
 def build_character_prompt(character: Mapping[str, Any] | None) -> str:
     """Build a single-character image prompt fragment."""
     normalized = normalize_character(character, fallback_id="character")
@@ -868,6 +912,7 @@ def build_character_image_prompt(
             "Reference image hint: apply the configured reference image only to "
             f"{normalized['name']} when the generation pipeline provides it."
         )
+    parts.append(NATURAL_FACE_SHAPE_GUARD)
     if include_safety_guard:
         parts.append(_IMAGE_ADULT_GUARD)
     return " ".join(part for part in parts if part).strip()
@@ -1000,6 +1045,8 @@ __all__ = [
     "load_character_registry",
     "normalize_character",
     "normalize_character_id",
+    "NATURAL_FACE_SHAPE_GUARD",
+    "sanitize_daily_image_prompt",
     "sanitize_image_prompt",
     "slugify_id",
     "upsert_manual_character",

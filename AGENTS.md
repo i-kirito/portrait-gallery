@@ -23,7 +23,7 @@ chat data, and local references belong in `data/`. Logs belong in `logs/`.
 - `docker compose build` builds the container image.
 - `docker compose up -d` starts the service with `./data` and `./config`
   mounted into the container.
-- `PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.6 docker compose up -d`
+- `PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.7 docker compose up -d`
   runs a pinned published image from Docker Hub.
 - `curl http://localhost:18889/api/health` verifies that the server is
   responding.

@@ -10,8 +10,10 @@ from typing import Optional
 
 import requests
 
+from characters import NATURAL_FACE_SHAPE_GUARD, sanitize_daily_image_prompt
 from core import (
     CONFIG_PATH,
+    DAILY_IMAGE_SAFETY_GUARD,
     SECRETARY_SCHEDULE_PATH,
     _GALLERY_CONFIG,
     _strip_hair_color_from_schedule_hair,
@@ -199,33 +201,18 @@ def _classify_style(prompt_text: str) -> str:
     return random.choice(["cool", "girly", "sweet"])
 
 
-# 发型池 — LLM 从这个池子里根据场景选最搭的发型
-_HAIRSTYLE_POOL = [
-    "high ponytail", "low ponytail", "side ponytail",
-    "twin tails", "messy bun", "double buns",
-    "french braid", "double dutch braids", "side braid",
-    "half-up half-down", "braided crown", "pigtail braids",
-]
-
-
 def _decide_hairstyle(prompt_text: str) -> Optional[str]:
-    """Use LLM to pick the most fitting hairstyle for the scene."""
-    pool_str = ", ".join(_HAIRSTYLE_POOL)
+    """Use LLM to freely invent a scene-fitting hairstyle (no fixed pool)."""
     system = (
-        "You are a hairstyle selector for character portrait generation. "
-        "Given a scene description, pick the SINGLE most fitting hairstyle from the pool below.\n\n"
-        f"Hairstyle pool: {pool_str}\n\n"
-        "Scene-to-hairstyle guidelines:\n"
-        "- JK uniform/school/active/sporty → high ponytail, double dutch braids, side braid, half-up half-down\n"
-        "- Cute/playful/douyin/kawaii → twin tails, double buns, pigtail braids, messy bun\n"
-        "- Elegant/date/evening/dinner/formal → low ponytail, braided crown, half-up half-down\n"
-        "- Loungewear/pajamas/bedtime/home/relaxed → messy bun, low ponytail, side braid\n"
-        "- Street/city/cool/edgy → high ponytail, side ponytail, low ponytail\n"
-        "- Sweet/romantic/cozy/warm → french braid, side braid, half-up half-down, low ponytail\n"
-        "- Waiting/gentle/melancholy → side braid, low ponytail, half-up half-down\n\n"
-        "IMPORTANT: Vary your selection! Do NOT always pick the same hairstyle. "
-        "Consider the scene's mood, outfit, and setting carefully.\n\n"
-        "Output ONLY the hairstyle name from the pool, e.g. 'high ponytail'. No explanation."
+        "You design hairstyles for character portrait generation.\n"
+        "Given a scene description, invent ONE specific hairstyle that fits the mood, outfit, and setting.\n\n"
+        "Rules:\n"
+        "- Free invent; do NOT choose from a fixed pool.\n"
+        "- Prefer tied-up / styled hair (ponytails, buns, braids, half-up, twists, clips, ribbons, claws, etc.).\n"
+        "- Avoid loose fully down hair unless the scene truly needs it.\n"
+        "- Do NOT invent a new hair COLOR; only describe style/shape/accessories/status.\n"
+        "- Be concrete and varied: include parting, volume, accessory, or tidy/messy status when useful.\n"
+        "- Output ONLY a short English hairstyle phrase, 3-16 words. No quotes, no explanation."
     )
 
     raw = _chat_llm(
@@ -233,20 +220,27 @@ def _decide_hairstyle(prompt_text: str) -> Optional[str]:
             {"role": "system", "content": system},
             {"role": "user", "content": prompt_text[:500]},
         ],
-        max_tokens=200,
-        temperature=0.2,
-    ).lower()
-    best_idx = len(raw)
-    best_h = None
-    for h in _HAIRSTYLE_POOL:
-        idx = raw.find(h)
-        if idx != -1 and idx < best_idx:
-            best_idx = idx
-            best_h = h
-    if best_h:
-        return best_h
-
-    return None
+        max_tokens=80,
+        temperature=0.8,
+    ).strip()
+    if not raw:
+        return None
+    # keep first line / strip wrappers
+    line = raw.splitlines()[0].strip().strip("\"'`").strip()
+    # reject obvious non-answers
+    low = line.lower()
+    if not line or low in {"none", "n/a", "unknown"}:
+        return None
+    # hard length guard
+    words = line.split()
+    if len(words) < 2 or len(words) > 20 or len(line) > 120:
+        return None
+    # if model still returns a long sentence, keep first clause
+    for sep in [".", ";", "—", " - "]:
+        if sep in line:
+            line = line.split(sep, 1)[0].strip()
+            break
+    return line or None
 
 
 def resolve_prompt(
@@ -850,6 +844,7 @@ def generate(
     style: Optional[str] = None,
     source: str = "chat",
     ref_image: Optional[str] = None,
+    ref_images: Optional[list] = None,
     size: Optional[str] = None,
     schedule_time: str = "",
     schedule_detail_json: str = "",
@@ -894,8 +889,7 @@ def generate(
         m = re.search(r"Today's plan:\s*(.+?)(?:\.\s*(?:Time|Style):|$)", schedule_ctx)
         if m:
             schedule_activity = m.group(1).strip()
-        resolved_prompt = f"{resolved_prompt}. {schedule_ctx}"
-        print(f"📋 Injected schedule into prompt (activity: {schedule_activity})", file=sys.stderr)
+        print(f"📋 Resolved schedule context (activity: {schedule_activity})", file=sys.stderr)
     
     # Re-build prompt with schedule-aware element selection if we have activity
     if schedule_activity and theme in DAILY_THEMES and not prompt_final:
@@ -903,12 +897,25 @@ def generate(
             print(f"🏠 Using LLM slot scene details: {scene_kw[:60]}", file=sys.stderr)
         if hair_kw:
             print(f"💇 Using LLM slot hairstyle: {hair_kw[:60]}", file=sys.stderr)
+        photo_style_en = ""
+        try:
+            today_str = service_today(_GALLERY_CONFIG).isoformat()
+            if os.path.exists(_SCHEDULE_PATH):
+                with open(_SCHEDULE_PATH, encoding="utf-8") as f:
+                    _day_data = json.load(f)
+                _daily = _day_data.get(today_str) if isinstance(_day_data, dict) else {}
+                if isinstance(_daily, dict):
+                    photo_style_en = str(_daily.get("photo_style_en") or "").strip()
+        except Exception:
+            photo_style_en = ""
         resolved_prompt = build_prompt(theme, schedule_activity=schedule_activity,
                                        outfit_keywords=outfit_kw,
                                        scene_keywords=scene_kw,
                                        hair_keywords=hair_kw,
-                                       time_constraint=schedule_time_constraint)
-        resolved_prompt = f"{resolved_prompt}. {schedule_ctx}"
+                                       time_constraint=schedule_time_constraint,
+                                       photo_style_en=photo_style_en)
+        if photo_style_en:
+            print(f"📷 Using LLM photo_style_en: {photo_style_en[:100]}", file=sys.stderr)
         print(f"🎨 Rebuilt prompt from LLM schedule line (outfit_kw={outfit_kw[:40]})", file=sys.stderr)
     elif theme in DAILY_THEMES and not prompt_final and not prompt_override:
         print(
@@ -921,6 +928,13 @@ def generate(
         print(f"ERROR: prompt is empty for theme={theme}; generation aborted", file=sys.stderr)
         return None
 
+    if theme in DAILY_THEMES:
+        resolved_prompt = sanitize_daily_image_prompt(resolved_prompt, limit=0)
+        if DAILY_IMAGE_SAFETY_GUARD not in resolved_prompt:
+            resolved_prompt = f"{resolved_prompt} {DAILY_IMAGE_SAFETY_GUARD}".strip()
+        if NATURAL_FACE_SHAPE_GUARD not in resolved_prompt:
+            resolved_prompt = f"{resolved_prompt} {NATURAL_FACE_SHAPE_GUARD}".strip()
+        print("🛡️ Applied adult everyday prompt safety normalization", file=sys.stderr)
     if schedule_time_constraint:
         resolved_prompt = _apply_schedule_clock_render_guard(resolved_prompt, schedule_time)
         print("🕒 Applied invisible schedule-clock guard", file=sys.stderr)
@@ -981,6 +995,7 @@ def generate(
             caption=False,
             prompt_override=resolved_prompt,
             ref_image=ref_image,
+            ref_images=ref_images,
             size=size,
             style=actual_style,
             prompt_is_final=True,
@@ -1052,6 +1067,7 @@ def generate(
                 caption=False,
                 prompt_override=resolved_prompt,
                 ref_image=ref_image,
+                ref_images=ref_images,
                 size=size,
                 style=actual_style,
                 prompt_is_final=True,
@@ -1074,8 +1090,13 @@ def generate(
     # Precision edits are merged by the app after reference-mode validation.
     if path and not precise_edit:
         from core import sync_to_gallery
+        gallery_prompt = (
+            resolved_prompt
+            if theme in DAILY_THEMES
+            else (prompt_override or resolved_prompt)
+        )
         sync_to_gallery(path, os.path.basename(path), theme, actual_style,
-                        prompt=prompt_override or resolved_prompt,
+                        prompt=gallery_prompt,
                         caption=caption_text or "",
                         model_name=used_model,
                         source=source,
@@ -1096,6 +1117,7 @@ if __name__ == "__main__":
     parser.add_argument("--style", choices=["cool", "girly", "sweet"], default=None, help="风格底模: cool(冷御风)/girly(少女风)/sweet(甜妹风), 仅 gptimage 引擎支持")
     parser.add_argument("--source", choices=["cron", "web", "chat", "custom", "hermes_api"], default="chat", help="来源标识: cron(定时)/web(现在在干嘛)/chat(聊天生图)/custom(自定义)/hermes_api(Hermes API)")
     parser.add_argument("--ref-image", type=str, default=None, help="参考图本地路径（图生图/img2img 模式）")
+    parser.add_argument("--ref-images", type=str, default=None, help="多参考图本地路径，逗号分隔；第1张锁动作/场景，第2张起为人脸")
     parser.add_argument("--size", type=str, default=None, help="图片尺寸")
     parser.add_argument("--schedule-time", type=str, default="", help="定时任务对应的日程时间和活动，如 '20:30 晚间直播'")
     parser.add_argument("--schedule-detail-json", type=str, default="", help="当前日程推断明细 JSON，用于即时生图")
@@ -1116,6 +1138,7 @@ if __name__ == "__main__":
         args.style,
         source=args.source,
         ref_image=args.ref_image,
+        ref_images=[p.strip() for p in str(args.ref_images or "").split(",") if p.strip()] or None,
         size=args.size,
         schedule_time=args.schedule_time,
         schedule_detail_json=args.schedule_detail_json,

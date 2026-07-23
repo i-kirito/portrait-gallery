@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from PIL import Image, ImageChops, ImageOps
+from PIL import Image
 
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
@@ -57,21 +57,16 @@ class ImageFilenameTest(unittest.TestCase):
                 filename_theme="schedule_2211",
             )
 
-        self.assertEqual("zhuzhu_schedule_2211_b0d947_1783952093.png", filename)
+        self.assertEqual("schedule_2211_b0d947_1783952093.png", filename)
 
-    def test_scheduled_resize_fills_canvas_without_extended_background(self):
-        source = Image.new("RGB", (90, 160))
-        for y in range(160):
-            for x in range(90):
+    def test_scheduled_save_preserves_upstream_bytes_and_dimensions(self):
+        source = Image.new("RGB", (180, 120))
+        for y in range(120):
+            for x in range(180):
                 source.putpixel((x, y), ((x * 7) % 256, (y * 5) % 256, ((x + y) * 3) % 256))
         image_buffer = io.BytesIO()
         source.save(image_buffer, format="PNG")
-        expected = ImageOps.fit(
-            source,
-            (120, 160),
-            method=Image.Resampling.LANCZOS,
-            centering=(0.5, 0.5),
-        )
+        upstream_bytes = image_buffer.getvalue()
 
         with tempfile.TemporaryDirectory() as tmpdir, patch.object(
             core,
@@ -86,10 +81,9 @@ class ImageFilenameTest(unittest.TestCase):
                 filename_theme="schedule_0825",
             )
             with Image.open(path) as output:
-                self.assertEqual((120, 160), output.size)
-                difference = ImageChops.difference(output.convert("RGB"), expected)
+                self.assertEqual((180, 120), output.size)
 
-        self.assertIsNone(difference.getbbox())
+            self.assertEqual(upstream_bytes, Path(path).read_bytes())
 
 
 if __name__ == "__main__":

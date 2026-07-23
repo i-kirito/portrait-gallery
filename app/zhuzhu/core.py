@@ -17,7 +17,7 @@ from typing import Optional
 from urllib.parse import quote
 
 import requests
-from PIL import Image, ImageOps
+from PIL import Image
 
 _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _APP_DIR not in sys.path:
@@ -25,8 +25,10 @@ if _APP_DIR not in sys.path:
 
 from store import ImageMetadataStore, LockedJsonDictStore, ScheduleStore
 from text_repair import repair_mojibake_text
+from characters import NATURAL_FACE_SHAPE_GUARD, sanitize_daily_image_prompt, sanitize_image_prompt
 from settings import (
     DEFAULT_GITEE_IMAGE_URL,
+    DEFAULT_PHOTO_REALISM_FLOOR,
     DEFAULT_QUALITY_PREFIX,
     GENERIC_APPEARANCE,
     base_style_label,
@@ -55,6 +57,13 @@ from settings import (
 )
 
 REQUEST_SESSION = requests.Session()
+
+DAILY_IMAGE_SAFETY_GUARD = (
+    "The subject is unmistakably an adult woman in her late twenties. "
+    "This is a non-sexual everyday lifestyle photograph. Her clothing is fully opaque, "
+    "secure, activity-appropriate daywear with a modest neckline and comfortable coverage. "
+    "Her pose, expression, and camera treatment are natural and focused on the scheduled task."
+)
 
 
 def _retry_without_temperature_if_needed(resp, payload: dict, post_func):
@@ -333,6 +342,80 @@ SEXY_APPEARANCE = str(get_nested(_GALLERY_CONFIG, "character.sexy_appearance", "
 
 QUALITY_PREFIX = str(get_nested(_GALLERY_CONFIG, "image_gen.quality_prefix", "") or DEFAULT_QUALITY_PREFIX).strip()
 SEXY_QUALITY_PREFIX = str(get_nested(_GALLERY_CONFIG, "image_gen.sexy_quality_prefix", "") or QUALITY_PREFIX).strip()
+PHOTO_REALISM_FLOOR = str(
+    get_nested(_GALLERY_CONFIG, "image_gen.photo_realism_floor", "") or DEFAULT_PHOTO_REALISM_FLOOR
+).strip()
+
+
+def _normalize_photo_style_en(value: str) -> str:
+    """Keep LLM photography language clean and free of character/outfit prose."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip(" .")
+    if not text:
+        return ""
+    blocked = (
+        "pink hair",
+        "dusty rose",
+        "hourglass",
+        "breasts",
+        "wearing",
+        "outfit",
+        "hairstyle",
+        "ponytail",
+        "chinese girl",
+        "18-year-old",
+    )
+    low = text.lower()
+    if any(token in low for token in blocked):
+        kept = []
+        for part in re.split(r"(?<=[.!?])\s+", text):
+            pl = part.lower()
+            if any(tok in pl for tok in blocked):
+                continue
+            if any(
+                key in pl
+                for key in (
+                    "photo",
+                    "light",
+                    "camera",
+                    "framing",
+                    "snapshot",
+                    "handheld",
+                    "skin",
+                    "color",
+                    "lens",
+                    "ambient",
+                    "candid",
+                    "composition",
+                )
+            ):
+                kept.append(part.strip())
+        text = " ".join(kept).strip()
+    replacements = (
+        (r"\bcinematic lighting\b", "natural ambient lighting"),
+        (r"\bcinematic color grade\b", "true-to-life color"),
+        (r"\bmasterpiece quality\b", ""),
+        (r"\bmasterpiece\b", ""),
+        (r"\bultra-realistic\b", "true-to-life"),
+        (r"\bphotorealistic\b", "true-to-life"),
+        (r"\bhdr glow\b", "natural exposure"),
+    )
+    for bad, good in replacements:
+        text = re.sub(bad, good, text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text).strip(" ,.")
+    return text[:500]
+
+
+def _resolve_quality_prefix(theme: str, photo_style_en: str = "") -> str:
+    """Prefer LLM day-level photo language; keep a thin realism floor."""
+    is_sexy = theme == "sexy"
+    if is_sexy:
+        return SEXY_QUALITY_PREFIX
+    style = _normalize_photo_style_en(photo_style_en)
+    if style:
+        floor = PHOTO_REALISM_FLOOR or DEFAULT_PHOTO_REALISM_FLOOR
+        return f"{style} {floor}".strip()
+    return QUALITY_PREFIX
+
 
 THEMES = {
     "morning": {
@@ -974,9 +1057,10 @@ def _strip_hair_color_from_schedule_hair(hair: str) -> str:
 
 def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activity: str = "",
                  outfit_keywords: str = "", scene_keywords: str = "", hair_keywords: str = "",
-                 time_constraint: str = "", allow_random_pool: bool = False) -> str:
+                 time_constraint: str = "", allow_random_pool: bool = False,
+                 photo_style_en: str = "") -> str:
     is_sexy = theme == "sexy"
-    quality = SEXY_QUALITY_PREFIX if is_sexy else QUALITY_PREFIX
+    quality = _resolve_quality_prefix(theme, photo_style_en)
 
     # 读取 runtime persona 的 appearance（Web UI / Hermes / OpenClaw / config），覆盖内置常量。
     custom_appearance = _read_custom_appearance()
@@ -987,7 +1071,11 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
         appearance = SEXY_APPEARANCE if is_sexy else APPEARANCE
 
     if extra_prompt:
-        return f"{quality} {appearance} {extra_prompt}".strip()
+        prompt = f"{quality} {appearance} {extra_prompt}".strip()
+        if not is_sexy:
+            prompt = sanitize_image_prompt(prompt, limit=0)
+            prompt = f"{prompt} {NATURAL_FACE_SHAPE_GUARD}".strip()
+        return prompt
 
     if not schedule_activity and not allow_random_pool:
         print(
@@ -1069,6 +1157,8 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
             f"Current scheduled scene from today's LLM plan: {schedule_activity}. "
             "Use this schedule text as the source of truth for the action, props, setting, mood, time of day, outfit, and hairstyle. "
             "Do not replace it with a generic routine or another activity. "
+            "If the plan mentions another person, judge for yourself how to keep the story while showing only this woman as the clear subject in the photo; "
+            "prefer atmosphere and props over putting a second person in frame. "
         )
         if time_constraint:
             activity_focus += (
@@ -1077,7 +1167,7 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
                 "Do not change the scene into night, evening, sunset, neon nightlife, or warm street-lamp lighting unless the scheduled time explicitly says so. "
             )
 
-    return (
+    prompt = (
         f"{quality} {appearance}. "
         f"{activity_focus}"
         + (f"Her hair color must follow the character appearance exactly: {hair_color}. " if hair_color else "")
@@ -1087,6 +1177,13 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
         f"Background: {environment}. "
         f"{lighting}"
     )
+    if schedule_activity and not is_sexy:
+        prompt = sanitize_daily_image_prompt(prompt, limit=0)
+        prompt = f"{prompt} {DAILY_IMAGE_SAFETY_GUARD} {NATURAL_FACE_SHAPE_GUARD}".strip()
+    elif not is_sexy:
+        prompt = sanitize_image_prompt(prompt, limit=0)
+        prompt = f"{prompt} {NATURAL_FACE_SHAPE_GUARD}".strip()
+    return prompt
 
 
 def detect_extension(img_data: bytes) -> str:
@@ -1100,48 +1197,6 @@ def detect_extension(img_data: bytes) -> str:
         return "png" if fmt == "PNG" else "jpg"
     except Exception:
         return "jpg"
-
-
-def _parse_target_size(target_size: Optional[str]) -> Optional[tuple[int, int]]:
-    if not target_size:
-        return None
-    match = re.fullmatch(r"\s*(\d{2,5})x(\d{2,5})\s*", str(target_size).lower())
-    if not match:
-        return None
-    width, height = int(match.group(1)), int(match.group(2))
-    if not (64 <= width <= 8192 and 64 <= height <= 8192):
-        return None
-    return width, height
-
-
-def _fit_image_bytes(img_data: bytes, target_size: Optional[str]) -> bytes:
-    parsed = _parse_target_size(target_size)
-    if not parsed:
-        return img_data
-    try:
-        with Image.open(io.BytesIO(img_data)) as src:
-            img = ImageOps.exif_transpose(src)
-            original_size = img.size
-            if original_size == parsed and detect_extension(img_data) == "png":
-                return img_data
-            if img.mode not in ("RGB", "RGBA"):
-                img = img.convert("RGBA" if ("transparency" in img.info or "A" in img.getbands()) else "RGB")
-            fitted = img if original_size == parsed else ImageOps.fit(
-                img,
-                parsed,
-                method=Image.Resampling.LANCZOS,
-                centering=(0.5, 0.5),
-            )
-            out = io.BytesIO()
-            fitted.save(out, format="PNG", optimize=True)
-            if original_size == parsed:
-                print(f"📐 Normalized image format to PNG at {parsed[0]}x{parsed[1]}", file=sys.stderr)
-            else:
-                print(f"📐 Adjusted image size from {original_size[0]}x{original_size[1]} to {parsed[0]}x{parsed[1]} as PNG", file=sys.stderr)
-            return out.getvalue()
-    except Exception as e:
-        print(f"Image size adjustment failed for {target_size}: {e}", file=sys.stderr)
-        return img_data
 
 
 def _safe_filename_label(value: str, fallback: str = "image") -> str:
@@ -1161,15 +1216,20 @@ def schedule_filename_theme(theme: str, schedule_time: str = "") -> str:
 
 def save_image(img_data: bytes, theme: str, model_name: str, style: Optional[str] = None,
                target_size: Optional[str] = None, filename_theme: Optional[str] = None):
+    """Persist the upstream image bytes without resizing or re-encoding them.
+
+    ``target_size`` is retained for caller compatibility and describes the size
+    requested from the upstream image API. The returned image is the source of
+    truth for the file's actual dimensions.
+    """
     os.makedirs(WORKSPACE_MEDIA, exist_ok=True)
-    img_data = _fit_image_bytes(img_data, target_size)
     ts = int(time.time())
     ext = detect_extension(img_data)
     label = _safe_filename_label(filename_theme or theme)
     style_label = _safe_filename_label(style, "") if style else ""
     style_part = f"_{style_label}" if style_label else ""
     short_id = uuid.uuid4().hex[:6]
-    filename = f"zhuzhu_{label}{style_part}_{short_id}_{ts}.{ext}"
+    filename = f"{label}{style_part}_{short_id}_{ts}.{ext}"
     path = os.path.join(WORKSPACE_MEDIA, filename)
 
     with open(path, "wb") as f:
@@ -1237,6 +1297,7 @@ def _load_daily_schedule_context(date_text: str, schedule_time: str = "") -> dic
         "outfit": str(daily.get("outfit") or "").strip(),
         "outfit_keywords": str(daily.get("outfit_keywords") or "").strip(),
         "scene_keywords": str(daily.get("scene_keywords") or "").strip(),
+        "photo_style_en": str(daily.get("photo_style_en") or "").strip(),
     }
     slot_time = _normalize_schedule_slot_time(schedule_time)
     if slot_time and result["schedule_details"]:
@@ -1500,6 +1561,7 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
         "schedule_time": schedule_time,
         "outfit_keywords": str(daily_context.get("outfit_keywords") or "").strip(),
         "scene_keywords": str(daily_context.get("scene_keywords") or "").strip(),
+        "photo_style_en": str(daily_context.get("photo_style_en") or "").strip(),
     }
     if source == "cron" and os.getenv("ZHUZHU_DELIVERY_PENDING", "").strip() == "1":
         entry.update({

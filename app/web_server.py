@@ -55,10 +55,12 @@ from image_editing import (
     normalize_image_edit_target,
 )
 from image_versions import (
+    archive_image_version,
     delete_image_versions,
     find_image_version,
     image_version_path,
     normalize_image_versions,
+    replace_image_from_version,
 )
 from outfit_plan_edit import (
     MAX_OUTFIT_PLAN_EDIT_LENGTH,
@@ -337,6 +339,8 @@ class GalleryServer:
         self._group_chat_reply_progress: dict[str, dict] = {}
         self._group_chat_background_tasks: set[asyncio.Task] = set()
         self._wardrobe_image_locks: dict[str, asyncio.Lock] = {}
+        self._image_mutation_locks: dict[str, asyncio.Lock] = {}
+        self._image_mutation_lock_users: dict[str, int] = {}
         self._manual_send_lock = asyncio.Lock()
         self._manual_send_cooldown_until = 0.0
         self._manual_send_last_error = ""
@@ -368,6 +372,7 @@ class GalleryServer:
         self.on_refresh_schedule = None
         self.on_rebuild_photo_jobs = None
         self.on_retry_photo_job = None
+        self.on_photo_quota_snapshot = None
         self.on_update_photo_plan = None
         self.on_update_outfit_plan = None
         self.on_image_dir_changed = None
@@ -670,6 +675,10 @@ class GalleryServer:
             "/api/images/{img_id}/versions/{version_id}",
             self.handle_image_version_file,
         )
+        self.app.router.add_post(
+            "/api/images/{img_id}/versions/{version_id}/activate",
+            self.handle_activate_image_version,
+        )
         self.app.router.add_get("/api/images/{img_id}", self.handle_image_detail)
         self.app.router.add_post("/api/images/{img_id}/reroll", self.handle_reroll_image)
         self.app.router.add_post("/api/images/{img_id}/edit", self.handle_edit_image)
@@ -714,6 +723,15 @@ class GalleryServer:
         self.app.router.add_patch("/api/favorite-outfits/{outfit_id}", self.handle_edit_favorite_outfit)
         self.app.router.add_post("/api/favorite-outfits/{outfit_id}/edit", self.handle_edit_favorite_outfit)
         self.app.router.add_post("/api/favorite-outfits/{outfit_id}/wardrobe-image", self.handle_favorite_outfit_wardrobe_image)
+        self.app.router.add_get("/api/favorite-outfits/{outfit_id}/wardrobe-image/versions", self.handle_favorite_outfit_wardrobe_versions)
+        self.app.router.add_get(
+            "/api/favorite-outfits/{outfit_id}/wardrobe-image/versions/{version_id}",
+            self.handle_favorite_outfit_wardrobe_version_file,
+        )
+        self.app.router.add_post(
+            "/api/favorite-outfits/{outfit_id}/wardrobe-image/versions/{version_id}/activate",
+            self.handle_activate_favorite_outfit_wardrobe_version,
+        )
         self.app.router.add_get("/api/disliked-outfits", self.handle_disliked_outfits)
         self.app.router.add_post("/api/disliked-outfits", self.handle_disliked_outfits)
 
@@ -1833,7 +1851,7 @@ class GalleryServer:
     @classmethod
     def _favorite_outfit_wardrobe_response_item(cls, item: dict) -> dict:
         wardrobe = cls._favorite_outfit_wardrobe_payload(item)
-        if not wardrobe:
+        if not wardrobe and not normalize_image_versions((item or {}).get("wardrobe_image_versions")):
             return {}
         result = {}
         for key in (
@@ -1852,6 +1870,13 @@ class GalleryServer:
             value = wardrobe.get(key)
             if value not in ("", None):
                 result[key] = value
+        versions = normalize_image_versions((item or {}).get("wardrobe_image_versions"))
+        if versions:
+            result["version_count"] = len(versions)
+            result["has_versions"] = True
+        elif wardrobe:
+            result["version_count"] = 0
+            result["has_versions"] = False
         return result
 
     @staticmethod
@@ -2601,11 +2626,23 @@ class GalleryServer:
                 previous_filename = str(previous_wardrobe.get("filename") or "").strip()
                 previous_path = self._safe_reference_path(self.wardrobe_reference_dir, previous_filename) if previous_filename else ""
                 new_path = str(result.get("path") or "").strip()
-                if previous_path and previous_path != new_path:
+                archived_version = None
+                if previous_path and previous_path != new_path and os.path.isfile(previous_path):
                     try:
-                        os.unlink(previous_path)
-                    except OSError as e:
-                        logger.warning("Delete previous wardrobe reference failed: %s", e)
+                        archived_version = archive_image_version(
+                            self.data_dir,
+                            previous_path,
+                            original_image_filename=previous_filename,
+                            archived_at=datetime.now().isoformat(timespec="seconds"),
+                            target="wardrobe_reroll",
+                            target_label="重生衣架图",
+                            instruction="",
+                            date=str(item.get("date") or ""),
+                            time="",
+                        )
+                    except Exception as e:
+                        logger.warning("Archive previous wardrobe reference failed: %s", e)
+                        archived_version = None
 
                 def _apply(items: list[dict]) -> list[dict]:
                     updated = []
@@ -2616,6 +2653,11 @@ class GalleryServer:
                         candidate_ids = {existing.get("id"), self._favorite_outfit_item_id(existing)}
                         if outfit_id in candidate_ids:
                             merged = dict(existing)
+                            versions = normalize_image_versions(merged.get("wardrobe_image_versions"))
+                            if archived_version:
+                                versions.append(archived_version)
+                            if versions:
+                                merged["wardrobe_image_versions"] = versions
                             merged["wardrobe_image"] = wardrobe_payload
                             merged.pop("wardrobe_image_status", None)
                             updated.append(merged)
@@ -2633,11 +2675,38 @@ class GalleryServer:
                         os.unlink(new_path)
                     except OSError:
                         pass
+                    if archived_version:
+                        delete_image_versions(self.data_dir, [archived_version])
                     raise
                 except Exception as e:
                     self._set_favorite_outfit_wardrobe_status(outfit_id, "failed", "衣架图保存失败", str(e))
                     logger.error("Save favorite outfit wardrobe image error: %s", e)
+                    if archived_version:
+                        delete_image_versions(self.data_dir, [archived_version])
                     raise
+
+                # Keep previous file only when archive failed; otherwise archive is source of truth.
+                if previous_path and previous_path != new_path and archived_version:
+                    try:
+                        os.unlink(previous_path)
+                    except OSError as e:
+                        logger.warning("Delete previous wardrobe reference after archive failed: %s", e)
+                elif previous_path and previous_path != new_path and not archived_version:
+                    # Fallback: if archive failed, keep previous file to avoid data loss.
+                    logger.warning(
+                        "Keeping previous wardrobe image because archive failed: %s",
+                        previous_filename,
+                    )
+
+                if archived_version:
+                    wardrobe_payload = dict(wardrobe_payload)
+                    wardrobe_payload["version_count"] = len(
+                        normalize_image_versions(
+                            (self._favorite_outfit_by_id(outfit_id) or {}).get("wardrobe_image_versions")
+                        )
+                    )
+                    wardrobe_payload["has_versions"] = wardrobe_payload["version_count"] > 0
+                    wardrobe_payload["archived_version_id"] = archived_version.get("id", "")
 
                 return wardrobe_payload
         except Exception as e:
@@ -2720,6 +2789,226 @@ class GalleryServer:
             "id": outfit_id,
             "wardrobe_image": wardrobe_payload,
         })
+
+    def _public_wardrobe_version(self, outfit_id: str, record: dict, position: int = 0) -> dict:
+        record = dict(record or {})
+        version_id = str(record.get("id") or "").strip().lower()
+        payload = {
+            "id": version_id,
+            "image_url": (
+                f"/api/favorite-outfits/{outfit_id}/wardrobe-image/versions/{version_id}"
+                if version_id
+                else ""
+            ),
+            "archived_at": record.get("archived_at", ""),
+            "target": record.get("target", ""),
+            "target_label": record.get("target_label", ""),
+            "instruction": record.get("instruction", ""),
+            "date": record.get("date", ""),
+            "time": record.get("time", ""),
+            "position": position,
+        }
+        for field in ("width", "height", "file_size_bytes"):
+            if record.get(field):
+                payload[field] = record[field]
+        return payload
+
+    async def handle_favorite_outfit_wardrobe_versions(self, request: web.Request):
+        """List archived wardrobe hanger-image versions for one favorite outfit."""
+        outfit_id = str(request.match_info.get("outfit_id") or "").strip()
+        item = self._favorite_outfit_by_id(outfit_id)
+        if not item:
+            return web.json_response({"error": "favorite_outfit_not_found"}, status=404)
+        records = normalize_image_versions(item.get("wardrobe_image_versions"))
+        available = []
+        for position, record in enumerate(records, start=1):
+            path = image_version_path(self.data_dir, record)
+            if path and path.is_file():
+                available.append(self._public_wardrobe_version(outfit_id, record, position))
+        available.reverse()
+        return web.json_response({
+            "id": outfit_id,
+            "version_count": len(available),
+            "items": available,
+            "current": self._favorite_outfit_wardrobe_response_item(item),
+        })
+
+    async def handle_favorite_outfit_wardrobe_version_file(self, request: web.Request):
+        """Serve one archived wardrobe hanger image."""
+        outfit_id = str(request.match_info.get("outfit_id") or "").strip()
+        item = self._favorite_outfit_by_id(outfit_id)
+        if not item:
+            raise web.HTTPNotFound()
+        resolved = find_image_version(
+            self.data_dir,
+            item.get("wardrobe_image_versions"),
+            request.match_info.get("version_id", ""),
+        )
+        if not resolved:
+            raise web.HTTPNotFound()
+        _, path = resolved
+        return web.FileResponse(
+            path,
+            headers={"Cache-Control": "private, max-age=31536000, immutable"},
+        )
+
+    async def handle_activate_favorite_outfit_wardrobe_version(self, request: web.Request):
+        """Restore one archived wardrobe image as the current hanger image."""
+        outfit_id = str(request.match_info.get("outfit_id") or "").strip()
+        version_id = str(request.match_info.get("version_id") or "").strip().lower()
+        item = self._favorite_outfit_by_id(outfit_id)
+        if not item:
+            return web.json_response({"error": "favorite_outfit_not_found"}, status=404)
+
+        lock = self._wardrobe_image_locks.setdefault(outfit_id, asyncio.Lock())
+        if lock.locked():
+            return web.json_response(
+                {
+                    "error": "wardrobe_image_generating",
+                    "message": "这套衣架图正在生成中，请稍后再切换版本",
+                },
+                status=409,
+            )
+
+        async with lock:
+            item = self._favorite_outfit_by_id(outfit_id)
+            if not item:
+                return web.json_response({"error": "favorite_outfit_not_found"}, status=404)
+            records = normalize_image_versions(item.get("wardrobe_image_versions"))
+            resolved = find_image_version(self.data_dir, records, version_id)
+            if not resolved:
+                return web.json_response(
+                    {
+                        "error": "version_not_found",
+                        "message": "该历史版本已变化，请重新打开",
+                    },
+                    status=404,
+                )
+            selected_record, selected_path = resolved
+            current = self._favorite_outfit_wardrobe_payload(item)
+            current_filename = str(current.get("filename") or "").strip()
+            current_path = (
+                self._safe_reference_path(self.wardrobe_reference_dir, current_filename)
+                if current_filename
+                else ""
+            )
+            if not current_path or not os.path.isfile(current_path):
+                # Still allow restore if only archive exists; create new current file name.
+                current_path = ""
+
+            switched_at = datetime.now().isoformat(timespec="seconds")
+            archived_current = None
+            if current_path and os.path.isfile(current_path):
+                try:
+                    archived_current = archive_image_version(
+                        self.data_dir,
+                        current_path,
+                        original_image_filename=current_filename,
+                        archived_at=switched_at,
+                        target="version_switch",
+                        target_label="切换前当前版本",
+                        instruction="",
+                        date=str(item.get("date") or ""),
+                        time="",
+                    )
+                except Exception as e:
+                    logger.error("Archive current wardrobe before switch failed: %s", e)
+                    return web.json_response(
+                        {
+                            "error": "version_archive_failed",
+                            "message": "保留当前衣架图失败，未切换",
+                        },
+                        status=500,
+                    )
+
+            ext = Path(selected_path).suffix.lower() or ".png"
+            if current_filename:
+                target_filename = current_filename
+            else:
+                target_filename = f"wardrobe_{outfit_id[:8]}_{int(time.time())}{ext}"
+            target_path = self._safe_reference_path(self.wardrobe_reference_dir, target_filename)
+            if not target_path:
+                return web.json_response({"error": "invalid_wardrobe_path"}, status=500)
+
+            try:
+                loop = asyncio.get_running_loop()
+                replaced = await loop.run_in_executor(
+                    None,
+                    lambda: replace_image_from_version(selected_path, target_path),
+                )
+            except Exception as e:
+                if archived_current:
+                    delete_image_versions(self.data_dir, [archived_current])
+                logger.error("Restore wardrobe version failed: %s", e)
+                return web.json_response(
+                    {
+                        "error": "version_restore_failed",
+                        "message": "切换衣架图版本失败",
+                    },
+                    status=500,
+                )
+
+            wardrobe_payload = {
+                "filename": os.path.basename(target_path),
+                "url": f"/local-refs/wardrobe/{os.path.basename(target_path)}",
+                "prompt": str(current.get("prompt") or ""),
+                "size": str(current.get("size") or ""),
+                "source": str(current.get("source") or "wardrobe"),
+                "model_name": str(current.get("model_name") or ""),
+                "generation_mode": str(current.get("generation_mode") or "text2img"),
+                "created_at": int(time.time()),
+                "file_size_bytes": int((replaced or {}).get("file_size_bytes") or 0),
+                "width": int((replaced or {}).get("width") or 0),
+                "height": int((replaced or {}).get("height") or 0),
+            }
+
+            def _apply(items: list[dict]) -> list[dict]:
+                updated = []
+                found = False
+                for existing in items:
+                    if not isinstance(existing, dict):
+                        continue
+                    candidate_ids = {existing.get("id"), self._favorite_outfit_item_id(existing)}
+                    if outfit_id in candidate_ids:
+                        merged = dict(existing)
+                        versions = normalize_image_versions(merged.get("wardrobe_image_versions"))
+                        # Drop activated version from history; append previous current.
+                        versions = [v for v in versions if v.get("id") != selected_record.get("id")]
+                        if archived_current:
+                            versions.append(archived_current)
+                        if versions:
+                            merged["wardrobe_image_versions"] = versions
+                        else:
+                            merged.pop("wardrobe_image_versions", None)
+                        merged["wardrobe_image"] = wardrobe_payload
+                        merged.pop("wardrobe_image_status", None)
+                        updated.append(merged)
+                        found = True
+                    else:
+                        updated.append(existing)
+                if not found:
+                    raise ValueError("favorite_outfit_not_found")
+                return updated
+
+            try:
+                self._update_favorite_outfits(_apply)
+            except Exception as e:
+                if archived_current:
+                    delete_image_versions(self.data_dir, [archived_current])
+                logger.error("Save wardrobe version switch failed: %s", e)
+                return web.json_response({"error": "save_failed", "message": str(e)}, status=500)
+
+            # Remove restored archive file after successful activation.
+            delete_image_versions(self.data_dir, [selected_record])
+
+            fresh = self._favorite_outfit_by_id(outfit_id) or {}
+            response_image = self._favorite_outfit_wardrobe_response_item(fresh)
+            return web.json_response({
+                "success": True,
+                "id": outfit_id,
+                "wardrobe_image": response_image,
+                "version_count": int(response_image.get("version_count") or 0),
+            })
 
     def _plugin_config_path(self) -> str:
         return os.path.join(self.data_dir, "plugin_config.json")
@@ -3003,6 +3292,17 @@ class GalleryServer:
         except OSError:
             return None
 
+    def _image_revision_token(self, filename: str) -> str:
+        """Return a stable cache token for the current bytes of one image."""
+        if not hasattr(self, "image_dir"):
+            return ""
+        stat = self._image_stat(filename)
+        if stat is None:
+            return ""
+        mtime_ns = int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000)))
+        ctime_ns = int(getattr(stat, "st_ctime_ns", int(stat.st_ctime * 1_000_000_000)))
+        return f"{ctime_ns:x}-{mtime_ns:x}-{int(stat.st_size):x}"
+
     def _image_file_info(self, filename: str) -> dict:
         path = self._image_file_path(filename)
         if not path:
@@ -3063,6 +3363,31 @@ class GalleryServer:
         if not raw or not re.fullmatch(r"[a-zA-Z0-9_.-]+", raw) or ".." in raw:
             raise ValueError("invalid_filename")
         return raw
+
+    def _reserve_image_mutation_lock(self, img_id: str) -> asyncio.Lock:
+        """Reserve the shared per-image lock before waiting for it."""
+        lock = self._image_mutation_locks.setdefault(img_id, asyncio.Lock())
+        self._image_mutation_lock_users[img_id] = (
+            self._image_mutation_lock_users.get(img_id, 0) + 1
+        )
+        return lock
+
+    def _release_image_mutation_lock(self, img_id: str, lock: asyncio.Lock) -> None:
+        users = self._image_mutation_lock_users.get(img_id, 0)
+        if users > 1:
+            self._image_mutation_lock_users[img_id] = users - 1
+            return
+        self._image_mutation_lock_users.pop(img_id, None)
+        if self._image_mutation_locks.get(img_id) is lock:
+            self._image_mutation_locks.pop(img_id, None)
+
+    async def _run_image_mutation(self, img_id: str, mutation):
+        lock = self._reserve_image_mutation_lock(img_id)
+        try:
+            async with lock:
+                return await mutation()
+        finally:
+            self._release_image_mutation_lock(img_id, lock)
 
     def _delete_gallery_image(self, filename: str) -> dict:
         """Remove one image from storage, gallery data, and image metadata."""
@@ -3133,16 +3458,34 @@ class GalleryServer:
             return {}, []
         return entry, normalize_image_versions(entry.get("image_versions"))
 
+    _VERSION_INSTRUCTION_BOILERPLATE = frozenset({
+        "重抽前的当前图片",
+        "切换时自动保留的当前图片",
+        "保留的编辑前图片",
+        "切换前当前版本",
+    })
+
     @staticmethod
     def _public_image_version(img_id: str, record: dict, position: int) -> dict:
+        target = str(record.get("target", "") or "").strip()
+        raw_instruction = str(record.get("instruction", "") or "").strip()
+        # Labels already describe archive source; hide boilerplate notes.
+        if (
+            not raw_instruction
+            or raw_instruction in GalleryServer._VERSION_INSTRUCTION_BOILERPLATE
+            or target in {"reroll", "version_switch"}
+        ):
+            instruction = ""
+        else:
+            instruction = raw_instruction
         payload = {
             "id": record["id"],
             "image_url": f"/api/images/{quote(img_id, safe='')}/versions/{record['id']}",
             "position": position,
             "archived_at": record.get("archived_at", ""),
-            "target": record.get("target", ""),
+            "target": target,
             "target_label": record.get("target_label", "") or "编辑",
-            "instruction": record.get("instruction", ""),
+            "instruction": instruction,
             "date": record.get("date", ""),
             "time": record.get("time", ""),
         }
@@ -3202,6 +3545,232 @@ class GalleryServer:
             path,
             headers={"Cache-Control": "private, max-age=31536000, immutable"},
         )
+
+    async def handle_activate_image_version(self, request: web.Request):
+        """Switch one archived image into the current card without losing either version."""
+        try:
+            img_id = self._normalize_gallery_image_filename(
+                request.match_info.get("img_id", "")
+            )
+        except ValueError:
+            return web.json_response({"error": "invalid_filename"}, status=400)
+        version_id = str(request.match_info.get("version_id") or "").strip().lower()
+        lock = self._reserve_image_mutation_lock(img_id)
+        acquired = False
+        try:
+            try:
+                # Version switch must not sit behind a multi-minute reroll/edit.
+                # Fail fast so the UI does not spin forever on "切换中".
+                await asyncio.wait_for(lock.acquire(), timeout=1.5)
+                acquired = True
+            except asyncio.TimeoutError:
+                return web.json_response(
+                    {
+                        "error": "image_busy",
+                        "message": "当前图片正在重抽或编辑，请稍后再切换版本",
+                    },
+                    status=409,
+                )
+
+            try:
+                entry, records = self._image_version_records_for_image(img_id)
+                if not entry:
+                    return web.json_response({"error": "not_found"}, status=404)
+                resolved = find_image_version(self.data_dir, records, version_id)
+                if not resolved:
+                    return web.json_response(
+                        {
+                            "error": "version_not_found",
+                            "message": "该历史版本已变化，请重新打开",
+                        },
+                        status=404,
+                    )
+                selected_record, selected_path = resolved
+                current_path_text = self._image_file_path(img_id)
+                if not current_path_text:
+                    return web.json_response(
+                        {
+                            "error": "current_image_not_found",
+                            "message": "当前图片文件不存在",
+                        },
+                        status=404,
+                    )
+                current_path = Path(current_path_text).resolve()
+                try:
+                    initial_stat = current_path.stat()
+                except OSError:
+                    return web.json_response(
+                        {
+                            "error": "current_image_not_found",
+                            "message": "当前图片文件不存在",
+                        },
+                        status=404,
+                    )
+                initial_signature = (initial_stat.st_mtime_ns, initial_stat.st_size)
+                switched_at = datetime.now().isoformat(timespec="seconds")
+                descriptor = entry.get("active_version_descriptor")
+                descriptor = descriptor if isinstance(descriptor, dict) else {}
+                current_instruction = str(
+                    descriptor.get("instruction")
+                    or entry.get("edit_instruction")
+                    or ""
+                ).strip()
+                try:
+                    loop = asyncio.get_running_loop()
+                    archived_current = await loop.run_in_executor(
+                        None,
+                        lambda: archive_image_version(
+                            self.data_dir,
+                            str(current_path),
+                            original_image_filename=img_id,
+                            archived_at=str(descriptor.get("archived_at") or switched_at),
+                            target=str(descriptor.get("target") or "version_switch"),
+                            target_label=str(descriptor.get("target_label") or "当前版本"),
+                            instruction=current_instruction,
+                            date=str(descriptor.get("date") or entry.get("date") or ""),
+                            time=str(descriptor.get("time") or entry.get("time") or ""),
+                        ),
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "Archive current image before version switch failed: image=%s error=%s",
+                        img_id,
+                        exc,
+                        exc_info=True,
+                    )
+                    return web.json_response(
+                        {
+                            "error": "version_archive_failed",
+                            "message": "切换前当前图片归档失败",
+                        },
+                        status=500,
+                    )
+
+                replaced = False
+                try:
+                    latest_stat = current_path.stat()
+                    if (latest_stat.st_mtime_ns, latest_stat.st_size) != initial_signature:
+                        raise RuntimeError("version_source_changed")
+                    replacement_info = await loop.run_in_executor(
+                        None,
+                        lambda: replace_image_from_version(selected_path, current_path),
+                    )
+                    replaced = True
+
+                    result = {}
+                    mutation = {"updated": False}
+
+                    def _activate(all_data):
+                        key, current_entry = self._find_image_entry(all_data, img_id)
+                        if not key or not current_entry:
+                            return all_data
+                        current_records = normalize_image_versions(
+                            current_entry.get("image_versions")
+                        )
+                        if not any(record.get("id") == version_id for record in current_records):
+                            return all_data
+                        next_records = [
+                            record for record in current_records
+                            if record.get("id") != version_id
+                        ]
+                        next_records.append(archived_current)
+                        current_entry["image_versions"] = next_records
+                        current_entry["version_count"] = len(next_records)
+                        current_entry["version_switched_at"] = switched_at
+                        current_entry.update(replacement_info)
+                        current_entry["size"] = (
+                            f"{replacement_info['width']}x{replacement_info['height']}"
+                        )
+                        current_entry["active_version_descriptor"] = {
+                            field: selected_record.get(field, "")
+                            for field in (
+                                "target",
+                                "target_label",
+                                "instruction",
+                                "date",
+                                "time",
+                                "archived_at",
+                            )
+                            if selected_record.get(field)
+                        }
+                        all_data[key] = current_entry
+                        result.update(current_entry)
+                        mutation["updated"] = True
+                        return all_data
+
+                    await loop.run_in_executor(
+                        None,
+                        lambda: ScheduleStore(self.data_dir).update(_activate),
+                    )
+                    if not mutation["updated"]:
+                        raise RuntimeError("version_source_changed")
+                except Exception as exc:
+                    if replaced:
+                        archived_path = image_version_path(self.data_dir, archived_current)
+                        if archived_path and archived_path.is_file():
+                            try:
+                                await loop.run_in_executor(
+                                    None,
+                                    lambda: replace_image_from_version(
+                                        archived_path,
+                                        current_path,
+                                    ),
+                                )
+                            except Exception as rollback_exc:
+                                logger.error(
+                                    "Rollback image version switch failed: image=%s error=%s",
+                                    img_id,
+                                    rollback_exc,
+                                    exc_info=True,
+                                )
+                    await loop.run_in_executor(
+                        None,
+                        lambda: delete_image_versions(self.data_dir, [archived_current]),
+                    )
+                    status = 409 if str(exc) == "version_source_changed" else 500
+                    logger.error(
+                        "Activate image version failed: image=%s version=%s error=%s",
+                        img_id,
+                        version_id,
+                        exc,
+                        exc_info=status >= 500,
+                    )
+                    message = (
+                        "当前图片已发生变化，请重试"
+                        if str(exc) == "version_source_changed"
+                        else "版本切换失败"
+                    )
+                    return web.json_response(
+                        {"error": str(exc), "message": message},
+                        status=status,
+                    )
+
+                _, delete_errors = await loop.run_in_executor(
+                    None,
+                    lambda: delete_image_versions(self.data_dir, [selected_record]),
+                )
+                if delete_errors:
+                    logger.warning(
+                        "Old image version cleanup failed after switch: image=%s errors=%s",
+                        img_id,
+                        delete_errors,
+                    )
+                self._image_info_cache.pop(str(current_path), None)
+                payload = self._enrich_photo_schedule_time(
+                    result,
+                    self._load_image_metadata(),
+                )
+                payload["image_revision"] = (
+                    self._image_revision_token(img_id)
+                    or str(int(time.time() * 1000))
+                )
+                payload["switched_version_id"] = version_id
+                return web.json_response(payload)
+            finally:
+                if acquired and lock.locked():
+                    lock.release()
+        finally:
+            self._release_image_mutation_lock(img_id, lock)
 
     def _gallery_entry_for_image(self, img_id: str) -> dict:
         img_id = str(img_id or "").strip()
@@ -3846,7 +4415,7 @@ class GalleryServer:
                     continue
                 if entry.get("date") != today_str or entry.get("status") != "ok":
                     continue
-                if entry.get("source", "") != "cron":
+                if str(entry.get("source") or "").strip() not in TODAY_PHOTO_SOURCES:
                     continue
                 if entry.get("delivery_status") in {"sending", "failed"}:
                     continue
@@ -4607,6 +5176,7 @@ class GalleryServer:
                 "prompt_mode",
                 "pure_prompt",
                 "custom_ref_mode",
+                "requested_size",
                 "requested_generation_mode",
                 "generation_mode",
                 "ref_image",
@@ -4662,6 +5232,12 @@ class GalleryServer:
                 normalized["height"] = image_info.get("height")
             if image_info.get("file_size_bytes"):
                 normalized["file_size_bytes"] = image_info["file_size_bytes"]
+            image_revision = self._image_revision_token(img_file)
+            if image_revision:
+                # The card filename stays stable across rerolls and version
+                # switches. Expose a token derived from the current inode so a
+                # full page reload cannot reuse bytes from the previous image.
+                normalized["image_revision"] = image_revision
 
         model_label = self._display_model_name(normalized.get("model_name", ""))
         if model_label and model_label != normalized.get("model_name"):
@@ -6669,7 +7245,9 @@ class GalleryServer:
                 "max_tokens": 220,
                 "temperature": 0.2,
             }
-            resp = requests.post(chat_url, headers=headers, json=payload, timeout=5)
+            # Display translation is non-critical, but 5s is too tight for Grok under load.
+            translate_timeout = 20
+            resp = requests.post(chat_url, headers=headers, json=payload, timeout=translate_timeout)
             if resp.status_code == 400:
                 try:
                     body = resp.json()
@@ -6677,7 +7255,7 @@ class GalleryServer:
                     body = resp.text
                 if llm_temperature_param_error(body):
                     payload.pop("temperature", None)
-                    return requests.post(chat_url, headers=headers, json=payload, timeout=5)
+                    return requests.post(chat_url, headers=headers, json=payload, timeout=translate_timeout)
             return resp
 
         loop = asyncio.get_running_loop()
@@ -9585,6 +10163,55 @@ JSON 格式：
                     "message": "今日日程里没有可用于生图的时间点。",
                 }, status=400)
 
+            # 「现在在干嘛」占用今日生图计划额度，与定时/补拍共用上限。
+            max_daily = self.get_photo_job_limit()
+            planned_total = 0
+            remaining = max_daily
+            completed = failed = inflight = scheduled = 0
+            if callable(self.on_photo_quota_snapshot):
+                try:
+                    snapshot = self.on_photo_quota_snapshot(
+                        today_str,
+                        include_scheduled=True,
+                    )
+                    (
+                        max_daily,
+                        completed,
+                        failed,
+                        inflight,
+                        scheduled,
+                        planned_total,
+                        remaining,
+                    ) = snapshot
+                except Exception as quota_error:
+                    logger.error("Generate now quota snapshot failed: %s", quota_error)
+                    planned_total = self._today_completed_photo_count()
+                    remaining = max(0, max_daily - planned_total)
+            else:
+                planned_total = self._today_completed_photo_count()
+                remaining = max(0, max_daily - planned_total)
+            if remaining <= 0:
+                logger.info(
+                    "Generate now blocked by daily photo plan limit: planned=%s max=%s",
+                    planned_total,
+                    max_daily,
+                )
+                return web.json_response(
+                    {
+                        "error": "limit_reached",
+                        "status": "limit_reached",
+                        "message": f"今日生图计划已达上限 {planned_total}/{max_daily}",
+                        "max_daily": max_daily,
+                        "completed_today": completed,
+                        "failed_today": failed,
+                        "running_today": inflight,
+                        "scheduled_today": scheduled,
+                        "planned_today": planned_total,
+                        "remaining_today": 0,
+                    },
+                    status=409,
+                )
+
             now_detail = await self._infer_generate_now_detail(now, daily)
             now_activity = self._clean_activity_text(now_detail.get("activity_zh", ""), max_len=72)
             if not now_activity:
@@ -9809,8 +10436,36 @@ JSON 格式：
             else:
                 pure = bool(pure_raw)
             raw_ref_image = body.get("ref_image", "")
-            ref_image = self._resolve_reference_image(raw_ref_image, allow_any_path=True)
-            if raw_ref_image and not ref_image:
+            raw_ref_images = body.get("ref_images") or body.get("references") or []
+            if isinstance(raw_ref_images, str):
+                raw_ref_images = [part.strip() for part in raw_ref_images.split(",") if part.strip()]
+            if not isinstance(raw_ref_images, list):
+                raw_ref_images = []
+            # also accept ref_image_2 / face_ref aliases
+            for key in ("ref_image_2", "face_ref", "face_image", "identity_ref"):
+                extra = str(body.get(key) or "").strip()
+                if extra:
+                    raw_ref_images.append(extra)
+            if raw_ref_image:
+                raw_ref_images = [raw_ref_image] + list(raw_ref_images)
+            # de-dupe preserve order
+            seen_raw = set()
+            unique_raw = []
+            for item in raw_ref_images:
+                token = str(item or "").strip()
+                if not token or token in seen_raw:
+                    continue
+                seen_raw.add(token)
+                unique_raw.append(token)
+            resolved_refs = []
+            for token in unique_raw:
+                resolved = self._resolve_reference_image(token, allow_any_path=True)
+                if not resolved:
+                    return web.json_response({"error": "invalid_ref_image", "ref": token}, status=400)
+                if resolved not in resolved_refs:
+                    resolved_refs.append(resolved)
+            ref_image = resolved_refs[0] if resolved_refs else ""
+            if raw_ref_image and not ref_image and not unique_raw:
                 return web.json_response({"error": "invalid_ref_image"}, status=400)
             selected_reference = {}
             if ref_image:
@@ -9822,9 +10477,11 @@ JSON 格式：
                 )
                 if selected_reference and not selected_reference.get("path"):
                     selected_reference["path"] = ref_image
-            elif not pure:
+            elif not pure and not resolved_refs:
                 selected_reference = self._select_default_custom_reference_sync()
                 ref_image = str(selected_reference.get("path") or "").strip()
+                if ref_image:
+                    resolved_refs = [ref_image]
             api_source = self._normalize_api_source(
                 body.get("api_source"),
                 body.get("source"),
@@ -9867,6 +10524,7 @@ JSON 格式：
                 image_model,
                 api_description,
                 selected_reference,
+                resolved_refs,
             )
             if entry and entry.status == "ok":
                 payload = entry.to_dict()
@@ -9975,13 +10633,20 @@ JSON 格式：
 
     async def handle_reroll_image(self, request: web.Request):
         """Generate a fresh image from an existing gallery card."""
-        img_id = request.match_info.get("img_id")
-        if not img_id or not re.match(r'^[a-zA-Z0-9_.-]+$', img_id) or '..' in img_id:
+        try:
+            img_id = self._normalize_gallery_image_filename(
+                request.match_info.get("img_id", "")
+            )
+        except ValueError:
             return web.json_response({"error": "invalid_filename"}, status=400)
         if not self.on_reroll_image:
             return web.json_response({"error": "reroll_unavailable"}, status=503)
+        reroll_image = self.on_reroll_image
         try:
-            entry = await self.on_reroll_image(img_id)
+            entry = await self._run_image_mutation(
+                img_id,
+                lambda: reroll_image(img_id),
+            )
             if not entry or entry.get("status") != "ok":
                 error = (entry or {}).get("error") or "generate_failed"
                 status = (
@@ -9992,6 +10657,15 @@ JSON 格式：
                 return web.json_response({"error": error}, status=status)
             metadata = self._load_image_metadata()
             normalized = self._enrich_photo_schedule_time(entry, metadata)
+            # Reroll keeps the card filename stable, so provide a revision
+            # token for browsers that otherwise retain the old image bytes.
+            current_path = self._image_file_path(img_id)
+            if current_path:
+                self._image_info_cache.pop(str(current_path), None)
+            normalized["image_revision"] = (
+                self._image_revision_token(img_id)
+                or str(int(time.time() * 1000))
+            )
             return web.json_response(normalized)
         except Exception as e:
             logger.error(f"Reroll image error: {e}")
@@ -10039,13 +10713,17 @@ JSON 格式：
             )
         if not self.on_edit_image:
             return web.json_response({"error": "image_edit_unavailable", "message": "图片编辑功能暂不可用"}, status=503)
+        edit_image = self.on_edit_image
 
         try:
-            entry = await self.on_edit_image(
+            entry = await self._run_image_mutation(
                 img_id,
-                target,
-                instruction,
-                schedule_description,
+                lambda: edit_image(
+                    img_id,
+                    target,
+                    instruction,
+                    schedule_description,
+                ),
             )
             if not entry or entry.get("status") != "ok":
                 error = (entry or {}).get("error") or "edit_generate_failed"
@@ -10722,6 +11400,7 @@ JSON 格式：
             "display_outfit": display_outfit,
             "outfit_description": display_outfit,
             "size": size or "",
+            "requested_size": size or "",
             "created_at": created_at,
             "generation_time": elapsed,
             "source": source,

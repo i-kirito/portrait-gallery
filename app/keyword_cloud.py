@@ -652,7 +652,11 @@ def _normalize_source(source: Any, filename: Any = "") -> str:
         return "openclaw"
     if "hermes" in raw or name.startswith("hermes_"):
         return "hermes_api"
-    if raw in {"custom", "custom_ui"} or "_custom_" in name or name.startswith("zhuzhu_custom"):
+    if (
+        raw in {"custom", "custom_ui"}
+        or "_custom_" in name
+        or name.startswith(("custom_", "zhuzhu_custom"))
+    ):
         return "custom"
     if raw in SOURCE_LABELS:
         return raw

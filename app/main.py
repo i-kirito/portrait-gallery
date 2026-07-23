@@ -41,7 +41,9 @@ from image_editing import (
 from image_versions import (
     archive_image_version,
     delete_image_versions,
+    image_version_path,
     normalize_image_versions,
+    replace_image_from_version,
 )
 from photo_plan_edit import (
     normalize_schedule_clock,
@@ -68,6 +70,7 @@ from characters import (
     upsert_manual_character,
 )
 from settings import (
+    DEFAULT_PHOTO_REALISM_FLOOR,
     DEFAULT_QUALITY_PREFIX,
     api_keys_path,
     apply_network_env,
@@ -351,6 +354,7 @@ class PortraitGalleryApp:
         self.web_server.on_refresh_schedule = self.refresh_schedule
         self.web_server.on_rebuild_photo_jobs = self.rebuild_photo_jobs
         self.web_server.on_retry_photo_job = self.retry_photo_job
+        self.web_server.on_photo_quota_snapshot = self._photo_quota_snapshot
         self.web_server.on_update_photo_plan = self.update_photo_plan
         self.web_server.on_update_outfit_plan = self.update_outfit_plan
         self.web_server.on_reroll_image = self.reroll_image
@@ -839,6 +843,7 @@ class PortraitGalleryApp:
         image_model: str = "",
         api_description: str = "",
         selected_reference: Optional[dict] = None,
+        ref_images: Optional[list] = None,
     ) -> DailyEntry:
         """自定义 prompt 生图"""
         today_str = self._today().isoformat()
@@ -846,7 +851,13 @@ class PortraitGalleryApp:
         shot_type = normalize_custom_shot_type(shot_type)
         shot_label = custom_shot_label(shot_type)
         shot_prompt = custom_shot_prompt(shot_type, size)
-        generation_prompt = f"{user_prompt}. {shot_prompt}"
+        # Prefer a short final prompt for custom/Hermes generations.
+        # Heavy quality prefixes + long pose menus make custom scenes collapse.
+        user_prompt = re.sub(r"\s+", " ", str(user_prompt or "")).strip()
+        if pure:
+            generation_prompt = user_prompt
+        else:
+            generation_prompt = self._build_light_custom_prompt(user_prompt, shot_prompt)
         normalized_api_source = re.sub(r"[\s_-]+", "", str(api_source or "").strip().lower())
         entry_source = "hermes_api" if normalized_api_source in {"hermes", "hermesapi"} else "custom"
         selected_reference = selected_reference if isinstance(selected_reference, dict) else {}
@@ -864,22 +875,42 @@ class PortraitGalleryApp:
                 # Custom uploaded reference, or pure mode with any reference, uses img2img only.
                 ref_path = ref_image
 
+        # Multi-ref: first locks pose/scene/outfit, later images are face/identity.
+        multi_refs: list[str] = []
+        if isinstance(ref_images, (list, tuple)):
+            multi_refs.extend(str(x or "").strip() for x in ref_images if str(x or "").strip())
+        if ref_path and ref_path not in multi_refs:
+            multi_refs.insert(0, ref_path)
+        # de-dupe preserve order
+        seen = set()
+        ordered_refs = []
+        for path in multi_refs:
+            key = os.path.abspath(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            ordered_refs.append(path)
+        if ordered_refs and not ref_path:
+            ref_path = ordered_refs[0]
+
         kwargs = {}
         if ref_path:
             kwargs["ref_image"] = ref_path
+        if len(ordered_refs) > 1:
+            kwargs["ref_images"] = ordered_refs
         if size:
             kwargs["size"] = size
-        has_reference = bool(ref_path)
+        has_reference = bool(ref_path or ordered_refs)
         no_auto_style = bool(pure)
         custom_ref_mode = "pure" if pure else ("reference" if has_reference else "text2img")
 
         filename = await self.image_gen.generate(
             generation_prompt,
             style=style,
-            timeout=image_process_timeout(self.config, with_reference_fallback=bool(style or ref_path)),
+            timeout=image_process_timeout(self.config, with_reference_fallback=bool(style or ref_path or ordered_refs)),
             source=entry_source,
             theme="custom",
-            prompt_final=bool(pure),
+            prompt_final=True,
             no_auto_style=no_auto_style,
             image_model=image_model,
             **kwargs
@@ -966,6 +997,72 @@ class PortraitGalleryApp:
     def _character_generation_prefix(self) -> str:
         image_config = self.config.get("image_gen", {}) if isinstance(self.config.get("image_gen"), dict) else {}
         return str(image_config.get("quality_prefix") or DEFAULT_QUALITY_PREFIX).strip()
+
+    def _compact_custom_appearance(self) -> str:
+        """Keep only stable identity cues for custom prompts.
+
+        Long appearance + quality stacks make custom scenes collapse; keep hair,
+        eyes, and skin short so the user scene remains the dominant signal.
+        """
+        persona = load_runtime_persona(self.config, self.data_dir)
+        appearance = re.sub(r"\s+", " ", str(persona.get("appearance") or "")).strip()
+        if not appearance:
+            character = self.config.get("character") if isinstance(self.config.get("character"), dict) else {}
+            appearance = re.sub(r"\s+", " ", str((character or {}).get("appearance") or "")).strip()
+        if not appearance:
+            return ""
+
+        parts: list[str] = []
+        for chunk in re.split(r"[,.;，。；]", appearance):
+            clause = chunk.strip(" .，,;；")
+            if not clause:
+                continue
+            low = clause.lower()
+            keep = False
+            if any(token in low for token in ("hair", "bang", "fringe")) or any(
+                token in clause for token in ("头发", "发色", "刘海")
+            ):
+                keep = True
+            elif any(token in low for token in ("eye", "iris", "pupil")) or any(
+                token in clause for token in ("眼睛", "瞳")
+            ):
+                keep = True
+            elif any(token in low for token in ("skin", "complexion")) or any(
+                token in clause for token in ("皮肤", "肤色")
+            ):
+                keep = True
+            if keep:
+                parts.append(clause)
+            if len(parts) >= 4:
+                break
+
+        if not parts:
+            # Last resort: a short head of the original appearance, not the full stack.
+            return appearance[:120].rstrip(" ,.;")
+        return ", ".join(parts)
+
+    def _build_light_custom_prompt(self, user_prompt: str, shot_prompt: str = "") -> str:
+        """Build a short final custom prompt.
+
+        Prefer scene first + compact identity + thin realism floor. Avoid the
+        heavy hybrid quality_prefix and long pose/face-guard menus that make
+        custom generations collapse.
+        """
+        scene = re.sub(r"\s+", " ", str(user_prompt or "")).strip()
+        camera = re.sub(r"\s+", " ", str(shot_prompt or "")).strip()
+        identity = self._compact_custom_appearance()
+        floor = re.sub(r"\s+", " ", str(DEFAULT_PHOTO_REALISM_FLOOR or "")).strip()
+
+        parts: list[str] = []
+        if scene:
+            parts.append(scene.rstrip(". ") + ".")
+        if identity:
+            parts.append(identity.rstrip(". ") + ".")
+        if camera:
+            parts.append(camera.rstrip(". ") + ".")
+        if floor:
+            parts.append(floor.rstrip(". ") + ".")
+        return " ".join(parts).strip()
 
     @staticmethod
     def _today_schedule_reference_style_guard(has_reference: bool, style_hint: str = "") -> str:
@@ -1490,6 +1587,51 @@ class PortraitGalleryApp:
         elif deleted:
             logger.info("已删除被替换图片文件: %s", filename)
 
+    def _resolve_generated_image_path(self, filename: str) -> str:
+        """Resolve a freshly generated file before it is registered in the gallery."""
+        raw = str(filename or "").strip()
+        if not raw or os.path.basename(raw) != raw:
+            return ""
+        candidates = []
+        resolver = getattr(self.web_server, "_image_file_path", None)
+        if callable(resolver):
+            try:
+                candidates.append(resolver(raw))
+            except (OSError, ValueError):
+                pass
+        output_dir = str(getattr(self.image_gen, "output_dir", "") or "").strip()
+        if output_dir:
+            candidates.append(os.path.join(output_dir, raw))
+        candidates.append(os.path.join(self.data_dir, "images", raw))
+        for candidate in candidates:
+            if candidate and os.path.isfile(candidate):
+                return os.path.abspath(candidate)
+        return ""
+
+    def _migrate_image_metadata(
+        self,
+        generated_filename: str,
+        target_filename: str,
+        patch: Optional[dict] = None,
+    ) -> None:
+        """Move metadata from a temporary generated filename onto the stable card filename."""
+        if not target_filename:
+            return
+
+        def _merge(metadata):
+            target = dict(metadata.get(target_filename) or {})
+            if generated_filename and generated_filename != target_filename:
+                generated = metadata.get(generated_filename)
+                if isinstance(generated, dict):
+                    target.update(generated)
+                metadata.pop(generated_filename, None)
+            if isinstance(patch, dict):
+                target.update(patch)
+            metadata[target_filename] = target
+            return metadata
+
+        ImageMetadataStore(self.data_dir).update(_merge)
+
     @staticmethod
     def _selected_reference_for_reroll(original: dict, meta: dict) -> dict:
         merged = {}
@@ -1598,6 +1740,7 @@ class PortraitGalleryApp:
             "reference_query",
             "outfit_keywords",
             "scene_keywords",
+            "photo_style_en",
         ):
             if field in schedule_context:
                 generated[field] = schedule_context[field]
@@ -1807,6 +1950,7 @@ class PortraitGalleryApp:
                 "reference_query",
                 "outfit_keywords",
                 "scene_keywords",
+                "photo_style_en",
                 "character_id",
                 "character_ids",
                 "character_names",
@@ -1940,12 +2084,24 @@ class PortraitGalleryApp:
         return result
 
     async def reroll_image(self, image_filename: str) -> dict:
-        """Generate a new card from an existing card's final prompt."""
+        """Replace the current card image and keep the previous image as a version."""
         store = ScheduleStore(self.data_dir)
         all_data = store.load()
         original_key, original = self._find_entry_by_image(all_data, image_filename)
         if not original:
             return {"status": "failed", "error": "not_found"}
+
+        image_path_resolver = getattr(self.web_server, "_image_file_path", None)
+        try:
+            current_image_path = (
+                image_path_resolver(image_filename)
+                if callable(image_path_resolver)
+                else ""
+            )
+        except ValueError:
+            current_image_path = ""
+        if not current_image_path or not os.path.isfile(current_image_path):
+            return {"status": "failed", "error": "image_file_missing"}
 
         metadata = ImageMetadataStore(self.data_dir).load()
         meta = metadata.get(image_filename, {}) if isinstance(metadata, dict) else {}
@@ -2014,13 +2170,7 @@ class PortraitGalleryApp:
         original_selected_reference = self._selected_reference_for_reroll(original, meta)
         original_ref_image = ""
         if is_precision_edit:
-            image_path_resolver = getattr(self.web_server, "_image_file_path", None)
-            try:
-                original_ref_image = image_path_resolver(image_filename) if callable(image_path_resolver) else ""
-            except ValueError:
-                original_ref_image = ""
-            if not original_ref_image or not os.path.isfile(original_ref_image):
-                return {"status": "failed", "error": "image_file_missing"}
+            original_ref_image = current_image_path
             original_selected_reference = {
                 "id": f"edit_source_{image_filename}",
                 "filename": image_filename,
@@ -2068,8 +2218,11 @@ class PortraitGalleryApp:
         reroll_no_auto_style = is_precision_edit or original_is_pure
         reroll_caption = False
         if is_custom_injected_reroll:
-            reroll_prompt = f"{custom_user_prompt}. {custom_shot_prompt(custom_shot_type, size)}"
-            reroll_prompt_final = False
+            reroll_prompt = self._build_light_custom_prompt(
+                custom_user_prompt,
+                custom_shot_prompt(custom_shot_type, size),
+            )
+            reroll_prompt_final = True
             reroll_no_auto_style = not has_custom_reference
         if is_scheduled_reroll:
             match = re.match(r'\s*(\d{1,2}):(\d{2})', schedule_time)
@@ -2138,33 +2291,58 @@ class PortraitGalleryApp:
             logger.error("图片重抽失败: %s", image_filename)
             return {"status": "failed", "error": "generate_failed"}
 
+        generated_image_path = self._resolve_generated_image_path(filename)
+        if not generated_image_path:
+            logger.error(
+                "图片重抽结果文件不存在: source=%s generated=%s",
+                image_filename,
+                filename,
+            )
+            self._delete_replaced_image(filename)
+            return {"status": "failed", "error": "generated_file_missing"}
+
         original_time = original.get("time") or self._image_time_from_filename(image_filename)
         now_time = self._image_time_from_filename(filename) or self._now().strftime("%H:%M")
-        archived_version = None
-        if is_precision_edit:
-            try:
-                archived_version = archive_image_version(
-                    self.data_dir,
-                    original_ref_image,
-                    original_image_filename=image_filename,
-                    archived_at=self._now().isoformat(timespec="seconds"),
-                    target="reroll",
-                    target_label="重抽",
-                    instruction=edit_instruction,
-                    date=str(original_date),
-                    time=str(original_time or now_time),
-                )
-            except Exception as e:
-                if filename != image_filename:
-                    self._delete_replaced_image(filename)
-                logger.error(
-                    "归档精准编辑重抽原图失败: image=%s generated=%s error=%s",
-                    image_filename,
-                    filename,
-                    e,
-                    exc_info=True,
-                )
-                return {"status": "failed", "error": "version_archive_failed"}
+        try:
+            archived_version = archive_image_version(
+                self.data_dir,
+                current_image_path,
+                original_image_filename=image_filename,
+                archived_at=self._now().isoformat(timespec="seconds"),
+                target="reroll",
+                target_label="重抽",
+                instruction=edit_instruction or "",
+                date=str(original_date),
+                time=str(original_time or now_time),
+            )
+        except Exception as e:
+            if filename != image_filename:
+                self._delete_replaced_image(filename)
+            logger.error(
+                "归档重抽原图失败: image=%s generated=%s error=%s",
+                image_filename,
+                filename,
+                e,
+                exc_info=True,
+            )
+            return {"status": "failed", "error": "version_archive_failed"}
+
+        # Keep the gallery filename stable. The generated file is only a temporary
+        # staging artifact; replace the current card file atomically after the old
+        # bytes have been archived for rollback.
+        try:
+            replace_image_from_version(generated_image_path, current_image_path)
+        except Exception as e:
+            delete_image_versions(self.data_dir, [archived_version])
+            self._delete_replaced_image(filename)
+            logger.error(
+                "替换当前卡片图片失败: image=%s generated=%s error=%s",
+                image_filename,
+                filename,
+                e,
+                exc_info=True,
+            )
+            return {"status": "failed", "error": "image_replace_failed"}
         schedule_context_entry = {}
         if is_scheduled_reroll:
             schedule_context_entry = self._reroll_schedule_context(
@@ -2177,33 +2355,41 @@ class PortraitGalleryApp:
         merge_state = {"source_changed": False}
 
         def _merge_reroll(all_data: dict):
-            current_source = original
-            current_key = original_key
-            if is_precision_edit:
-                current_key, current_source = self._find_entry_by_image(all_data, image_filename)
-                if not current_source:
-                    merge_state["source_changed"] = True
-                    return all_data
-            generated_key, generated = self._find_entry_by_image(all_data, filename)
+            current_key, current_source = self._find_entry_by_image(
+                all_data,
+                image_filename,
+            )
+            if not current_source:
+                merge_state["source_changed"] = True
+                return all_data
+            generated_key, generated_entry = self._find_entry_by_image(all_data, filename)
             generated_key = generated_key or filename
-            generated = dict(generated or {})
+            # Keep the existing card record as the base. A reroll changes its
+            # image bytes, not its gallery identity, date slot, or card count.
+            generated = dict(current_source)
+            if isinstance(generated_entry, dict):
+                generated.update(generated_entry)
             replacement_key = current_key or image_filename
             if re.match(r'^\d{4}-\d{2}-\d{2}$', str(replacement_key)):
                 replacement_key = image_filename
             generated.update({
-                "id": filename,
+                "id": image_filename,
                 "date": original_date,
                 "time": original_time or generated.get("time") or now_time,
-                "image_filename": filename,
-                "image_path": f"/images/{filename}",
+                "image_filename": image_filename,
+                "image_path": f"/images/{image_filename}",
                 "prompt": generated.get("prompt") or prompt,
                 "status": "ok",
                 "source": original_source or reroll_source,
-                "favorite": bool(original.get("favorite", False)),
+                "favorite": bool(current_source.get("favorite", False)),
                 "rerolled_from": image_filename,
                 "replaced_image_filename": image_filename,
                 "replacement_key": replacement_key,
             })
+            image_versions = normalize_image_versions(
+                current_source.get("image_versions")
+            )
+            image_versions.append(archived_version)
             if is_scheduled_reroll:
                 self._apply_scheduled_reroll_context(generated, schedule_context_entry)
                 if schedule_time:
@@ -2242,8 +2428,6 @@ class PortraitGalleryApp:
                         self._reference_path_for_display(ref_image, selected_reference),
                     )
                 if is_precision_edit:
-                    image_versions = normalize_image_versions(current_source.get("image_versions"))
-                    image_versions.append(archived_version)
                     generated.update({
                         "generation_type": "image_edit",
                         "prompt_mode": "precision_edit",
@@ -2264,6 +2448,8 @@ class PortraitGalleryApp:
                         "edited_from": edited_from,
                         "original_image_filename": original_image_filename,
                     })
+            generated["image_versions"] = image_versions
+            generated["version_count"] = len(image_versions)
             if (
                 (not is_scheduled_reroll or not reroll_uses_today_schedule)
                 and not generated.get("caption")
@@ -2293,57 +2479,100 @@ class PortraitGalleryApp:
                 if re.match(r'^\d{4}-\d{2}-\d{2}$', str(key)):
                     continue
                 entry_filename = entry.get("image_filename") if isinstance(entry, dict) else ""
-                if key in {replacement_key, generated_key, image_filename, filename} or entry_filename in {image_filename, filename}:
+                if key == replacement_key:
+                    continue
+                if (
+                    key in {generated_key, image_filename, filename}
+                    or entry_filename in {image_filename, filename}
+                ):
                     del all_data[key]
             all_data[replacement_key] = generated
             result.update(generated)
             return all_data
 
-        store.update(_merge_reroll)
+        try:
+            store.update(_merge_reroll)
+        except Exception:
+            # Do not leave the card file and JSON store out of sync if the
+            # persistence transaction fails after the atomic file replacement.
+            archived_path = image_version_path(self.data_dir, archived_version)
+            if archived_path and archived_path.is_file():
+                try:
+                    replace_image_from_version(archived_path, current_image_path)
+                except Exception:
+                    logger.error(
+                        "重抽失败后回滚当前图片失败: image=%s",
+                        image_filename,
+                        exc_info=True,
+                    )
+            delete_image_versions(self.data_dir, [archived_version])
+            self._delete_replaced_image(filename)
+            raise
+
         if merge_state["source_changed"]:
+            archived_path = image_version_path(self.data_dir, archived_version)
+            if archived_path and archived_path.is_file():
+                try:
+                    replace_image_from_version(archived_path, current_image_path)
+                except Exception:
+                    logger.error(
+                        "源卡片变化后回滚当前图片失败: image=%s",
+                        image_filename,
+                        exc_info=True,
+                    )
             delete_image_versions(self.data_dir, [archived_version])
             self._delete_replaced_image(filename)
             logger.warning(
-                "精准编辑重抽结果已丢弃，源卡片在生成期间发生变化: source=%s generated=%s",
+                "重抽结果已丢弃，源卡片在生成期间发生变化: source=%s generated=%s",
                 image_filename,
                 filename,
             )
             return {"status": "failed", "error": "reroll_source_changed"}
+
+        # The generator writes metadata under its temporary filename. Move it
+        # onto the stable card filename, then remove the temporary artifact.
+        metadata_patch = {
+            "rerolled_from": image_filename,
+            "replaced_image_filename": image_filename,
+            "replacement_key": result.get("replacement_key", original_key or image_filename),
+            "version_count": len(result.get("image_versions") or []),
+        }
         if is_precision_edit:
-            metadata_updater = getattr(self.web_server, "_update_image_metadata_entry", None)
-            if callable(metadata_updater):
-                generated_metadata = ImageMetadataStore(self.data_dir).load()
-                generated_meta = generated_metadata.get(filename, {}) if isinstance(generated_metadata, dict) else {}
-                generated_meta = dict(generated_meta) if isinstance(generated_meta, dict) else {}
-                generated_meta.update({
-                    "source": "image_edit",
-                    "precise_edit": True,
-                    "generation_type": "image_edit",
-                    "prompt_mode": "precision_edit",
-                    "custom_ref_mode": "precision_edit",
-                    "custom_prompt": edit_instruction,
-                    "edited_from": edited_from,
-                    "original_image_filename": original_image_filename,
-                    "edit_target": edit_target,
-                    "edit_target_label": edit_target_label_value,
-                    "edit_instruction": edit_instruction,
-                    "edit_history": edit_history,
-                    "replaced_image_filename": image_filename,
-                    "replacement_key": result.get("replacement_key", original_key or image_filename),
-                    "requested_generation_mode": "img2img",
-                    "generation_mode": "img2img",
-                    "requested_ref_image": image_filename,
-                    "requested_ref_image_path": original_ref_image,
-                    "selected_reference": selected_reference,
-                    "version_count": len(result.get("image_versions") or []),
-                })
-                try:
-                    metadata_updater(filename, generated_meta)
-                except Exception as e:
-                    logger.error("保存精准编辑重抽元数据失败: image=%s error=%s", filename, e)
+            metadata_patch.update({
+                "source": "image_edit",
+                "precise_edit": True,
+                "generation_type": "image_edit",
+                "prompt_mode": "precision_edit",
+                "custom_ref_mode": "precision_edit",
+                "custom_prompt": edit_instruction,
+                "edited_from": edited_from,
+                "original_image_filename": original_image_filename,
+                "edit_target": edit_target,
+                "edit_target_label": edit_target_label_value,
+                "edit_instruction": edit_instruction,
+                "edit_history": edit_history,
+                "requested_generation_mode": "img2img",
+                "generation_mode": "img2img",
+                "requested_ref_image": image_filename,
+                "requested_ref_image_path": original_ref_image,
+                "selected_reference": selected_reference,
+            })
+        try:
+            self._migrate_image_metadata(filename, image_filename, metadata_patch)
+        except Exception as e:
+            logger.error(
+                "迁移重抽元数据失败: generated=%s target=%s error=%s",
+                filename,
+                image_filename,
+                e,
+                exc_info=True,
+            )
         if filename != image_filename:
-            self._delete_replaced_image(image_filename)
-        logger.info("图片重抽成功: %s -> %s", image_filename, filename)
+            self._delete_replaced_image(filename)
+        result["id"] = image_filename
+        result["image_filename"] = image_filename
+        result["image_path"] = f"/images/{image_filename}"
+        logger.info("图片重抽成功，原卡片就地替换: %s (staged=%s)", image_filename, filename)
         return result
 
     async def daily_job(self):
@@ -2808,7 +3037,7 @@ class PortraitGalleryApp:
                     continue
                 if entry.get("date") != today_str or entry.get("status") != "ok":
                     continue
-                if entry.get("source", "") != "cron":
+                if str(entry.get("source") or "").strip() not in TODAY_PHOTO_SOURCES:
                     continue
                 if entry.get("delivery_status") in {"sending", "failed"}:
                     continue
@@ -2856,7 +3085,7 @@ class PortraitGalleryApp:
                     continue
                 if entry.get("date") != today_str or entry.get("status") != "ok":
                     continue
-                if entry.get("source", "") != "cron":
+                if str(entry.get("source") or "").strip() not in TODAY_PHOTO_SOURCES:
                     continue
                 img_file = entry.get("image_filename", "")
                 if not img_file or not self._photo_image_exists(img_file):

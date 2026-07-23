@@ -99,7 +99,7 @@ SCHEDULE_ACTIVITY_CATEGORY_ALIASES = {
     "bookstore_reading": ("书店", "阅读", "看书", "杂志"),
     "creative_work": ("画画", "草图", "设计稿", "手账", "写作", "创作"),
     "shopping": ("逛街", "购物中心", "商场", "试穿"),
-    "social": ("见朋友", "聚会", "约会", "一起吃", "聊天"),
+    "social": ("见朋友", "聚会", "约会", "一起吃", "聊天", "牵手", "双人", "共进"),
 }
 
 ACCESSORY_CATEGORY_ALIASES = {
@@ -306,6 +306,25 @@ SCHEDULE_DIVERSITY_IDEAS = (
 )
 
 BASE_STYLE_OPTIONS = {"cool", "girly", "sweet"}
+SCHEDULE_PHOTO_STYLE_RULES = """【摄影风格判断 photo_style_en — 由你根据今日整体日程自行判断，不要固定套模板】
+这不是穿搭风格，也不是固定 quality_prefix。
+请阅读今天的 schedule / schedule_details / outfit_style / mood 后，用 1-3 句纯英文写出今天最合适的摄影语言。
+
+判断原则（自行选择，不要写死某一套）：
+- 若今天整体更像居家、通勤、便利店、整理房间、随手记录：偏 candid real-life smartphone / natural ambient light / imperfect framing。
+- 若今天整体更像咖啡馆窗边、花市、城市散步、生活方式打卡：可加入 casual everyday snapshot / handheld friend-like framing，但仍保持真实手机感。
+- 若今天整体更像夜景散步、餐厅、演出、精致出门：可加强 ambient practical light / warm practical lamps / shallow environmental context，但不要变成广告棚拍或电影海报。
+- 始终是照片，不是 anime/illustration/CGI；不要塑料皮肤，不要过度精修。
+- 不要写 Masterpiece / ultra-realistic / photorealistic / cinematic lighting / HDR glow / cinematic color grade 这类容易漂成大片或 AI 滤镜的词。
+- 不要描述人物外貌、发型、服装单品（那些由 appearance 与 schedule_details 负责）。
+- 只写镜头、光线、取景、色彩真实感、质感这些摄影语言。
+
+示例方向（仅参考气质，禁止照抄整句）：
+- casual phone snapshot, natural window light, true-to-life color, slightly imperfect framing
+- candid handheld smartphone photo after dinner, practical street ambient light, mild optical softness
+- quiet home snapshot, soft indoor ambient light, natural skin texture, no heavy retouching
+"""
+
 SCHEDULE_DETAIL_REQUIRED_FIELDS = (
     "time",
     "activity_zh",
@@ -327,6 +346,19 @@ SCHEDULE_PHOTO_QUIET_END_MINUTE = 6 * 60
 JSON_OUTPUT_CONTRACT = """【最高优先级输出协议】
 只允许输出一个合法 JSON 对象。回复第一个字符必须是 {，最后一个字符必须是 }。
 禁止输出 Markdown、代码块、解释、复述任务、思考过程、分析过程或“我们被要求/首先分析/下面是”等说明文字。"""
+
+SCHEDULE_IMAGE_SAFETY_RULES = """所有生图字段必须描述明确 25 岁以上成年女性的非性化日常摄影；聊天人设中的年龄只属于对话设定，不能写进 reference_query、prompt、schedule_prompt 或 schedule_details。
+禁止在生图字段使用 18-year-old、teen、girl、young-looking、youthful、innocent、seductive、sexualized、lingerie、sheer、cleavage 等年龄模糊或性化表达。
+“性感风”只能解释为成熟、利落、时尚的成年人日常造型：服装必须完整、不透视、领口得体、适合当前活动，动作和镜头聚焦日程任务，不突出身体曲线，不使用暧昧卧室姿态。
+outfit_en 必须使用具体的日常成衣名称；吊带类上衣要明确 opaque、full coverage、modest neckline，不能写成内衣、睡裙或透明罩衫。"""
+
+SCHEDULE_SOLO_CAMERA_RULES = """【最高优先级·生图镜头原则（交给你自行判断，不靠关键词黑名单）】
+中文展示日程与小心思可以自然写约会、见面、牵手、双人晚餐等与人相关的生活事件。
+但你在写任何会进入生图的描述时，必须自己判断画面：镜头里只能清楚拍到角色本人。
+如果日程语义涉及另一人，请把“和谁在一起”留在中文故事里；生图描述只表现角色自己的动作、表情、道具和氛围。
+你可以保留约会/社交气氛（烛光、双人餐桌布置、对面空座、绿道傍晚），但不要把第二个人作为可见主体放进画面。
+背景里若有路人，应虚化且不可识别，不能变成互动对象。
+不要依赖固定禁用词表；用你的理解保证：同一活动既保留故事完整性，又让照片始终是角色单人出镜。"""
 
 
 class DailyScheduler:
@@ -382,15 +414,16 @@ class DailyScheduler:
     def _schedule_diversity_prompt_block(self, schedule_history: str) -> str:
         ideas = "\n".join(f"- {item}" for item in SCHEDULE_DIVERSITY_IDEAS)
         history_text = schedule_history or "（无近期日程）"
-        return f"""近 3 天日程避重参考（不要复刻这些活动组合或场景顺序）：
+        return f"""【近 3 天完整日程动作｜生成时硬约束（双保障第 1 层：你必须先自己避重）】
 {history_text}
 
-多样化要求：
-- 今天必须像真实新的一天，不要回到“早上赖床/床上刷手机，中午做饭，晚上做饭/准备晚餐”的模板。
-- schedule 第一条不要写赖床、躺床、床上翻手机、被窝里刷手机；可以写起床后的具体行动，如取咖啡、整理书桌、晨间拉伸、出门办小事。
-- 一天最多 1 条下厨/做饭/准备饭菜/厨房烹饪活动；午餐和晚餐不要都写成做饭。另一餐可以写外食、轻食、便当、咖啡馆、餐厅、朋友聚餐或简单用餐。
-- 至少 3 条活动要脱离“床/沙发/厨房”的低变化场景，给出明确地点、道具或兴趣任务。
-- 不要连续多天复用同一套活动骨架；从下面灵感里挑新的生活片段，但不要逐字照抄：
+生成 schedule 之前，先完整读完上面近 3 天每一条动作，再开始写今天的 6-8 条：
+1. 禁止复用近 3 天已经出现过的日程动作。同义改写、换说法、换时间点、换地点词仍算重复。
+2. 禁止复用近 3 天的任务主线。例如近 3 天出现过慢跑/快走/健身/拉伸/运动训练，今天不要再写跑步、运动场、体育公园、运动补给、运动记录；出现过插画/手账/书店，今天不要再回到同一创作或阅读主线；出现过便利店买气泡水、阳台浇水、做冷面，今天也不要再写这些具体动作。
+3. 你自己判断：如果新活动与近 3 天任一活动在「人在做什么」上相同或高度相似，就丢掉重写，不要输出。
+4. 今天必须是全新的一天：核心动作、场景任务、兴趣主线都要重新设计；不要只微调旧日程。
+5. 至少 3 条活动给出明确新地点、新道具或新兴趣任务。
+6. 可从下面灵感挑全新生活片段，但不要逐字照抄，也不要复用近 3 天已有动作：
 {ideas}"""
 
     def _load_schedule_data(self) -> dict:
@@ -709,6 +742,7 @@ class DailyScheduler:
         )
 
     def _get_schedule_history(self, today: date, days: int = 3) -> str:
+        """Return recent full schedule actions for LLM-led anti-repeat judgment."""
         all_data = self._load_schedule_data()
         lines = []
         for i in range(1, days + 1):
@@ -716,12 +750,72 @@ class DailyScheduler:
             entry = self._daily_schedule_entry(all_data, date_str)
             if not entry:
                 continue
-            activities = [activity for _time_text, activity in self._schedule_plan_items(entry.get("schedule", ""))]
-            if not activities:
+            items = self._schedule_plan_items(entry.get("schedule", ""))
+            if not items:
                 continue
-            summary = " / ".join(activity[:24] for activity in activities[:6])
-            lines.append(f"[{date_str}] {summary}")
+            day_lines = [f"{time_text} {activity}" for time_text, activity in items]
+            # Keep full action text so the model can judge sameness itself.
+            lines.append(f"[{date_str}]\n" + "\n".join(day_lines))
         return "\n".join(lines) if lines else "（无近期日程）"
+
+    def _recent_schedule_actions(self, today: date, days: int = 3) -> list[dict]:
+        """Collect recent schedule actions with date for post-check against LLM output."""
+        all_data = self._load_schedule_data()
+        actions = []
+        for i in range(1, days + 1):
+            date_str = (today - timedelta(days=i)).isoformat()
+            entry = self._daily_schedule_entry(all_data, date_str)
+            if not entry:
+                continue
+            for time_text, activity in self._schedule_plan_items(entry.get("schedule", "")):
+                activity = str(activity or "").strip()
+                if not activity:
+                    continue
+                actions.append({
+                    "date": date_str,
+                    "time": time_text,
+                    "activity": activity,
+                    "signature": self._activity_signature(activity),
+                    "core": self._activity_action_core(activity),
+                })
+        return actions
+
+    @staticmethod
+    def _activity_action_core(activity: str) -> str:
+        """Normalize an activity into a shorter action core for soft equality checks."""
+        text = re.sub(r"\s+", "", str(activity or ""))
+        text = re.sub(r"[，,。.!！?？；;、：:（）()《》“”\"'‘’]", "", text)
+        for filler in (
+            "今天的", "今日的", "一份", "简单的", "精致的", "舒服的", "轻松的",
+            "然后", "顺便", "之后", "同时", "并", "和",
+        ):
+            text = text.replace(filler, "")
+        # Drop very common leading scene/time glue without hardcoding activity themes.
+        for prefix in ("起床后", "回家后", "出门前", "出门后", "在晨光中", "在柔和的灯光下"):
+            if text.startswith(prefix):
+                text = text[len(prefix):]
+        return text[:28]
+
+    @classmethod
+    def _activities_are_same_action(cls, left: str, right: str) -> bool:
+        """Judge whether two activities describe essentially the same schedule action."""
+        a = cls._activity_action_core(left)
+        b = cls._activity_action_core(right)
+        if not a or not b:
+            return False
+        if a == b:
+            return True
+        # Containment after normalization: synonym rewrites that keep the same verb+object.
+        shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+        if len(shorter) >= 8 and shorter in longer:
+            return True
+        # High character overlap for near-paraphrases of the same action.
+        set_a, set_b = set(a), set(b)
+        shared = len(set_a & set_b)
+        smaller = min(len(set_a), len(set_b))
+        if smaller >= 8 and shared / smaller >= 0.72:
+            return True
+        return False
 
     def _recent_schedule_category_counts(self, today: date, days: int = 3) -> dict[str, int]:
         all_data = self._load_schedule_data()
@@ -746,47 +840,34 @@ class DailyScheduler:
         self,
         display_items: list[tuple[str, str]],
         recent_counts: Optional[dict[str, int]] = None,
+        recent_actions: Optional[list[dict]] = None,
     ) -> str:
+        """Dual-guard layer 2: catch obvious 3-day action reuse and same-day exact action duplicates.
+
+        Layer 1 is generation-time: the model must avoid repeating near-3-day
+        actions from the full history in the prompt. This post-check rejects
+        obvious same-action paraphrases so generation can retry.
+        """
+        del recent_counts  # category theme counts are not the primary policy
         if not display_items:
             return ""
-        recent_counts = recent_counts or {}
-        first_activity = display_items[0][1]
-        if self._activity_has(first_activity, BED_IDLE_TERMS):
-            return "schedule 第一条是赖床/床上刷手机模板，请换成起床后的具体行动"
+        recent_actions = recent_actions or []
 
-        cooking_items = [
-            f"{time_text} {activity}"
-            for time_text, activity in display_items
-            if self._activity_has(activity, COOKING_TERMS)
-        ]
-        if len(cooking_items) > 1:
-            return "一天最多 1 条下厨/做饭/准备饭菜活动，当前重复: " + "；".join(cooking_items[:3])
-        if cooking_items and recent_counts.get("cooking_days", 0) >= 2:
-            return "最近 3 天已有多天下厨/做饭，今天请改成外食、轻食、咖啡馆、便当或非餐饮活动"
-
-        low_energy_items = [
-            f"{time_text} {activity}"
-            for time_text, activity in display_items
-            if self._activity_has(activity, LOW_ENERGY_HOME_TERMS)
-        ]
-        if len(low_energy_items) > 2:
-            return "床/沙发/追番/发呆类低变化活动过多，请增加外出、兴趣、整理、创作或社交任务"
-        if low_energy_items and recent_counts.get("low_energy_home_days", 0) >= 2:
-            return "最近 3 天已有多天是床/沙发/追番等低变化活动，今天请安排新的外出、兴趣、创作或社交内容"
-
-        candidate_categories = set().union(
-            *(self._activity_categories(activity) for _time_text, activity in display_items)
-        )
-        for recent_day in recent_counts.get("category_days", []):
-            recent_categories = set(recent_day.get("categories") or set())
-            shared = candidate_categories & recent_categories
-            smaller = min(len(candidate_categories), len(recent_categories))
-            if len(shared) >= 4 and smaller and len(shared) / smaller >= 0.55:
-                return (
-                    f"与近 3 天中的 {recent_day.get('date', '某一天')} 活动骨架过于相似: "
-                    + "、".join(sorted(shared))
-                    + "。请更换主要地点、任务类别和活动顺序"
+        repeated = []
+        for time_text, activity in display_items:
+            for recent in recent_actions:
+                if not self._activities_are_same_action(activity, recent.get("activity", "")):
+                    continue
+                repeated.append(
+                    f"今天 {time_text}「{activity[:28]}」≈ {recent.get('date')} "
+                    f"{recent.get('time', '')}「{str(recent.get('activity') or '')[:28]}」"
                 )
+                break
+        if repeated:
+            return (
+                "近 3 天已出现相同或高度相似的日程动作，请重新设计全新动作/任务主线，不要同义改写："
+                + "；".join(repeated[:4])
+            )
 
         signatures = [self._activity_signature(activity) for _time_text, activity in display_items]
         duplicates = sorted({item for item in signatures if item and signatures.count(item) > 1})
@@ -860,6 +941,7 @@ class DailyScheduler:
             data.get("caption", ""),
             data.get("outfit_keywords", ""),
             data.get("scene_keywords", ""),
+            data.get("photo_style_en", ""),
         ]
         details = data.get("schedule_details")
         if isinstance(details, list):
@@ -1228,9 +1310,16 @@ class DailyScheduler:
 【角色外貌】
 {appearance}
 
+【生图安全约束】
+{SCHEDULE_IMAGE_SAFETY_RULES}
+
 【任务要求】
 请为今日生成一份完整的穿搭和日程计划。
 必须严格服从【真实日历约束】：周末/法定节假日不要安排上班、上学、通勤、办公室会议、考试、作业或加班；调休上班日才允许按工作日处理。
+
+{SCHEDULE_SOLO_CAMERA_RULES}
+
+{SCHEDULE_PHOTO_STYLE_RULES}
 
 ⚠️ 你需要自己选择当天最合适的 outfit_style，并写出 reference_query：
 - outfit_style 必须从 [{style_list_text}] 中选择一个，不要使用未启用的风格。
@@ -1242,14 +1331,14 @@ class DailyScheduler:
 
 ⚠️ outfit 字段必须包含以下五个部分，缺一不可：
 1. 「风格：」+ 风格名（只能从 [{style_list_text}] 中选，不要使用未启用的风格）
-2. 「发型：」+ 具体发型描述（15-30 个汉字，如：双马尾配蝴蝶结、慵懒低丸子头、编发侧马尾、高马尾、公主切、蛋卷头等，不要披头散发）
+2. 「发型：」+ 具体发型描述（15-40 个汉字）。必须自由创造，不要只从固定池子里挑；可以组合扎法/分缝/发饰/松紧状态（如：侧边麻花辫收低马尾、碎发夹发卡的半扎发、蝴蝶结高马尾、低盘发配珍珠夹等）。同一天不同时段可微调整理状态，但不要总是双马尾。不要披头散发
 3. 「穿搭：」+ 详细穿搭描述（至少 70 个汉字），必须同时写清：上装、下装或裙装、鞋子、发饰/首饰等配饰、主色、材质、版型/廓形、一个细节亮点。不要只写“少女风造型”“精心搭配”等空泛词。
 4. 「动作：」+ 当前的姿态/场景动作（20-40 个汉字，由你根据今天设定自主决定；示例只作格式参考，不要照抄：托腮趴在桌上、踮脚够书架上的书、蹲下系鞋带、靠在窗边喝咖啡等）
 5. 「场景：」+ 当前中文场景描述（15-40 个汉字，由你根据今天设定自主决定；示例只作格式参考，不要照抄：晨光照进来的卧室窗边、安静咖啡馆的靠窗小桌、暖色路灯下的街角等）
 
 ⚠️ prompt 字段必须是纯英文，适合 AI 生图，必须包含：发型、服装细节、动作/姿势、场景、光影氛围
 
-⚠️ schedule 是 WebUI 展示用，必须用中文，必须有 6-8 条，严格使用 \\n 分隔，每行一条，格式为「HH:mm 中文活动描述」：
+⚠️ 生成 schedule 时先执行双保障第 1 层：对照近 3 天完整日程动作，禁止相同或同义动作/任务主线，再开始写今天的条目。\n⚠️ schedule 是 WebUI 展示用，必须用中文，必须有 6-8 条，严格使用 \\n 分隔，每行一条，格式为「HH:mm 中文活动描述」：
    下面示例只展示格式，不要照抄活动内容：
    "08:12 起床整理今天的温柔穿搭\\n10:27 坐在咖啡馆窗边写手账\\n12:43 吃一份清爽午餐\\n14:18 在画室整理灵感草图\\n16:36 去公园散步拍照\\n18:22 回家做一顿简单晚餐\\n20:17 准备晚间直播\\n22:11 做睡前护肤准备休息"
    不要用"早上9点"、"下午2点"等中文时间格式，必须用 HH:mm 数字格式！每行之间必须用 \\n 换行，不要用空格或句号分隔！
@@ -1257,23 +1346,28 @@ class DailyScheduler:
    不要安排 03:00-05:59 的日程生图时间；这个时段只用于系统生成全天计划，不出现在 schedule、schedule_prompt 或 schedule_details。
    每条活动描述必须用中文写，要具体到场景/动作/道具（12-30 个汉字），不要只写"做早餐""出门""休息"等短句。
    每个时段的动作、道具和场景都由你根据今日人设、心情色彩、日程类型和穿搭自主决定；后续生图会直接采用这些日程动作，不会再用代码模板补动作。
+   中文 schedule 可以写约会/见面/互动；你自己判断哪些内容只留在故事里，哪些写成适合单人出镜的生图描述。
 
 ⚠️ schedule_prompt 是生图 prompt 注入用，必须用纯英文，条数和时间必须与 schedule 一一对应：
    下面示例只展示格式，不要照抄活动内容：
    "08:12 wake up and arrange today's soft outfit\\n10:27 write diary at a window table in a cafe\\n12:43 have a light refreshing lunch\\n14:18 organize inspiration sketches in an art studio\\n16:36 take a walk and photos in the park\\n18:22 cook a simple dinner at home\\n20:17 prepare for an evening livestream\\n22:11 do skincare and get ready for bedtime"
    schedule 给用户看中文；schedule_prompt 只给生图 prompt 使用英文。
    schedule_prompt 的每条英文活动必须明确 action + scene + props/time mood，不能只写 vague daily routine。
+   若中文日程涉及另一人，schedule_prompt 请自行改写成角色单人可见画面，保留氛围与道具，不把第二人画进镜头。
 
 ⚠️ schedule_details 是生图链路的严格结构化明细，必须是数组，条数、顺序、time 必须与 schedule 和 schedule_prompt 完全一致：
    - 每个时间段都必须输出一个对象，不能遗漏任何一条 schedule。
    - 每个对象必须包含 time、activity_zh、activity_en、action_en、scene_en、outfit_en、hair_en，可选 props_en、lighting_en。
    - activity_zh 必须是中文，并和 schedule 当前行表达同一个活动。
    - activity_en、action_en、scene_en、outfit_en、hair_en、props_en、lighting_en 必须是纯英文。
-   - action_en 必须写清人物当时正在做什么、手部/身体动作和互动对象。
+   - action_en 必须写清角色在镜头中的身体/手部动作和道具；你自己判断如何在保留日程语义的同时只拍角色。
    - scene_en 必须写清具体地点、周围环境、关键道具和时间氛围。
+   - scene_en 可保留社交/约会氛围，但由你判断避免第二人成为清晰主体。
    - time 是强约束：06:00-11:59 必须是 morning/daylight 氛围；12:00-17:59 必须是 midday/afternoon daylight 氛围；不能因为“街区/打卡/散步”等活动就写成 night/evening/sunset/neon/street lamps。
    - outfit_en 必须写清上装、下装/裙装、鞋子、配饰、颜色、材质/版型；如果当天整套穿搭不变，也要在每个时间段重复写清。
    - hair_en 必须写清具体发型、发饰/整理状态；不要只写 "nice hair"、"beautiful hairstyle" 等空话。
+   - hair_en 必须自由发明，不要只从固定发型池挑选；要具体到扎法/分缝/发饰/松紧状态，并贴合当前时段活动。
+   - 一天内发型可以有小变化（更利落/更松散/换发饰），但不要整天重复同一句发型模板，尤其不要默认 twin tails。
    - hair_en 不负责决定发色；发色必须跟【角色外貌提示词】里的 appearance 走，不要因为穿搭风格把发色改成黑色、棕色、金色等。
    - 后续生图会严格采用对应 time 的 schedule_details，不再用代码随机补动作、场景、服饰或发型。
 
@@ -1296,6 +1390,9 @@ class DailyScheduler:
    - 禁止出现“画廊、拍照、美照、造型、穿搭很美、今天穿得”等记录或外观评价话术。
    - 输出 1-2 句中文，总长 40-90 个汉字；不要加标题、引号或 emoji。
 
+⚠️ photo_style_en 字段：根据今天整体日程与氛围，自行判断今天最合适的摄影/镜头语言，用 1-3 句纯英文写。
+   只写摄影语言（镜头、光线、取景、色彩真实感、质感），不要写人物外貌/发型/服装。
+   不要固定套用同一套前缀；不要写 Masterpiece、ultra-realistic、cinematic lighting、HDR glow。
 ⚠️ outfit_keywords 字段：从 prompt 中提取穿搭相关英文关键词（服装+鞋子+配饰），逗号分隔，5-10个词。必须和 prompt 中的穿搭描述完全一致。
 ⚠️ scene_keywords 字段：从 prompt 中提取场景相关英文关键词（环境+道具+光线），逗号分隔，3-6个词。必须和 prompt 中的场景描述完全一致。
 
@@ -1321,6 +1418,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
     ],
     "prompt": "English prompt with hairstyle, outfit details, pose, scene, lighting...",
     "caption": "{character_name}自然想着今天想怎么过的小心思。",
+    "photo_style_en": "1-3 English sentences of photography language chosen for today's overall schedule mood",
     "outfit_keywords": "JK uniform, pleated skirt, white blouse, red ribbon, loafers",
     "scene_keywords": "coffee shop, cafe counter, warm ambient light"
 }}"""
@@ -1363,18 +1461,23 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 真实日历：
 {calendar_guidance}
 角色外貌：{str(appearance)[:700]}
+生图安全：{SCHEDULE_IMAGE_SAFETY_RULES}
 小心思口吻：{str(caption_voice)[:220]}
 近 3 天穿搭参考（服装、发型、鞋包和首饰都避免重复）：{str(history)[:1200]}
 具体配饰的颜色+图案+类别不能复用；同义改写仍算重复，例如银色十字星锁骨链与银色星形项链视为同一件配饰。
-近期日程避重（不要复刻）：{str(schedule_history)[:900]}
+【生成时硬约束·双保障第1层】近 3 天完整日程动作如下，生成前必须先读完并自行避开相同/同义动作：{str(schedule_history)[:1800]}
 历史生图词云（低权重软参考）：{self._schedule_keyword_cloud_prompt_block(limit=2, selection_key=today.isoformat())[:700]}
 收藏偏好（只参考穿搭/发型气质）：{self._favorite_outfit_context(limit=2)[:700]}
 禁止复现的不喜欢穿搭（硬约束）：{disliked_outfits[:1800]}
 日程禁词（最高优先级，相关活动/道具/场景/配饰都不要生成）：{self._schedule_forbidden_prompt_block()}
 
+{SCHEDULE_SOLO_CAMERA_RULES}
+
+{SCHEDULE_PHOTO_STYLE_RULES}
+
 硬性要求：
 0. 严格服从真实日历；休息日/节假日禁止写上班、上学、通勤、办公室会议、考试、作业或加班，调休上班日除外。
-0.1. 日程要避开模板化重复：第一条不要赖床/床上刷手机；一天最多 1 条下厨/做饭/准备饭菜；至少 3 条活动离开床/沙发/厨房场景。
+0.1. 双保障第1层：生成时必须先避开近 3 天完整日程里的相同/同义动作与任务主线，只换说法或换时间地点仍算重复。
 0.2. 不得生成与不喜欢记录高度相似的核心单品组合；不能靠改风格名或同义改写绕过。同风格换成明显不同的服装、鞋履、配色/材质/版型可以使用。
 1. outfit_style 必须从可选穿搭风格中选一个。
 2. outfit 必须是中文，包含「风格：」「发型：」「穿搭：」「动作：」「场景：」五段；穿搭写清上装、下装/裙装、鞋子、配饰、颜色、材质/版型。
@@ -1384,6 +1487,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 6. 白天时间不能写 night/evening/sunset/neon/street lamps；发色必须跟角色外貌，不要由风格改发色。
 7. prompt 必须是纯英文生图提示词，包含发型、穿搭、动作、场景、光影。
 8. caption 是今日计划的小心思，中文 40-90 字，口语自然，轻轻带到 2-4 个安排；不要文艺隐喻，不要自拍/美照/外貌点评。
+9. photo_style_en 必须是纯英文 1-3 句，由你根据今天日程整体氛围自行判断摄影/镜头语言；只写镜头光线取景质感，不要写外貌服装，不要 Masterpiece/cinematic lighting/HDR。
 
 只输出这个 JSON 对象：
 {{
@@ -1407,6 +1511,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
   ],
   "prompt": "English image prompt",
   "caption": "{character_name}今天自然冒出来的小心思。",
+  "photo_style_en": "English photography language for today's overall schedule mood",
   "outfit_keywords": "English outfit keywords",
   "scene_keywords": "English scene keywords"
 }}"""
@@ -1442,17 +1547,22 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 真实日历：
 {calendar_guidance}
 外貌约束：{str(appearance)[:320]}
+生图安全：{SCHEDULE_IMAGE_SAFETY_RULES}
 禁词约束：{self._schedule_forbidden_prompt_block()}
 近 3 天穿搭避重：{str(outfit_history)[:800]}
 配饰的颜色+图案+类别不得与近 3 天相同，同义改写也算重复。
 禁止复现的不喜欢穿搭：{disliked_outfits[:1200]}
-近期日程避重：{str(schedule_history)[:500]}
+【生成时硬约束·双保障第1层】近 3 天完整日程动作，生成前先避重：{str(schedule_history)[:1200]}
 词云低权重软参考：{self._schedule_keyword_cloud_prompt_block(limit=1, selection_key=today.isoformat())[:500]}
+
+{SCHEDULE_SOLO_CAMERA_RULES}
+
+{SCHEDULE_PHOTO_STYLE_RULES}
 
 只输出 minified JSON，不要换成数组，不要代码块。
 要求：
 - 严格服从真实日历；休息日/节假日禁止写上班、上学、通勤、办公室会议、考试、作业或加班，调休上班日除外。
-- 避免重复模板：第一条不要赖床/床上刷手机；一天最多 1 条下厨/做饭/准备饭菜；午餐和晚餐不要都写做饭；多安排具体地点、道具或兴趣任务。
+- 双保障第1层：生成时必须避开近 3 天相同/同义日程动作与任务主线；多安排全新地点、道具或兴趣任务。
 - 不得生成与不喜欢记录高度相似的核心单品组合；只改风格名或同义说法仍算重复。同风格的核心服装、鞋履、配色/材质/版型明显不同时可以使用。
 - outfit_style 从可选风格中选。
 - schedule 固定 6 行，时间用 08:12、10:27、13:18、15:42、18:36、22:11，每行中文活动，覆盖早中晚；不要用整点或 03:00-05:59。
@@ -1460,11 +1570,12 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 - schedule_details 6 个对象，time 与 schedule 一致；必须含 activity_zh、activity_en、action_en、scene_en、outfit_en、hair_en；英文项不能有中文。
 - outfit 中文含 风格/发型/穿搭/动作/场景。
 - prompt 纯英文，写清发型、穿搭、动作、场景、光线。
+- photo_style_en 纯英文 1-3 句，按今天日程氛围判断摄影语言（镜头/光线/取景/质感），不要写外貌服装，不要 Masterpiece/cinematic lighting。
 - caption 中文 40-90 字，是今天计划的小心思。
 - 白天不要写 night/evening/sunset/neon/street lamps；发色跟外貌约束。
 
 JSON keys:
-outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_details, prompt, caption, outfit_keywords, scene_keywords."""
+outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_details, prompt, caption, photo_style_en, outfit_keywords, scene_keywords."""
 
     def _extract_outfit_keywords(self, prompt: str) -> str:
         """从英文 prompt 中提取穿搭关键词（fallback）"""
@@ -2077,6 +2188,7 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
         history = self._get_history(today)
         schedule_history = self._get_schedule_history(today)
         recent_counts = self._recent_schedule_category_counts(today)
+        recent_actions = self._recent_schedule_actions(today)
         recent_accessories = self._recent_outfit_accessories(today)
         disliked_items = self._load_disliked_outfits()
         disliked_context = self._disliked_outfit_context(limit=12, items=disliked_items)
@@ -2100,6 +2212,7 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
         )
         prompt_sequence = [prompt, compact_prompt, emergency_prompt]
         disliked_rejection_feedback = ""
+        schedule_rejection_feedback = ""
 
         # 最多重试 3 次
         for attempt in range(3):
@@ -2110,11 +2223,18 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
                     + disliked_rejection_feedback
                     + "\n这次必须重新设计核心单品组合。"
                 )
+            if schedule_rejection_feedback:
+                current_prompt += (
+                    "\n\n【上一候选日程未通过双保障校验】\n"
+                    + schedule_rejection_feedback
+                    + "\n请重新阅读近 3 天完整日程动作后重写：今天禁止相同或同义的动作/任务主线，"
+                    "不能只换时间或地点词；同时修正任何结构问题。"
+                )
             if attempt == 1:
                 logger.warning("完整日程 prompt 未生成可用 JSON，切换压缩日程 prompt 重试")
             elif attempt == 2:
                 logger.warning("压缩日程 prompt 未生成可用 JSON，切换极简日程 prompt 重试")
-            text = await self._call_llm(current_prompt, json_mode=True)
+            text = await self._call_llm(current_prompt, timeout=180, json_mode=True)
             if not text:
                 logger.warning(f"LLM 返回为空 (attempt {attempt+1})")
                 continue
@@ -2129,6 +2249,7 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             # 提取关键词（LLM 输出优先，fallback 从 prompt 提取）
             outfit_kw = self._text_field(data.get("outfit_keywords", ""))
             scene_kw = self._text_field(data.get("scene_keywords", ""))
+            photo_style_en = self._text_field(data.get("photo_style_en", "") or data.get("photo_style", ""))
             llm_prompt = self._text_field(data.get("prompt", ""))
             if not outfit_kw and llm_prompt:
                 outfit_kw = self._extract_outfit_keywords(llm_prompt)
@@ -2160,9 +2281,14 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             if alignment_error:
                 logger.warning(f"日程/生图日程结构不合格 (attempt {attempt+1}): {alignment_error}")
                 continue
-            diversity_error = self._schedule_diversity_error(display_items, recent_counts)
+            diversity_error = self._schedule_diversity_error(
+                display_items,
+                recent_counts,
+                recent_actions=recent_actions,
+            )
             if diversity_error:
-                logger.warning("日程重复性过高 (attempt %s): %s", attempt + 1, diversity_error)
+                schedule_rejection_feedback = diversity_error
+                logger.warning("日程避重双保障未通过 (attempt %s): %s", attempt + 1, diversity_error)
                 continue
             missing_display = self._missing_required_periods(schedule_display)
             missing_prompt = self._missing_required_periods(schedule_prompt)
@@ -2242,8 +2368,12 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
                 status="ok",
                 outfit_keywords=outfit_kw,
                 scene_keywords=scene_kw,
+                photo_style_en=photo_style_en,
             )
-            logger.info(f"日程生成成功: {entry.outfit_style} | reference_query={entry.reference_query[:60]} | outfit_kw={outfit_kw[:50]} | scene_kw={scene_kw[:50]}")
+            logger.info(
+                f"日程生成成功: {entry.outfit_style} | reference_query={entry.reference_query[:60]} "
+                f"| outfit_kw={outfit_kw[:50]} | scene_kw={scene_kw[:50]} | photo_style={photo_style_en[:80]}"
+            )
             return entry
 
         logger.error(f"日程生成失败: 重试 {3} 次均未成功")
@@ -2266,4 +2396,5 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             source="fallback",
             outfit_keywords="",
             scene_keywords="",
+            photo_style_en="",
         )

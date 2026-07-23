@@ -112,6 +112,7 @@ class ImageGenerator:
         engine: str = "",
         timeout: int = 0,
         ref_image: str = "",
+        ref_images: Optional[list] = None,
         size: str = "",
         source: str = "custom",
         prompt_final: bool = False,
@@ -125,7 +126,7 @@ class ImageGenerator:
         """生成图片，返回图片文件名（相对路径）（异步，不阻塞事件循环）"""
         engine = engine or self.default_engine
         if not timeout:
-            timeout = image_process_timeout(self.config, with_reference_fallback=bool(style or ref_image))
+            timeout = image_process_timeout(self.config, with_reference_fallback=bool(style or ref_image or ref_images))
         model_label = image_model or "-"
         logger.info(
             f"开始生图: theme={theme}, engine={engine}, model={model_label}, "
@@ -151,6 +152,10 @@ class ImageGenerator:
             cmd.extend(["--style", style])
         if ref_image:
             cmd.extend(["--ref-image", ref_image])
+        if ref_images:
+            cleaned = [str(x).strip() for x in ref_images if str(x or "").strip()]
+            if cleaned:
+                cmd.extend(["--ref-images", ",".join(cleaned)])
         if size:
             cmd.extend(["--size", size])
         if schedule_time:

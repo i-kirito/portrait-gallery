@@ -265,10 +265,16 @@ class LogViewFormattingTest(unittest.TestCase):
 
         normalized = server._normalize_entry_display(
             entry,
-            {"fallback.png": {"model": "z-image-turbo"}},
+            {
+                "fallback.png": {
+                    "model": "z-image-turbo",
+                    "requested_size": "1536x2048",
+                }
+            },
         )
 
         self.assertEqual("Gitee", normalized["model_name"])
+        self.assertEqual("1536x2048", normalized["requested_size"])
 
 
 class ManualSendFailureHandlingTest(unittest.IsolatedAsyncioTestCase):

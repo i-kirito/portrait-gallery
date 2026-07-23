@@ -25,9 +25,9 @@ from image_editing import (  # noqa: E402
     rewrite_image_edit_schedule_description,
 )
 from image_gen import ImageGenerator  # noqa: E402
-from image_versions import image_version_path  # noqa: E402
+from image_versions import archive_image_version, image_version_path  # noqa: E402
 from main import PortraitGalleryApp  # noqa: E402
-from store import ScheduleStore  # noqa: E402
+from store import ImageMetadataStore, ScheduleStore  # noqa: E402
 from web_server import GalleryServer  # noqa: E402
 import generate as unified_generate  # noqa: E402
 
@@ -366,6 +366,9 @@ class PortraitGalleryImageEditTest(unittest.IsolatedAsyncioTestCase):
             current_filename = "edited.png"
             current_path = image_dir / current_filename
             Image.new("RGB", (48, 64), (220, 230, 240)).save(current_path)
+            generated_filename = "rerolled.png"
+            generated_path = image_dir / generated_filename
+            Image.new("RGB", (48, 64), (80, 100, 120)).save(generated_path)
             edit_history = [{
                 "from_image": "original.png",
                 "target": "background",
@@ -400,19 +403,18 @@ class PortraitGalleryImageEditTest(unittest.IsolatedAsyncioTestCase):
                 json.dumps({current_filename: {"model": "gpt-image-2"}}),
                 encoding="utf-8",
             )
-            saved_metadata = {}
-            delete_image_files = Mock(return_value=([current_filename], []))
+            delete_image_files = Mock(return_value=([generated_filename], []))
             app = PortraitGalleryApp.__new__(PortraitGalleryApp)
             app.data_dir = str(data_dir)
             app.config = {}
             app.web_server = SimpleNamespace(
                 _image_file_path=lambda filename: str(current_path) if filename == current_filename else "",
-                _update_image_metadata_entry=lambda filename, entry: saved_metadata.update({filename: entry}),
                 _delete_image_files=delete_image_files,
             )
             app.image_gen = SimpleNamespace(
                 default_engine="gitee",
-                generate=AsyncMock(return_value="rerolled.png"),
+                output_dir=str(image_dir),
+                generate=AsyncMock(return_value=generated_filename),
             )
 
             result = await app.reroll_image(current_filename)
@@ -436,8 +438,171 @@ class PortraitGalleryImageEditTest(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(current_filename, result["requested_ref_image"])
             self.assertEqual(current_filename, result["rerolled_from"])
-            self.assertTrue(saved_metadata["rerolled.png"]["precise_edit"])
-            delete_image_files.assert_called_once_with(current_filename)
+            self.assertEqual(current_filename, result["image_filename"])
+            self.assertEqual(current_filename, ScheduleStore(str(data_dir)).load()["card"]["image_filename"])
+            self.assertEqual((80, 100, 120), Image.open(current_path).getpixel((0, 0)))
+            saved_metadata = ImageMetadataStore(str(data_dir)).load()
+            self.assertTrue(saved_metadata[current_filename]["precise_edit"])
+            self.assertNotIn(generated_filename, saved_metadata)
+            delete_image_files.assert_called_once_with(generated_filename)
+
+    async def test_regular_reroll_archives_current_image_and_preserves_history(self):
+        with tempfile.TemporaryDirectory(prefix="portrait-gallery-reroll-history-") as temp_dir:
+            data_dir = Path(temp_dir) / "data"
+            image_dir = data_dir / "images"
+            image_dir.mkdir(parents=True)
+            current_filename = "current.png"
+            current_path = image_dir / current_filename
+            Image.new("RGB", (48, 64), (210, 220, 230)).save(current_path)
+            generated_filename = "rerolled.png"
+            generated_path = image_dir / generated_filename
+            Image.new("RGB", (48, 64), (60, 80, 100)).save(generated_path)
+            previous_path = image_dir / "previous.png"
+            Image.new("RGB", (48, 64), (180, 190, 200)).save(previous_path)
+            previous_version = archive_image_version(
+                str(data_dir),
+                str(previous_path),
+                original_image_filename=current_filename,
+                target="background",
+                target_label="背景",
+                instruction="上一版背景",
+            )
+            ScheduleStore(str(data_dir)).save({
+                "card": {
+                    "id": current_filename,
+                    "date": "2026-07-19",
+                    "time": "10:27",
+                    "image_filename": current_filename,
+                    "image_path": f"/images/{current_filename}",
+                    "prompt": "adult portrait in a cafe",
+                    "outfit_style": "清新风",
+                    "outfit": "风格：清新风 穿搭：白衬衫",
+                    "status": "ok",
+                    "source": "custom",
+                    "prompt_mode": "pure",
+                    "pure_prompt": True,
+                    "image_versions": [previous_version],
+                    "version_count": 1,
+                },
+            })
+            (data_dir / "image_metadata.json").write_text(
+                json.dumps({
+                    current_filename: {
+                        "model": "gpt-image-2",
+                        "prompt": "adult portrait in a cafe",
+                    },
+                    generated_filename: {
+                        "model": "gpt-image-2",
+                        "prompt": "rerolled adult portrait in a cafe",
+                    },
+                }),
+                encoding="utf-8",
+            )
+            delete_image_files = Mock(return_value=([generated_filename], []))
+            app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+            app.data_dir = str(data_dir)
+            app.config = {}
+            app.web_server = SimpleNamespace(
+                _image_file_path=lambda filename: (
+                    str(current_path) if filename == current_filename else ""
+                ),
+                _delete_image_files=delete_image_files,
+            )
+            app.image_gen = SimpleNamespace(
+                default_engine="gptimage",
+                output_dir=str(image_dir),
+                generate=AsyncMock(return_value=generated_filename),
+            )
+
+            result = await app.reroll_image(current_filename)
+
+            self.assertEqual("ok", result["status"])
+            self.assertEqual(2, result["version_count"])
+            self.assertEqual(previous_version["id"], result["image_versions"][0]["id"])
+            reroll_version = result["image_versions"][1]
+            self.assertEqual("reroll", reroll_version["target"])
+            self.assertEqual("重抽", reroll_version["target_label"])
+            self.assertFalse(str(reroll_version.get("instruction") or "").strip())
+            self.assertTrue(image_version_path(str(data_dir), reroll_version).is_file())
+            saved = ScheduleStore(str(data_dir)).load()["card"]
+            self.assertEqual(current_filename, result["image_filename"])
+            self.assertEqual(current_filename, saved["image_filename"])
+            self.assertEqual(2, saved["version_count"])
+            self.assertEqual(1, len(ScheduleStore(str(data_dir)).load()))
+            self.assertEqual((60, 80, 100), Image.open(current_path).getpixel((0, 0)))
+            self.assertEqual((210, 220, 230), Image.open(image_version_path(str(data_dir), reroll_version)).getpixel((0, 0)))
+            saved_metadata = ImageMetadataStore(str(data_dir)).load()
+            self.assertIn(current_filename, saved_metadata)
+            self.assertNotIn(generated_filename, saved_metadata)
+            self.assertEqual("rerolled adult portrait in a cafe", saved_metadata[current_filename]["prompt"])
+            delete_image_files.assert_called_once_with(generated_filename)
+
+    async def test_scheduled_reroll_also_creates_a_history_version(self):
+        with tempfile.TemporaryDirectory(prefix="portrait-gallery-scheduled-reroll-history-") as temp_dir:
+            data_dir = Path(temp_dir) / "data"
+            image_dir = data_dir / "images"
+            image_dir.mkdir(parents=True)
+            current_filename = "scheduled.png"
+            current_path = image_dir / current_filename
+            Image.new("RGB", (48, 64), (200, 210, 220)).save(current_path)
+            generated_filename = "scheduled-rerolled.png"
+            generated_path = image_dir / generated_filename
+            Image.new("RGB", (48, 64), (40, 60, 80)).save(generated_path)
+            ScheduleStore(str(data_dir)).save({
+                "card": {
+                    "id": current_filename,
+                    "date": "2026-07-18",
+                    "time": "10:27",
+                    "image_filename": current_filename,
+                    "image_path": f"/images/{current_filename}",
+                    "prompt": "stored scheduled portrait prompt",
+                    "outfit_style": "清新风",
+                    "outfit": "风格：清新风 穿搭：白衬衫",
+                    "status": "ok",
+                    "source": "cron",
+                    "schedule_time": "10:27 在咖啡馆阅读",
+                },
+            })
+            (data_dir / "image_metadata.json").write_text(
+                json.dumps({
+                    current_filename: {
+                        "model": "gpt-image-2",
+                        "prompt": "stored scheduled portrait prompt",
+                    },
+                }),
+                encoding="utf-8",
+            )
+            delete_image_files = Mock(return_value=([generated_filename], []))
+            app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+            app.data_dir = str(data_dir)
+            app.config = {}
+            app.web_server = SimpleNamespace(
+                _image_file_path=lambda filename: (
+                    str(current_path) if filename == current_filename else ""
+                ),
+                _delete_image_files=delete_image_files,
+            )
+            app.image_gen = SimpleNamespace(
+                default_engine="gptimage",
+                output_dir=str(image_dir),
+                generate=AsyncMock(return_value=generated_filename),
+            )
+
+            result = await app.reroll_image(current_filename)
+
+            call = app.image_gen.generate.await_args
+            self.assertEqual("10:27 在咖啡馆阅读", call.kwargs["schedule_time"])
+            self.assertEqual(1, result["version_count"])
+            self.assertEqual("reroll", result["image_versions"][0]["target"])
+            self.assertEqual("重抽", result["image_versions"][0]["target_label"])
+            self.assertTrue(
+                image_version_path(str(data_dir), result["image_versions"][0]).is_file()
+            )
+            self.assertEqual("10:27 在咖啡馆阅读", result["schedule_time"])
+            self.assertEqual(current_filename, result["image_filename"])
+            self.assertEqual(current_filename, ScheduleStore(str(data_dir)).load()["card"]["image_filename"])
+            self.assertEqual((40, 60, 80), Image.open(current_path).getpixel((0, 0)))
+            delete_image_files.assert_called_once_with(generated_filename)
 
 
 class ImageEditEndpointTest(unittest.IsolatedAsyncioTestCase):
@@ -555,6 +720,38 @@ class ImageEditEndpointTest(unittest.IsolatedAsyncioTestCase):
             "坐在窗边喝咖啡并阅读杂志",
         )
 
+    async def test_reroll_endpoint_returns_same_card_filename_with_revision(self):
+        with tempfile.TemporaryDirectory(prefix="portrait-gallery-reroll-api-") as temp_dir:
+            server = self._make_server(Path(temp_dir))
+            server.on_reroll_image = AsyncMock(return_value={
+                "id": "original.png",
+                "date": "2026-07-23",
+                "time": "10:27",
+                "image_filename": "original.png",
+                "image_path": "/images/original.png",
+                "status": "ok",
+                "source": "cron",
+                "replaced_image_filename": "original.png",
+                "version_count": 1,
+            })
+            test_server = TestServer(server.app)
+            await test_server.start_server(access_log=None)
+            client = TestClient(test_server)
+            try:
+                response = await client.post(
+                    "/api/images/original.png/reroll",
+                    json={},
+                )
+                payload = await response.json()
+            finally:
+                await client.close()
+
+        self.assertEqual(200, response.status)
+        self.assertEqual("original.png", payload["image_filename"])
+        self.assertEqual("original.png", payload["replaced_image_filename"])
+        self.assertTrue(payload["image_revision"])
+        server.on_reroll_image.assert_awaited_once_with("original.png")
+
 
 class ImageEditFrontendContractTest(unittest.TestCase):
     def test_modal_uses_edit_button_and_precision_endpoint(self):
@@ -567,9 +764,13 @@ class ImageEditFrontendContractTest(unittest.TestCase):
         self.assertIn('id="imageEditScheduleDescription"', html)
         self.assertIn('id="modalVersionBtn"', html)
         self.assertIn('fa-clock-rotate-left', html)
+        self.assertNotIn('id="modalVersionCount"', html)
         self.assertIn('imageVersionOverlay.id = "imageVersionOverlay"', html)
         self.assertIn('async function openImageVersions(event)', html)
         self.assertIn('/versions`', html)
+        self.assertIn('data-version-activate-index=', html)
+        self.assertIn('/activate`', html)
+        self.assertIn('async function activateImageVersion(item, button)', html)
         self.assertIn(
             '.modal-content .today-card-info { flex:0 0 auto;min-height:auto;',
             html,
@@ -609,7 +810,31 @@ class ImageEditFrontendContractTest(unittest.TestCase):
         self.assertNotIn("if (imageEditBusy && !force) return", html)
         self.assertIn("cancel.textContent = imageEditBusy ? '关闭窗口' : '取消';", html)
         self.assertIn("document.getElementById('imageEditCloseBtn').disabled = false;", html)
+
+    def test_reroll_replaces_same_card_and_cache_busts_image(self):
+        html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")
+        reroll_start = html.index("async function rerollImage(")
+        reroll_end = html.index("async function rerollModalImage", reroll_start)
+        reroll = html[reroll_start:reroll_end]
+
+        self.assertIn("const oldImgId = data.replaced_image_filename || imgId", reroll)
+        self.assertIn("const revision = imageRevisionToken(data.image_revision) || String(Date.now())", reroll)
+        self.assertIn("withImageRevision(", reroll)
+        self.assertIn("image_filename: oldImgId", reroll)
+        self.assertIn("replaceLocalImage(oldImgId, fresh)", reroll)
+        self.assertNotIn("upsertGeneratedGalleryEntry(fresh)", reroll)
         self.assertIn("<span>后台编辑中</span>", html)
+
+    def test_gallery_image_urls_keep_revision_after_full_reload(self):
+        html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")
+        url_start = html.index("function imageRevisionToken(value)")
+        url_end = html.index("function truncateGroupChatMetadataText", url_start)
+        image_url_helpers = html[url_start:url_end]
+
+        self.assertIn("function withImageRevision(url, revision)", image_url_helpers)
+        self.assertIn("entry.image_revision", image_url_helpers)
+        self.assertIn('base.includes("?") ? "&" : "?"', image_url_helpers)
+        self.assertIn("encodeURIComponent(token)", image_url_helpers)
 
     def test_gallery_card_shows_favorite_reroll_edit_and_delete_actions(self):
         html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")
