@@ -337,8 +337,9 @@ SCHEDULE_DETAIL_REQUIRED_FIELDS = (
 
 DEFAULT_REQUIRED_PERIODS = [
     {"name": "morning", "label": "早", "start": "06:00", "end": "11:59"},
-    {"name": "noon", "label": "中", "start": "12:00", "end": "17:59"},
-    {"name": "evening", "label": "晚", "start": "18:00", "end": "23:59"},
+    {"name": "midday", "label": "中", "start": "12:00", "end": "13:59"},
+    {"name": "afternoon", "label": "午", "start": "14:00", "end": "18:59"},
+    {"name": "evening", "label": "晚", "start": "19:00", "end": "01:59"},
 ]
 SCHEDULE_PHOTO_QUIET_START_MINUTE = 3 * 60
 SCHEDULE_PHOTO_QUIET_END_MINUTE = 6 * 60
@@ -1186,6 +1187,7 @@ class DailyScheduler:
                             break
                         content = self._choice_final_text(choices[0]) if json_mode else llm_choice_text(choices[0])
                         if content:
+                            self._last_llm_model = str(model or "").strip()
                             return content
                         if json_mode:
                             reasoning_excerpt = llm_response_excerpt(
@@ -1340,9 +1342,9 @@ class DailyScheduler:
 
 ⚠️ 生成 schedule 时先执行双保障第 1 层：对照近 3 天完整日程动作，禁止相同或同义动作/任务主线，再开始写今天的条目。\n⚠️ schedule 是 WebUI 展示用，必须用中文，必须有 6-8 条，严格使用 \\n 分隔，每行一条，格式为「HH:mm 中文活动描述」：
    下面示例只展示格式，不要照抄活动内容：
-   "08:12 起床整理今天的温柔穿搭\\n10:27 坐在咖啡馆窗边写手账\\n12:43 吃一份清爽午餐\\n14:18 在画室整理灵感草图\\n16:36 去公园散步拍照\\n18:22 回家做一顿简单晚餐\\n20:17 准备晚间直播\\n22:11 做睡前护肤准备休息"
+   "08:12 起床整理今天的温柔穿搭\\n10:27 坐在咖啡馆窗边写手账\\n12:43 吃一份清爽午餐\\n14:18 在画室整理灵感草图\\n16:36 去公园散步拍照\\n20:17 回家做一顿简单晚餐\\n22:11 准备晚间直播\\n00:42 做睡前护肤准备休息"
    不要用"早上9点"、"下午2点"等中文时间格式，必须用 HH:mm 数字格式！每行之间必须用 \\n 换行，不要用空格或句号分隔！
-   时间必须自然错开整点：分钟不能是 00，不要卡在 HH:00 这类整点；请用 08:12、10:27、13:18、15:42、18:36、21:18 这类上下浮动的分钟。
+   时间必须自然错开整点：分钟不能是 00，不要卡在 HH:00 这类整点；请用 08:12、10:27、12:43、15:42、20:17、22:11 这类上下浮动的分钟。
    不要安排 03:00-05:59 的日程生图时间；这个时段只用于系统生成全天计划，不出现在 schedule、schedule_prompt 或 schedule_details。
    每条活动描述必须用中文写，要具体到场景/动作/道具（12-30 个汉字），不要只写"做早餐""出门""休息"等短句。
    每个时段的动作、道具和场景都由你根据今日人设、心情色彩、日程类型和穿搭自主决定；后续生图会直接采用这些日程动作，不会再用代码模板补动作。
@@ -1350,7 +1352,7 @@ class DailyScheduler:
 
 ⚠️ schedule_prompt 是生图 prompt 注入用，必须用纯英文，条数和时间必须与 schedule 一一对应：
    下面示例只展示格式，不要照抄活动内容：
-   "08:12 wake up and arrange today's soft outfit\\n10:27 write diary at a window table in a cafe\\n12:43 have a light refreshing lunch\\n14:18 organize inspiration sketches in an art studio\\n16:36 take a walk and photos in the park\\n18:22 cook a simple dinner at home\\n20:17 prepare for an evening livestream\\n22:11 do skincare and get ready for bedtime"
+   "08:12 wake up and arrange today's soft outfit\\n10:27 write diary at a window table in a cafe\\n12:43 have a light refreshing lunch\\n14:18 organize inspiration sketches in an art studio\\n16:36 take a walk and photos in the park\\n20:17 cook a simple dinner at home\\n22:11 prepare for an evening livestream\\n00:42 do skincare and get ready for bedtime"
    schedule 给用户看中文；schedule_prompt 只给生图 prompt 使用英文。
    schedule_prompt 的每条英文活动必须明确 action + scene + props/time mood，不能只写 vague daily routine。
    若中文日程涉及另一人，schedule_prompt 请自行改写成角色单人可见画面，保留氛围与道具，不把第二人画进镜头。
@@ -1363,7 +1365,7 @@ class DailyScheduler:
    - action_en 必须写清角色在镜头中的身体/手部动作和道具；你自己判断如何在保留日程语义的同时只拍角色。
    - scene_en 必须写清具体地点、周围环境、关键道具和时间氛围。
    - scene_en 可保留社交/约会氛围，但由你判断避免第二人成为清晰主体。
-   - time 是强约束：06:00-11:59 必须是 morning/daylight 氛围；12:00-17:59 必须是 midday/afternoon daylight 氛围；不能因为“街区/打卡/散步”等活动就写成 night/evening/sunset/neon/street lamps。
+   - time 是强约束：06:00-11:59 必须是 morning/daylight 氛围；12:00-13:59 必须是 midday daylight 氛围；14:00-18:59 必须是 afternoon daylight 或 early-evening dusk 氛围；19:00-01:59 才可写 evening/night 氛围；不能因为“街区/打卡/散步”等白天活动就写成 night/evening/sunset/neon/street lamps。
    - outfit_en 必须写清上装、下装/裙装、鞋子、配饰、颜色、材质/版型；如果当天整套穿搭不变，也要在每个时间段重复写清。
    - hair_en 必须写清具体发型、发饰/整理状态；不要只写 "nice hair"、"beautiful hairstyle" 等空话。
    - hair_en 必须自由发明，不要只从固定发型池挑选；要具体到扎法/分缝/发饰/松紧状态，并贴合当前时段活动。
@@ -1371,12 +1373,14 @@ class DailyScheduler:
    - hair_en 不负责决定发色；发色必须跟【角色外貌提示词】里的 appearance 走，不要因为穿搭风格把发色改成黑色、棕色、金色等。
    - 后续生图会严格采用对应 time 的 schedule_details，不再用代码随机补动作、场景、服饰或发型。
 
-⚠️ schedule 必须覆盖早/中/晚三个时间段，每个时间段至少 1 条：
+⚠️ schedule 必须覆盖以下四个时间段，每个时间段至少 1 条：
    - 早：06:00-11:59
-   - 中：12:00-17:59
-   - 晚：18:00-23:59
-   即使只输出 6 条，也必须至少包含 1 条早、1 条中、1 条晚；不要把所有安排都集中在上午和下午。
-   schedule_prompt 的时间必须和 schedule 一一对应，也要覆盖同样的早/中/晚时间段。
+   - 中：12:00-13:59
+   - 午：14:00-18:59
+   - 晚：19:00-01:59（可跨到次日凌晨，如 20:17、22:11、00:42）
+   “晚”段必须落在 19:00-01:59，不能用 14:00-18:59 的午后条目顶替。
+   即使只输出 6 条，也必须至少包含 1 条早、1 条中、1 条午、1 条晚；不要把所有安排都集中在上午和下午。
+   schedule_prompt 的时间必须和 schedule 一一对应，也要覆盖同样的四个时间段。
 
 ⚠️ caption 是 WebUI「今日穿搭方案」里的“小心思”，不是单张照片配文。
    它必须写成「{character_name}」在心里自然冒出来的全天计划小念头：
@@ -1481,7 +1485,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 0.2. 不得生成与不喜欢记录高度相似的核心单品组合；不能靠改风格名或同义改写绕过。同风格换成明显不同的服装、鞋履、配色/材质/版型可以使用。
 1. outfit_style 必须从可选穿搭风格中选一个。
 2. outfit 必须是中文，包含「风格：」「发型：」「穿搭：」「动作：」「场景：」五段；穿搭写清上装、下装/裙装、鞋子、配饰、颜色、材质/版型。
-3. schedule 必须是 6-8 行中文，每行「HH:mm 中文活动」，用 \\n 分隔，覆盖 06:00-11:59、12:00-17:59、18:00-23:59；分钟不能是 00，不要安排 03:00-05:59，时间要像 08:12、10:27、13:18、15:42、18:36 这样自然浮动。
+3. schedule 必须是 6-8 行中文，每行「HH:mm 中文活动」，用 \\n 分隔，覆盖 06:00-11:59、12:00-13:59、14:00-18:59、19:00-01:59；分钟不能是 00，不要安排 03:00-05:59，时间要像 08:12、10:27、12:43、15:42、20:17、22:11 这样自然浮动。
 4. schedule_prompt 必须与 schedule 时间逐条一致，纯英文，每条写清 action + scene + props/time mood。
 5. schedule_details 必须是数组，条数和 schedule 一样；每项必须包含 time、activity_zh、activity_en、action_en、scene_en、outfit_en、hair_en，可选 props_en、lighting_en。除 activity_zh 外都用纯英文。
 6. 白天时间不能写 night/evening/sunset/neon/street lamps；发色必须跟角色外貌，不要由风格改发色。
@@ -1565,7 +1569,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 - 双保障第1层：生成时必须避开近 3 天相同/同义日程动作与任务主线；多安排全新地点、道具或兴趣任务。
 - 不得生成与不喜欢记录高度相似的核心单品组合；只改风格名或同义说法仍算重复。同风格的核心服装、鞋履、配色/材质/版型明显不同时可以使用。
 - outfit_style 从可选风格中选。
-- schedule 固定 6 行，时间用 08:12、10:27、13:18、15:42、18:36、22:11，每行中文活动，覆盖早中晚；不要用整点或 03:00-05:59。
+- schedule 固定 6 行，时间用 08:12、10:27、12:43、15:42、20:17、22:11，每行中文活动，覆盖早/中/午/晚；不要用整点或 03:00-05:59。
 - schedule_prompt 与 schedule 时间一致，纯英文。
 - schedule_details 6 个对象，time 与 schedule 一致；必须含 activity_zh、activity_en、action_en、scene_en、outfit_en、hair_en；英文项不能有中文。
 - outfit 中文含 风格/发型/穿搭/动作/场景。
@@ -2213,6 +2217,7 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
         prompt_sequence = [prompt, compact_prompt, emergency_prompt]
         disliked_rejection_feedback = ""
         schedule_rejection_feedback = ""
+        self._last_llm_model = ""
 
         # 最多重试 3 次
         for attempt in range(3):
@@ -2354,6 +2359,7 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             if not self._caption_is_schedule_plan(caption):
                 caption = self._build_schedule_plan_caption(schedule_display, character_name)
 
+            schedule_model = str(getattr(self, "_last_llm_model", "") or "").strip()
             entry = DailyEntry(
                 date=date_str,
                 outfit_style=data.get("outfit_style", ""),
@@ -2369,9 +2375,11 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
                 outfit_keywords=outfit_kw,
                 scene_keywords=scene_kw,
                 photo_style_en=photo_style_en,
+                schedule_llm_model=schedule_model,
             )
             logger.info(
-                f"日程生成成功: {entry.outfit_style} | reference_query={entry.reference_query[:60]} "
+                f"日程生成成功: model={schedule_model or '-'} | {entry.outfit_style} | "
+                f"reference_query={entry.reference_query[:60]} "
                 f"| outfit_kw={outfit_kw[:50]} | scene_kw={scene_kw[:50]} | photo_style={photo_style_en[:80]}"
             )
             return entry
@@ -2397,4 +2405,5 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             outfit_keywords="",
             scene_keywords="",
             photo_style_en="",
+            schedule_llm_model="fallback",
         )

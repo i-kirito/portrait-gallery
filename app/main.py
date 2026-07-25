@@ -3129,7 +3129,7 @@ class PortraitGalleryApp:
             if not job.id.startswith("photo_dynamic_"):
                 continue
             run_time = self._local_job_run_time(job)
-            if run_time and run_time.date() == target_date:
+            if run_time and self._is_schedule_day_photo_run(run_time, target_date):
                 times.add(f"{run_time.hour:02d}:{run_time.minute:02d}")
         return times
 
@@ -3215,7 +3215,7 @@ class PortraitGalleryApp:
             if not job.id.startswith("photo_dynamic_"):
                 continue
             run_time = self._local_job_run_time(job)
-            if not run_time or run_time.date() != today:
+            if not run_time or not self._is_schedule_day_photo_run(run_time, today):
                 continue
             scheduled.append({
                 "id": job.id,
@@ -3627,7 +3627,7 @@ class PortraitGalleryApp:
                 logger.info(f"跳过已存在的动态任务: {job_id}")
                 continue
 
-            run_time = datetime.combine(today, dt_time(h, m))
+            run_time = self._photo_job_run_datetime(h, m, today)
             schedule_text_for_job = f"{schedule_time_str} {activity.strip()}".strip()
 
             # Do not auto-backfill expired slots, but keep selected ones visible
@@ -3795,15 +3795,52 @@ class PortraitGalleryApp:
 
     @staticmethod
     def _theme_for_hour(hour: int) -> str:
-        if 0 <= hour < 6:
-            return "bedtime"  # 凌晨 0-5 点算深夜
-        if hour < 12:
+        """Map clock hour to generate.py theme buckets, aligned with 4 required periods.
+
+        早 06-12 morning | 中 12-14 noon | 午 14-19 noon |
+        晚 19-01 evening/bedtime | 02-05 quiet/bedtime
+        """
+        hour = int(hour)
+        if 6 <= hour < 12:
             return "morning"
-        if hour < 18:
+        if 12 <= hour < 19:
             return "noon"
-        if hour <= 20:
+        if 19 <= hour < 21:
             return "evening"
+        # 21:00-01:59 + 02:00-05:59
         return "bedtime"
+
+    def _photo_job_run_datetime(
+        self,
+        hour: int,
+        minute: int,
+        schedule_date=None,
+    ):
+        """Build APScheduler run time for a schedule slot.
+
+        Slots in 00:00-01:59 belong to the late-night tail of the schedule day,
+        so they run on the next calendar day (after the 03:00-06:00 quiet window).
+        """
+        base = schedule_date or self._today()
+        hour = int(hour)
+        minute = int(minute)
+        run_time = datetime.combine(base, dt_time(hour, minute))
+        if 0 <= hour <= 1:
+            run_time = run_time + timedelta(days=1)
+        return run_time
+
+    def _is_schedule_day_photo_run(self, run_time, schedule_date=None) -> bool:
+        """Whether a job run_time belongs to the given schedule day's photo plan."""
+        if run_time is None:
+            return False
+        schedule_date = schedule_date or self._today()
+        run_date = run_time.date() if hasattr(run_time, "date") else run_time
+        if run_date == schedule_date:
+            return True
+        # Overnight tail 00:00-01:59 scheduled on next calendar day.
+        if run_date == schedule_date + timedelta(days=1) and getattr(run_time, "hour", -1) <= 1:
+            return True
+        return False
 
     def _today_schedule_activity_map(self) -> dict:
         """Return {HH:mm: activity} for today's persisted schedule."""
@@ -3847,6 +3884,7 @@ class PortraitGalleryApp:
                 "type": "photo",
                 "status": "scheduled",
                 "theme": theme,
+                "period_label": self._schedule_period_label(local_run_at.hour, local_run_at.minute),
                 "time": time_text,
                 "run_at": local_run_at.isoformat(),
                 "activity": activity_by_time.get(time_text, ""),
@@ -3871,6 +3909,7 @@ class PortraitGalleryApp:
                 "type": "photo",
                 "status": "sending" if delivery_retry else "running",
                 "theme": self._theme_for_hour(hour),
+                "period_label": self._schedule_period_label(hour, int(time_text.split(':', 1)[1])),
                 "time": time_text,
                 "run_at": datetime.fromtimestamp(started_at).isoformat(),
                 "started_at": datetime.fromtimestamp(started_at).isoformat(),
@@ -3899,6 +3938,7 @@ class PortraitGalleryApp:
                 "type": "photo",
                 "status": "delivery_failed" if delivery_failed else ("missed" if expired else "failed"),
                 "theme": failed.get("theme") or self._theme_for_hour(hour),
+                "period_label": self._schedule_period_label(hour, int(time_text.split(':', 1)[1])),
                 "time": time_text,
                 "run_at": failed.get("failed_at") or self._now().isoformat(),
                 "activity": failed.get("activity") or activity_by_time.get(time_text, ""),
@@ -4409,10 +4449,53 @@ class PortraitGalleryApp:
             return fallback or ""
 
     @staticmethod
-    def _caption_text_usable(text: str) -> bool:
+    def _caption_has_instruction_leak(text: str) -> bool:
+        try:
+            from zhuzhu.core import _caption_has_instruction_leak as core_leak
+            return bool(core_leak(text))
+        except Exception:
+            compact = re.sub(r"\s+", "", str(text or "").lower())
+            markers = (
+                "theuserwantsme",
+                "writeashort",
+                "littlethought",
+                "inthetoneof",
+                "foraphoto",
+                "我们被要求",
+                "请写一条",
+                "直接输出",
+                "当前日程",
+            )
+            return any(marker in compact for marker in markers)
+
+    @staticmethod
+    def _caption_is_mostly_chinese(text: str) -> bool:
+        try:
+            from zhuzhu.core import _caption_is_mostly_chinese as core_cn
+            return bool(core_cn(text))
+        except Exception:
+            compact = re.sub(r"\s+", "", str(text or ""))
+            if not compact:
+                return False
+            cjk = len(re.findall(r"[一-鿿]", compact))
+            latin = len(re.findall(r"[A-Za-z]", compact))
+            if cjk < 4:
+                return False
+            if latin >= 12 and cjk * 2 < latin:
+                return False
+            return True
+
+    @classmethod
+    def _caption_text_usable(cls, text: str) -> bool:
         text = repair_mojibake_text(text)
-        text = re.sub(r"\s+", "", str(text or "")).strip("，,。.!！?；;、")
-        return len(text) >= 4
+        compact = re.sub(r"\s+", "", str(text or "")).strip("，,。.!！?；;、")
+        if len(compact) < 4:
+            return False
+        if cls._caption_has_instruction_leak(text):
+            return False
+        if not cls._caption_is_mostly_chinese(text):
+            return False
+        return True
 
     @classmethod
     def _prefer_caption_text(cls, candidate: str = "", current: str = "") -> str:

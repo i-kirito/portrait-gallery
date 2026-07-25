@@ -5239,6 +5239,8 @@ class GalleryServer:
                 # full page reload cannot reuse bytes from the previous image.
                 normalized["image_revision"] = image_revision
 
+        self._normalize_entry_reference_preview(normalized, img_file, image_versions)
+
         model_label = self._display_model_name(normalized.get("model_name", ""))
         if model_label and model_label != normalized.get("model_name"):
             normalized["model_name"] = model_label
@@ -5259,6 +5261,67 @@ class GalleryServer:
 
         self._ensure_entry_reference_label(normalized)
         return normalized
+
+    def _normalize_entry_reference_preview(
+        self,
+        entry: dict,
+        image_filename: str,
+        image_versions: list[dict],
+    ) -> None:
+        """Keep reference previews from requesting replaced gallery files.
+
+        Precision edits archive the previous image outside the public /images
+        directory. Older records still point at that removed public path. When
+        the archive exists, expose its authenticated version URL; otherwise
+        remove only the broken preview fields while retaining the reference
+        label and edit provenance.
+        """
+        selected = entry.get("selected_reference")
+        if not isinstance(selected, dict):
+            return
+        if str(selected.get("source") or "").strip().lower() != "gallery":
+            return
+
+        selected_filename = self._reference_basename(
+            selected.get("filename") or selected.get("url") or selected.get("path")
+        )
+        if not selected_filename:
+            return
+        public_path = Path(self.image_dir) / selected_filename
+        if public_path.is_file():
+            return
+
+        archived = None
+        for record in image_versions:
+            if str(record.get("original_image_filename") or "").strip() != selected_filename:
+                continue
+            path = image_version_path(self.data_dir, record)
+            if path and path.is_file():
+                archived = record
+                break
+
+        cleaned = dict(selected)
+        cleaned.pop("path", None)
+        cleaned.pop("filename", None)
+        if archived and image_filename:
+            cleaned["url"] = (
+                f"/api/images/{quote(str(image_filename), safe='')}/versions/"
+                f"{archived['id']}"
+            )
+        else:
+            cleaned.pop("url", None)
+        entry["selected_reference"] = cleaned
+
+        # These legacy fields are fallback candidates in the frontend. Clear
+        # only values that resolve to the same missing gallery source.
+        for field in (
+            "ref_image",
+            "ref_image_path",
+            "requested_ref_image",
+            "requested_ref_image_path",
+        ):
+            if self._reference_basename(entry.get(field, "")) == selected_filename:
+                entry[field] = ""
 
     @staticmethod
     def _entry_outfit_needs_repair(outfit: str) -> bool:
@@ -6303,6 +6366,7 @@ class GalleryServer:
             outfit_keywords = ""
             scene_keywords = ""
             caption = ""
+            schedule_llm_model = ""
 
             if schedule_entry:
                 outfit_style = schedule_entry.get("outfit_style", "")
@@ -6311,6 +6375,11 @@ class GalleryServer:
                 outfit_keywords = schedule_entry.get("outfit_keywords", "")
                 scene_keywords = schedule_entry.get("scene_keywords", "")
                 caption = schedule_entry.get("caption", "")
+                schedule_llm_model = str(
+                    schedule_entry.get("schedule_llm_model")
+                    or schedule_entry.get("llm_model")
+                    or ""
+                ).strip()
                 outfit_parts.update(self._parse_outfit_parts(schedule_entry.get("outfit", "")))
                 self._enrich_outfit_parts_from_entry(outfit_parts, schedule_entry)
                 # 解析 schedule
@@ -6388,6 +6457,7 @@ class GalleryServer:
                 "prompt": prompt,
                 "outfit_keywords": outfit_keywords,
                 "scene_keywords": scene_keywords,
+                "schedule_llm_model": schedule_llm_model,
                 "outfit_favorite_id": outfit_id,
                 "outfit_favorite": bool(outfit_id and outfit_id in favorite_ids),
                 "outfit_disliked_id": outfit_id,
@@ -6984,31 +7054,81 @@ class GalleryServer:
 
     @staticmethod
     def _caption_has_instruction_leak(text: str) -> bool:
-        compact = re.sub(r"\s+", "", str(text or ""))
-        if not compact:
-            return False
-        markers = (
-            "我们被要求",
-            "被要求以",
-            "口吻写一句",
-            "照片的配文",
-            "内容要像",
-            "真实想法",
-            "具体到正在做的事",
-            "下一步安排",
-            "当前日程",
-            "请写一条",
-            "直接输出",
-            "不要加引号",
-            "不要写长段落",
-            "禁止使用",
-            "输出1-2句",
-            "小心思要像",
-            "下面的口吻",
-            "读者称呼",
-            "这是一条",
-        )
-        return any(marker in compact for marker in markers)
+        try:
+            from zhuzhu.core import _caption_has_instruction_leak as core_leak
+            return bool(core_leak(text))
+        except Exception:
+            raw = str(text or "")
+            compact = re.sub(r"\s+", "", raw)
+            if not compact:
+                return False
+            chinese_markers = (
+                "我们被要求",
+                "被要求以",
+                "口吻写一句",
+                "照片的配文",
+                "内容要像",
+                "真实想法",
+                "具体到正在做的事",
+                "下一步安排",
+                "当前日程",
+                "请写一条",
+                "直接输出",
+                "不要加引号",
+                "不要写长段落",
+                "禁止使用",
+                "输出1-2句",
+                "小心思要像",
+                "下面的口吻",
+                "读者称呼",
+                "这是一条",
+            )
+            english_markers = (
+                "theuserwantsme",
+                "iwantyoutowrite",
+                "writeashort",
+                "littlethought",
+                "inthetoneof",
+                "foraphoto",
+                "asrequested",
+                "hereisacaption",
+                "captionin",
+                "intheroleof",
+            )
+            lower = re.sub(r"\s+", "", raw.lower())
+            if any(marker in compact for marker in chinese_markers):
+                return True
+            if any(marker in lower for marker in english_markers):
+                return True
+            lower_raw = raw.lower()
+            english_patterns = (
+                r"\bthe user wants\b",
+                r"\bi need to write\b",
+                r"\bwrite a short\b",
+                r"\blittle thought\b",
+                r"\bin the tone of\b",
+                r"\bfor a photo\b",
+                r"\bas an ai\b",
+                r"\bhere(?:'s| is) (?:a |the )?caption\b",
+            )
+            return any(re.search(pattern, lower_raw) for pattern in english_patterns)
+
+    @staticmethod
+    def _caption_is_mostly_chinese(text: str) -> bool:
+        try:
+            from zhuzhu.core import _caption_is_mostly_chinese as core_cn
+            return bool(core_cn(text))
+        except Exception:
+            compact = re.sub(r"\s+", "", str(text or ""))
+            if not compact:
+                return False
+            cjk = len(re.findall(r"[一-鿿]", compact))
+            latin = len(re.findall(r"[A-Za-z]", compact))
+            if cjk < 4:
+                return False
+            if latin >= 12 and cjk * 2 < latin:
+                return False
+            return True
 
     @staticmethod
     def _clean_caption_text(text: str, limit: int = 180) -> str:
@@ -7018,6 +7138,8 @@ class GalleryServer:
         text = text.strip(" \t\n\r\"'“”‘’")
         if GalleryServer._caption_has_instruction_leak(text):
             return ""
+        if not GalleryServer._caption_is_mostly_chinese(text):
+            return ""
         if len(text) > limit:
             text = text[:limit].rstrip(" \t\n\r，,。.!！?；;、") + "…"
         return text
@@ -7025,8 +7147,12 @@ class GalleryServer:
     @staticmethod
     def _caption_text_usable(text: str) -> bool:
         text = repair_mojibake_text(text)
-        text = re.sub(r"\s+", "", str(text or "")).strip("，,。.!！?；;、")
-        return len(text) >= 4 and not GalleryServer._caption_has_instruction_leak(text)
+        compact = re.sub(r"\s+", "", str(text or "")).strip("，,。.!！?；;、")
+        return (
+            len(compact) >= 4
+            and not GalleryServer._caption_has_instruction_leak(text)
+            and GalleryServer._caption_is_mostly_chinese(text)
+        )
 
     @classmethod
     def _prefer_caption_text(cls, candidate: str = "", current: str = "") -> str:

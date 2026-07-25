@@ -39,6 +39,24 @@ class GptImageFailureTest(unittest.TestCase):
         self.assertIn("immutable source image", instruction)
         self.assertNotIn("pointed v-shaped chin", instruction)
 
+
+    def test_expression_guard_rejects_reference_pout(self):
+        text = generate_gptimage._reference_expression_guard().lower()
+        self.assertIn("pout", text)
+        self.assertIn("duck face", text)
+        self.assertIn("嘟嘴".lower() if False else "嘟嘴", generate_gptimage._reference_expression_guard())
+
+        instruction = generate_gptimage._reference_edit_instruction(
+            "/tmp/ref_style_sweet.jpg"
+        ).lower()
+        self.assertIn("pout", instruction)
+        self.assertIn("mouth", instruction)
+
+        multi = generate_gptimage._multi_reference_edit_instruction(
+            ["/tmp/base.png", "/tmp/face.png"]
+        ).lower()
+        self.assertIn("pout", multi)
+
     def test_reference_guard_can_be_omitted_when_prompt_already_contains_it(self):
         instruction = generate_gptimage._reference_edit_instruction(
             "/tmp/reference_face.jpg",

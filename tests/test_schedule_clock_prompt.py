@@ -301,6 +301,36 @@ class ScheduleClockPromptTest(unittest.TestCase):
 
         self.assertEqual("12:36 在书店阅读", next_activity)
 
+
+    def test_english_instruction_caption_is_rejected(self):
+        bad = (
+            'The user wants me to write a short "小心思" '
+            '(little thought) in the tone of "猪猪" for a photo。'
+        )
+        schedule = '19:33 到社区共享厨房和朋友一起摆盘夏日冷盘'
+
+        self.assertTrue(zhuzhu_core._caption_has_instruction_leak(bad))
+        self.assertFalse(zhuzhu_core._caption_is_mostly_chinese(bad))
+        self.assertIn(
+            zhuzhu_core._caption_rejection_reason(bad, schedule),
+            {'instruction_leak', 'not_chinese'},
+        )
+
+        cleaned = zhuzhu_core._scene_caption_fallback(
+            'evening',
+            {'name': '猪猪', 'user_name': '主人'},
+            bad,
+            schedule,
+        )
+        self.assertFalse(zhuzhu_core._caption_rejection_reason(cleaned, schedule))
+        self.assertTrue(zhuzhu_core._caption_is_mostly_chinese(cleaned))
+        self.assertNotIn('The user wants', cleaned)
+
+    def test_best_caption_rejects_instruction_leak(self):
+        bad = 'The user wants me to write a short little thought in the tone of 猪猪 for a photo.'
+        good = '猪猪先把冷盘摆整齐，别在火候上分心。'
+        self.assertEqual(zhuzhu_core._best_caption(bad, good), good)
+
     def test_caption_fallback_does_not_invent_a_future_task(self):
         with patch.object(zhuzhu_core, "_next_schedule_activity", return_value=""):
             caption = zhuzhu_core._personalized_caption_fallback(

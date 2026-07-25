@@ -277,6 +277,102 @@ class ImageVersionEndpointTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(1, versions["unavailable_count"])
             self.assertEqual([], versions["items"])
 
+    async def test_replaced_reference_preview_uses_archived_version_url(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            current_filename = "schedule_0816_current.png"
+            replaced_filename = "zhuzhu_schedule_0816_old.png"
+            Image.new("RGB", (24, 32), (180, 170, 160)).save(
+                Path(server.image_dir) / current_filename
+            )
+            old_path = root / replaced_filename
+            Image.new("RGB", (24, 32), (90, 100, 110)).save(old_path)
+            old_version = archive_image_version(
+                server.data_dir,
+                str(old_path),
+                original_image_filename=replaced_filename,
+                target="outfit",
+                target_label="穿搭",
+                instruction="替换穿搭",
+            )
+            ScheduleStore(server.data_dir).save({
+                "card": {
+                    "image_filename": current_filename,
+                    "image_path": f"/images/{current_filename}",
+                    "status": "ok",
+                    "selected_reference": {
+                        "filename": replaced_filename,
+                        "url": f"/images/{replaced_filename}",
+                        "label": "原图",
+                        "source": "gallery",
+                    },
+                    "requested_ref_image": replaced_filename,
+                    "requested_ref_image_path": f"/images/{replaced_filename}",
+                    "image_versions": [old_version],
+                },
+            })
+
+            test_server = TestServer(server.app)
+            await test_server.start_server(access_log=None)
+            client = TestClient(test_server)
+            try:
+                response = await client.get("/api/gallery?limit=10")
+                payload = await response.json()
+                item = payload["items"][0]
+                preview_url = item["selected_reference"]["url"]
+                preview_response = await client.get(preview_url)
+            finally:
+                await client.close()
+
+            self.assertEqual(200, response.status)
+            self.assertIn(f"/api/images/{current_filename}/versions/", preview_url)
+            self.assertEqual("", item["requested_ref_image"])
+            self.assertEqual("", item["requested_ref_image_path"])
+            self.assertEqual(200, preview_response.status)
+
+    async def test_missing_replaced_reference_keeps_label_without_broken_url(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            current_filename = "schedule_0816_current.png"
+            replaced_filename = "zhuzhu_schedule_0816_missing.png"
+            Image.new("RGB", (24, 32), (180, 170, 160)).save(
+                Path(server.image_dir) / current_filename
+            )
+            ScheduleStore(server.data_dir).save({
+                "card": {
+                    "image_filename": current_filename,
+                    "image_path": f"/images/{current_filename}",
+                    "status": "ok",
+                    "selected_reference": {
+                        "filename": replaced_filename,
+                        "url": f"/images/{replaced_filename}",
+                        "label": "原图",
+                        "source": "gallery",
+                    },
+                    "requested_ref_image": replaced_filename,
+                    "requested_ref_image_path": f"/images/{replaced_filename}",
+                },
+            })
+
+            test_server = TestServer(server.app)
+            await test_server.start_server(access_log=None)
+            client = TestClient(test_server)
+            try:
+                response = await client.get("/api/gallery?limit=10")
+                payload = await response.json()
+            finally:
+                await client.close()
+
+            item = payload["items"][0]
+            self.assertEqual(200, response.status)
+            self.assertEqual("原图", item["selected_reference"]["label"])
+            self.assertNotIn("url", item["selected_reference"])
+            self.assertNotIn("filename", item["selected_reference"])
+            self.assertEqual("", item["requested_ref_image"])
+            self.assertEqual("", item["requested_ref_image_path"])
+
     async def test_versions_can_switch_back_and_forth_without_creating_a_new_card(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

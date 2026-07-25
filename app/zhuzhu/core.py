@@ -826,12 +826,28 @@ def _caption_voice_hint(persona: dict) -> str:
     return voice[:180]
 
 
+def _caption_is_mostly_chinese(caption: str) -> bool:
+    """Caption output for this gallery must be Chinese everyday speech."""
+    text = re.sub(r"\s+", "", str(caption or ""))
+    if not text:
+        return False
+    cjk = len(re.findall(r"[一-鿿]", text))
+    latin = len(re.findall(r"[A-Za-z]", text))
+    if cjk < 4:
+        return False
+    # Reject pure English / instruction restatements.
+    if latin >= 12 and cjk * 2 < latin:
+        return False
+    return True
+
+
 def _caption_rejection_reason(caption: str, schedule_time: str = "") -> str:
     caption = repair_mojibake_text(caption)
     if not caption:
         return "empty"
     checks = (
         ("too_short", not _caption_is_usable(caption)),
+        ("not_chinese", not _caption_is_mostly_chinese(caption)),
         ("persona_leak", _caption_has_persona_leak(caption)),
         ("instruction_leak", _caption_has_instruction_leak(caption)),
         ("reader_address", _caption_addresses_reader(caption, schedule_time)),
@@ -857,9 +873,9 @@ def _caption_is_usable(caption: str) -> bool:
 def _best_caption(caption: str = "", fallback: str = "") -> str:
     caption = repair_mojibake_text(caption).strip()
     fallback = repair_mojibake_text(fallback).strip()
-    if _caption_is_usable(caption):
+    if caption and not _caption_rejection_reason(caption):
         return caption
-    if _caption_is_usable(fallback):
+    if fallback and not _caption_rejection_reason(fallback):
         return fallback
     return caption or fallback
 
@@ -887,10 +903,11 @@ def _caption_has_persona_leak(caption: str) -> bool:
 
 
 def _caption_has_instruction_leak(caption: str) -> bool:
-    text = re.sub(r"\s+", "", str(caption or ""))
-    if not text:
+    raw = str(caption or "")
+    compact = re.sub(r"\s+", "", raw)
+    if not compact:
         return False
-    markers = (
+    chinese_markers = (
         "我们被要求",
         "被要求以",
         "口吻写一句",
@@ -911,7 +928,37 @@ def _caption_has_instruction_leak(caption: str) -> bool:
         "读者称呼",
         "这是一条",
     )
-    return any(marker in text for marker in markers)
+    english_markers = (
+        # English meta-instruction leaks from the caption model
+        "theuserwantsme",
+        "iwantyoutowrite",
+        "writeashort",
+        "littlethought",
+        "inthetoneof",
+        "foraphoto",
+        "asrequested",
+        "hereisacaption",
+        "captionin",
+        "intheroleof",
+    )
+    lower = re.sub(r"\s+", "", raw.lower())
+    if any(marker in compact for marker in chinese_markers):
+        return True
+    if any(marker in lower for marker in english_markers):
+        return True
+    # Raw English task restatement patterns
+    lower_raw = raw.lower()
+    english_patterns = (
+        r"\bthe user wants\b",
+        r"\bi need to write\b",
+        r"\bwrite a short\b",
+        r"\blittle thought\b",
+        r"\bin the tone of\b",
+        r"\bfor a photo\b",
+        r"\bas an ai\b",
+        r"\bhere(?:'s| is) (?:a |the )?caption\b",
+    )
+    return any(re.search(pattern, lower_raw) for pattern in english_patterns)
 
 
 def _caption_addresses_reader(caption: str, schedule_time: str = "") -> bool:
@@ -1783,6 +1830,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         "输出 1-2 句中文，总长不超过 70 个汉字。"
         "不要写长段落，不要提技术术语、英文提示词、模型名称。"
         "直接输出配文内容，不要加引号或标题。"
+        "只输出最终中文小心思正文；禁止复述任务说明、禁止英文解释、禁止写 The user wants / write a short / in the tone of 这类元指令。"
         "绝对不要在末尾加「网页版」「查看详情」「点击查看」等任何引导性后缀。"
     )
 
@@ -1804,7 +1852,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
     next_context = f"下一项真实日程：{next_activity}。" if next_activity else "没有提供下一项日程，不得虚构。"
     text_user_content = (
         f"当前日程：{scene}。{next_context}请写一条短小心思，像当时心里真实想的一句话，"
-        "具体到正在做的事；只有给出真实下一项时才可以提到下一步，不要文艺比喻。"
+        "具体到正在做的事；只有给出真实下一项时才可以提到下一步，不要文艺比喻。只给最终中文正文，不要复述本条指令。"
     )
     request_variants: list[tuple[str, object]] = []
     if img_b64 and not activity:

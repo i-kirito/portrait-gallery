@@ -72,7 +72,8 @@ DEFAULT_STYLE_REFERENCE_PROMPTS = {
     ),
     "sweet": (
         "Soft sweet portrait reference: gentle, warm, delicate and romantic look, "
-        "soft styling, tender facial mood, cozy pastel or fresh outfit atmosphere, "
+        "soft styling, natural relaxed facial mood with a soft closed or lightly parted mouth "
+        "(never pouty lips, duck face, or 嘟嘴), cozy pastel or fresh outfit atmosphere, "
         "dreamy approachable vibe, suitable for 甜美风、温柔风、清新风 and relaxed cozy schedules."
     ),
 }

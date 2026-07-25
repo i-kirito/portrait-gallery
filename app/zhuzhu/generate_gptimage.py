@@ -437,7 +437,10 @@ def _reference_expression_guard() -> str:
         "\n[IMPORTANT] Facial expression guard: the facial expression must be newly generated "
         "from the current text description, schedule, action, scene, and emotional tone. "
         "Do NOT copy the reference image's facial expression, mouth shape, smile, grin, "
-        "tongue, gaze emotion, or facial mood; ignore any strong expression in the reference image."
+        "tongue, gaze emotion, or facial mood; ignore any strong expression in the reference image. "
+        "Especially do NOT copy pouty lips, duck face, pursed kissy mouth, 嘟嘴, or any exaggerated "
+        "lip push from the reference. Prefer a natural relaxed closed or softly parted mouth that fits "
+        "the scheduled activity, unless the text explicitly requests another expression."
     )
 
 
@@ -467,7 +470,8 @@ def _reference_edit_instruction(
         "Use stable identity cues such as the eyes, brows, nose, lips, and their relative spacing to keep the person recognizable. "
         "Treat the reference image's observed facial width, cheek volume, jaw contour, and chin proportions as the neutral baseline rather than an invitation to beautify or exaggerate them. "
         f"{face_shape_guard}"
-        "Do NOT copy or reference the hairstyle, hair color, hair accessories, clothing, outfit, pose, body posture, hand gestures, gaze direction, camera angle, framing, background, lighting, or any other non-facial elements from the reference image. "
+        "Do NOT copy or reference the hairstyle, hair color, hair accessories, clothing, outfit, pose, body posture, hand gestures, gaze direction, camera angle, framing, background, lighting, mouth expression, or any other non-facial elements from the reference image. "
+        "Do NOT transfer pout / duck-face / 嘟嘴 lip shape from the reference; rebuild mouth naturally for the scene. "
         "All non-facial elements must strictly follow the text description. "
         "If the text says the hair must be a specific color or hairstyle, that text is absolute and overrides the reference image completely, even when the reference image shows pink, red, light, or otherwise different hair."
         + _reference_expression_guard()
@@ -535,7 +539,7 @@ def _multi_reference_edit_instruction(
         "Image 1 = immutable base photo. Strictly lock pose, body posture, hand gestures, outfit/clothing layers, accessories already worn, props, scene, background, lighting, camera angle, framing, crop, and composition from Image 1. Do not invent a new pose.",
         "Image 2 (and later face references) = identity/face source only. Transfer facial identity (eyes, brows, nose, lips, facial proportions) onto the person in Image 1.",
         f"{face_shape_guard}If the text requests a specific hair color or bangs (e.g. dusty rose pink hair / wispy air bangs), apply that hair change while still keeping Image 1 pose and outfit locked.".strip(),
-        "Do NOT copy clothing, pose, hands, camera, background, or body layout from Image 2. Do NOT put a second person in frame. Keep one subject only.",
+        "Do NOT copy clothing, pose, hands, camera, background, body layout, or facial expression/mouth shape (no pout/duck-face/嘟嘴) from Image 2. Do NOT put a second person in frame. Keep one subject only.",
         "Change only: face identity + requested hair color/style from text/face refs. Everything else must match Image 1.",
     ]
     return chr(10) + chr(10).join(parts) + _reference_expression_guard()

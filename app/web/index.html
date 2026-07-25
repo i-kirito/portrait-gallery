@@ -5482,6 +5482,49 @@ textarea:focus-visible,
   padding-top: 2px;
 }
 .egg-section-title-main { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.egg-section-title.with-model {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.egg-model-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 52%;
+  min-height: 22px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(124, 58, 237, 0.16);
+  background: linear-gradient(135deg, rgba(237, 233, 254, 0.95), rgba(221, 214, 254, 0.88));
+  color: #6d28d9;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 4px 10px rgba(124, 58, 237, 0.08);
+  flex: 0 1 auto;
+}
+.egg-model-badge .egg-model-icon {
+  font-size: 12px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.egg-model-badge .egg-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.egg-model-badge.is-unknown {
+  border-color: rgba(148, 163, 184, 0.28);
+  background: rgba(248, 250, 252, 0.95);
+  color: #64748b;
+  box-shadow: none;
+}
 .egg-title-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
 .egg-outfit-fav-btn,
 .egg-outfit-dislike-btn,
@@ -7064,11 +7107,11 @@ function referenceImageUrl(e) {
     const value = String(raw || "").trim();
     if (!value) continue;
     if (/^(https?:\/\/|data:image\/|blob:)/i.test(value)) return value;
-    if (value.startsWith("/images/") || value.startsWith("/refs/") || value.startsWith("/local-refs/")) return value;
+    if (value.startsWith("/api/images/") || value.startsWith("/images/") || value.startsWith("/refs/") || value.startsWith("/local-refs/")) return value;
     if (value.startsWith("images/") || value.startsWith("refs/") || value.startsWith("local-refs/")) return `/${value}`;
     const fileName = value.split(/[\/]/).pop().split("?")[0];
     if (fileName && /\.(png|jpe?g|webp|gif)$/i.test(fileName)) {
-      if (REFERENCE_FILE_LABELS[fileName]) return `/refs/${encodeURIComponent(fileName)}`;
+      if (REFERENCE_FILE_LABELS[fileName]) return `/local-refs/${encodeURIComponent(fileName)}`;
       return `/images/${encodeURIComponent(fileName)}`;
     }
   }
@@ -14255,15 +14298,42 @@ function summarizePhotoJobError(jobOrText) {
 }
 
 function inferTheme(timeStr) {
-  // 根据 HH:mm 推断主题：<12=morning, 12-17=noon, 18-20=evening, >20=bedtime
-  var h = parseInt(timeStr.split(':')[0], 10);
-  if (h < 12) return 'morning';
-  if (h < 18) return 'noon';
-  if (h <= 20) return 'evening';
-  return 'bedtime';
+  // 对齐四段硬覆盖：早06-12 / 中12-14 / 午14-19 / 晚19-01:59（theme 仍映射 generate 桶）
+  var h = parseInt(String(timeStr || '').split(':')[0], 10);
+  if (isNaN(h)) return 'morning';
+  if (h >= 6 && h < 12) return 'morning';
+  if (h >= 12 && h < 14) return 'midday';
+  if (h >= 14 && h < 19) return 'afternoon';
+  if (h >= 19 && h < 21) return 'evening';
+  return 'bedtime'; // 21-05 + 00-01
 }
-function themeLabel(t) {
-  return { morning: '☀️ 晨间', noon: '🌤 午后', evening: '🌆 傍晚', bedtime: '🌙 睡前' }[t] || t;
+function periodLabelFromTime(timeStr) {
+  var h = parseInt(String(timeStr || '').split(':')[0], 10);
+  if (isNaN(h)) return '';
+  if (h >= 6 && h < 12) return '早';
+  if (h >= 12 && h < 14) return '中';
+  if (h >= 14 && h < 19) return '午';
+  if (h >= 19 || h <= 1) return '晚';
+  return '';
+}
+function themeLabel(t, timeStr) {
+  var period = periodLabelFromTime(timeStr || '');
+  if (period === '早') return '☀️ 早';
+  if (period === '中') return '🌤 中';
+  if (period === '午') return '🌤 午';
+  if (period === '晚') {
+    var h = parseInt(String(timeStr || '').split(':')[0], 10);
+    if (!isNaN(h) && (h >= 21 || h <= 1)) return '🌙 睡前';
+    return '🌆 晚';
+  }
+  return {
+    morning: '☀️ 早',
+    midday: '🌤 中',
+    noon: '🌤 中',
+    afternoon: '🌤 午',
+    evening: '🌆 晚',
+    bedtime: '🌙 睡前'
+  }[t] || t;
 }
 
 function loadScheduleEggData(options) {
@@ -14312,6 +14382,36 @@ function loadScheduleEggData(options) {
     var currentOutfitStyle = (detail.outfit_style || (detail.outfit && detail.outfit['风格']) || '').trim();
     var eggDateText = detail.date + (detail.outfit_style ? ' · ' + escapeHtml(detail.outfit_style) : '');
     dateEl.textContent = eggDateText;
+
+    function shortScheduleModelName(model) {
+      var raw = String(model || '').trim();
+      if (!raw) return '';
+      var name = raw.replace(/^.*[\/]/, '');
+      if (/grok/i.test(name)) return name.replace(/^grok[-_]?/i, 'Grok ').replace(/\s+/g, ' ').trim() || 'Grok';
+      if (/gemini/i.test(name)) return name.replace(/^gemini[-_]?/i, 'Gemini ').replace(/\s+/g, ' ').trim() || 'Gemini';
+      if (/claude/i.test(name)) return name.replace(/^claude[-_]?/i, 'Claude ').replace(/\s+/g, ' ').trim() || 'Claude';
+      if (/mimo/i.test(name)) return name.replace(/^mimo[-_]?/i, 'MiMo ').replace(/\s+/g, ' ').trim() || 'MiMo';
+      if (/fallback/i.test(name)) return '兜底';
+      return name;
+    }
+    function scheduleModelIcon(model) {
+      var raw = String(model || '').toLowerCase();
+      if (!raw) return '❔';
+      if (raw.indexOf('grok') >= 0) return '⚡';
+      if (raw.indexOf('gemini') >= 0) return '✦';
+      if (raw.indexOf('claude') >= 0) return '◎';
+      if (raw.indexOf('mimo') >= 0) return '◇';
+      if (raw.indexOf('fallback') >= 0) return '🛟';
+      return '🧠';
+    }
+    function renderScheduleModelBadge(model) {
+      var label = shortScheduleModelName(model);
+      if (!label) {
+        return '<span class="egg-model-badge is-unknown" title="未记录生成模型"><span class="egg-model-icon">❔</span><span class="egg-model-name">模型未知</span></span>';
+      }
+      return '<span class="egg-model-badge" title="日程生成模型：' + escapeHtml(String(model || label)) + '"><span class="egg-model-icon">' + scheduleModelIcon(model) + '</span><span class="egg-model-name">' + escapeHtml(label) + '</span></span>';
+    }
+    var scheduleModelBadgeHtml = renderScheduleModelBadge(detail.schedule_llm_model || detail.llm_model || '');
 
     var html = '';
 
@@ -14419,7 +14519,7 @@ function loadScheduleEggData(options) {
     }
 
     if (visibleSchedule.length > 0) {
-      html += '<div class="egg-section"><div class="egg-section-title"><span class="icon">📅</span>今日日程</div>';
+      html += '<div class="egg-section"><div class="egg-section-title with-model"><span class="egg-section-title-main"><span class="icon">📅</span>今日日程</span>' + scheduleModelBadgeHtml + '</div>';
       html += '<div class="egg-schedule-list">';
       for (var i = 0; i < visibleSchedule.length; i++) {
         var item = visibleSchedule[i];
@@ -14428,13 +14528,13 @@ function loadScheduleEggData(options) {
         var statusCls = (i === activeScheduleIdx && !item.isPast) ? 'now' : (item.isPast ? 'past' : 'future');
         var statusIcon = statusCls === 'now' ? '💫' : (statusCls === 'future' ? '⏳' : '✅');
         html += '<div class="egg-sched-item ' + statusCls + '">';
-        html += '<div class="egg-sched-time">' + statusIcon + ' ' + escapeHtml(item.time) + '<span class="egg-sched-theme ' + theme + '">' + themeLabel(theme) + '</span></div>';
+        html += '<div class="egg-sched-time">' + statusIcon + ' ' + escapeHtml(item.time) + '<span class="egg-sched-theme ' + theme + '">' + themeLabel(theme, item.time) + '</span></div>';
         html += '<div class="egg-sched-activity">' + escapeHtml(item.activity) + '</div>';
         html += '</div>';
       }
       html += '</div></div>';
     } else {
-      html += '<div class="egg-section"><div class="egg-section-title"><span class="icon">📅</span>今日日程</div>';
+      html += '<div class="egg-section"><div class="egg-section-title with-model"><span class="egg-section-title-main"><span class="icon">📅</span>今日日程</span>' + scheduleModelBadgeHtml + '</div>';
       html += '<div class="egg-empty" style="padding:20px 0;font-size:13px;color:#aaa;">还没有生图计划日程哦～</div></div>';
     }
 
@@ -14512,7 +14612,7 @@ function loadScheduleEggData(options) {
         html += '<div class="egg-photo-item">';
         html += '<span class="egg-photo-status-badge ' + planStatusCls + '">' + planStatusText + '</span>';
         html += '<span class="egg-photo-time">' + escapeHtml(plan.time) + '</span>';
-        html += '<span class="egg-photo-theme">' + themeLabel(planTheme) + '</span>';
+        html += '<span class="egg-photo-theme">' + themeLabel(planTheme, plan.time) + '</span>';
         html += '<span class="egg-photo-activity editable" data-plan-time="' + escapeAttr(plan.time) + '" data-plan-activity="' + escapeAttr(plan.activity || '') + '" ondblclick="startPhotoPlanEdit(this)">' + escapeHtml(plan.activity || '') + '</span>';
         if ((planFailed || planRunningRetryable) && planErrorText) html += '<span class="egg-photo-error" title="' + escapeAttr(planErrorText) + '">' + escapeHtml(planErrorText) + '</span>';
         var planOutfitStyle = (plan.job && plan.job.outfit_style) || currentOutfitStyle || (planPhoto && planPhoto.outfit_style) || '';
