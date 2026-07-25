@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.3.7**
+当前版本：**v1.3.8**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -96,7 +96,7 @@ curl http://localhost:18889/api/health
 如果要使用已经发布到 Docker Hub/GHCR 的镜像，通过 `PORTRAIT_GALLERY_IMAGE` 指定：
 
 ```bash
-PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.7 docker compose up -d
+PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.8 docker compose up -d
 curl http://localhost:18889/api/health
 ```
 
@@ -332,6 +332,15 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥、三级 LLM 模型链、Gitee 回退、日程风格和升级选项
 
 ## 🧾 Release Notes
+
+### v1.3.8
+
+- 小心思过滤加强：拦截英文任务复述 / instruction leak，强制中文正文，坏文案自动回退本地 fallback。
+- 参考图表情守卫加强：禁止复制嘟嘴 / duck face / pout 嘴型，甜妹风 reference prompt 改为自然放松嘴型。
+- 今日日程标题旁显示生成模型标识（含历史「模型未知」兜底）。
+- 生图时段覆盖：早 06–11:59 / 中 12–13:59 / 午 14–18:59 / 晚 19–01:59 至少各有一条；00:00–01:59 归次日执行。
+- 旧 `zhuzhu_*` 参考预览 404 修复：版本 API / 本地 refs 归一化，避免失效路径。
+- 图片版本切换与重抽替换链路更稳，相关回归测试补齐。
 
 ### v1.3.7
 
