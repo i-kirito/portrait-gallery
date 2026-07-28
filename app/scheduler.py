@@ -11,6 +11,7 @@ from typing import Optional
 from calendar_context import build_day_context
 from data import DailyEntry
 from keyword_cloud import build_schedule_keyword_prompt_block
+from text_repair import repair_mojibake_text
 from settings import (
     DEFAULT_OUTFIT_STYLES,
     llm_choice_text,
@@ -379,6 +380,118 @@ DEFAULT_REQUIRED_PERIODS = [
 ]
 SCHEDULE_PHOTO_QUIET_START_MINUTE = 3 * 60
 SCHEDULE_PHOTO_QUIET_END_MINUTE = 6 * 60
+
+
+def _stream_text_fragment(value) -> str:
+    """Preserve exact text fragments from OpenAI-compatible stream chunks."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, list):
+        return "".join(_stream_text_fragment(item) for item in value)
+    if isinstance(value, dict):
+        for key in ("text", "content", "value", "output_text"):
+            if key in value:
+                return _stream_text_fragment(value.get(key))
+    return ""
+
+
+def _buffer_openai_sse_response(response):
+    """Collect an OpenAI-compatible SSE response into a normal JSON response."""
+    content_parts = []
+    reasoning_parts = []
+    finish_reason = None
+    model = ""
+    usage = None
+    last_payload = None
+    error_payload = None
+
+    # Do not let requests guess an SSE charset. Some OpenAI-compatible
+    # proxies omit charset=utf-8, causing requests to decode UTF-8 as
+    # ISO-8859-1 and turn Chinese text into mojibake.
+    for raw_line in response.iter_lines(decode_unicode=False):
+        if isinstance(raw_line, bytes):
+            line = raw_line.decode("utf-8", errors="replace").strip()
+        else:
+            line = str(raw_line or "").strip()
+        if not line or line.startswith(":") or line.startswith("event:"):
+            continue
+        data_text = line[5:].strip() if line.startswith("data:") else line
+        if data_text == "[DONE]":
+            continue
+        try:
+            payload = json.loads(data_text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        last_payload = payload
+        if payload.get("error"):
+            error_payload = payload
+            break
+        if payload.get("model"):
+            model = str(payload.get("model") or "")
+        if payload.get("usage") is not None:
+            usage = payload.get("usage")
+        choices = payload.get("choices")
+        if not isinstance(choices, list):
+            continue
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            container = choice.get("delta")
+            if not isinstance(container, dict):
+                container = choice.get("message")
+            if isinstance(container, dict):
+                content_parts.append(_stream_text_fragment(container.get("content")))
+                reasoning_parts.append(_stream_text_fragment(container.get("reasoning_content")))
+            else:
+                content_parts.append(_stream_text_fragment(choice.get("text")))
+            if choice.get("finish_reason") is not None:
+                finish_reason = choice.get("finish_reason")
+
+    if error_payload is not None:
+        buffered = error_payload
+        error = error_payload.get("error") if isinstance(error_payload.get("error"), dict) else {}
+        status = error_payload.get("status") or error.get("status") or 502
+        try:
+            response.status_code = int(status)
+        except (TypeError, ValueError):
+            response.status_code = 502
+    elif content_parts or reasoning_parts:
+        message = {"role": "assistant", "content": "".join(content_parts)}
+        reasoning_text = "".join(reasoning_parts)
+        if reasoning_text:
+            message["reasoning_content"] = reasoning_text
+        buffered = {
+            "choices": [{"message": message, "finish_reason": finish_reason}],
+        }
+        if model:
+            buffered["model"] = model
+        if usage is not None:
+            buffered["usage"] = usage
+    elif isinstance(last_payload, dict):
+        buffered = last_payload
+    else:
+        buffered = {
+            "error": {
+                "type": "stream_error",
+                "code": "empty_stream",
+                "message": "stream response contained no readable data",
+            }
+        }
+        response.status_code = 502
+
+    response._content = json.dumps(buffered, ensure_ascii=False).encode("utf-8")
+    response._content_consumed = True
+    try:
+        response.close()
+    except Exception:
+        pass
+    return response
 
 JSON_OUTPUT_CONTRACT = """【最高优先级输出协议】
 只允许输出一个合法 JSON 对象。回复第一个字符必须是 {，最后一个字符必须是 }。
@@ -1112,7 +1225,8 @@ class DailyScheduler:
 
     @staticmethod
     def _should_disable_thinking(model: str) -> bool:
-        return "deepseek" in str(model or "").lower()
+        model_name = str(model or "").lower()
+        return "deepseek" in model_name or "grok" in model_name
 
     @staticmethod
     def _request_exception_detail(error: Exception) -> str:
@@ -1165,6 +1279,7 @@ class DailyScheduler:
                 for model in models_override
                 if str(model or "").strip()
             ]
+        stream_enabled = bool(request_config.get("stream", False))
         if not chat_url or not models:
             logger.error("LLM config missing: chat_url/models")
             return None
@@ -1183,7 +1298,17 @@ class DailyScheduler:
         def _do_request(url, headers, json_data, timeout):
             import requests as req
             try:
-                return req.post(url, headers=headers, json=json_data, timeout=timeout), None
+                use_stream = bool(json_data.get("stream", False))
+                response = req.post(
+                    url,
+                    headers=headers,
+                    json=json_data,
+                    timeout=timeout,
+                    stream=use_stream,
+                )
+                if use_stream and response.status_code == 200:
+                    response = _buffer_openai_sse_response(response)
+                return response, None
             except req.exceptions.Timeout as exc:
                 return None, f"请求超时（{self._request_exception_detail(exc)}）"
             except req.exceptions.ConnectionError as exc:
@@ -1251,7 +1376,7 @@ class DailyScheduler:
                 "model": model,
                 "messages": messages,
                 "max_tokens": 8192 if json_mode and self._should_disable_thinking(model) else 4096,
-                "stream": False,
+                "stream": stream_enabled,
             }
             if temperature is not None:
                 try:
@@ -1316,8 +1441,10 @@ class DailyScheduler:
                             break
                         content = self._choice_final_text(choices[0]) if json_mode else llm_choice_text(choices[0])
                         if content:
+                            if stream_enabled:
+                                logger.info("LLM stream completed: model=%s", model)
                             self._last_llm_model = str(model or "").strip()
-                            return content
+                            return repair_mojibake_text(content)
                         if json_mode:
                             reasoning_excerpt = llm_response_excerpt(
                                 choices[0].get("message", {}).get("reasoning_content", "") if isinstance(choices[0], dict) else "",

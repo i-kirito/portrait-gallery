@@ -37,7 +37,7 @@ class RuntimeConfigTest(unittest.TestCase):
             )
             Path(runtime_config_path(str(data_dir))).write_text(
                 json.dumps({
-                    "llm": {"model": "runtime-model", "models": ["runtime-model"]},
+                    "llm": {"model": "runtime-model", "models": ["runtime-model"], "stream": True},
                     "integrations": {"hermes_cli": "/runtime/hermes"},
                     "gallery": {"allowed_image_roots": ["/"]},
                     "paths": {"image_dir": "/tmp/untrusted"},
@@ -50,6 +50,7 @@ class RuntimeConfigTest(unittest.TestCase):
 
             self.assertEqual("runtime-model", loaded["llm"]["model"])
             self.assertEqual(["runtime-model"], loaded["llm"]["models"])
+            self.assertTrue(loaded["llm"]["stream"])
             self.assertEqual("/runtime/hermes", loaded["integrations"]["hermes_cli"])
             self.assertNotIn("allowed_image_roots", loaded.get("gallery", {}))
             self.assertNotEqual("/tmp/untrusted", loaded.get("paths", {}).get("image_dir"))

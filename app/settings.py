@@ -79,7 +79,7 @@ DEFAULT_STYLE_REFERENCE_PROMPTS = {
 }
 
 RUNTIME_CONFIG_MUTABLE_FIELDS = {
-    "llm": {"model", "models", "fallback_model"},
+    "llm": {"model", "models", "fallback_model", "stream"},
     "integrations": {"hermes_cli", "openclaw_cli"},
 }
 
@@ -1384,7 +1384,14 @@ def llm_request_config(config: dict, data_dir: str) -> dict:
         or _non_empty(get_nested(config, "llm.api_key", ""))
     )
     models = configured_llm_models(config.get("llm", {}) if isinstance(config, dict) else {})
-    return {"base_url": base_url.rstrip("/"), "chat_url": normalize_chat_url(base_url), "api_key": api_key, "models": models}
+    stream = bool(get_nested(config, "llm.stream", False))
+    return {
+        "base_url": base_url.rstrip("/"),
+        "chat_url": normalize_chat_url(base_url),
+        "api_key": api_key,
+        "models": models,
+        "stream": stream,
+    }
 
 
 def apply_network_env(config: dict, env: dict[str, str] | None = None, data_dir: str = "") -> dict[str, str]:

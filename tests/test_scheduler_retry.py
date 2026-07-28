@@ -105,6 +105,66 @@ class SchedulerRetryTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual("gemini-3.5-flash", payload["model"])
             self.assertEqual(0.8, payload["temperature"])
 
+    async def test_streaming_chunks_are_reassembled_as_final_json(self):
+        streamed = requests.Response()
+        streamed.status_code = 200
+        streamed.iter_lines = lambda decode_unicode=False: iter([
+            'data: {"model":"grok-4.5","choices":[{"delta":{"reasoning_content":"thinking"}}]}'.encode("utf-8"),
+            'data: {"choices":[{"delta":{"content":"{\\"文字\\":\\"中"}}]}'.encode("utf-8"),
+            'data: {"choices":[{"delta":{"content":"文\\"}"},"finish_reason":"stop"}]}'.encode("utf-8"),
+            b'data: [DONE]',
+        ])
+        request_config = {
+            "chat_url": "https://example.test/v1/chat/completions",
+            "api_key": "secret",
+            "models": ["grok-4.5"],
+            "stream": True,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = DailyScheduler({}, tmpdir)
+            with (
+                patch.object(scheduler_module, "llm_request_config", return_value=request_config),
+                patch("requests.post", return_value=streamed) as post,
+            ):
+                result = await scheduler._call_llm("probe", timeout=1, json_mode=True)
+
+        self.assertEqual('{"文字":"中文"}', result)
+        self.assertTrue(post.call_args.kwargs["stream"])
+        self.assertTrue(post.call_args.kwargs["json"]["stream"])
+        self.assertEqual(8192, post.call_args.kwargs["json"]["max_tokens"])
+        self.assertEqual(
+            {"type": "disabled"},
+            post.call_args.kwargs["json"]["thinking"],
+        )
+
+    async def test_streaming_upstream_mojibake_is_repaired(self):
+        mojibake = '{"文字":"中文"}'.encode("utf-8").decode("latin-1")
+        streamed = requests.Response()
+        streamed.status_code = 200
+        streamed.iter_lines = lambda decode_unicode=False: iter([
+            (
+                'data: {"choices":[{"delta":{"content":'
+                + scheduler_module.json.dumps(mojibake, ensure_ascii=False)
+                + '},"finish_reason":"stop"}]}'
+            ).encode("utf-8"),
+            b'data: [DONE]',
+        ])
+        request_config = {
+            "chat_url": "https://example.test/v1/chat/completions",
+            "api_key": "secret",
+            "models": ["grok-4.5"],
+            "stream": True,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = DailyScheduler({}, tmpdir)
+            with (
+                patch.object(scheduler_module, "llm_request_config", return_value=request_config),
+                patch("requests.post", return_value=streamed),
+            ):
+                result = await scheduler._call_llm("probe", timeout=1, json_mode=True)
+
+        self.assertEqual('{"文字":"中文"}', result)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6418,6 +6418,17 @@ textarea:focus-visible,
       <div class="sk-desc">LLM 接口认证密钥，必须填写</div>
       <input type="password" id="skCpaKey" placeholder="输入新密钥（留空则不修改）">
       <div class="sk-status" id="skCpaKeyStatus">加载中...</div>
+      <div class="sk-gitee-fallback-inline" id="skLlmStreamRow">
+        <div class="sk-gitee-fallback-copy">
+          <span class="sk-gitee-fallback-title">流式响应</span>
+          <span class="sk-gitee-fallback-hint">适合 Grok 等长请求，持续接收内容以避免代理等待超时</span>
+        </div>
+        <label class="sk-switch" for="skLlmStream" aria-label="启用 LLM 流式响应">
+          <input type="checkbox" id="skLlmStream" onchange="syncLlmStreamVisual(this.checked)">
+          <span class="sk-switch-knob"></span>
+        </label>
+      </div>
+      <div class="sk-status" id="skLlmStreamStatus">加载中...</div>
     </div>
     </div>
     <div class="sk-panel" id="skPanelMaintain" data-settings-panel-content="maintain">
@@ -12658,10 +12669,12 @@ function openSettings() {
   document.getElementById("skPersona").value = "";
   document.getElementById("skGiteeFallback").checked = false;
   document.getElementById("skGptChatFallback").checked = false;
+  document.getElementById("skLlmStream").checked = false;
   availableLlmModels = [];
   setLlmModelChain([]);
   setPushChannel("wechat");
   syncGiteeFallbackVisual(false);
+  syncLlmStreamVisual(false);
   syncGptChatFallbackVisual(false);
   const cleanupResult = document.getElementById("skCleanupResult");
   if (cleanupResult) cleanupResult.textContent = "";
@@ -12787,6 +12800,16 @@ function syncGptChatFallbackVisual(enabled) {
   if (row) row.classList.toggle("enabled", enabled === true);
   if (status) {
     status.textContent = enabled ? "✓ Chat 回退开" : "○ Chat 回退关";
+    status.className = "sk-status " + (enabled ? "set" : "unset");
+  }
+}
+
+function syncLlmStreamVisual(enabled) {
+  const row = document.getElementById("skLlmStreamRow");
+  const status = document.getElementById("skLlmStreamStatus");
+  if (row) row.classList.toggle("enabled", enabled === true);
+  if (status) {
+    status.textContent = enabled ? "✓ 流式已开启" : "○ 使用普通响应";
     status.className = "sk-status " + (enabled ? "set" : "unset");
   }
 }
@@ -13364,6 +13387,9 @@ async function loadSettingsStatus() {
     const gptChatFallbackEl = document.getElementById("skGptChatFallback");
     gptChatFallbackEl.checked = data.gpt_chat_fallback_enabled === true;
     syncGptChatFallbackVisual(gptChatFallbackEl.checked);
+    const llmStreamEl = document.getElementById("skLlmStream");
+    llmStreamEl.checked = data.llm_stream_enabled === true;
+    syncLlmStreamVisual(llmStreamEl.checked);
 
     // Appearance: show as textarea content (not masked)
     const appEl = document.getElementById("skAppearance");
@@ -13845,6 +13871,7 @@ async function saveSettings() {
   const llmModels = fullLlmModelChain();
   const giteeFallbackEnabled = document.getElementById("skGiteeFallback").checked;
   const gptChatFallbackEnabled = document.getElementById("skGptChatFallback").checked;
+  const llmStreamEnabled = document.getElementById("skLlmStream").checked;
   const missing = [];
   requireSettingsValue("Gitee API URL", giteeUrl, missing);
   if (!giteeKey && !hasSavedSecret("gitee_key")) missing.push("Gitee API Key");
@@ -13885,6 +13912,7 @@ async function saveSettings() {
     // llm_model: always send; llm_models keeps the ordered fallback chain
     body.llm_model = llmModel;
     body.llm_models = llmModels;
+    body.llm_stream_enabled = llmStreamEnabled;
 
     const res = await fetch(`${API}/api/config/keys`, {
       method: "POST",

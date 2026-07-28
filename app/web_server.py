@@ -4904,6 +4904,7 @@ class GalleryServer:
             "llm_model": llm_model,
             "llm_models": self.config.get("llm", {}),
             "llm_model_chain": llm_model_chain,
+            "llm_stream_enabled": bool(full_llm_config.get("stream", False)),
             "gitee_fallback_enabled": gitee_fallback_enabled,
             "gpt_chat_fallback_enabled": gpt_chat_fallback_enabled,
             "push_channel": push_channel,
@@ -5952,7 +5953,9 @@ class GalleryServer:
                             else:
                                 api_keys.append(body["gitee_key"])
 
-                    llm_changed = "llm_model" in body or "llm_models" in body
+                    llm_models_changed = "llm_model" in body or "llm_models" in body
+                    llm_stream_changed = "llm_stream_enabled" in body
+                    llm_changed = llm_models_changed or llm_stream_changed
                     integration_keys = [
                         key for key in ("hermes_cli", "openclaw_cli") if key in body
                     ]
@@ -5967,6 +5970,7 @@ class GalleryServer:
                         if llm_changed:
                             if not isinstance(runtime_config.get("llm"), dict):
                                 runtime_config["llm"] = {}
+                        if llm_models_changed:
                             raw_llm_models = body.get("llm_models", [])
                             if isinstance(raw_llm_models, dict):
                                 requested_models = configured_llm_models(raw_llm_models)
@@ -5982,6 +5986,10 @@ class GalleryServer:
                             runtime_config["llm"]["model"] = requested_chain[0] if requested_chain else ""
                             runtime_config["llm"]["fallback_model"] = (
                                 requested_chain[1] if len(requested_chain) > 1 else ""
+                            )
+                        if llm_stream_changed:
+                            runtime_config["llm"]["stream"] = self._body_bool(
+                                body, "llm_stream_enabled"
                             )
 
                         if integration_keys:
@@ -6013,8 +6021,9 @@ class GalleryServer:
                         current_llm.update(runtime_config["llm"])
                         self.config["llm"] = current_llm
                         logger.info(
-                            "LLM model chain updated to: %s",
+                            "LLM settings updated: models=%s stream=%s",
                             ", ".join(current_llm.get("models") or []) or "(empty)",
+                            bool(current_llm.get("stream", False)),
                         )
                     if integration_keys:
                         current_integrations = dict(self.config.get("integrations") or {})
