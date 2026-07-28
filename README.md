@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.3.9**
+当前版本：**v1.3.10**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -96,7 +96,7 @@ curl http://localhost:18889/api/health
 如果要使用已经发布到 Docker Hub/GHCR 的镜像，通过 `PORTRAIT_GALLERY_IMAGE` 指定：
 
 ```bash
-PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.9 docker compose up -d
+PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.10 docker compose up -d
 curl http://localhost:18889/api/health
 ```
 
@@ -353,6 +353,14 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥、三级 LLM 模型链、Gitee 回退、日程风格和升级选项
 
 ## 🧾 Release Notes
+
+### v1.3.10
+
+- 新增可选 LLM 流式响应开关（默认关闭），适合 Grok 等长请求，避免代理空等超时。
+- OpenAI-compatible SSE 会缓冲成现有 completion 结构，并处理流式错误。
+- 流式内容按原始 UTF-8 解码，并修复 Latin-1 mojibake，避免中文日程校验失败。
+- Grok 日程 JSON 请求默认关闭 reasoning，保留兼容重试。
+- Web 设置页可直接开关流式响应；相关 runtime 配置与回归测试已补齐。
 
 ### v1.3.9
 
