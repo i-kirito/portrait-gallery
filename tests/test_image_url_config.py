@@ -124,6 +124,39 @@ class ImageUrlConfigTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(original_keys, stored)
             self.assertNotEqual("new-model", server.config.get("llm", {}).get("model"))
 
+    async def test_llm_stream_switch_persists_without_clearing_models(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            server.config["llm"].update({
+                "model": "grok-4.5",
+                "models": ["grok-4.5", "fallback-model"],
+            })
+            test_server = TestServer(server.app)
+            await test_server.start_server(access_log=None)
+            client = TestClient(test_server)
+            try:
+                response = await client.post("/api/config/keys", json={
+                    "llm_stream_enabled": True,
+                })
+                payload = await response.json()
+                current_response = await client.get("/api/config/keys")
+                current = await current_response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(200, response.status, payload)
+            self.assertTrue(payload.get("success"))
+            self.assertTrue(current.get("llm_stream_enabled"))
+            self.assertEqual(
+                ["grok-4.5", "fallback-model"],
+                server.config["llm"]["models"],
+            )
+            runtime = json.loads(
+                (root / "data" / "runtime_config.json").read_text(encoding="utf-8")
+            )
+            self.assertTrue(runtime["llm"]["stream"])
+
     async def test_gitee_environment_overrides_local_url_and_key(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

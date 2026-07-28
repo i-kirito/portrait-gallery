@@ -105,6 +105,33 @@ class SchedulerRetryTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual("gemini-3.5-flash", payload["model"])
             self.assertEqual(0.8, payload["temperature"])
 
+    async def test_streaming_chunks_are_reassembled_as_final_json(self):
+        streamed = requests.Response()
+        streamed.status_code = 200
+        streamed.iter_lines = lambda decode_unicode=True: iter([
+            'data: {"model":"grok-4.5","choices":[{"delta":{"reasoning_content":"thinking"}}]}',
+            'data: {"choices":[{"delta":{"content":"{\\"ok\\":"}}]}',
+            'data: {"choices":[{"delta":{"content":" true}"},"finish_reason":"stop"}]}',
+            'data: [DONE]',
+        ])
+        request_config = {
+            "chat_url": "https://example.test/v1/chat/completions",
+            "api_key": "secret",
+            "models": ["grok-4.5"],
+            "stream": True,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = DailyScheduler({}, tmpdir)
+            with (
+                patch.object(scheduler_module, "llm_request_config", return_value=request_config),
+                patch("requests.post", return_value=streamed) as post,
+            ):
+                result = await scheduler._call_llm("probe", timeout=1, json_mode=True)
+
+        self.assertEqual('{"ok": true}', result)
+        self.assertTrue(post.call_args.kwargs["stream"])
+        self.assertTrue(post.call_args.kwargs["json"]["stream"])
+
 
 if __name__ == "__main__":
     unittest.main()
