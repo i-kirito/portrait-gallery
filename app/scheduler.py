@@ -11,6 +11,7 @@ from typing import Optional
 from calendar_context import build_day_context
 from data import DailyEntry
 from keyword_cloud import build_schedule_keyword_prompt_block
+from text_repair import repair_mojibake_text
 from settings import (
     DEFAULT_OUTFIT_STYLES,
     llm_choice_text,
@@ -408,7 +409,10 @@ def _buffer_openai_sse_response(response):
     last_payload = None
     error_payload = None
 
-    for raw_line in response.iter_lines(decode_unicode=True):
+    # Do not let requests guess an SSE charset. Some OpenAI-compatible
+    # proxies omit charset=utf-8, causing requests to decode UTF-8 as
+    # ISO-8859-1 and turn Chinese text into mojibake.
+    for raw_line in response.iter_lines(decode_unicode=False):
         if isinstance(raw_line, bytes):
             line = raw_line.decode("utf-8", errors="replace").strip()
         else:
@@ -1221,7 +1225,8 @@ class DailyScheduler:
 
     @staticmethod
     def _should_disable_thinking(model: str) -> bool:
-        return "deepseek" in str(model or "").lower()
+        model_name = str(model or "").lower()
+        return "deepseek" in model_name or "grok" in model_name
 
     @staticmethod
     def _request_exception_detail(error: Exception) -> str:
@@ -1439,7 +1444,7 @@ class DailyScheduler:
                             if stream_enabled:
                                 logger.info("LLM stream completed: model=%s", model)
                             self._last_llm_model = str(model or "").strip()
-                            return content
+                            return repair_mojibake_text(content)
                         if json_mode:
                             reasoning_excerpt = llm_response_excerpt(
                                 choices[0].get("message", {}).get("reasoning_content", "") if isinstance(choices[0], dict) else "",
