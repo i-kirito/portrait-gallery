@@ -299,11 +299,47 @@ OUTFIT_HAIR_ALIASES = {
     "loose_down": ("自然披散", "披肩长发", "披散", "hair worn down", "loose hair"),
 }
 
-SCHEDULE_DIVERSITY_IDEAS = (
-    "晨间：花市买一小束花、楼下取咖啡、整理书桌、去便利店补生活用品、做拉伸、给植物换水、图书馆还书、短途散步。",
-    "中午/下午：去咖啡馆写计划、逛文创店、看展、修照片、整理灵感板、练琴/练舞、去书店、做手作、和朋友吃轻食。",
-    "傍晚/晚上：城市散步、听播客收拾房间、整理明天穿搭、写观影笔记、夜间阅读、做香薰放松、复盘直播/创作素材。",
+SCHEDULE_DIVERSITY_DOMAINS = (
+    "参与体验：课程、工作坊、排练、志愿活动、现场实践或需要亲手完成的任务。",
+    "城市与文化探索：陌生街区、公共文化活动、限定展演、开放日、在地观察或主题路线。",
+    "创作与挑战：完成一个有明确成果的作品、技能挑战、记录任务、策划任务或小型项目。",
+    "自然与户外：结合当天天气与真实日历，设计有目的的观察、探索、体验或轻量活动。",
+    "社交与生活事件：允许约会、见面、聚会或共同体验，但活动本身要有具体事件和推进。",
 )
+
+# This guard is deliberately broad. The LLM remains responsible for semantic
+# novelty; these families only catch candidates that split one mundane mainline
+# into many superficially different schedule rows.
+SCHEDULE_BROAD_ACTIVITY_FAMILIES = {
+    "retail": (
+        "购物", "逛街", "商场", "购物中心", "市集", "专柜", "试穿", "试戴", "试闻",
+        "买一", "买了", "购买", "新买", "新购", "选购", "挑选", "比较几款", "书店",
+        "文具店", "花店", "小店",
+    ),
+    "organizing": (
+        "整理", "收拾", "收纳", "归类", "分类", "打扫", "清单", "提纲", "复盘",
+        "摆上", "挂进衣柜",
+    ),
+    "passive_media": (
+        "刷剧", "追剧", "追番", "看动漫", "看动画", "看电影", "听播客", "刷视频",
+    ),
+    "exercise": (
+        "运动", "跑步", "慢跑", "快走", "健身", "训练", "瑜伽", "拉伸", "骑行",
+        "游泳", "徒步",
+    ),
+    "reading_writing": (
+        "阅读", "看书", "读书", "小说", "杂志", "书架", "书籍", "文档", "笔记",
+        "记录", "总结", "提纲", "计划", "手账", "日记", "便签", "明信片",
+    ),
+}
+
+SCHEDULE_BROAD_ACTIVITY_FAMILY_LABELS = {
+    "retail": "购物/选购",
+    "organizing": "整理/规划",
+    "passive_media": "被动影音消遣",
+    "exercise": "运动训练",
+    "reading_writing": "阅读/记录/规划",
+}
 
 BASE_STYLE_OPTIONS = {"cool", "girly", "sweet"}
 SCHEDULE_PHOTO_STYLE_RULES = """【摄影风格判断 photo_style_en — 由你根据今日整体日程自行判断，不要固定套模板】
@@ -412,20 +448,31 @@ class DailyScheduler:
             if any(term in compact for term in terms)
         }
 
+    @staticmethod
+    def _broad_activity_families(activity: str) -> set[str]:
+        compact = re.sub(r"\s+", "", str(activity or ""))
+        return {
+            family
+            for family, terms in SCHEDULE_BROAD_ACTIVITY_FAMILIES.items()
+            if any(term in compact for term in terms)
+        }
+
     def _schedule_diversity_prompt_block(self, schedule_history: str) -> str:
-        ideas = "\n".join(f"- {item}" for item in SCHEDULE_DIVERSITY_IDEAS)
+        domains = "\n".join(f"- {item}" for item in SCHEDULE_DIVERSITY_DOMAINS)
         history_text = schedule_history or "（无近期日程）"
-        return f"""【近 3 天完整日程动作｜生成时硬约束（双保障第 1 层：你必须先自己避重）】
+        return f"""【近 3 天完整日程动作｜多样性参考】
 {history_text}
 
-生成 schedule 之前，先完整读完上面近 3 天每一条动作，再开始写今天的 6-8 条：
-1. 禁止复用近 3 天已经出现过的日程动作。同义改写、换说法、换时间点、换地点词仍算重复。
-2. 禁止复用近 3 天的任务主线。例如近 3 天出现过慢跑/快走/健身/拉伸/运动训练，今天不要再写跑步、运动场、体育公园、运动补给、运动记录；出现过插画/手账/书店，今天不要再回到同一创作或阅读主线；出现过便利店买气泡水、阳台浇水、做冷面，今天也不要再写这些具体动作。
-3. 你自己判断：如果新活动与近 3 天任一活动在「人在做什么」上相同或高度相似，就丢掉重写，不要输出。
-4. 今天必须是全新的一天：核心动作、场景任务、兴趣主线都要重新设计；不要只微调旧日程。
-5. 至少 3 条活动给出明确新地点、新道具或新兴趣任务。
-6. 可从下面灵感挑全新生活片段，但不要逐字照抄，也不要复用近 3 天已有动作：
-{ideas}"""
+输出 JSON 前，请在内部参考下面的多样性目标；判断过程不要输出：
+1. 先把近 3 天每条日程归纳成「人在做什么」的动作族和当天任务主线，而不是只看地点、道具或名词。
+2. 尽量避开与近 3 天相同、同义或属于同一任务主线的候选；只换说法、时间、地点、店铺或道具不算真正的新活动。必要的吃饭、休息等生活过渡可以自然重复。
+3. 优先选择近 3 天没有出现的新主题，并尽量设计一个“精彩锚点”：今天最值得记住、需要角色真实参与且会推动一天进展的具体事件。
+4. 尽量让 6-8 条日程覆盖多种实质不同的动作族和场景，避免购物、整理、阅读或运动等单一活动占据大半天。逛多个商店仍然只算“购物”，在不同房间连续整理仍然只算“整理”。
+5. 保持自然转场和前后推进，避免把一次活动拆成多条凑数；尽量让每条活动都有不同的行动变化。
+6. 最终自检时，优先提高近 3 天语义差异、当天丰富度、精彩锚点和行动变化；这些是生成质量目标，不是生成后的拒绝条件。
+
+下面只是拓宽构思方向，不是固定动作池；请结合日期、人设和近 3 天历史自行创造，也可以设计这些方向以外的新事件：
+{domains}"""
 
     def _load_schedule_data(self) -> dict:
         path = os.path.join(self.data_dir, "schedule_data.json")
@@ -820,7 +867,12 @@ class DailyScheduler:
 
     def _recent_schedule_category_counts(self, today: date, days: int = 3) -> dict[str, int]:
         all_data = self._load_schedule_data()
-        counts = {"cooking_days": 0, "low_energy_home_days": 0, "category_days": []}
+        counts = {
+            "cooking_days": 0,
+            "low_energy_home_days": 0,
+            "category_days": [],
+            "family_days": [],
+        }
         for i in range(1, days + 1):
             date_str = (today - timedelta(days=i)).isoformat()
             entry = all_data.get(date_str)
@@ -835,6 +887,9 @@ class DailyScheduler:
             categories = set().union(*(self._activity_categories(activity) for activity in activities))
             if categories:
                 counts["category_days"].append({"date": date_str, "categories": categories})
+            families = set().union(*(self._broad_activity_families(activity) for activity in activities))
+            if families:
+                counts["family_days"].append({"date": date_str, "families": families})
         return counts
 
     def _schedule_diversity_error(
@@ -843,15 +898,15 @@ class DailyScheduler:
         recent_counts: Optional[dict[str, int]] = None,
         recent_actions: Optional[list[dict]] = None,
     ) -> str:
-        """Dual-guard layer 2: catch obvious 3-day action reuse and same-day exact action duplicates.
+        """Return an advisory diversity note without deciding acceptance.
 
-        Layer 1 is generation-time: the model must avoid repeating near-3-day
-        actions from the full history in the prompt. This post-check rejects
-        obvious same-action paraphrases so generation can retry.
+        The generator receives full recent history in its prompt. This helper
+        only describes obvious repetition for logs and diagnostics; callers
+        must not reject an otherwise valid schedule because of this note.
         """
-        del recent_counts  # category theme counts are not the primary policy
         if not display_items:
             return ""
+        recent_counts = recent_counts or {}
         recent_actions = recent_actions or []
 
         repeated = []
@@ -874,6 +929,63 @@ class DailyScheduler:
         duplicates = sorted({item for item in signatures if item and signatures.count(item) > 1})
         if duplicates:
             return "schedule 内部活动过于重复: " + "、".join(duplicates[:3])
+
+        family_counts: dict[str, int] = {}
+        for _time_text, activity in display_items:
+            for family in self._broad_activity_families(activity):
+                family_counts[family] = family_counts.get(family, 0) + 1
+        dominant = sorted(
+            (
+                (family, count)
+                for family, count in family_counts.items()
+                if count > len(display_items) / 2
+            ),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        if dominant:
+            family, count = dominant[0]
+            label = SCHEDULE_BROAD_ACTIVITY_FAMILY_LABELS.get(family, family)
+            recent_dates = [
+                str(day.get("date") or "")
+                for day in recent_counts.get("family_days", [])
+                if family in set(day.get("families") or [])
+            ]
+            recent_note = (
+                f"，而且近 3 天的 {', '.join(recent_dates[:3])} 已出现该主线"
+                if recent_dates
+                else ""
+            )
+            return (
+                f"全天主线过于单一：{len(display_items)} 条中有 {count} 条属于「{label}」"
+                f"{recent_note}。不要把同一活动拆成多个地点/物品凑数；请保留自然转场，"
+                "改成更多实质不同的动作族，并加入一个需要真实参与的精彩锚点。"
+            )
+
+        repeated_families = []
+        for family, count in family_counts.items():
+            if count < 2:
+                continue
+            recent_dates = [
+                str(day.get("date") or "")
+                for day in recent_counts.get("family_days", [])
+                if family in set(day.get("families") or [])
+            ]
+            if recent_dates:
+                repeated_families.append((family, count, recent_dates))
+        if repeated_families:
+            family, count, recent_dates = sorted(
+                repeated_families,
+                key=lambda item: item[1],
+                reverse=True,
+            )[0]
+            label = SCHEDULE_BROAD_ACTIVITY_FAMILY_LABELS.get(family, family)
+            return (
+                f"近 3 天任务主线重复：今天有 {count} 条属于「{label}」，"
+                f"而 {', '.join(recent_dates[:3])} 已出现该动作族。"
+                "单条必要生活过渡可以保留，但不要让旧动作族再次成为今天的主线或连续次主线；"
+                "请换成不同的参与方式，并重新设计精彩锚点。"
+            )
         return ""
 
     def _runtime_persona(self) -> dict:
@@ -1034,12 +1146,25 @@ class DailyScheduler:
                 return text
         return ""
 
-    async def _call_llm(self, prompt: str, timeout: int = 60, json_mode: bool = False) -> Optional[str]:
+    async def _call_llm(
+        self,
+        prompt: str,
+        timeout: int = 60,
+        json_mode: bool = False,
+        models_override: Optional[list[str]] = None,
+        temperature: Optional[float] = 0.3,
+    ) -> Optional[str]:
         """调用 CPA LLM（异步，不阻塞事件循环）"""
         request_config = llm_request_config(self.config, self.data_dir)
         chat_url = request_config["chat_url"]
         api_key = request_config["api_key"]
         models = request_config["models"]
+        if models_override is not None:
+            models = [
+                str(model).strip()
+                for model in models_override
+                if str(model or "").strip()
+            ]
         if not chat_url or not models:
             logger.error("LLM config missing: chat_url/models")
             return None
@@ -1126,9 +1251,13 @@ class DailyScheduler:
                 "model": model,
                 "messages": messages,
                 "max_tokens": 8192 if json_mode and self._should_disable_thinking(model) else 4096,
-                "temperature": 0.3,
                 "stream": False,
             }
+            if temperature is not None:
+                try:
+                    base_payload["temperature"] = max(0.0, min(2.0, float(temperature)))
+                except (TypeError, ValueError):
+                    base_payload["temperature"] = 0.3
             if json_mode:
                 base_payload["response_format"] = {"type": "json_object"}
                 if self._should_disable_thinking(model):
@@ -1289,10 +1418,10 @@ class DailyScheduler:
 【真实日历约束】
 {calendar_guidance}
 
-【历史穿搭参考（不要重复以下穿搭）】
+【历史穿搭参考（尽量生成不同搭配）】
 {history}
-- 近 3 天出现过的具体配饰禁止再次出现；颜色、图案和类别相同但换了同义说法仍算重复。
-- 例如“银色十字星锁骨链”改写成“银色星形项链”仍然重复，必须换颜色、换图案、换配饰类别，或取消项链。
+- 优先避开近 3 天出现过的具体配饰；颜色、图案和类别相同但换了同义说法不算真正的新搭配。
+- 例如已有“银色十字星锁骨链”时，尽量换颜色、换图案、换配饰类别，或取消项链，而不是只改写成“银色星形项链”。
 
 【日程避重与多样化要求】
 {self._schedule_diversity_prompt_block(schedule_history)}
@@ -1340,7 +1469,7 @@ class DailyScheduler:
 
 ⚠️ prompt 字段必须是纯英文，适合 AI 生图，必须包含：发型、服装细节、动作/姿势、场景、光影氛围
 
-⚠️ 生成 schedule 时先执行双保障第 1 层：对照近 3 天完整日程动作，禁止相同或同义动作/任务主线，再开始写今天的条目。\n⚠️ schedule 是 WebUI 展示用，必须用中文，必须有 6-8 条，严格使用 \\n 分隔，每行一条，格式为「HH:mm 中文活动描述」：
+⚠️ 生成 schedule 时先参考近 3 天完整日程动作，尽量避开相同或同义动作/任务主线，主动提高今天的多样性。\n⚠️ schedule 是 WebUI 展示用，必须用中文，必须有 6-8 条，严格使用 \\n 分隔，每行一条，格式为「HH:mm 中文活动描述」：
    下面示例只展示格式，不要照抄活动内容：
    "08:12 起床整理今天的温柔穿搭\\n10:27 坐在咖啡馆窗边写手账\\n12:43 吃一份清爽午餐\\n14:18 在画室整理灵感草图\\n16:36 去公园散步拍照\\n20:17 回家做一顿简单晚餐\\n22:11 准备晚间直播\\n00:42 做睡前护肤准备休息"
    不要用"早上9点"、"下午2点"等中文时间格式，必须用 HH:mm 数字格式！每行之间必须用 \\n 换行，不要用空格或句号分隔！
@@ -1467,9 +1596,9 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 角色外貌：{str(appearance)[:700]}
 生图安全：{SCHEDULE_IMAGE_SAFETY_RULES}
 小心思口吻：{str(caption_voice)[:220]}
-近 3 天穿搭参考（服装、发型、鞋包和首饰都避免重复）：{str(history)[:1200]}
-具体配饰的颜色+图案+类别不能复用；同义改写仍算重复，例如银色十字星锁骨链与银色星形项链视为同一件配饰。
-【生成时硬约束·双保障第1层】近 3 天完整日程动作如下，生成前必须先读完并自行避开相同/同义动作：{str(schedule_history)[:1800]}
+近 3 天穿搭参考（服装、发型、鞋包和首饰尽量生成不同组合）：{str(history)[:1200]}
+具体配饰优先换颜色、图案或类别；不要只靠同义改写制造差异，例如银色十字星锁骨链与银色星形项链仍是相近搭配。
+{self._schedule_diversity_prompt_block(str(schedule_history)[:1800])}
 历史生图词云（低权重软参考）：{self._schedule_keyword_cloud_prompt_block(limit=2, selection_key=today.isoformat())[:700]}
 收藏偏好（只参考穿搭/发型气质）：{self._favorite_outfit_context(limit=2)[:700]}
 禁止复现的不喜欢穿搭（硬约束）：{disliked_outfits[:1800]}
@@ -1481,7 +1610,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 
 硬性要求：
 0. 严格服从真实日历；休息日/节假日禁止写上班、上学、通勤、办公室会议、考试、作业或加班，调休上班日除外。
-0.1. 双保障第1层：生成时必须先避开近 3 天完整日程里的相同/同义动作与任务主线，只换说法或换时间地点仍算重复。
+0.1. 多样性目标：参考近 3 天日程，尽量避开相同或同义的动作与任务主线，优先增加动作族、场景和精彩锚点；不要只换说法、时间、地点、店铺或物品来制造表面差异。
 0.2. 不得生成与不喜欢记录高度相似的核心单品组合；不能靠改风格名或同义改写绕过。同风格换成明显不同的服装、鞋履、配色/材质/版型可以使用。
 1. outfit_style 必须从可选穿搭风格中选一个。
 2. outfit 必须是中文，包含「风格：」「发型：」「穿搭：」「动作：」「场景：」五段；穿搭写清上装、下装/裙装、鞋子、配饰、颜色、材质/版型。
@@ -1553,10 +1682,10 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 外貌约束：{str(appearance)[:320]}
 生图安全：{SCHEDULE_IMAGE_SAFETY_RULES}
 禁词约束：{self._schedule_forbidden_prompt_block()}
-近 3 天穿搭避重：{str(outfit_history)[:800]}
-配饰的颜色+图案+类别不得与近 3 天相同，同义改写也算重复。
+近 3 天穿搭多样性参考：{str(outfit_history)[:800]}
+配饰优先选择与近 3 天不同的颜色、图案或类别，不要只做同义改写。
 禁止复现的不喜欢穿搭：{disliked_outfits[:1200]}
-【生成时硬约束·双保障第1层】近 3 天完整日程动作，生成前先避重：{str(schedule_history)[:1200]}
+{self._schedule_diversity_prompt_block(str(schedule_history)[:1200])}
 词云低权重软参考：{self._schedule_keyword_cloud_prompt_block(limit=1, selection_key=today.isoformat())[:500]}
 
 {SCHEDULE_SOLO_CAMERA_RULES}
@@ -1566,7 +1695,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 只输出 minified JSON，不要换成数组，不要代码块。
 要求：
 - 严格服从真实日历；休息日/节假日禁止写上班、上学、通勤、办公室会议、考试、作业或加班，调休上班日除外。
-- 双保障第1层：生成时必须避开近 3 天相同/同义日程动作与任务主线；多安排全新地点、道具或兴趣任务。
+- 多样性目标：参考近 3 天日程，尽量避开相同/同义动作与任务主线；优先覆盖不同动作族和场景，并设计一个需要真实参与的精彩锚点。
 - 不得生成与不喜欢记录高度相似的核心单品组合；只改风格名或同义说法仍算重复。同风格的核心服装、鞋履、配色/材质/版型明显不同时可以使用。
 - outfit_style 从可选风格中选。
 - schedule 固定 6 行，时间用 08:12、10:27、12:43、15:42、20:17、22:11，每行中文活动，覆盖早/中/午/晚；不要用整点或 03:00-05:59。
@@ -1931,7 +2060,7 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
         text = " ".join(str(detail.get(field, "")) for field in ("activity_en", "action_en", "scene_en", "props_en", "lighting_en")).lower()
         if not text:
             return ""
-        if 6 <= hour < 17:
+        if 6 <= hour < 19:
             conflict_terms = (
                 " at night",
                 "nighttime",
@@ -1990,7 +2119,7 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
                 continue
             if hour < 12:
                 buckets["上午"].append(label)
-            elif hour < 18:
+            elif hour < 19:
                 buckets["午后"].append(label)
             else:
                 buckets["晚上"].append(label)
@@ -2170,7 +2299,12 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
 【原始任务】
 {original_prompt}
 """
-        repaired_text = await self._call_llm(repair_prompt, timeout=60, json_mode=True)
+        repaired_text = await self._call_llm(
+            repair_prompt,
+            timeout=60,
+            json_mode=True,
+            temperature=0.1,
+        )
         if not repaired_text:
             logger.warning(f"JSON 修复请求返回为空 (attempt {attempt})")
             return None
@@ -2216,7 +2350,6 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
         )
         prompt_sequence = [prompt, compact_prompt, emergency_prompt]
         disliked_rejection_feedback = ""
-        schedule_rejection_feedback = ""
         self._last_llm_model = ""
 
         # 最多重试 3 次
@@ -2228,18 +2361,16 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
                     + disliked_rejection_feedback
                     + "\n这次必须重新设计核心单品组合。"
                 )
-            if schedule_rejection_feedback:
-                current_prompt += (
-                    "\n\n【上一候选日程未通过双保障校验】\n"
-                    + schedule_rejection_feedback
-                    + "\n请重新阅读近 3 天完整日程动作后重写：今天禁止相同或同义的动作/任务主线，"
-                    "不能只换时间或地点词；同时修正任何结构问题。"
-                )
             if attempt == 1:
                 logger.warning("完整日程 prompt 未生成可用 JSON，切换压缩日程 prompt 重试")
             elif attempt == 2:
                 logger.warning("压缩日程 prompt 未生成可用 JSON，切换极简日程 prompt 重试")
-            text = await self._call_llm(current_prompt, timeout=180, json_mode=True)
+            text = await self._call_llm(
+                current_prompt,
+                timeout=180,
+                json_mode=True,
+                temperature=self._llm_config.get("schedule_temperature", 0.8),
+            )
             if not text:
                 logger.warning(f"LLM 返回为空 (attempt {attempt+1})")
                 continue
@@ -2286,15 +2417,17 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             if alignment_error:
                 logger.warning(f"日程/生图日程结构不合格 (attempt {attempt+1}): {alignment_error}")
                 continue
-            diversity_error = self._schedule_diversity_error(
+            diversity_note = self._schedule_diversity_error(
                 display_items,
                 recent_counts,
                 recent_actions=recent_actions,
             )
-            if diversity_error:
-                schedule_rejection_feedback = diversity_error
-                logger.warning("日程避重双保障未通过 (attempt %s): %s", attempt + 1, diversity_error)
-                continue
+            if diversity_note:
+                logger.info(
+                    "日程多样性建议（不拦截） (attempt %s): %s",
+                    attempt + 1,
+                    diversity_note,
+                )
             missing_display = self._missing_required_periods(schedule_display)
             missing_prompt = self._missing_required_periods(schedule_prompt)
             if missing_display or missing_prompt:
@@ -2315,12 +2448,11 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
                 recent_accessories,
             )
             if accessory_repeat_error:
-                logger.warning(
-                    "穿搭配饰触发近 3 天避重 (attempt %s): %s",
+                logger.info(
+                    "穿搭配饰多样性建议（不拦截） (attempt %s): %s",
                     attempt + 1,
                     accessory_repeat_error,
                 )
-                continue
             schedule_details, detail_error = self._normalize_schedule_details(
                 data.get("schedule_details"),
                 display_items,

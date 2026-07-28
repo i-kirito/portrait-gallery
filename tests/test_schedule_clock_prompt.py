@@ -1,5 +1,7 @@
 import re
+import json
 import sys
+import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +16,8 @@ sys.path.insert(0, str(ZHUZHU_DIR))
 
 import core as zhuzhu_core  # noqa: E402
 import generate as unified_generate  # noqa: E402
+from scheduler import DailyScheduler  # noqa: E402
+from web_server import GalleryServer  # noqa: E402
 from generate import _apply_schedule_clock_render_guard, _schedule_time_constraint  # noqa: E402
 
 
@@ -70,6 +74,37 @@ class ScheduleClockPromptTest(unittest.TestCase):
         self.assertIn("natural daylight", constraint)
         self.assertNotIn("09:24", constraint)
         self.assertIsNone(re.search(r"\b\d{1,2}:\d{2}\b", constraint))
+
+    def test_18xx_remains_afternoon_across_prompt_and_schedule_validation(self):
+        constraint = _schedule_time_constraint("18:42 在公园散步")
+
+        self.assertIn("afternoon", constraint)
+        self.assertNotIn("early evening", constraint)
+        self.assertIn("Forbidden time-of-day mismatch: night, evening", constraint)
+        self.assertTrue(unified_generate._detail_time_is_daylight("18:59"))
+        self.assertTrue(
+            DailyScheduler._schedule_detail_time_conflict(
+                "18:42",
+                {"scene_en": "walking under street lamps in the evening"},
+            )
+        )
+
+    def test_18xx_uses_noon_theme_and_afternoon_ui_period(self):
+        self.assertEqual("noon", GalleryServer._theme_for_schedule_time("18:59"))
+        self.assertEqual("evening", GalleryServer._theme_for_schedule_time("19:00"))
+
+        html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("hour >= 14 && hour < 19", html)
+        self.assertIn("hour >= 19 && hour < 24", html)
+
+    def test_schedule_caption_does_not_call_18xx_evening(self):
+        caption = GalleryServer._build_schedule_plan_caption([
+            {"time": "18:42", "activity": "在公园散步"},
+            {"time": "19:20", "activity": "回家阅读"},
+        ])
+
+        self.assertIn("午后在公园散步", caption)
+        self.assertIn("晚上回家阅读", caption)
 
     def test_clock_guard_removes_only_the_schedule_time_and_forbids_rendering(self):
         guarded = _apply_schedule_clock_render_guard(
@@ -300,6 +335,71 @@ class ScheduleClockPromptTest(unittest.TestCase):
             )
 
         self.assertEqual("12:36 在书店阅读", next_activity)
+
+    def test_schedule_date_selects_previous_day_context_style_and_gallery_date(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            schedule_path = Path(tmpdir) / "schedule_data.json"
+            schedule_path.write_text(
+                json.dumps({
+                    "2026-07-14": {
+                        "date": "2026-07-14",
+                        "status": "ok",
+                        "schedule": "00:30 昨日尾部活动",
+                        "schedule_prompt": "00:30 Yesterday tail activity",
+                        "outfit_style": "昨日风格",
+                        "outfit": "风格：昨日风格 穿搭：昨日外套",
+                        "outfit_keywords": "previous-day jacket",
+                        "photo_style_en": "previous-day documentary style",
+                    },
+                    "2026-07-15": {
+                        "date": "2026-07-15",
+                        "status": "ok",
+                        "schedule": "00:30 今日尾部活动",
+                        "outfit_style": "今日风格",
+                        "outfit": "风格：今日风格 穿搭：今日外套",
+                        "outfit_keywords": "current-day jacket",
+                        "photo_style_en": "current-day studio style",
+                    },
+                }, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            with patch.object(unified_generate, "_SCHEDULE_PATH", str(schedule_path)):
+                context = unified_generate._get_schedule_context(
+                    "bedtime",
+                    "00:30 昨日尾部活动",
+                    schedule_date="2026-07-14",
+                )
+                self.assertIn("Yesterday tail activity", context[0])
+                self.assertEqual("previous-day jacket", context[2])
+                self.assertEqual(
+                    "昨日风格",
+                    unified_generate._get_today_outfit_style_name("2026-07-14"),
+                )
+
+                with patch.object(
+                    unified_generate,
+                    "generate_with_gptimage",
+                    return_value="/tmp/generated.png",
+                ) as generate_image, patch.object(
+                    zhuzhu_core,
+                    "sync_to_gallery",
+                ) as sync_gallery:
+                    result = unified_generate.generate(
+                        "bedtime",
+                        "gptimage",
+                        source="cron",
+                        schedule_time="00:30 昨日尾部活动",
+                        schedule_date="2026-07-14",
+                        no_auto_style=True,
+                    )
+
+            self.assertEqual("/tmp/generated.png", result)
+            final_prompt = generate_image.call_args.kwargs["prompt_override"]
+            self.assertIn("previous-day documentary style", final_prompt)
+            self.assertNotIn("current-day studio style", final_prompt)
+            self.assertEqual("2026-07-14", sync_gallery.call_args.kwargs["schedule_date"])
+            self.assertEqual("昨日风格", sync_gallery.call_args.kwargs["outfit_style"])
 
 
     def test_english_instruction_caption_is_rejected(self):

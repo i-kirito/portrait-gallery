@@ -1,9 +1,11 @@
+import asyncio
 import json
 import sys
 import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
@@ -48,6 +50,86 @@ class ScheduleDiversityTest(unittest.TestCase):
             self.assertNotIn("hand in hand", prompt)
             self.assertNotIn("schedule_details.action_en", prompt)
 
+    def test_all_schedule_prompt_variants_ask_for_semantic_variety_without_blocking(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = self.make_scheduler(tmpdir)
+            today = date(2026, 7, 27)
+            history = (
+                "[2026-07-26]\n"
+                "08:22 在阳台给绿植浇水并擦拭花盆\n"
+                "12:48 到社区公园树荫下读小说\n"
+                "19:46 在厨房煮番茄意面"
+            )
+            prompts = (
+                scheduler._build_schedule_prompt(today, "（无）", history, ""),
+                scheduler._build_compact_schedule_prompt(today, "（无）", history, ""),
+                scheduler._build_emergency_schedule_prompt(today, history, "（无）", ""),
+            )
+
+        for prompt in prompts:
+            self.assertIn("先把近 3 天每条日程归纳", prompt)
+            self.assertIn("精彩锚点", prompt)
+            self.assertIn("尽量让 6-8 条日程覆盖多种实质不同的动作族和场景", prompt)
+            self.assertIn("逛多个商店", prompt)
+            self.assertIn("最终自检", prompt)
+            self.assertIn("这些是生成质量目标，不是生成后的拒绝条件", prompt)
+            self.assertNotIn("生成时硬约束", prompt)
+            self.assertNotIn("双保障", prompt)
+
+    def test_generation_accepts_diversity_and_accessory_advisories(self):
+        candidate = {
+            "outfit_style": "清新风",
+            "reference_query": "清爽自然的日常穿搭与城市生活氛围",
+            "outfit": (
+                "风格：清新风\n"
+                "发型：低马尾配简洁发夹\n"
+                "穿搭：蓝色棉质衬衫搭配白色直筒长裤和浅色运动鞋。\n"
+                "动作：整理桌面上的活动材料\n"
+                "场景：明亮的社区活动室"
+            ),
+            "schedule": "08:12 在社区活动室整理今天的材料",
+            "schedule_prompt": "08:12 arrange today's materials in a bright community room",
+            "schedule_details": [],
+            "prompt": "adult woman arranging activity materials in a bright community room",
+            "caption": "今天想按自己的节奏完成几件事，也给生活留一点新鲜感。",
+            "photo_style_en": "Natural eye-level lifestyle photography in soft daylight.",
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = self.make_scheduler(tmpdir)
+            call_llm = AsyncMock(return_value=json.dumps(candidate, ensure_ascii=False))
+            with (
+                patch.object(scheduler, "_configured_today", return_value=date(2026, 7, 28)),
+                patch.object(scheduler, "_call_llm", new=call_llm),
+                patch.object(
+                    scheduler,
+                    "_validate_schedule_alignment",
+                    return_value=([("08:12", "在社区活动室整理今天的材料")], [("08:12", "arrange materials")], ""),
+                ),
+                patch.object(scheduler, "_missing_required_periods", return_value=[]),
+                patch.object(scheduler, "_valid_display_outfit", return_value=True),
+                patch.object(scheduler, "_normalize_schedule_details", return_value=([], "")),
+                patch.object(scheduler, "_schedule_forbidden_output_error", return_value=""),
+                patch.object(scheduler, "_disliked_outfit_similarity_error", return_value=""),
+                patch.object(
+                    scheduler,
+                    "_schedule_diversity_error",
+                    return_value="近 3 天任务主线重复",
+                ) as diversity_note,
+                patch.object(
+                    scheduler,
+                    "_outfit_accessory_repeat_error",
+                    return_value="近 3 天已出现相同配饰",
+                ) as accessory_note,
+            ):
+                entry = asyncio.run(scheduler.generate_today())
+
+        self.assertEqual("ok", entry.status)
+        self.assertEqual("2026-07-28", entry.date)
+        self.assertEqual(1, call_llm.await_count)
+        diversity_note.assert_called_once()
+        accessory_note.assert_called_once()
+
     def test_allows_bed_idle_opening_and_multiple_cooking(self):
         """Bed-idle first item and multi cooking are no longer hard post-check limits."""
         scheduler = self.make_scheduler("data")
@@ -73,8 +155,88 @@ class ScheduleDiversityTest(unittest.TestCase):
 
         self.assertEqual("", scheduler._schedule_diversity_error(items))
 
-    def test_post_check_rejects_recent_similar_actions_as_second_guard(self):
-        """Dual guard layer 2: obvious same-action paraphrases must fail post-check."""
+    def test_reports_one_retail_mainline_split_across_many_stores(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            schedule_data = {
+                "2026-07-24": {
+                    "status": "ok",
+                    "schedule": (
+                        "08:27 在书桌前列出今日购物清单\n"
+                        "10:33 乘地铁前往市中心购物广场\n"
+                        "14:45 在女装店试穿夏日新款\n"
+                        "16:27 到家居区挑选收纳用品\n"
+                        "18:52 回家整理新购衣物"
+                    ),
+                },
+            }
+            Path(tmpdir, "schedule_data.json").write_text(
+                json.dumps(schedule_data, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            scheduler = self.make_scheduler(tmpdir)
+            recent_counts = scheduler._recent_schedule_category_counts(date(2026, 7, 25))
+            items = scheduler._schedule_plan_items(
+                "08:34 到楼下咖啡窗口取一杯冰美式\n"
+                "10:19 走进社区二手书店翻找室内设计杂志\n"
+                "12:36 在巷口面馆吃一碗海鲜汤面\n"
+                "14:22 到香氛小店试闻夏日木质调香水\n"
+                "16:08 在文具店挑选新的活页本和中性笔\n"
+                "18:41 到灯具专柜比较几款桌面阅读灯\n"
+                "20:27 回家把新买的文具和灯具摆上书桌\n"
+                "22:15 在床边准备明日直播提纲"
+            )
+
+            error = scheduler._schedule_diversity_error(
+                items,
+                recent_counts=recent_counts,
+            )
+
+            self.assertIn("全天主线过于单一", error)
+            self.assertIn("购物/选购", error)
+            self.assertIn("2026-07-24", error)
+            self.assertIn("精彩锚点", error)
+
+    def test_reports_repeated_secondary_reading_and_note_mainline(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            schedule_data = {
+                "2026-07-26": {
+                    "status": "ok",
+                    "schedule": (
+                        "12:48 在社区公园树荫长椅读轻小说\n"
+                        "23:12 在床头写几句今日心情便签"
+                    ),
+                },
+            }
+            Path(tmpdir, "schedule_data.json").write_text(
+                json.dumps(schedule_data, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            scheduler = self.make_scheduler(tmpdir)
+            recent_counts = scheduler._recent_schedule_category_counts(date(2026, 7, 27))
+            items = scheduler._schedule_plan_items(
+                "08:17 在阳台练习基础瑜伽并记录身体状态\n"
+                "10:38 到区图书馆挑选几本编程与设计书籍\n"
+                "13:22 在轻食餐厅享用时令水果酸奶碗\n"
+                "15:46 在图书馆阅读技术书并做笔记\n"
+                "18:09 到创客空间参加树莓派入门工作坊\n"
+                "20:33 回家煮蔬菜味噌汤配糙米饭\n"
+                "22:18 在书房整理今天的学习笔记"
+            )
+
+            error = scheduler._schedule_diversity_error(
+                items,
+                recent_counts=recent_counts,
+            )
+
+            self.assertTrue(
+                "全天主线过于单一" in error or "近 3 天任务主线重复" in error,
+                error,
+            )
+            self.assertIn("阅读/记录/规划", error)
+            self.assertIn("2026-07-26", error)
+
+    def test_diagnostic_reports_recent_similar_actions(self):
+        """The diagnostic can describe repetition without rejecting generation."""
         with tempfile.TemporaryDirectory() as tmpdir:
             schedule_data = {
                 "2026-07-21": {
@@ -166,7 +328,7 @@ class ScheduleDiversityTest(unittest.TestCase):
                 ),
             )
 
-    def test_prompt_requires_llm_to_judge_three_day_action_dedupe(self):
+    def test_prompt_asks_llm_to_judge_three_day_action_dedupe(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             schedule_data = {
                 "2026-07-21": {
@@ -188,10 +350,11 @@ class ScheduleDiversityTest(unittest.TestCase):
             )
 
             self.assertIn("近 3 天完整日程动作", prompt)
-            self.assertIn("双保障第 1 层", prompt)
+            self.assertIn("多样性参考", prompt)
             self.assertIn("去楼下便利店买气泡水", prompt)
-            self.assertIn("同义改写、换说法、换时间点、换地点词仍算重复", prompt)
-            self.assertIn("生成 schedule 时先执行双保障第 1 层", prompt)
+            self.assertIn("只换说法、时间、地点、店铺或道具不算真正的新活动", prompt)
+            self.assertIn("尽量避开相同或同义动作/任务主线", prompt)
+            self.assertNotIn("双保障", prompt)
 
     def test_history_keeps_accessories_beyond_the_old_sixty_character_cutoff(self):
         with tempfile.TemporaryDirectory() as tmpdir:

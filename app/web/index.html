@@ -6775,6 +6775,43 @@ if (document.readyState === "loading") {
   };
 })();
 
+const IMAGE_OPERATION_TIMEOUT_MS = 31 * 60 * 1000;
+const QUICK_MUTATION_TIMEOUT_MS = 20 * 1000;
+
+async function fetchWithTimeout(input, init = {}, timeoutMs = IMAGE_OPERATION_TIMEOUT_MS, timeoutMessage = '请求超时，请稍后重试') {
+  const duration = Math.max(1, Number(timeoutMs) || IMAGE_OPERATION_TIMEOUT_MS);
+  if (typeof AbortController === 'undefined') {
+    let timeoutId = 0;
+    try {
+      return await Promise.race([
+        fetch(input, init),
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), duration);
+        })
+      ]);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, duration);
+  try {
+    return await fetch(input, Object.assign({}, init, {signal: controller.signal}));
+  } catch (error) {
+    if (timedOut || (error && error.name === 'AbortError')) {
+      throw new Error(timeoutMessage);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 let allEntries = [];
 let todayData = null;  // {date, photos: [...], schedule, outfit_style}
 let galleryNextCursor = "";
@@ -9457,10 +9494,10 @@ async function triggerGenerate() {
   openLiveLogs({ scrollToBottom: true, status: "生图已开始，日志自动刷新中..." });
   
   try {
-    const res = await fetch(`${API}/api/generate-now`, {
+    const res = await fetchWithTimeout(`${API}/api/generate-now`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-    });
+    }, IMAGE_OPERATION_TIMEOUT_MS, '生图请求超时，后台可能仍在处理，请稍后刷新画廊');
     const data = await res.json();
     if (data.error || data.status === "limit_reached") {
       if (data.error === "limit_reached" || data.status === "limit_reached") {
@@ -9516,8 +9553,8 @@ function getPeriodFromTime(timeStr) {
   if (isNaN(hour)) return '上午';
   if (hour >= 6 && hour < 12) return '上午';
   if (hour >= 12 && hour < 14) return '中午';
-  if (hour >= 14 && hour < 18) return '下午';
-  if (hour >= 18 && hour < 24) return '晚上';
+  if (hour >= 14 && hour < 19) return '下午';
+  if (hour >= 19 && hour < 24) return '晚上';
   return '深夜';
 }
 
@@ -11178,14 +11215,14 @@ window.addEventListener("resize", () => {
 	  setImageEditBusy(true);
 	  showToast('已开始后台编辑，可关闭窗口继续浏览');
 	  try {
-	    const response = await fetch(`${API}/api/images/${encodeURIComponent(sourceImage)}/edit`, {
+	    const response = await fetchWithTimeout(`${API}/api/images/${encodeURIComponent(sourceImage)}/edit`, {
 	      method: 'POST',
 	      headers: {'Content-Type':'application/json'},
 	      body: JSON.stringify(Object.assign(
 	        {target:requestedTarget, instruction},
 	        scheduleManuallyChanged ? {schedule_description:scheduleDescription} : {}
 	      ))
-	    });
+	    }, IMAGE_OPERATION_TIMEOUT_MS, '编辑请求超时，后台可能仍在处理，请稍后刷新画廊');
 	    const data = await response.json().catch(() => ({}));
 	    if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
 	    const replacedImage = data.replaced_image_filename || sourceImage;
@@ -11417,11 +11454,11 @@ async function rerollImage(imgId, event, btn, options = {}) {
   setRerollButtonLoading(btn, true);
   showToast("🎲 正在抽一张新图...");
   try {
-    const res = await fetch(`${API}/api/images/${encodeURIComponent(imgId)}/reroll`, {
+    const res = await fetchWithTimeout(`${API}/api/images/${encodeURIComponent(imgId)}/reroll`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({})
-    });
+    }, IMAGE_OPERATION_TIMEOUT_MS, '重抽请求超时，后台可能仍在处理，请稍后刷新画廊');
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.error) {
       showToast("❌ 抽卡失败" + (data.error ? ": " + data.error : ""));
@@ -12340,11 +12377,11 @@ async function submitCustomGen() {
   showToast("🌸 按你的描述开始生成～");
   
   try {
-    const res = await fetch(`${API}/api/generate-custom`, {
+    const res = await fetchWithTimeout(`${API}/api/generate-custom`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify(payload.body)
-    });
+    }, IMAGE_OPERATION_TIMEOUT_MS, '定制生图请求超时，后台可能仍在处理，请稍后刷新画廊');
     const data = await res.json();
     if (data.error) showToast("❌ " + data.error);
     else {
@@ -12374,11 +12411,11 @@ async function quickCustomImg2ImgFromModal(event, btn) {
   }
   showToast("🪄 正在用当前图做参考生成～");
   try {
-    const res = await fetch(`${API}/api/generate-custom`, {
+    const res = await fetchWithTimeout(`${API}/api/generate-custom`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify(payload.body)
-    });
+    }, IMAGE_OPERATION_TIMEOUT_MS, '参考图生图请求超时，后台可能仍在处理，请稍后刷新画廊');
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.error) {
       showToast("❌ " + (data.error || `HTTP ${res.status}`));
@@ -15237,11 +15274,11 @@ async function generateWardrobeImage(btn) {
   const busyTimer = setInterval(updateBusyText, 1000);
   showToast('🧥 正在生成衣架图，通常需要 1-2 分钟...', 6000);
   try {
-    const res = await fetch('/api/favorite-outfits/' + encodeURIComponent(outfitId) + '/wardrobe-image', {
+    const res = await fetchWithTimeout('/api/favorite-outfits/' + encodeURIComponent(outfitId) + '/wardrobe-image', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ aspect: '3:4', resolution: '1k' })
-    });
+    }, IMAGE_OPERATION_TIMEOUT_MS, '衣架图生成请求超时，后台可能仍在处理，请稍后刷新衣柜');
     const data = await res.json().catch(() => ({}));
     if (res.status === 409 && data.error === 'wardrobe_image_generating') {
       showToast('⏳ ' + (data.message || '这套衣架图正在生成中，请稍后刷新。'), 5000);
@@ -15387,11 +15424,11 @@ async function activateWardrobeVersion(item, button) {
   controls.forEach((control) => { control.disabled = true; });
   if (button) button.innerHTML = '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><span>切换中</span>';
   try {
-    const res = await fetch(`/api/favorite-outfits/${encodeURIComponent(outfitId)}/wardrobe-image/versions/${encodeURIComponent(versionId)}/activate`, {
+    const res = await fetchWithTimeout(`/api/favorite-outfits/${encodeURIComponent(outfitId)}/wardrobe-image/versions/${encodeURIComponent(versionId)}/activate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({})
-    });
+    }, QUICK_MUTATION_TIMEOUT_MS, '衣架图版本切换超时，请稍后重试');
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.error) throw new Error(data.message || data.error || (`HTTP ${res.status}`));
     if (data.wardrobe_image && updateWardrobeItemWardrobeImage(outfitId, data.wardrobe_image)) {

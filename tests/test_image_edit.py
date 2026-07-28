@@ -754,6 +754,26 @@ class ImageEditEndpointTest(unittest.IsolatedAsyncioTestCase):
 
 
 class ImageEditFrontendContractTest(unittest.TestCase):
+    def test_long_running_image_actions_have_bounded_frontend_requests(self):
+        html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("async function fetchWithTimeout(", html)
+        self.assertIn("const IMAGE_OPERATION_TIMEOUT_MS = 31 * 60 * 1000;", html)
+        self.assertIn("controller.abort()", html)
+        for function_name, next_marker in (
+            ("async function triggerGenerate()", "// ===== Parse schedule ====="),
+            ("async function submitImageEdit()", "function wardrobeEscapeRegExp"),
+            ("async function rerollImage(", "async function rerollModalImage"),
+            ("async function submitCustomGen()", "async function quickCustomImg2ImgFromModal"),
+            ("async function quickCustomImg2ImgFromModal", "// ===== Load ====="),
+            ("async function generateWardrobeImage", "document.addEventListener('click'"),
+            ("async function activateWardrobeVersion", "async function openWardrobeVersions"),
+        ):
+            with self.subTest(function=function_name):
+                start = html.index(function_name)
+                end = html.index(next_marker, start)
+                self.assertIn("fetchWithTimeout(", html[start:end])
+
     def test_modal_uses_edit_button_and_precision_endpoint(self):
         html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")
 

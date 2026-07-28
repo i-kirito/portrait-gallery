@@ -100,6 +100,27 @@ PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.8 docker com
 curl http://localhost:18889/api/health
 ```
 
+#### 方式四：一键发布新版本
+
+仓库提供 `scripts/release.sh`，可一键完成版本号更新、Git tag、多架构 Docker 镜像推送和 GitHub Release：
+
+```bash
+# 预演（不改文件、不推送）
+./scripts/release.sh 1.3.9 --dry-run --notes $'- fix A\n- feat B'
+
+# 正式发布（工作区需干净）
+./scripts/release.sh 1.3.9 --notes-file /tmp/notes.md
+
+# 或自动 bump patch
+./scripts/release.sh --bump patch --notes $'- bugfix'
+
+# 仅重发当前 VERSION 对应镜像
+./scripts/release.sh --docker-only
+```
+
+默认镜像为 `ikirito9/hermes-portrait-gallery`，builder 为 `portrait-gallery-publisher`，平台 `linux/amd64,linux/arm64`。
+
+
 本地开发仍可使用源码构建：
 
 ```bash

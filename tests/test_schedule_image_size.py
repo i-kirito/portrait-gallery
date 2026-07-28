@@ -1,10 +1,11 @@
+import asyncio
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP_DIR))
@@ -137,7 +138,6 @@ class PhotoJobSizeCommandTest(unittest.IsolatedAsyncioTestCase):
         app.config = {"image_gen": {"metadata_size": "1536x2048"}}
         app._photo_job_schedule_meta = {}
         app._slot_key_for_schedule_time = lambda _value: ("", "", "")
-        app._photo_job_id_for_time = lambda _value: ""
         app._is_photo_quiet_now = lambda: False
         app._today_schedule_entry = lambda: {}
 
@@ -160,6 +160,56 @@ class PhotoJobSizeCommandTest(unittest.IsolatedAsyncioTestCase):
         command = run.call_args.args[0]
         size_index = command.index("--size")
         self.assertEqual("1536x2048", command[size_index + 1])
+
+    async def test_photo_job_pins_command_and_reference_context_to_schedule_date(self):
+        app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+        app.config = {"image_gen": {"metadata_size": "1536x2048"}}
+        app._photo_job_schedule_meta = {}
+        app._failed_photo_jobs = {}
+        app._photo_jobs_inflight = set()
+        app._photo_jobs_inflight_started = {}
+        app._inflight_lock = asyncio.Lock()
+        app._slot_key_for_schedule_time = (
+            lambda value, schedule_date="": (
+                f"{schedule_date} 00:30",
+                "00:30",
+                "昨日尾部活动",
+            )
+        )
+        app._is_photo_quiet_now = lambda: False
+        app._is_photo_quiet_time = lambda *_args: False
+        app._is_exact_hour_time = lambda *_args: False
+        app._check_photo_exists_for_slot = lambda *_args: False
+        app._photo_quota_snapshot = lambda *_args, **_kwargs: (4, 0, 0, 0, 0, 0, 4)
+        app._today_schedule_entry = Mock(return_value={
+            "outfit_style": "昨日穿搭",
+            "schedule": "00:30 昨日尾部活动",
+        })
+        app._select_reference_for_generation = AsyncMock(return_value={})
+        app.image_gen = SimpleNamespace(
+            python_executable=sys.executable,
+            generate_script="/tmp/generate.py",
+            script_dir="/tmp",
+            build_env=lambda: {},
+        )
+        completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch.object(main_module.subprocess, "run", return_value=completed) as run:
+            result = await app.photo_job(
+                "bedtime",
+                "00:30 昨日尾部活动",
+                schedule_date="2026-07-14",
+                scheduled_job_id="photo_dynamic_20260714_0_30",
+            )
+
+        self.assertTrue(result)
+        command = run.call_args.args[0]
+        date_index = command.index("--schedule-date")
+        self.assertEqual("2026-07-14", command[date_index + 1])
+        app._today_schedule_entry.assert_called_once_with("2026-07-14")
+        reference_context = app._select_reference_for_generation.await_args.args[0]
+        self.assertEqual("昨日穿搭", reference_context["outfit_style"])
+        self.assertEqual("00:30 昨日尾部活动", reference_context["schedule"])
 
 
 if __name__ == "__main__":

@@ -2993,9 +2993,34 @@ class GalleryServer:
             try:
                 self._update_favorite_outfits(_apply)
             except Exception as e:
-                if archived_current:
-                    delete_image_versions(self.data_dir, [archived_current])
                 logger.error("Save wardrobe version switch failed: %s", e)
+                # Roll back the already-switched file so disk matches the unchanged JSON.
+                if archived_current:
+                    previous_path = image_version_path(self.data_dir, archived_current)
+                    try:
+                        if not previous_path or not previous_path.is_file():
+                            raise FileNotFoundError("archived_current_missing")
+                        await loop.run_in_executor(
+                            None,
+                            lambda: replace_image_from_version(previous_path, target_path),
+                        )
+                    except Exception as rollback_error:
+                        # Keep the archive copy: it is the only pre-switch content left.
+                        logger.error(
+                            "Rollback wardrobe switch failed, pre-switch copy kept at %s: %s",
+                            previous_path,
+                            rollback_error,
+                        )
+                    else:
+                        delete_image_versions(self.data_dir, [archived_current])
+                else:
+                    # No current file existed before the switch; drop the new one.
+                    try:
+                        os.remove(target_path)
+                    except FileNotFoundError:
+                        pass
+                    except OSError as rollback_error:
+                        logger.error("Rollback new wardrobe file failed: %s", rollback_error)
                 return web.json_response({"error": "save_failed", "message": str(e)}, status=500)
 
             # Remove restored archive file after successful activation.
@@ -4309,6 +4334,98 @@ class GalleryServer:
             raise ValueError("更新源包含非法字符")
         return remote_ref
 
+    def _rollback_safe_update(
+        self,
+        project_root: Path,
+        env: dict[str, str],
+        original_head: str,
+        changed_files: list[str],
+        tracked_before: list[str],
+        absent_before: list[str],
+    ) -> list[str]:
+        """Restore HEAD, index, and update-owned worktree paths after a failure."""
+        errors = []
+        current_head = self._git_run(["rev-parse", "HEAD"], project_root, env)
+        if current_head.returncode != 0:
+            errors.append(
+                "读取回滚前 HEAD 失败: "
+                + (current_head.stderr.strip() or current_head.stdout.strip() or "unknown")
+            )
+        elif current_head.stdout.strip() != original_head:
+            restore_head = self._git_run(
+                ["update-ref", "HEAD", original_head],
+                project_root,
+                env,
+            )
+            if restore_head.returncode != 0:
+                errors.append(
+                    "恢复 HEAD 失败: "
+                    + (restore_head.stderr.strip() or restore_head.stdout.strip() or "unknown")
+                )
+
+        if changed_files:
+            restore_index = self._git_run(
+                ["reset", original_head, "--", *changed_files],
+                project_root,
+                env,
+            )
+            if restore_index.returncode != 0:
+                errors.append(
+                    "恢复索引失败: "
+                    + (restore_index.stderr.strip() or restore_index.stdout.strip() or "unknown")
+                )
+        if tracked_before:
+            restore_worktree = self._git_run(
+                ["checkout", original_head, "--", *tracked_before],
+                project_root,
+                env,
+                timeout=90,
+            )
+            if restore_worktree.returncode != 0:
+                errors.append(
+                    "恢复代码文件失败: "
+                    + (
+                        restore_worktree.stderr.strip()
+                        or restore_worktree.stdout.strip()
+                        or "unknown"
+                    )
+                )
+
+        root = project_root.resolve()
+        for path in absent_before:
+            candidate = (project_root / path).resolve()
+            try:
+                candidate.relative_to(root)
+            except ValueError:
+                errors.append(f"拒绝清理仓库外路径: {path}")
+                continue
+            try:
+                if candidate.is_symlink() or candidate.is_file():
+                    candidate.unlink()
+                elif candidate.exists():
+                    errors.append(f"回滚新增路径不是普通文件: {path}")
+            except OSError as exc:
+                errors.append(f"清理升级新增文件失败: {path}: {exc}")
+        return errors
+
+    @staticmethod
+    def _safe_update_failure_payload(
+        response: dict,
+        message: str,
+        rollback_errors: list[str],
+    ) -> tuple[dict, int]:
+        rollback_ok = not rollback_errors
+        return {
+            **response,
+            "status": "error",
+            "error": "safe_update_failed",
+            "message": message,
+            "will_restart": False,
+            "safe_update": False,
+            "rolled_back": rollback_ok,
+            "rollback_errors": rollback_errors,
+        }, 500
+
     @staticmethod
     def _body_bool(body: dict, key: str, default: bool = False) -> bool:
         if not isinstance(body, dict) or key not in body:
@@ -5028,7 +5145,7 @@ class GalleryServer:
                 continue
             if hour < 12:
                 buckets["上午"].append(label)
-            elif hour < 18:
+            elif hour < 19:
                 buckets["午后"].append(label)
             else:
                 buckets["晚上"].append(label)
@@ -9735,6 +9852,11 @@ class GalleryServer:
                 "fitted knit top, high-waisted skirt, small shoulder bag, earrings",
             )
         if has(("街", "散步", "路灯", "公园", "出门", "逛", "夜市", "外出")):
+            if hour < 19:
+                return (
+                    "taking a relaxed walk outside in natural afternoon daylight, gentle candid pose near a sidewalk or park path, light breeze, lively everyday urban atmosphere",
+                    "fitted knit top, high-waisted skirt, light cardigan, small shoulder bag",
+                )
             return (
                 "taking a relaxed walk outside under city lights, gentle candid pose near a sidewalk or park path, soft evening breeze, lively but romantic urban atmosphere",
                 "elegant satin slip dress, sheer lace cardigan, delicate necklace, low heels",
@@ -9744,7 +9866,7 @@ class GalleryServer:
                 "doing a quiet morning routine at home in soft window light, natural relaxed pose, tidy room and mirror nearby, calm start-of-day atmosphere",
                 "cream knit cardigan, white camisole top, light pleated skirt, mary jane shoes",
             )
-        if hour < 18:
+        if hour < 19:
             return (
                 "spending a relaxed daytime moment indoors with soft sunlight, natural candid pose, small personal items nearby, clean cozy everyday atmosphere",
                 "fitted crop top, high-waisted wide-leg trousers, simple earrings",
@@ -9814,7 +9936,7 @@ class GalleryServer:
             activity = nearest_activity or "在晨光里整理今天的穿搭"
             prompt = "arranging today's outfit in soft morning light, relaxed natural pose, tidy bedroom mirror, warm calm atmosphere"
             outfit = "cream knit cardigan, white camisole top, light blue pleated skirt, beige mary jane shoes"
-        elif hour < 18:
+        elif hour < 19:
             activity = nearest_activity or "在午后阳光里享受轻松日常"
             prompt = "enjoying a relaxed afternoon moment, casual natural pose, bright cafe or city street setting, clean daylight atmosphere"
             outfit = "fitted crop top, high-waisted wide-leg trousers, small shoulder bag, simple earrings"
@@ -10239,7 +10361,7 @@ JSON 格式：
             return "bedtime"
         if hour < 12:
             return "morning"
-        if hour < 18:
+        if hour < 19:
             return "noon"
         if hour <= 20:
             return "evening"
@@ -10664,6 +10786,48 @@ JSON 格式：
             logger.error(f"Custom generate error: {e}")
             return web.json_response({"error": str(e)}, status=500)
 
+    def _delete_cleanup_candidate(self, filename: str, errors: list) -> Optional[int]:
+        """Delete one cleanup candidate's file, entry, metadata, and versions.
+
+        Caller must hold that image's mutation lock so this stays atomic with
+        respect to reroll/edit/version-switch/delete on the same image.
+        Returns the number of archived version files removed, or None when the
+        image file could not be fully removed (nothing else is touched then).
+        """
+        _, delete_errors = self._delete_image_files(filename)
+        if delete_errors:
+            errors.extend(delete_errors)
+            if self._image_exists(filename):
+                return None
+
+        version_records = []
+
+        def _remove_entry(all_data):
+            for key, entry in list(all_data.items()):
+                if key == filename or (
+                    isinstance(entry, dict) and entry.get("image_filename") == filename
+                ):
+                    if isinstance(entry, dict):
+                        version_records.extend(
+                            normalize_image_versions(entry.get("image_versions"))
+                        )
+                    del all_data[key]
+            return all_data
+
+        ScheduleStore(self.data_dir).update(_remove_entry)
+
+        def _remove_metadata(metadata):
+            metadata.pop(filename, None)
+            return metadata
+
+        ImageMetadataStore(self.data_dir).update(_remove_metadata)
+        deleted_version_count, version_errors = delete_image_versions(
+            self.data_dir,
+            version_records,
+        )
+        errors.extend(version_errors)
+        return deleted_version_count
+
     async def handle_cleanup_images(self, request: web.Request):
         """Preview or delete old non-favorite gallery images."""
         try:
@@ -10684,51 +10848,32 @@ JSON 格式：
                 })
 
             deleted_filenames = []
+            skipped_locked = []
             errors = []
+            deleted_version_count = 0
+
             for item in candidates:
                 filename = item["filename"]
-                _, delete_errors = self._delete_image_files(filename)
-                if delete_errors:
-                    errors.extend(delete_errors)
-                    if self._image_exists(filename):
+                lock = self._reserve_image_mutation_lock(filename)
+                acquired = False
+                try:
+                    try:
+                        # Cleanup must never queue behind a live reroll/edit/
+                        # version-switch/delete; skip a busy image instead of
+                        # stalling the whole batch on one locked card.
+                        await asyncio.wait_for(lock.acquire(), timeout=0.1)
+                        acquired = True
+                    except asyncio.TimeoutError:
+                        skipped_locked.append(filename)
                         continue
-                deleted_filenames.append(filename)
-
-            deleted_set = set(deleted_filenames)
-            deleted_version_count = 0
-            if deleted_set:
-                store = ScheduleStore(self.data_dir)
-                version_records = []
-
-                def _remove_deleted_entries(all_data):
-                    for key, entry in list(all_data.items()):
-                        if key in deleted_set:
-                            if isinstance(entry, dict):
-                                version_records.extend(
-                                    normalize_image_versions(entry.get("image_versions"))
-                                )
-                            del all_data[key]
-                            continue
-                        if isinstance(entry, dict) and entry.get("image_filename") in deleted_set:
-                            version_records.extend(
-                                normalize_image_versions(entry.get("image_versions"))
-                            )
-                            del all_data[key]
-                    return all_data
-
-                store.update(_remove_deleted_entries)
-
-                def _remove_deleted_metadata(metadata):
-                    for filename in deleted_set:
-                        metadata.pop(filename, None)
-                    return metadata
-
-                ImageMetadataStore(self.data_dir).update(_remove_deleted_metadata)
-                deleted_version_count, version_errors = delete_image_versions(
-                    self.data_dir,
-                    version_records,
-                )
-                errors.extend(version_errors)
+                    version_count = self._delete_cleanup_candidate(filename, errors)
+                    if version_count is not None:
+                        deleted_filenames.append(filename)
+                        deleted_version_count += version_count
+                finally:
+                    if acquired and lock.locked():
+                        lock.release()
+                    self._release_image_mutation_lock(filename, lock)
 
             return web.json_response({
                 "success": True,
@@ -10737,6 +10882,8 @@ JSON 格式：
                 "deleted_count": len(deleted_filenames),
                 "deleted_version_count": deleted_version_count,
                 "deleted": deleted_filenames,
+                "skipped_locked": skipped_locked,
+                "skipped_locked_count": len(skipped_locked),
                 "errors": errors,
             })
         except ValueError as e:
@@ -10747,15 +10894,41 @@ JSON 格式：
 
     async def handle_delete_image(self, request: web.Request):
         """删除图片和条目"""
-        img_id = request.match_info.get("img_id")
         try:
-            result = self._delete_gallery_image(img_id)
-            return web.json_response({"success": True, **result})
-        except ValueError as e:
-            return web.json_response({"error": str(e) or "invalid_filename"}, status=400)
-        except Exception as e:
-            logger.error(f"Delete image error: {e}")
-            return web.json_response({"error": str(e)}, status=500)
+            img_id = self._normalize_gallery_image_filename(
+                request.match_info.get("img_id", "")
+            )
+        except ValueError:
+            return web.json_response({"error": "invalid_filename"}, status=400)
+        lock = self._reserve_image_mutation_lock(img_id)
+        acquired = False
+        try:
+            try:
+                # Delete must not sit behind a multi-minute reroll/edit.
+                # Fail fast so the UI does not spin forever on "删除中".
+                await asyncio.wait_for(lock.acquire(), timeout=1.5)
+                acquired = True
+            except asyncio.TimeoutError:
+                return web.json_response(
+                    {
+                        "error": "image_mutation_in_progress",
+                        "message": "当前图片正在重抽或编辑，请稍后再删除",
+                    },
+                    status=409,
+                )
+            try:
+                result = self._delete_gallery_image(img_id)
+                return web.json_response({"success": True, **result})
+            except ValueError as e:
+                return web.json_response({"error": str(e) or "invalid_filename"}, status=400)
+            except Exception as e:
+                logger.error(f"Delete image error: {e}")
+                return web.json_response({"error": str(e)}, status=500)
+            finally:
+                if acquired and lock.locked():
+                    lock.release()
+        finally:
+            self._release_image_mutation_lock(img_id, lock)
 
     async def handle_reroll_image(self, request: web.Request):
         """Generate a fresh image from an existing gallery card."""
@@ -11342,14 +11515,74 @@ JSON 格式：
                 "will_restart": False,
                 "safe_update": False,
             }, 409
+
+        tracked_before = []
+        absent_before = []
+        if changed_files:
+            tracked_result = self._git_run(
+                ["ls-tree", "-r", "--name-only", current_head_ref, "--", *changed_files],
+                project_root,
+                env,
+            )
+            if tracked_result.returncode != 0:
+                detail = tracked_result.stderr.strip() or tracked_result.stdout.strip()
+                return {
+                    **response,
+                    "status": "error",
+                    "error": "safe_update_snapshot_failed",
+                    "message": f"升级前快照失败: {detail or 'git ls-tree failed'}",
+                    "will_restart": False,
+                    "safe_update": False,
+                }, 500
+            tracked_before = [
+                line.strip()
+                for line in tracked_result.stdout.splitlines()
+                if line.strip()
+            ]
+            tracked_set = set(tracked_before)
+            collisions = []
+            for path in changed_files:
+                if path in tracked_set:
+                    continue
+                if os.path.lexists(project_root / path):
+                    collisions.append(path)
+                else:
+                    absent_before.append(path)
+            if collisions:
+                return {
+                    **response,
+                    "status": "conflict",
+                    "error": "update_path_collision",
+                    "message": "远端新增文件与本地现有路径冲突，已停止升级，未覆盖任何文件。",
+                    "conflicting_files": sorted(collisions),
+                    "will_restart": False,
+                    "safe_update": False,
+                }, 409
+
+        def _rollback_failure(label: str, result) -> tuple[dict, int]:
+            detail = result.stderr.strip() or result.stdout.strip() or "unknown"
+            rollback_errors = self._rollback_safe_update(
+                project_root,
+                env,
+                current_head_ref,
+                changed_files,
+                tracked_before,
+                absent_before,
+            )
+            return self._safe_update_failure_payload(
+                response,
+                f"{label}: {detail}",
+                rollback_errors,
+            )
+
         if checkout_files:
             result = self._git_run(["checkout", remote_ref, "--", *checkout_files], project_root, env, timeout=90)
             if result.returncode != 0:
-                return {"error": f"安全更新失败: {result.stderr.strip() or result.stdout.strip()}"}, 500
+                return _rollback_failure("安全更新失败", result)
         if deleted_files:
             result = self._git_run(["rm", "-r", "--ignore-unmatch", "--", *deleted_files], project_root, env, timeout=90)
             if result.returncode != 0:
-                return {"error": f"安全更新删除旧文件失败: {result.stderr.strip() or result.stdout.strip()}"}, 500
+                return _rollback_failure("安全更新删除旧文件失败", result)
 
         move_head = self._git_run(
             ["update-ref", "HEAD", remote_ref, current_head_ref],
@@ -11357,7 +11590,7 @@ JSON 格式：
             env,
         )
         if move_head.returncode != 0:
-            return {"error": f"更新 Git 基线失败: {move_head.stderr.strip() or move_head.stdout.strip()}"}, 500
+            return _rollback_failure("更新 Git 基线失败", move_head)
         reset_paths = sorted(set(plan.get("all_changed_files") or []))
         if reset_paths:
             reset_index = self._git_run(
@@ -11366,9 +11599,7 @@ JSON 格式：
                 env,
             )
             if reset_index.returncode != 0:
-                return {
-                    "error": f"刷新 Git 索引失败: {reset_index.stderr.strip() or reset_index.stdout.strip()}"
-                }, 500
+                return _rollback_failure("刷新 Git 索引失败", reset_index)
 
         response["message"] = "更新成功，服务即将重启；本地 API Key、Base URL、appearance、图片和参考图已保留"
         if restart:

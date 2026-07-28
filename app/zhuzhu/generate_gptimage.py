@@ -63,6 +63,7 @@ IMG2IMG_QUALITY = get_image_int("img2img_quality", 92, 1, 100)
 _IMAGES_API_UNSUPPORTED_BASES: set[str] = set()
 _LAST_TERMINAL_IMAGE_FAILURE = ""
 _LAST_IMAGE_FAILURE_KIND = ""
+_LAST_SUCCESSFUL_IMAGE_ENDPOINT = ""
 
 
 def _configured_image_base_url(url: str) -> str:
@@ -302,6 +303,13 @@ def _images_api_failure_kind(
     text_blob = f"{body or ''} {exc or ''}".lower()
     if exc is not None and isinstance(exc, (requests.Timeout, TimeoutError)):
         return "timeout"
+    if (
+        exc is not None
+        and isinstance(exc, (FileNotFoundError, PermissionError))
+    ) or "reference image is not readable:" in text_blob:
+        return "reference_unavailable"
+    if exc is not None and isinstance(exc, (requests.ConnectionError, ConnectionError)):
+        return "connection"
     if "timed out" in text_blob or "timeout" in text_blob or "read timed out" in text_blob:
         return "timeout"
     if (
@@ -316,6 +324,13 @@ def _images_api_failure_kind(
         or "content_policy_violation" in text_blob
     ):
         return "moderation"
+    if (
+        "no available channel" in text_blob
+        or "no available compatible accounts" in text_blob
+        or "无可用渠道" in text_blob
+        or "没有可用的兼容账号" in text_blob
+    ):
+        return "unavailable_channel"
     if status_code in {401, 403}:
         return "auth"
     if status_code:
@@ -348,14 +363,36 @@ def _image_engine_label(model: str = "") -> str:
     return name or "GPT Image"
 
 
-def _gpt_headers(content_type: bool = False) -> dict:
+def _gpt_headers(content_type: bool = False, api_key: Optional[str] = None) -> dict:
     headers = {}
     if content_type:
         headers["Content-Type"] = "application/json"
-    api_key = _get_gpt_key()
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    effective_key = _get_gpt_key() if api_key is None else str(api_key).strip()
+    if effective_key:
+        headers["Authorization"] = f"Bearer {effective_key}"
     return headers
+
+
+def _direct_gpt_image_endpoints() -> list[dict]:
+    """Return ordered endpoints, retaining the legacy single-endpoint config."""
+    endpoints = _load_gpt_image_endpoints()
+    if endpoints:
+        return endpoints
+    base_url = _get_gpt_raw_base_url()
+    if not base_url:
+        return []
+    return [{"base_url": base_url, "api_key": _get_gpt_key()}]
+
+
+def _endpoint_failure_allows_failover(kind: str) -> bool:
+    value = str(kind or "").strip().lower()
+    return value in {
+        "timeout",
+        "connection",
+        "codex_edits_eof",
+        "unavailable_channel",
+        "unsupported_api",
+    } or bool(re.fullmatch(r"http_5\d\d", value))
 
 
 def _image_response_bytes(data: dict) -> Optional[bytes]:
@@ -391,6 +428,7 @@ def _compress_image_for_img2img(
     from PIL import Image
     import io
 
+    _preflight_reference_image(image_path)
     img = Image.open(image_path)
     img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
     if img.mode in ('RGBA', 'P'):
@@ -406,6 +444,7 @@ def _image_bytes_for_edit(image_path: str, max_size: int = IMG2IMG_MAX_SIZE) -> 
     """Resize a reference only when it exceeds the configured identity limit."""
     from PIL import Image
 
+    _preflight_reference_image(image_path)
     img = Image.open(image_path)
     img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
     if img.mode not in ("RGB", "RGBA"):
@@ -413,6 +452,21 @@ def _image_bytes_for_edit(image_path: str, max_size: int = IMG2IMG_MAX_SIZE) -> 
     buffer = io.BytesIO()
     img.save(buffer, format="PNG", optimize=True)
     return buffer.getvalue()
+
+
+def _preflight_reference_image(image_path: str) -> str:
+    """Raise an explicit filesystem error before Pillow parses a reference."""
+    path = str(image_path or "").strip()
+    if not path:
+        raise FileNotFoundError("reference image path is empty")
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"reference image does not exist: {path}")
+    try:
+        with open(path, "rb") as handle:
+            handle.read(1)
+    except OSError as exc:
+        raise OSError(f"reference image is not readable: {path}: {exc}") from exc
+    return path
 
 
 def _request_quality_fields(model: str) -> dict:
@@ -438,9 +492,10 @@ def _reference_expression_guard() -> str:
         "from the current text description, schedule, action, scene, and emotional tone. "
         "Do NOT copy the reference image's facial expression, mouth shape, smile, grin, "
         "tongue, gaze emotion, or facial mood; ignore any strong expression in the reference image. "
-        "Especially do NOT copy pouty lips, duck face, pursed kissy mouth, 嘟嘴, or any exaggerated "
-        "lip push from the reference. Prefer a natural relaxed closed or softly parted mouth that fits "
-        "the scheduled activity, unless the text explicitly requests another expression."
+        "If the reference shows pouty lips, duck face, pursed kissy mouth, 嘟嘴, or exaggerated lip push, "
+        "treat that as reference-only noise and do not carry it into every generated frame. "
+        "Mouth and expression may still be pouty, playful, or sweet when the schedule/text itself asks for it; "
+        "just never default to the reference photo's mouth shape."
     )
 
 
@@ -471,7 +526,7 @@ def _reference_edit_instruction(
         "Treat the reference image's observed facial width, cheek volume, jaw contour, and chin proportions as the neutral baseline rather than an invitation to beautify or exaggerate them. "
         f"{face_shape_guard}"
         "Do NOT copy or reference the hairstyle, hair color, hair accessories, clothing, outfit, pose, body posture, hand gestures, gaze direction, camera angle, framing, background, lighting, mouth expression, or any other non-facial elements from the reference image. "
-        "Do NOT transfer pout / duck-face / 嘟嘴 lip shape from the reference; rebuild mouth naturally for the scene. "
+        "Do NOT transfer the reference photo mouth shape (including pout / duck-face / 嘟嘴 if present); rebuild expression from the text/schedule only. "
         "All non-facial elements must strictly follow the text description. "
         "If the text says the hair must be a specific color or hairstyle, that text is absolute and overrides the reference image completely, even when the reference image shows pink, red, light, or otherwise different hair."
         + _reference_expression_guard()
@@ -539,7 +594,7 @@ def _multi_reference_edit_instruction(
         "Image 1 = immutable base photo. Strictly lock pose, body posture, hand gestures, outfit/clothing layers, accessories already worn, props, scene, background, lighting, camera angle, framing, crop, and composition from Image 1. Do not invent a new pose.",
         "Image 2 (and later face references) = identity/face source only. Transfer facial identity (eyes, brows, nose, lips, facial proportions) onto the person in Image 1.",
         f"{face_shape_guard}If the text requests a specific hair color or bangs (e.g. dusty rose pink hair / wispy air bangs), apply that hair change while still keeping Image 1 pose and outfit locked.".strip(),
-        "Do NOT copy clothing, pose, hands, camera, background, body layout, or facial expression/mouth shape (no pout/duck-face/嘟嘴) from Image 2. Do NOT put a second person in frame. Keep one subject only.",
+        "Do NOT copy clothing, pose, hands, camera, background, body layout, or facial expression/mouth shape from Image 2 (including any pout/duck-face/嘟嘴 only present in the face reference). Expression follows text/schedule, not Image 2. Do NOT put a second person in frame. Keep one subject only.",
         "Change only: face identity + requested hair color/style from text/face refs. Everything else must match Image 1.",
     ]
     return chr(10) + chr(10).join(parts) + _reference_expression_guard()
@@ -552,8 +607,12 @@ def _generate_via_images_api(
     raw_base_url: str,
     precise_edit: bool = False,
     ref_images: Optional[list] = None,
+    api_key: Optional[str] = None,
+    max_attempts: Optional[int] = None,
 ) -> Optional[tuple]:
     """Call OpenAI-compatible /v1/images/generations or /v1/images/edits."""
+    global _LAST_TERMINAL_IMAGE_FAILURE
+
     images_base = _normalize_gpt_images_base_url(raw_base_url)
     engine_label = _image_engine_label()
     if not images_base:
@@ -566,11 +625,13 @@ def _generate_via_images_api(
     agnes_img2img = bool(refs and _is_agnes_model(GPTIMAGE_DIRECT_MODEL))
     endpoint = f"{images_base}/images/generations" if (not refs or agnes_img2img) else f"{images_base}/images/edits"
     endpoint_label = _gpt_endpoint_label(endpoint)
-    headers = _gpt_headers()
+    headers = _gpt_headers(api_key=api_key)
     timeout = IMG2IMG_TIMEOUT if refs else TEXT2IMG_TIMEOUT
     # Dual/multi-ref on Codex edits is often slow-fail (EOF/timeout). Do not burn full retries
     # before face-only fallback; single-ref / text2img keep normal retry budget.
-    max_attempts = 1 if multi_ref else MAX_RETRIES
+    attempt_limit = max(1, int(max_attempts)) if max_attempts is not None else (1 if multi_ref else MAX_RETRIES)
+    if multi_ref:
+        attempt_limit = 1
     start = time.time()
 
     edit_prompt = prompt
@@ -581,7 +642,7 @@ def _generate_via_images_api(
             include_face_shape_guard=NATURAL_FACE_SHAPE_GUARD not in prompt,
         )
 
-    for attempt in range(max_attempts):
+    for attempt in range(attempt_limit):
         try:
             if refs and agnes_img2img:
                 payload = {
@@ -647,6 +708,7 @@ def _generate_via_images_api(
             if resp.status_code != 200:
                 if _looks_like_images_api_unsupported(resp.status_code, resp.text):
                     _mark_images_api_unsupported(raw_base_url)
+                    _note_image_failure_kind("unsupported_api")
                     print(
                         f"{engine_label} Images API unsupported [{endpoint_label}]",
                         file=sys.stderr,
@@ -659,7 +721,7 @@ def _generate_via_images_api(
                 print(
                     f"{engine_label} Images API error {resp.status_code} kind={failure_kind} "
                     f"[{endpoint_label}] refs={len(refs)} "
-                    f"(attempt {attempt + 1}/{max_attempts}): {resp.text[:240]}",
+                    f"(attempt {attempt + 1}/{attempt_limit}): {resp.text[:240]}",
                     file=sys.stderr,
                 )
                 if terminal_reason:
@@ -678,7 +740,7 @@ def _generate_via_images_api(
                         file=sys.stderr,
                     )
                     return None
-                if resp.status_code in RETRYABLE_STATUS and attempt < max_attempts - 1:
+                if resp.status_code in RETRYABLE_STATUS and attempt < attempt_limit - 1:
                     time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
                     continue
                 return None
@@ -693,7 +755,7 @@ def _generate_via_images_api(
                 print(
                     f"{engine_label} Images API business error kind={failure_kind} "
                     f"[{endpoint_label}] refs={len(refs)} "
-                    f"(attempt {attempt + 1}/{max_attempts}): {err_body[:240]}",
+                    f"(attempt {attempt + 1}/{attempt_limit}): {err_body[:240]}",
                     file=sys.stderr,
                 )
                 if terminal_reason:
@@ -710,7 +772,7 @@ def _generate_via_images_api(
                         file=sys.stderr,
                     )
                     return None
-                if attempt < max_attempts - 1:
+                if attempt < attempt_limit - 1:
                     time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
                     continue
                 return None
@@ -718,10 +780,10 @@ def _generate_via_images_api(
             if not img_data:
                 print(
                     f"{engine_label} Images API: no image in response [{endpoint_label}] "
-                    f"refs={len(refs)} (attempt {attempt + 1}/{max_attempts}): {resp.text[:240]}",
+                    f"refs={len(refs)} (attempt {attempt + 1}/{attempt_limit}): {resp.text[:240]}",
                     file=sys.stderr,
                 )
-                if attempt < max_attempts - 1:
+                if attempt < attempt_limit - 1:
                     time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
                     continue
                 return None
@@ -731,9 +793,12 @@ def _generate_via_images_api(
             failure_kind = _note_image_failure_kind(_images_api_failure_kind(exc=e))
             print(
                 f"{engine_label} Images API failed kind={failure_kind} [{endpoint_label}] "
-                f"refs={len(refs)} (attempt {attempt + 1}/{max_attempts}): {e}",
+                f"refs={len(refs)} (attempt {attempt + 1}/{attempt_limit}): {e}",
                 file=sys.stderr,
             )
+            if failure_kind == "reference_unavailable":
+                _LAST_TERMINAL_IMAGE_FAILURE = f"GPT Image 参考图不可用: {e}"
+                return None
             if multi_ref and failure_kind in {"timeout", "codex_edits_eof"}:
                 print(
                     f"{engine_label} multi-ref fast-fail kind={failure_kind}; "
@@ -741,7 +806,7 @@ def _generate_via_images_api(
                     file=sys.stderr,
                 )
                 return None
-            if attempt < max_attempts - 1:
+            if attempt < attempt_limit - 1:
                 time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
                 continue
             return None
@@ -753,9 +818,14 @@ def _generate_via_chat_gpt(
     size: Optional[str] = None,
     precise_edit: bool = False,
     ref_images: Optional[list] = None,
+    raw_base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    max_attempts: Optional[int] = None,
 ) -> Optional[tuple]:
     """Call the legacy chat-compatible GPT Image endpoint."""
-    base_url = _get_gpt_base_url()
+    global _LAST_TERMINAL_IMAGE_FAILURE
+
+    base_url = _normalize_gpt_chat_url(raw_base_url) if raw_base_url else _get_gpt_base_url()
     if not base_url:
         print("ERROR: image_gen.gpt_base_url is required", file=sys.stderr)
         return None
@@ -764,7 +834,7 @@ def _generate_via_chat_gpt(
         print("ERROR: image_gen.gpt_model is required", file=sys.stderr)
         return None
 
-    headers = _gpt_headers(content_type=True)
+    headers = _gpt_headers(content_type=True, api_key=api_key)
     refs = _normalize_ref_images(ref_image, ref_images)
 
     if refs:
@@ -784,7 +854,13 @@ def _generate_via_chat_gpt(
                 )
             content.append({"type": "text", "text": prompt + face_instruction})
         except Exception as e:
-            print(f"Failed to compress reference image: {e}", file=sys.stderr)
+            failure_kind = _note_image_failure_kind(_images_api_failure_kind(exc=e))
+            if failure_kind == "reference_unavailable":
+                _LAST_TERMINAL_IMAGE_FAILURE = f"GPT Image 参考图不可用: {e}"
+            print(
+                f"Failed to compress reference image kind={failure_kind}: {e}",
+                file=sys.stderr,
+            )
             return None
     else:
         content = prompt
@@ -801,7 +877,8 @@ def _generate_via_chat_gpt(
     start = time.time()
 
     endpoint_label = _gpt_endpoint_label(base_url)
-    for attempt in range(MAX_RETRIES):
+    attempt_limit = max(1, int(max_attempts)) if max_attempts is not None else MAX_RETRIES
+    for attempt in range(attempt_limit):
         try:
             resp = REQUEST_SESSION.post(
                 base_url,
@@ -814,7 +891,7 @@ def _generate_via_chat_gpt(
                 terminal_reason = _set_terminal_image_failure(resp.status_code, resp.text)
                 print(
                     f"Direct GPT API error {resp.status_code} [{endpoint_label}] "
-                    f"(attempt {attempt + 1}/{MAX_RETRIES}): {resp.text[:200]}",
+                    f"(attempt {attempt + 1}/{attempt_limit}): {resp.text[:200]}",
                     file=sys.stderr,
                 )
                 if terminal_reason:
@@ -823,7 +900,8 @@ def _generate_via_chat_gpt(
                         file=sys.stderr,
                     )
                     return None
-                if resp.status_code in RETRYABLE_STATUS and attempt < MAX_RETRIES - 1:
+                _note_image_failure_kind(_images_api_failure_kind(resp.status_code, resp.text))
+                if resp.status_code in RETRYABLE_STATUS and attempt < attempt_limit - 1:
                     time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
                     continue
                 return None
@@ -839,10 +917,10 @@ def _generate_via_chat_gpt(
                 else:
                     print(
                         f"Direct GPT API: unexpected image_url format "
-                        f"(attempt {attempt + 1}/{MAX_RETRIES}): {str(img_url)[:100]}",
+                        f"(attempt {attempt + 1}/{attempt_limit}): {str(img_url)[:100]}",
                         file=sys.stderr,
                     )
-                    if attempt < MAX_RETRIES - 1:
+                    if attempt < attempt_limit - 1:
                         time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
                         continue
                     return None
@@ -853,7 +931,7 @@ def _generate_via_chat_gpt(
                     terminal_reason = _set_terminal_image_failure(resp.status_code, response_content)
                     print(
                         f"Direct GPT API: no base64 image in response "
-                        f"(attempt {attempt + 1}/{MAX_RETRIES}): {response_content[:300]}",
+                        f"(attempt {attempt + 1}/{attempt_limit}): {response_content[:300]}",
                         file=sys.stderr,
                     )
                     if terminal_reason:
@@ -862,7 +940,7 @@ def _generate_via_chat_gpt(
                             file=sys.stderr,
                         )
                         return None
-                    if attempt < MAX_RETRIES - 1:
+                    if attempt < attempt_limit - 1:
                         time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
                         continue
                     return None
@@ -872,8 +950,12 @@ def _generate_via_chat_gpt(
             return img_data, elapsed
 
         except Exception as e:
-            print(f"Direct GPT API failed [{endpoint_label}] (attempt {attempt + 1}/{MAX_RETRIES}): {e}", file=sys.stderr)
-            if attempt < MAX_RETRIES - 1:
+            failure_kind = _note_image_failure_kind(_images_api_failure_kind(exc=e))
+            print(f"Direct GPT API failed kind={failure_kind} [{endpoint_label}] (attempt {attempt + 1}/{attempt_limit}): {e}", file=sys.stderr)
+            if failure_kind == "reference_unavailable":
+                _LAST_TERMINAL_IMAGE_FAILURE = f"GPT Image 参考图不可用: {e}"
+                return None
+            if attempt < attempt_limit - 1:
                 time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
                 continue
             return None
@@ -896,8 +978,10 @@ def _generate_via_direct_gpt(
     Returns:
         (img_data, elapsed_time) tuple or None on failure
     """
-    raw_base_url = _get_gpt_raw_base_url()
-    if not raw_base_url:
+    global _LAST_IMAGE_FAILURE_KIND, _LAST_SUCCESSFUL_IMAGE_ENDPOINT
+
+    endpoints = _direct_gpt_image_endpoints()
+    if not endpoints:
         print("ERROR: image_gen.gpt_base_url is required", file=sys.stderr)
         return None
     if not GPTIMAGE_DIRECT_MODEL:
@@ -906,53 +990,111 @@ def _generate_via_direct_gpt(
 
     engine_label = _image_engine_label()
     is_agnes = _is_agnes_model(GPTIMAGE_DIRECT_MODEL)
-    if _is_explicit_chat_url(raw_base_url):
-        if precise_edit:
-            return _generate_via_chat_gpt(
-                prompt, ref_image, size, precise_edit=True, ref_images=ref_images
-            )
-        return _generate_via_chat_gpt(prompt, ref_image, size, ref_images=ref_images)
+    per_endpoint_attempts = 1 if len(endpoints) > 1 else None
 
-    images_api_unsupported = _images_api_known_unsupported(raw_base_url)
-    if not images_api_unsupported:
-        result = _generate_via_images_api(
-            prompt,
-            ref_image,
-            size,
-            raw_base_url,
-            precise_edit=precise_edit,
-            ref_images=ref_images,
-        )
-        if result or _is_explicit_images_url(raw_base_url):
+    for endpoint_index, endpoint_config in enumerate(endpoints):
+        raw_base_url = str(endpoint_config.get("base_url") or "").strip()
+        api_key = str(endpoint_config.get("api_key") or "").strip()
+        endpoint_label = endpoint_config.get("label") or _gpt_endpoint_label(raw_base_url)
+        has_next_endpoint = endpoint_index < len(endpoints) - 1
+        _LAST_IMAGE_FAILURE_KIND = ""
+
+        if _is_explicit_chat_url(raw_base_url):
+            result = _generate_via_chat_gpt(
+                prompt,
+                ref_image,
+                size,
+                precise_edit=precise_edit,
+                ref_images=ref_images,
+                raw_base_url=raw_base_url,
+                api_key=api_key,
+                max_attempts=per_endpoint_attempts,
+            )
+            if result:
+                _LAST_SUCCESSFUL_IMAGE_ENDPOINT = str(endpoint_label)
+                return result
+            if _LAST_TERMINAL_IMAGE_FAILURE:
+                return None
+            if has_next_endpoint and _endpoint_failure_allows_failover(_LAST_IMAGE_FAILURE_KIND):
+                print(
+                    f"{engine_label} endpoint [{endpoint_label}] failed kind={_LAST_IMAGE_FAILURE_KIND}; "
+                    "trying next configured endpoint",
+                    file=sys.stderr,
+                )
+                continue
+            return None
+
+        images_api_unsupported = _images_api_known_unsupported(raw_base_url)
+        if images_api_unsupported:
+            _note_image_failure_kind("unsupported_api")
+            result = None
+        else:
+            result = _generate_via_images_api(
+                prompt,
+                ref_image,
+                size,
+                raw_base_url,
+                precise_edit=precise_edit,
+                ref_images=ref_images,
+                api_key=api_key,
+                max_attempts=per_endpoint_attempts,
+            )
+        if result:
+            _LAST_SUCCESSFUL_IMAGE_ENDPOINT = str(endpoint_label)
             return result
         if _LAST_TERMINAL_IMAGE_FAILURE:
             return None
+
         images_api_unsupported = _images_api_known_unsupported(raw_base_url)
+        if has_next_endpoint and _endpoint_failure_allows_failover(_LAST_IMAGE_FAILURE_KIND):
+            print(
+                f"{engine_label} endpoint [{endpoint_label}] failed kind={_LAST_IMAGE_FAILURE_KIND}; "
+                "trying next configured endpoint",
+                file=sys.stderr,
+            )
+            continue
+        if has_next_endpoint:
+            print(
+                f"{engine_label} endpoint [{endpoint_label}] failed kind={_LAST_IMAGE_FAILURE_KIND}; "
+                "failure is not eligible for endpoint failover",
+                file=sys.stderr,
+            )
+            return None
 
-    reason = "unsupported" if images_api_unsupported else "failed"
-    if is_agnes:
-        print(
-            f"{engine_label} Images API {reason}; not retrying chat-compatible GPT Image endpoint",
-            file=sys.stderr,
-        )
-        return None
+        reason = "unsupported" if images_api_unsupported else "failed"
+        if _is_explicit_images_url(raw_base_url):
+            return None
+        if is_agnes:
+            print(
+                f"{engine_label} Images API {reason}; not retrying chat-compatible GPT Image endpoint",
+                file=sys.stderr,
+            )
+            return None
+        if not _gpt_chat_fallback_enabled():
+            print(
+                f"Images API {reason}; chat-compatible GPT Image fallback is disabled",
+                file=sys.stderr,
+            )
+            return None
 
-    if not _gpt_chat_fallback_enabled():
-        print(
-            f"Images API {reason}; chat-compatible GPT Image fallback is disabled",
-            file=sys.stderr,
+        if images_api_unsupported:
+            print("Images API unsupported; using chat-compatible GPT Image endpoint", file=sys.stderr)
+        else:
+            print("Images API failed; retrying chat-compatible GPT Image endpoint", file=sys.stderr)
+        result = _generate_via_chat_gpt(
+            prompt,
+            ref_image,
+            size,
+            precise_edit=precise_edit,
+            ref_images=ref_images,
+            raw_base_url=raw_base_url,
+            api_key=api_key,
         )
-        return None
+        if result:
+            _LAST_SUCCESSFUL_IMAGE_ENDPOINT = str(endpoint_label)
+        return result
 
-    if images_api_unsupported:
-        print("Images API unsupported; using chat-compatible GPT Image endpoint", file=sys.stderr)
-    else:
-        print("Images API failed; retrying chat-compatible GPT Image endpoint", file=sys.stderr)
-    if precise_edit:
-        return _generate_via_chat_gpt(
-            prompt, ref_image, size, precise_edit=True, ref_images=ref_images
-        )
-    return _generate_via_chat_gpt(prompt, ref_image, size, ref_images=ref_images)
+    return None
 
 
 def generate(theme: str, send: bool = False, caption: bool = False,

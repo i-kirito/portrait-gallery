@@ -615,11 +615,12 @@ def _caption_activity(schedule_time: str = "") -> str:
     return text
 
 
-def _next_schedule_activity(schedule_time: str = "") -> str:
+def _next_schedule_activity(schedule_time: str = "", schedule_date: str = "") -> str:
     current = _normalize_schedule_slot_time(schedule_time)
     if not current:
         return ""
-    context = _load_daily_schedule_context(service_today(_GALLERY_CONFIG).isoformat(), schedule_time)
+    date_text = schedule_date or service_today(_GALLERY_CONFIG).isoformat()
+    context = _load_daily_schedule_context(date_text, schedule_time)
     candidates = []
     for line in str(context.get("schedule") or "").splitlines():
         match = re.match(r"^\s*(\d{1,2}):(\d{2})\s+(.+)$", line)
@@ -705,12 +706,12 @@ def _caption_repeats_schedule(caption: str, schedule_time: str = "") -> bool:
     return long_piece_hits >= 2 or any(f"{piece}前后" in text or f"{piece}的时候" in text for piece in pieces)
 
 
-def _personalized_caption_fallback(theme: str, persona: dict, schedule_time: str = "") -> str:
+def _personalized_caption_fallback(theme: str, persona: dict, schedule_time: str = "", schedule_date: str = "") -> str:
     character = persona.get("name") or "角色"
     user_name = persona.get("user_name") or "你"
     activity = _caption_activity(schedule_time)
     if activity:
-        next_activity = _next_schedule_activity(schedule_time)
+        next_activity = _next_schedule_activity(schedule_time, schedule_date)
         activity_key = re.sub(r"\s+", "", activity)
         specific_templates = []
         if any(word in activity_key for word in ("歌会", "唱歌", "情歌", "练歌", "歌曲", "吉他曲", "曲目")):
@@ -1526,8 +1527,15 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
                     outfit_style: str = "", generation_mode: str = "",
                     requested_generation_mode: str = "", ref_image: str = "",
                     requested_ref_image: str = "",
-                    fallback_used: bool = False):
-    """Sync generated image to Docker portrait gallery (18889)."""
+                    fallback_used: bool = False, schedule_date: str = ""):
+    """Sync generated image to Docker portrait gallery (18889).
+
+    `schedule_date` (YYYY-MM-DD) pins the gallery entry to the schedule day the
+    photo belongs to. This matters for overnight tail slots (00:00-01:59) that
+    physically run on the next calendar day but still belong to the previous
+    schedule day's plan/outfit/reference context. Falls back to the current
+    service date when not provided (legacy callers).
+    """
     # 1. Copy image (skip if already in gallery dir)
     os.makedirs(SECRETARY_GALLERY_DIR, exist_ok=True)
     dst = os.path.join(SECRETARY_GALLERY_DIR, filename)
@@ -1535,7 +1543,7 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
         shutil.copy2(path, dst)
 
     # 2. Build entry for schedule_data.json
-    today = service_today(_GALLERY_CONFIG).isoformat()
+    today = schedule_date if re.match(r"^\d{4}-\d{2}-\d{2}$", str(schedule_date or "")) else service_today(_GALLERY_CONFIG).isoformat()
     style_name = (outfit_style or "").strip()
     base_style = style or ""  # cool/girly/sweet or empty
     source_uses_base_style = source in {"chat", "custom", "hermes_api"}
@@ -1781,7 +1789,7 @@ def enhance_prompt(user_input: str, theme: Optional[str] = None) -> str:
 
 
 def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "image/jpeg",
-                  schedule_time: str = "") -> str:
+                  schedule_time: str = "", schedule_date: str = "") -> str:
     theme_hint = {
         "morning": "早上刚起床的慵懒美照",
         "noon": "中午阳光下的外出美照",
@@ -1790,7 +1798,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         "sexy": "带点坏坏氛围的性感美照",
     }
     activity = _caption_activity(schedule_time)
-    next_activity = _next_schedule_activity(schedule_time) if activity else ""
+    next_activity = _next_schedule_activity(schedule_time, schedule_date) if activity else ""
     slot = re.match(r"^(\d{1,2}:\d{2})", str(schedule_time or "").strip())
     scene = (
         f"{slot.group(1)} 的拍照计划：{activity}" if activity and slot
@@ -1871,7 +1879,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         chat_url = get_cpa_chat_url()
         if not api_key or not models or not chat_url:
             print("[caption] llm config missing; using fallback caption", file=sys.stderr)
-            return _personalized_caption_fallback(theme, persona, schedule_time)
+            return _personalized_caption_fallback(theme, persona, schedule_time, schedule_date)
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
         timeout = config_int(_GALLERY_CONFIG, "llm.caption_timeout", 30, 1)
         caption_max_tokens = max(900, min(config_int(_GALLERY_CONFIG, "llm.caption_max_tokens", 900, 1), 1200))
@@ -1938,19 +1946,19 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
     except Exception as e:
         print(f"[caption] llm failed: {e}", file=sys.stderr)
 
-    return _personalized_caption_fallback(theme, persona, schedule_time)
+    return _personalized_caption_fallback(theme, persona, schedule_time, schedule_date)
 
 
-def build_caption_for_image(theme: str, image_path: str, schedule_time: str = "") -> str:
+def build_caption_for_image(theme: str, image_path: str, schedule_time: str = "", schedule_date: str = "") -> str:
     try:
         with open(image_path, "rb") as f:
             img_b64 = base64.b64encode(f.read()).decode("utf-8")
         ext = os.path.splitext(image_path)[1].lower()
         img_mime = "image/png" if ext == ".png" else "image/jpeg"
-        return build_caption(theme, img_b64=img_b64, img_mime=img_mime, schedule_time=schedule_time)
+        return build_caption(theme, img_b64=img_b64, img_mime=img_mime, schedule_time=schedule_time, schedule_date=schedule_date)
     except Exception as e:
         print(f"[caption] image read failed: {e}", file=sys.stderr)
-        return build_caption(theme, schedule_time=schedule_time)
+        return build_caption(theme, schedule_time=schedule_time, schedule_date=schedule_date)
 
 
 def send_photo(path: str, caption: Optional[str] = None):

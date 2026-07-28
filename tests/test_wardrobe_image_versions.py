@@ -140,6 +140,82 @@ class WardrobeImageVersionTests(unittest.TestCase):
         current_name = payload["wardrobe_image"]["filename"]
         self.assertTrue((self.wardrobe_dir / current_name).exists())
 
+    def test_activate_save_failure_rolls_back_switched_file(self) -> None:
+        # Build one archived version by regenerating the hanger image.
+        new_path = self.wardrobe_dir / "wardrobe_abcd1234_new.png"
+        Image.new("RGB", (40, 60), color=(90, 140, 200)).save(new_path)
+
+        def fake_run(*args, **kwargs):
+            return {
+                "filename": new_path.name,
+                "path": str(new_path),
+                "url": f"/local-refs/wardrobe/{new_path.name}",
+                "source": "wardrobe",
+                "model_name": "gpt-image-2",
+                "file_size_bytes": new_path.stat().st_size,
+                "width": 40,
+                "height": 60,
+            }
+
+        with patch.object(self.server, "_run_hermes_image_generation", side_effect=fake_run):
+            asyncio.run(
+                self.server._generate_and_store_favorite_outfit_wardrobe_image(
+                    "abcd1234efgh5678",
+                    prompt="new hanger",
+                    size="1024x1536",
+                    replace_existing=True,
+                )
+            )
+
+        item = self.server._favorite_outfit_by_id("abcd1234efgh5678")
+        records = normalize_image_versions(item.get("wardrobe_image_versions"))
+        version_id = records[0]["id"]
+        resolved = find_image_version(str(self.data_dir), records, version_id)
+        self.assertIsNotNone(resolved)
+        version_path = resolved[1]
+
+        target_path = self.wardrobe_dir / item["wardrobe_image"]["filename"]
+        json_path = self.data_dir / "favorite_outfits.json"
+        archive_dir = self.data_dir / "image_versions"
+        target_bytes_before = target_path.read_bytes()
+        version_bytes_before = version_path.read_bytes()
+        json_bytes_before = json_path.read_bytes()
+        archive_names_before = sorted(p.name for p in archive_dir.iterdir())
+
+        class FakeRequest:
+            def __init__(self, outfit_id, version_id):
+                self.match_info = {"outfit_id": outfit_id, "version_id": version_id}
+
+        with patch.object(
+            self.server, "_update_favorite_outfits", side_effect=OSError("disk full")
+        ):
+            response = asyncio.run(
+                self.server.handle_activate_favorite_outfit_wardrobe_version(
+                    FakeRequest("abcd1234efgh5678", version_id)
+                )
+            )
+
+        self.assertEqual(response.status, 500)
+        self.assertEqual(json.loads(response.text).get("error"), "save_failed")
+        # target file restored byte-for-byte to the pre-switch content
+        self.assertEqual(target_path.read_bytes(), target_bytes_before)
+        # favorites JSON untouched
+        self.assertEqual(json_path.read_bytes(), json_bytes_before)
+        # selected history version file and record remain usable
+        self.assertEqual(version_path.read_bytes(), version_bytes_before)
+        item_after = self.server._favorite_outfit_by_id("abcd1234efgh5678")
+        self.assertIsNotNone(
+            find_image_version(
+                str(self.data_dir),
+                item_after.get("wardrobe_image_versions"),
+                version_id,
+            )
+        )
+        # no orphaned pre-switch archive copies are left behind
+        self.assertEqual(
+            sorted(p.name for p in archive_dir.iterdir()), archive_names_before
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

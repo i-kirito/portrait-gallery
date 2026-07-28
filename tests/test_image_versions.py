@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from aiohttp.test_utils import TestClient, TestServer
 from PIL import Image
@@ -17,7 +18,7 @@ from image_versions import (  # noqa: E402
     normalize_image_versions,
     replace_image_from_version,
 )
-from store import ScheduleStore  # noqa: E402
+from store import ImageMetadataStore, ScheduleStore  # noqa: E402
 from web_server import GalleryServer  # noqa: E402
 
 
@@ -476,6 +477,148 @@ class ImageVersionEndpointTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_version_activation_waits_for_background_reroll(self):
         await self._assert_activation_waits_for_mutation("reroll")
+
+    async def test_delete_image_returns_409_when_mutation_lock_is_busy(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            filename = "locked-for-delete.png"
+            current_path = Path(server.image_dir) / filename
+            Image.new("RGB", (32, 40), (40, 60, 80)).save(current_path)
+            ScheduleStore(server.data_dir).save({
+                "card": {
+                    "id": filename,
+                    "image_filename": filename,
+                    "image_path": f"/images/{filename}",
+                    "status": "ok",
+                },
+            })
+
+            test_server = TestServer(server.app)
+            await test_server.start_server(access_log=None)
+            client = TestClient(test_server)
+            try:
+                with patch.object(
+                    server,
+                    "_delete_gallery_image",
+                    wraps=server._delete_gallery_image,
+                ) as delete_spy:
+                    # Simulate another in-flight mutation already holding the
+                    # per-image lock before the delete request arrives.
+                    lock = server._reserve_image_mutation_lock(filename)
+                    await lock.acquire()
+                    try:
+                        busy_response = await client.delete(f"/api/images/{filename}")
+                        busy_payload = await busy_response.json()
+                    finally:
+                        lock.release()
+                        server._release_image_mutation_lock(filename, lock)
+
+                    # Delete must fail fast with 409 and never touch storage
+                    # while the lock is held.
+                    self.assertEqual(409, busy_response.status)
+                    self.assertEqual(
+                        "image_mutation_in_progress", busy_payload.get("error")
+                    )
+                    delete_spy.assert_not_called()
+                    self.assertTrue(current_path.exists())
+                    store_data = ScheduleStore(server.data_dir).load()
+                    self.assertEqual(
+                        filename, store_data.get("card", {}).get("image_filename")
+                    )
+
+                    # Once the lock is free, the same request succeeds normally.
+                    success_response = await client.delete(f"/api/images/{filename}")
+                    success_payload = await success_response.json()
+                    delete_spy.assert_called_once_with(filename)
+            finally:
+                await client.close()
+
+            self.assertEqual(200, success_response.status)
+            self.assertTrue(success_payload.get("success"))
+            self.assertFalse(current_path.exists())
+            self.assertNotIn(filename, ScheduleStore(server.data_dir).load())
+            # Lock bookkeeping must not leak once every reservation is released.
+            self.assertEqual({}, server._image_mutation_locks)
+            self.assertEqual({}, server._image_mutation_lock_users)
+
+    async def test_cleanup_images_skips_locked_image_and_deletes_unlocked(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            # Embed an old unix timestamp so both images are cleanup candidates
+            # regardless of schedule/metadata timestamps.
+            locked_name = "cleanup-locked_1000000000.png"
+            unlocked_name = "cleanup-unlocked_1000000000.png"
+            locked_path = Path(server.image_dir) / locked_name
+            unlocked_path = Path(server.image_dir) / unlocked_name
+            Image.new("RGB", (24, 24), (10, 20, 30)).save(locked_path)
+            Image.new("RGB", (24, 24), (40, 50, 60)).save(unlocked_path)
+
+            ScheduleStore(server.data_dir).save({
+                locked_name: {
+                    "id": locked_name,
+                    "image_filename": locked_name,
+                    "image_path": f"/images/{locked_name}",
+                    "status": "ok",
+                },
+                unlocked_name: {
+                    "id": unlocked_name,
+                    "image_filename": unlocked_name,
+                    "image_path": f"/images/{unlocked_name}",
+                    "status": "ok",
+                },
+            })
+            ImageMetadataStore(server.data_dir).save({
+                locked_name: {"source": "test"},
+                unlocked_name: {"source": "test"},
+            })
+
+            test_server = TestServer(server.app)
+            await test_server.start_server(access_log=None)
+            client = TestClient(test_server)
+            try:
+                # Simulate another in-flight mutation (reroll/edit/version/delete)
+                # already holding the locked image's per-image lock.
+                lock = server._reserve_image_mutation_lock(locked_name)
+                await lock.acquire()
+                try:
+                    response = await client.post(
+                        "/api/images/cleanup",
+                        json={"dry_run": False, "older_than_days": 1},
+                    )
+                    payload = await response.json()
+                finally:
+                    lock.release()
+                    server._release_image_mutation_lock(locked_name, lock)
+            finally:
+                await client.close()
+
+            self.assertEqual(200, response.status)
+            self.assertTrue(payload.get("success"))
+            self.assertFalse(payload.get("dry_run"))
+            self.assertEqual([unlocked_name], payload.get("deleted"))
+            self.assertEqual(1, payload.get("deleted_count"))
+            self.assertEqual([locked_name], payload.get("skipped_locked"))
+            self.assertEqual(1, payload.get("skipped_locked_count"))
+
+            store_data = ScheduleStore(server.data_dir).load()
+            metadata = ImageMetadataStore(server.data_dir).load()
+
+            # Locked image must be completely untouched: file, schedule entry,
+            # and metadata all remain exactly as before cleanup ran.
+            self.assertTrue(locked_path.exists())
+            self.assertIn(locked_name, store_data)
+            self.assertIn(locked_name, metadata)
+
+            # Unlocked image must be fully removed.
+            self.assertFalse(unlocked_path.exists())
+            self.assertNotIn(unlocked_name, store_data)
+            self.assertNotIn(unlocked_name, metadata)
+
+            # Lock bookkeeping must not leak once every reservation is released.
+            self.assertEqual({}, server._image_mutation_locks)
+            self.assertEqual({}, server._image_mutation_lock_users)
 
 
 if __name__ == "__main__":

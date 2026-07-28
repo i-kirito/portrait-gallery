@@ -26,6 +26,56 @@ class SafeUpdateTest(unittest.IsolatedAsyncioTestCase):
             str(config_path),
         )
 
+    @staticmethod
+    def git(cwd: Path, *args: str) -> str:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=str(cwd),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+
+    def make_transaction_repo(self, base: Path) -> tuple[Path, Path, GalleryServer]:
+        source = base / "source"
+        target = base / "target"
+        (source / "app" / "references").mkdir(parents=True)
+        (source / "app" / "references" / ".keep").write_text("", encoding="utf-8")
+        (source / "config").mkdir()
+        (source / "app" / "main.py").write_text("VERSION = 1\n", encoding="utf-8")
+        (source / "README.md").write_text("release one\n", encoding="utf-8")
+        (source / "notes.txt").write_text("base notes\n", encoding="utf-8")
+        (source / "local.txt").write_text("base local\n", encoding="utf-8")
+        (source / "config" / "config.yaml").write_text("gallery: {}\n", encoding="utf-8")
+        self.git(source, "init", "-b", "main")
+        self.git(source, "config", "user.email", "tests@example.com")
+        self.git(source, "config", "user.name", "Tests")
+        self.git(source, "add", ".")
+        self.git(source, "commit", "-m", "base")
+        subprocess.run(
+            ["git", "clone", str(source), str(target)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        (source / "app" / "main.py").write_text("VERSION = 2\n", encoding="utf-8")
+        (source / "README.md").unlink()
+        (source / "app" / "new.py").write_text("NEW = True\n", encoding="utf-8")
+        self.git(source, "add", "-A")
+        self.git(source, "commit", "-m", "remote transaction update")
+
+        (target / "notes.txt").write_text("locally staged notes\n", encoding="utf-8")
+        self.git(target, "add", "notes.txt")
+        (target / "local.txt").write_text("locally unstaged text\n", encoding="utf-8")
+        server = GalleryServer(
+            {"paths": {"project_root": str(target)}, "gallery": {}},
+            str(target / "data"),
+            str(target / "config" / "config.yaml"),
+        )
+        return source, target, server
+
     async def test_update_stops_before_checkout_when_local_file_conflicts(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -200,6 +250,47 @@ class SafeUpdateTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual("README.md", git(target, "diff", "--cached", "--name-only"))
             self.assertEqual("", git(target, "diff", "--name-only", "--", "README.md"))
             self.assertEqual("VERSION = 2\n", (target / "app" / "main.py").read_text(encoding="utf-8"))
+
+    async def test_safe_update_rolls_back_every_mutating_git_failure(self):
+        for failing_command in ("checkout", "rm", "update-ref", "reset"):
+            with self.subTest(failing_command=failing_command), tempfile.TemporaryDirectory() as tmpdir:
+                _source, target, server = self.make_transaction_repo(Path(tmpdir))
+                original_head = self.git(target, "rev-parse", "HEAD")
+                original_status = self.git(target, "status", "--porcelain=v1")
+                original_git_run = server._git_run
+                injected = False
+
+                def fail_after_mutation(args, cwd, env, timeout=60):
+                    nonlocal injected
+                    result = original_git_run(args, cwd, env, timeout)
+                    if not injected and args and args[0] == failing_command:
+                        injected = True
+                        return subprocess.CompletedProcess(
+                            result.args,
+                            1,
+                            result.stdout,
+                            f"injected {failing_command} failure",
+                        )
+                    return result
+
+                with patch.object(server, "_git_run", side_effect=fail_after_mutation):
+                    payload, status = await server._perform_safe_update(
+                        dry_run=False,
+                        restart=False,
+                    )
+
+                self.assertTrue(injected)
+                self.assertEqual(500, status, payload)
+                self.assertEqual("safe_update_failed", payload.get("error"))
+                self.assertTrue(payload.get("rolled_back"), payload)
+                self.assertEqual([], payload.get("rollback_errors"))
+                self.assertEqual(original_head, self.git(target, "rev-parse", "HEAD"))
+                self.assertEqual(original_status, self.git(target, "status", "--porcelain=v1"))
+                self.assertEqual("VERSION = 1\n", (target / "app" / "main.py").read_text(encoding="utf-8"))
+                self.assertEqual("release one\n", (target / "README.md").read_text(encoding="utf-8"))
+                self.assertFalse((target / "app" / "new.py").exists())
+                self.assertEqual("locally staged notes\n", (target / "notes.txt").read_text(encoding="utf-8"))
+                self.assertEqual("locally unstaged text\n", (target / "local.txt").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

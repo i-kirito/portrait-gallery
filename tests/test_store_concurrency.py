@@ -105,6 +105,30 @@ class StoreConcurrencyTest(unittest.TestCase):
             self.assertEqual("pending", entry.get("delivery_status"))
             self.assertTrue(entry.get("delivery_updated_at"))
 
+    def test_cross_midnight_gallery_sync_persists_schedule_date(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "source.jpg"
+            source.write_bytes(b"image")
+            schedule_path = root / "schedule_data.json"
+
+            with (
+                patch.object(core, "SECRETARY_GALLERY_DIR", str(root / "images")),
+                patch.object(core, "SECRETARY_SCHEDULE_PATH", str(schedule_path)),
+            ):
+                core.sync_to_gallery(
+                    str(source),
+                    "overnight.jpg",
+                    "bedtime",
+                    source="cron",
+                    schedule_time="00:30 昨日尾部活动",
+                    schedule_date="2026-07-14",
+                )
+
+            entry = json.loads(schedule_path.read_text(encoding="utf-8"))["overnight.jpg"]
+            self.assertEqual("2026-07-14", entry["date"])
+            self.assertEqual("00:30 昨日尾部活动", entry["schedule_time"])
+
     def test_gallery_sync_persistence_failure_is_propagated(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

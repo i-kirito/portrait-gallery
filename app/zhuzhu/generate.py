@@ -73,8 +73,8 @@ def _extract_outfit_style_name(outfit_info: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def _get_today_outfit_style_name() -> str:
-    today_str = service_today(_GALLERY_CONFIG).isoformat()
+def _get_today_outfit_style_name(schedule_date: str = "") -> str:
+    today_str = schedule_date or service_today(_GALLERY_CONFIG).isoformat()
     if not os.path.exists(_SCHEDULE_PATH):
         return ""
     try:
@@ -104,14 +104,14 @@ def _get_today_outfit_style_name() -> str:
     return ""
 
 
-def _gallery_outfit_style_for_source(source: str, actual_style: Optional[str]) -> str:
+def _gallery_outfit_style_for_source(source: str, actual_style: Optional[str], schedule_date: str = "") -> str:
     """Return the gallery style label without leaking the daily schedule style into chat/custom images."""
     if (source or "").strip() in {"chat", "custom", "hermes_api"}:
         style = (actual_style or "").strip()
         if style in {"cool", "girly", "sweet"}:
             return "自定义"
         return style
-    return _get_today_outfit_style_name()
+    return _get_today_outfit_style_name(schedule_date)
 
 
 def _gitee_fallback_enabled() -> bool:
@@ -421,14 +421,10 @@ def _schedule_time_constraint(value: str) -> str:
         label = "midday"
         lighting = "bright midday natural daylight"
         forbid = "night, evening, sunset, neon nightlife, or street-lamp-dominated lighting"
-    elif 14 <= hour < 17:
+    elif 14 <= hour < 19:
         label = "afternoon"
         lighting = "afternoon natural daylight"
         forbid = "night, evening, neon nightlife, or street-lamp-dominated lighting"
-    elif 17 <= hour < 19:
-        label = "early evening"
-        lighting = "plausible early-evening dusk or golden-hour light"
-        forbid = "deep night or neon nightlife unless explicitly described"
     elif 19 <= hour < 22:
         label = "evening"
         lighting = "realistic evening ambient light"
@@ -476,7 +472,7 @@ def _detail_time_is_daylight(value: str) -> bool:
     if not time_text:
         return False
     hour = int(time_text.split(":", 1)[0])
-    return 5 <= hour < 17
+    return 5 <= hour < 19
 
 
 def _strip_daylight_conflicts(value: str) -> str:
@@ -635,11 +631,21 @@ def _clean_schedule_detail_override(raw_value: str) -> dict:
     return cleaned
 
 
-def _get_schedule_context(theme: str, schedule_time_override: str = "", schedule_detail_override: Optional[dict] = None) -> tuple:
-    """Read daily schedule and return context, display slot, outfit, scene, and hair details."""
+def _get_schedule_context(
+    theme: str,
+    schedule_time_override: str = "",
+    schedule_detail_override: Optional[dict] = None,
+    schedule_date: str = "",
+) -> tuple:
+    """Read daily schedule and return context, display slot, outfit, scene, and hair details.
+
+    `schedule_date` (YYYY-MM-DD) pins the lookup to the schedule day the photo
+    belongs to, so overnight tail slots (00:00-01:59) still read the correct
+    day's schedule/outfit even though they physically run the next calendar day.
+    """
     if theme not in _THEME_PERIODS or not _THEME_PERIODS[theme]:
         return "", "", "", "", ""
-    today_str = service_today(_GALLERY_CONFIG).isoformat()
+    today_str = schedule_date or service_today(_GALLERY_CONFIG).isoformat()
     data = {}
     if os.path.exists(_SCHEDULE_PATH):
         try:
@@ -770,8 +776,8 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "", schedule
     # Theme → hour ranges
     _THEME_HOURS = {
         "morning": (6, 11),
-        "noon": (12, 17),
-        "evening": (18, 20),
+        "noon": (12, 18),
+        "evening": (19, 20),
         "bedtime": (21, 23),  # 21-23 晚上
         "bedtime_late": (0, 5),  # 0-5 凌晨
     }
@@ -848,6 +854,7 @@ def generate(
     size: Optional[str] = None,
     schedule_time: str = "",
     schedule_detail_json: str = "",
+    schedule_date: str = "",
     prompt_final: bool = False,
     no_auto_style: bool = False,
     precise_edit: bool = False,
@@ -881,6 +888,7 @@ def generate(
         theme,
         schedule_time,
         schedule_detail_override,
+        schedule_date,
     )
     schedule_activity = ""
     if schedule_ctx and theme in DAILY_THEMES and not prompt_final:
@@ -899,7 +907,7 @@ def generate(
             print(f"💇 Using LLM slot hairstyle: {hair_kw[:60]}", file=sys.stderr)
         photo_style_en = ""
         try:
-            today_str = service_today(_GALLERY_CONFIG).isoformat()
+            today_str = schedule_date or service_today(_GALLERY_CONFIG).isoformat()
             if os.path.exists(_SCHEDULE_PATH):
                 with open(_SCHEDULE_PATH, encoding="utf-8") as f:
                     _day_data = json.load(f)
@@ -1080,7 +1088,7 @@ def generate(
 
     caption_text = None
     if path and caption:
-        caption_text = build_caption_for_image(theme, path, schedule_time=schedule_raw)
+        caption_text = build_caption_for_image(theme, path, schedule_time=schedule_raw, schedule_date=schedule_date)
         if caption_text:
             update_metadata_caption(os.path.basename(path), caption_text)
             if send:
@@ -1101,7 +1109,8 @@ def generate(
                         model_name=used_model,
                         source=source,
                         schedule_time=schedule_raw,
-                        outfit_style=_gallery_outfit_style_for_source(source, actual_style))
+                        outfit_style=_gallery_outfit_style_for_source(source, actual_style, schedule_date),
+                        schedule_date=schedule_date)
 
     return path
 
@@ -1120,6 +1129,7 @@ if __name__ == "__main__":
     parser.add_argument("--ref-images", type=str, default=None, help="多参考图本地路径，逗号分隔；第1张锁动作/场景，第2张起为人脸")
     parser.add_argument("--size", type=str, default=None, help="图片尺寸")
     parser.add_argument("--schedule-time", type=str, default="", help="定时任务对应的日程时间和活动，如 '20:30 晚间直播'")
+    parser.add_argument("--schedule-date", type=str, default="", help="定时任务所属的日程日期 YYYY-MM-DD；用于跨午夜（00:00-01:59）任务读取正确的前一日日程/穿搭/参考图")
     parser.add_argument("--schedule-detail-json", type=str, default="", help="当前日程推断明细 JSON，用于即时生图")
     parser.add_argument("--prompt-final", action="store_true", help="prompt 已是完整生图提示词，不再注入画质/人设/发型")
     parser.add_argument("--no-auto-style", action="store_true", help="不自动选择底模参考图，用于纯文/纯图生图")
@@ -1142,6 +1152,7 @@ if __name__ == "__main__":
         size=args.size,
         schedule_time=args.schedule_time,
         schedule_detail_json=args.schedule_detail_json,
+        schedule_date=args.schedule_date,
         prompt_final=args.prompt_final,
         no_auto_style=args.no_auto_style,
         precise_edit=args.precise_edit,

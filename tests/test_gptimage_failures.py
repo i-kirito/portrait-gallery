@@ -2,7 +2,9 @@ import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import ANY, patch
+
+import requests
 
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
@@ -16,6 +18,8 @@ import generate_gptimage  # noqa: E402
 class GptImageFailureTest(unittest.TestCase):
     def tearDown(self):
         generate_gptimage._LAST_TERMINAL_IMAGE_FAILURE = ""
+        generate_gptimage._LAST_IMAGE_FAILURE_KIND = ""
+        generate_gptimage._LAST_SUCCESSFUL_IMAGE_ENDPOINT = ""
         generate_gptimage._IMAGES_API_UNSUPPORTED_BASES.clear()
 
     def test_face_reference_keeps_identity_without_face_slimming(self):
@@ -41,21 +45,29 @@ class GptImageFailureTest(unittest.TestCase):
 
 
     def test_expression_guard_rejects_reference_pout(self):
-        text = generate_gptimage._reference_expression_guard().lower()
+        guard = generate_gptimage._reference_expression_guard()
+        text = guard.lower()
         self.assertIn("pout", text)
         self.assertIn("duck face", text)
-        self.assertIn("嘟嘴".lower() if False else "嘟嘴", generate_gptimage._reference_expression_guard())
+        self.assertIn("嘟嘴", guard)
+        self.assertIn("reference", text)
+        # schedule may still request pout; only reference-copy is blocked
+        self.assertIn("schedule", text)
+        self.assertNotIn("unless the text explicitly requests", text)
 
         instruction = generate_gptimage._reference_edit_instruction(
             "/tmp/ref_style_sweet.jpg"
         ).lower()
         self.assertIn("pout", instruction)
         self.assertIn("mouth", instruction)
+        self.assertIn("text/schedule", instruction)
 
         multi = generate_gptimage._multi_reference_edit_instruction(
             ["/tmp/base.png", "/tmp/face.png"]
         ).lower()
         self.assertIn("pout", multi)
+        self.assertIn("text/schedule", multi)
+
 
     def test_reference_guard_can_be_omitted_when_prompt_already_contains_it(self):
         instruction = generate_gptimage._reference_edit_instruction(
@@ -268,7 +280,15 @@ class GptImageFailureTest(unittest.TestCase):
             result = generate_gptimage._generate_via_direct_gpt("portrait")
 
         self.assertEqual(expected, result)
-        chat_api.assert_called_once_with("portrait", None, None, ref_images=None)
+        chat_api.assert_called_once_with(
+            "portrait",
+            None,
+            None,
+            precise_edit=False,
+            ref_images=None,
+            raw_base_url="http://example.test/v1",
+            api_key=ANY,
+        )
 
     def test_explicit_chat_endpoint_does_not_require_fallback_switch(self):
         expected = (b"image", 1.0)
@@ -296,7 +316,150 @@ class GptImageFailureTest(unittest.TestCase):
 
         self.assertEqual(expected, result)
         images_api.assert_not_called()
-        chat_api.assert_called_once_with("portrait", None, None, ref_images=None)
+        chat_api.assert_called_once_with(
+            "portrait",
+            None,
+            None,
+            precise_edit=False,
+            ref_images=None,
+            raw_base_url="http://example.test/v1/chat/completions",
+            api_key=ANY,
+            max_attempts=None,
+        )
+
+    def test_multiple_endpoints_fail_over_with_endpoint_specific_credentials(self):
+        success = SimpleNamespace(
+            status_code=200,
+            text="",
+            json=lambda: {"data": [{"b64_json": "aW1hZ2U="}]},
+        )
+        endpoints = [
+            {"base_url": "http://first.test/v1", "api_key": "first-key", "label": "first"},
+            {"base_url": "http://second.test/v1", "api_key": "second-key", "label": "second"},
+        ]
+
+        with patch.object(
+            generate_gptimage,
+            "_direct_gpt_image_endpoints",
+            return_value=endpoints,
+        ), patch.object(
+            generate_gptimage.REQUEST_SESSION,
+            "post",
+            side_effect=[requests.Timeout("read timed out"), success],
+        ) as post, patch.object(generate_gptimage.time, "sleep") as sleep:
+            result = generate_gptimage._generate_via_direct_gpt("portrait")
+
+        self.assertEqual((b"image", ANY), result)
+        self.assertEqual(2, post.call_count)
+        self.assertEqual(
+            [
+                "http://first.test/v1/images/generations",
+                "http://second.test/v1/images/generations",
+            ],
+            [call.args[0] for call in post.call_args_list],
+        )
+        self.assertEqual(
+            ["Bearer first-key", "Bearer second-key"],
+            [call.kwargs["headers"]["Authorization"] for call in post.call_args_list],
+        )
+        sleep.assert_not_called()
+        self.assertEqual("second", generate_gptimage._LAST_SUCCESSFUL_IMAGE_ENDPOINT)
+
+    def test_terminal_auth_failure_does_not_try_later_endpoint(self):
+        denied = SimpleNamespace(status_code=401, text='{"error":"unauthorized"}')
+        endpoints = [
+            {"base_url": "http://first.test/v1", "api_key": "bad-key"},
+            {"base_url": "http://second.test/v1", "api_key": "unused-key"},
+        ]
+
+        with patch.object(
+            generate_gptimage,
+            "_direct_gpt_image_endpoints",
+            return_value=endpoints,
+        ), patch.object(
+            generate_gptimage.REQUEST_SESSION,
+            "post",
+            return_value=denied,
+        ) as post:
+            result = generate_gptimage._generate_via_direct_gpt("portrait")
+
+        self.assertIsNone(result)
+        self.assertEqual(1, post.call_count)
+        self.assertIn("凭据无效", generate_gptimage._LAST_TERMINAL_IMAGE_FAILURE)
+
+    def test_5xx_and_unsupported_images_api_are_failover_eligible(self):
+        self.assertTrue(generate_gptimage._endpoint_failure_allows_failover("http_503"))
+        self.assertTrue(generate_gptimage._endpoint_failure_allows_failover("unsupported_api"))
+        self.assertTrue(generate_gptimage._endpoint_failure_allows_failover("unavailable_channel"))
+        self.assertFalse(generate_gptimage._endpoint_failure_allows_failover("http_400"))
+
+    def test_http_200_unavailable_channel_business_error_uses_next_endpoint(self):
+        unavailable = SimpleNamespace(
+            status_code=200,
+            text='{"error":{"message":"No available channel for model gpt-image-2"}}',
+            json=lambda: {
+                "error": {"message": "No available channel for model gpt-image-2"},
+            },
+        )
+        success = SimpleNamespace(
+            status_code=200,
+            text="",
+            json=lambda: {"data": [{"b64_json": "aW1hZ2U="}]},
+        )
+        endpoints = [
+            {"base_url": "http://first.test/v1", "api_key": "first-key"},
+            {"base_url": "http://second.test/v1", "api_key": "second-key"},
+        ]
+
+        with patch.object(
+            generate_gptimage,
+            "_direct_gpt_image_endpoints",
+            return_value=endpoints,
+        ), patch.object(
+            generate_gptimage.REQUEST_SESSION,
+            "post",
+            side_effect=[unavailable, success],
+        ) as post:
+            result = generate_gptimage._generate_via_direct_gpt("portrait")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(b"image", result[0])
+        self.assertEqual(2, post.call_count)
+
+    def test_missing_reference_is_explicit_and_never_posts(self):
+        missing = "/tmp/portrait-gallery-missing-reference.png"
+        with patch.object(generate_gptimage.REQUEST_SESSION, "post") as post:
+            result = generate_gptimage._generate_via_images_api(
+                "portrait",
+                missing,
+                "1024x1024",
+                "http://example.test/v1",
+                max_attempts=1,
+            )
+
+        self.assertIsNone(result)
+        post.assert_not_called()
+        self.assertIn("参考图不可用", generate_gptimage._LAST_TERMINAL_IMAGE_FAILURE)
+        self.assertIn("does not exist", generate_gptimage._LAST_TERMINAL_IMAGE_FAILURE)
+
+    def test_both_reference_encoders_preflight_missing_paths(self):
+        missing = "/tmp/portrait-gallery-missing-reference-encoder.png"
+
+        for encoder in (
+            generate_gptimage._compress_image_for_img2img,
+            generate_gptimage._image_bytes_for_edit,
+        ):
+            with self.subTest(encoder=encoder.__name__):
+                with self.assertRaisesRegex(FileNotFoundError, "reference image does not exist"):
+                    encoder(missing)
+
+    def test_unreadable_reference_failure_is_terminal(self):
+        error = OSError("reference image is not readable: /tmp/ref.png: denied")
+
+        self.assertEqual(
+            "reference_unavailable",
+            generate_gptimage._images_api_failure_kind(exc=error),
+        )
 
 
 if __name__ == "__main__":

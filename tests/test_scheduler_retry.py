@@ -78,6 +78,33 @@ class SchedulerRetryTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn("thinking", post.call_args_list[0].kwargs["json"])
             self.assertNotIn("thinking", post.call_args_list[1].kwargs["json"])
 
+    async def test_temperature_and_model_overrides_are_sent(self):
+        accepted = FakeResponse(200, {
+            "choices": [{"message": {"content": "{\"ok\": true}"}}],
+        })
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = DailyScheduler({}, tmpdir)
+            with (
+                patch.object(
+                    scheduler_module,
+                    "llm_request_config",
+                    return_value=self.request_config(),
+                ),
+                patch("requests.post", return_value=accepted) as post,
+            ):
+                result = await scheduler._call_llm(
+                    "probe",
+                    timeout=1,
+                    json_mode=True,
+                    models_override=["gemini-3.5-flash"],
+                    temperature=0.8,
+                )
+
+            self.assertEqual('{"ok": true}', result)
+            payload = post.call_args.kwargs["json"]
+            self.assertEqual("gemini-3.5-flash", payload["model"])
+            self.assertEqual(0.8, payload["temperature"])
+
 
 if __name__ == "__main__":
     unittest.main()

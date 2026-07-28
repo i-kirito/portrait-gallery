@@ -783,7 +783,7 @@ class PortraitGalleryApp:
 
         if self._is_photo_quiet_now():
             logger.info("当前为 03:00-06:00 生图静默时段，只保存日程并恢复后续动态任务")
-            await self._schedule_dynamic_photos(entry.schedule)
+            await self._schedule_dynamic_photos(entry.schedule, entry.date)
             return entry
 
         # 2. 生成图片
@@ -2617,7 +2617,7 @@ class PortraitGalleryApp:
                 logger.warning("日程生成使用兜底结果，保留现有今日日程")
                 preserved = DailyEntry.from_dict(existing_entry)
                 preserved.source = "preserved"
-                await self._schedule_dynamic_photos(preserved.schedule)
+                await self._schedule_dynamic_photos(preserved.schedule, preserved.date)
                 return preserved
             if existing_entry and existing_missing:
                 logger.warning(f"现有今日日程缺少时间段 {existing_missing}，无法直接保留")
@@ -2631,8 +2631,8 @@ class PortraitGalleryApp:
         # save_schedule_entry performs the replacement under one exclusive lock.
         save_schedule_entry(self.data_dir, entry)
         logger.info(f"日程生成成功: {entry.outfit_style}")
-        await self._schedule_dynamic_photos(entry.schedule)
-        
+        await self._schedule_dynamic_photos(entry.schedule, entry.date)
+
         return entry
 
     def _get_photo_job_limit(self) -> int:
@@ -2940,11 +2940,61 @@ class PortraitGalleryApp:
         self._photo_jobs_inflight_started.pop(slot_key, None)
 
     @staticmethod
-    def _photo_job_id_for_time(time_text: str) -> str:
+    def _photo_job_id_for_time(time_text: str, schedule_date: str = "") -> str:
         match = re.match(r"^\s*(\d{1,2}):(\d{2})", str(time_text or ""))
         if not match:
             return ""
-        return f"photo_dynamic_{int(match.group(1))}_{int(match.group(2))}"
+        hour = int(match.group(1))
+        minute = int(match.group(2))
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", str(schedule_date or "")):
+            return f"photo_dynamic_{schedule_date.replace('-', '')}_{hour}_{minute}"
+        return f"photo_dynamic_{hour}_{minute}"
+
+    def _dynamic_job_schedule_date(self, job, run_time=None) -> str:
+        """Return the schedule day owned by a dynamic job.
+
+        New jobs always carry explicit metadata and a date-bearing id.  The
+        run-time fallback keeps jobs created by older releases readable after a
+        hot update; 00:00-01:59 physically runs on the following calendar day.
+        """
+        job_id = str(getattr(job, "id", "") or "")
+        meta = self._photo_job_schedule_meta.get(job_id, {}) or {}
+        date_text = str(meta.get("schedule_date") or "").strip()
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", date_text):
+            return date_text
+
+        match = re.match(r"^photo_dynamic_(\d{8})_\d{1,2}_\d{1,2}$", job_id)
+        if match:
+            raw = match.group(1)
+            return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}"
+
+        run_time = run_time or self._local_job_run_time(job)
+        if not run_time:
+            return ""
+        schedule_day = run_time.date()
+        if 0 <= int(getattr(run_time, "hour", -1)) <= 1:
+            schedule_day -= timedelta(days=1)
+        return schedule_day.isoformat()
+
+    def _dynamic_job_slot_time(self, job, run_time=None) -> str:
+        """Return the original HH:mm slot instead of a recovery run-at time."""
+        job_id = str(getattr(job, "id", "") or "")
+        meta = self._photo_job_schedule_meta.get(job_id, {}) or {}
+        time_text = str(meta.get("time") or "").strip()
+        if re.match(r"^\d{2}:\d{2}$", time_text):
+            return time_text
+
+        match = re.match(
+            r"^photo_dynamic_(?:\d{8}_)?(\d{1,2})_(\d{1,2})$",
+            job_id,
+        )
+        if match:
+            return f"{int(match.group(1)):02d}:{int(match.group(2)):02d}"
+
+        run_time = run_time or self._local_job_run_time(job)
+        if run_time:
+            return f"{run_time.hour:02d}:{run_time.minute:02d}"
+        return ""
 
     def _handle_scheduler_event(self, event):
         """Record missed dynamic photo jobs so they do not silently disappear."""
@@ -2961,15 +3011,35 @@ class PortraitGalleryApp:
 
         meta = self._photo_job_schedule_meta.pop(job_id, {}) or {}
         if run_time is None:
-            match = re.match(r"^photo_dynamic_(\d{1,2})_(\d{1,2})$", job_id)
+            match = re.match(
+                r"^photo_dynamic_(?:(\d{8})_)?(\d{1,2})_(\d{1,2})$",
+                job_id,
+            )
             if not match:
                 logger.warning("动态生图任务错过执行但无法解析时间: %s", job_id)
                 return
-            now = self._naive_now()
-            run_time = datetime.combine(now.date(), dt_time(int(match.group(1)), int(match.group(2))))
+            date_token, hour_text, minute_text = match.groups()
+            if date_token:
+                schedule_day = datetime.strptime(date_token, "%Y%m%d").date()
+                run_time = self._photo_job_run_datetime(
+                    int(hour_text),
+                    int(minute_text),
+                    schedule_day,
+                )
+            else:
+                now = self._naive_now()
+                run_time = datetime.combine(
+                    now.date(),
+                    dt_time(int(hour_text), int(minute_text)),
+                )
 
-        date_text = run_time.strftime("%Y-%m-%d")
-        time_text = f"{run_time.hour:02d}:{run_time.minute:02d}"
+        date_text = str(meta.get("schedule_date") or "").strip()
+        if not date_text:
+            date_text = self._dynamic_job_schedule_date(
+                type("MissedJob", (), {"id": job_id, "next_run_time": run_time})(),
+                run_time,
+            ) or run_time.strftime("%Y-%m-%d")
+        time_text = str(meta.get("time") or "").strip() or f"{run_time.hour:02d}:{run_time.minute:02d}"
         if self._check_photo_exists_for_slot(date_text, time_text):
             return
 
@@ -3055,16 +3125,12 @@ class PortraitGalleryApp:
 
     def _today_scheduled_photo_count(self, today_str: str = "") -> int:
         today_str = today_str or self._today().isoformat()
-        try:
-            target_date = datetime.strptime(today_str, "%Y-%m-%d").date()
-        except ValueError:
-            target_date = self._today()
         count = 0
         for job in self.aps.get_jobs():
             if not job.id.startswith("photo_dynamic_"):
                 continue
             run_time = self._local_job_run_time(job)
-            if run_time and run_time.date() == target_date:
+            if self._dynamic_job_schedule_date(job, run_time) == today_str:
                 count += 1
         return count
 
@@ -3120,17 +3186,16 @@ class PortraitGalleryApp:
 
     def _today_scheduled_photo_times(self, today_str: str = "") -> set[str]:
         today_str = today_str or self._today().isoformat()
-        try:
-            target_date = datetime.strptime(today_str, "%Y-%m-%d").date()
-        except ValueError:
-            target_date = self._today()
         times = set()
         for job in self.aps.get_jobs():
             if not job.id.startswith("photo_dynamic_"):
                 continue
             run_time = self._local_job_run_time(job)
-            if run_time and self._is_schedule_day_photo_run(run_time, target_date):
-                times.add(f"{run_time.hour:02d}:{run_time.minute:02d}")
+            if self._dynamic_job_schedule_date(job, run_time) != today_str:
+                continue
+            time_text = self._dynamic_job_slot_time(job, run_time)
+            if time_text:
+                times.add(time_text)
         return times
 
     def _today_photo_plan_times(
@@ -3215,12 +3280,17 @@ class PortraitGalleryApp:
             if not job.id.startswith("photo_dynamic_"):
                 continue
             run_time = self._local_job_run_time(job)
-            if not run_time or not self._is_schedule_day_photo_run(run_time, today):
+            if not run_time or self._dynamic_job_schedule_date(job, run_time) != today_str:
                 continue
+            time_text = self._dynamic_job_slot_time(job, run_time)
+            time_match = re.match(r"^(\d{2}):(\d{2})$", time_text)
             scheduled.append({
                 "id": job.id,
                 "run_time": run_time,
-                "period_label": self._schedule_period_label(run_time.hour, run_time.minute),
+                "period_label": self._schedule_period_label(
+                    int(time_match.group(1)) if time_match else run_time.hour,
+                    int(time_match.group(2)) if time_match else run_time.minute,
+                ),
                 "job": job,
             })
 
@@ -3238,6 +3308,7 @@ class PortraitGalleryApp:
             )
             try:
                 job.remove()
+                self._photo_job_schedule_meta.pop(job.id, None)
             except Exception as e:
                 logger.warning(f"移除超额生图任务失败: {job.id}, error={e}")
 
@@ -3382,8 +3453,14 @@ class PortraitGalleryApp:
             logger.error(f"检查日程早中晚覆盖失败: {e}")
             return []
 
-    def _today_schedule_entry(self) -> dict:
-        today_str = self._today().isoformat()
+    def _today_schedule_entry(self, schedule_date: str = "") -> dict:
+        """Return the daily schedule entry for `schedule_date` (defaults to today).
+
+        `schedule_date` (YYYY-MM-DD) must be passed explicitly by any caller that
+        already knows which schedule day it is acting on (e.g. an overnight tail
+        photo job), rather than re-deriving the day from the current wall clock.
+        """
+        today_str = schedule_date or self._today().isoformat()
         try:
             all_data = ScheduleStore(self.data_dir).load()
             if self._is_usable_schedule_entry(all_data.get(today_str)):
@@ -3396,11 +3473,11 @@ class PortraitGalleryApp:
                 ):
                     return entry
         except Exception as e:
-            logger.error(f"读取今日日程条目失败: {e}")
+            logger.error(f"读取日程条目失败: date={today_str}, error={e}")
         return {}
 
-    def _today_schedule_text(self) -> str:
-        return self._today_schedule_entry().get("schedule", "")
+    def _today_schedule_text(self, schedule_date: str = "") -> str:
+        return self._today_schedule_entry(schedule_date).get("schedule", "")
 
     def update_photo_plan(self, time_text: str, activity: str) -> dict:
         """Update one activity line in today's saved schedule and pending photo job."""
@@ -3483,20 +3560,23 @@ class PortraitGalleryApp:
             self._save_failed_photo_jobs()
             result["failed_job_updated"] = True
 
-        job_id = self._photo_job_id_for_time(normalized_time)
+        job_id = self._photo_job_id_for_time(normalized_time, today_str)
         job_updated = False
         if job_id:
-            job = self.aps.get_job(job_id)
+            job = self.aps.get_job(job_id) or self.aps.get_job(
+                self._photo_job_id_for_time(normalized_time)
+            )
             if job:
                 run_time = self._local_job_run_time(job)
-                if not run_time or run_time.date() == self._today():
+                if not run_time or self._dynamic_job_schedule_date(job, run_time) == today_str:
                     theme = job.args[0] if getattr(job, "args", None) else self._theme_for_hour(int(normalized_time.split(":", 1)[0]))
                     schedule_text_for_job = f"{normalized_time} {activity}".strip()
                     job.modify(args=[theme, schedule_text_for_job])
-                    self._photo_job_schedule_meta[job_id] = {
+                    self._photo_job_schedule_meta[job.id] = {
                         "theme": theme,
                         "time": normalized_time,
                         "activity": activity,
+                        "schedule_date": today_str,
                     }
                     job_updated = True
         result["job_updated"] = job_updated
@@ -3566,27 +3646,49 @@ class PortraitGalleryApp:
     def rebuild_photo_jobs(self) -> list:
         """Rebuild dynamic photo jobs from today's saved schedule."""
         self._prune_photo_jobs_for_limit()
-        schedule_text = self._today_schedule_text()
-        asyncio.create_task(self._schedule_dynamic_photos(schedule_text))
+        today_str = self._today().isoformat()
+        schedule_text = self._today_schedule_text(today_str)
+        asyncio.create_task(self._schedule_dynamic_photos(schedule_text, today_str))
         return self.list_photo_jobs()
 
-    async def _schedule_dynamic_photos(self, schedule_text: str):
-        """Parse HH:mm times from schedule and create one-shot photo jobs."""
+    @staticmethod
+    def _parse_schedule_date(schedule_date: str):
+        """Parse a YYYY-MM-DD string into a date object, or None if invalid/empty."""
+        try:
+            return datetime.strptime(schedule_date, "%Y-%m-%d").date() if schedule_date else None
+        except (TypeError, ValueError):
+            return None
+
+    async def _schedule_dynamic_photos(self, schedule_text: str, schedule_date: str = ""):
+        """Parse HH:mm times from schedule and create one-shot photo jobs.
+
+        `schedule_date` (YYYY-MM-DD) is the schedule day `schedule_text` belongs
+        to. It must be threaded into each created job (see `photo_job`) so that
+        overnight tail slots (00:00-01:59), which physically run on the next
+        calendar day, still resolve daily entry / reference / quota / failure
+        bookkeeping against the correct schedule day instead of the wall clock
+        date at execution time.
+        """
         if not schedule_text:
             logger.warning("日程文本为空，跳过动态生图调度")
             return
 
         now = self._naive_now()
-        today = now.date()
+        today = self._parse_schedule_date(schedule_date) or now.date()
         today_str = today.strftime("%Y-%m-%d")
 
-        # Remove old dynamic photo jobs
+        # Replace only this schedule day's dynamic jobs.  A previous day's
+        # 00:00-01:59 recovery job may be running alongside today's plan.
         removed = 0
         for job in self.aps.get_jobs():
-            if job.id.startswith("photo_dynamic_"):
-                job.remove()
-                self._photo_job_schedule_meta.pop(job.id, None)
-                removed += 1
+            if not job.id.startswith("photo_dynamic_"):
+                continue
+            run_time = self._local_job_run_time(job)
+            if self._dynamic_job_schedule_date(job, run_time) != today_str:
+                continue
+            job.remove()
+            self._photo_job_schedule_meta.pop(job.id, None)
+            removed += 1
         if removed:
             logger.info(f"移除了 {removed} 个旧的动态生图任务")
 
@@ -3619,7 +3721,7 @@ class PortraitGalleryApp:
 
             theme = self._theme_for_hour(h)
 
-            job_id = f"photo_dynamic_{h}_{m}"
+            job_id = self._photo_job_id_for_time(schedule_time_str, today_str)
 
             # Skip if job already exists
             existing = self.aps.get_job(job_id)
@@ -3679,11 +3781,16 @@ class PortraitGalleryApp:
                     f"activity={item['activity'][:30]}"
                 )
                 continue
+            job_kwargs = {
+                "schedule_date": today_str,
+                "scheduled_job_id": item["id"],
+            }
             self.aps.add_job(
                 self.photo_job,
                 'date',
                 run_date=item["run_time"],
                 args=[item["theme"], f"{item['hour']:02d}:{item['minute']:02d} {item['activity']}"],
+                kwargs=job_kwargs,
                 id=item["id"],
                 misfire_grace_time=PHOTO_JOB_MISFIRE_GRACE_SECONDS,
                 coalesce=True,
@@ -3694,6 +3801,7 @@ class PortraitGalleryApp:
                 "theme": item["theme"],
                 "time": f"{item['hour']:02d}:{item['minute']:02d}",
                 "activity": item["activity"],
+                "schedule_date": today_str,
             }
             logger.info(
                 f"添加动态生图任务: {item['hour']:02d}:{item['minute']:02d} "
@@ -3876,18 +3984,30 @@ class PortraitGalleryApp:
             except Exception:
                 local_run_at = run_at
 
-            time_text = f"{local_run_at.hour:02d}:{local_run_at.minute:02d}"
-            theme = job.args[0] if getattr(job, "args", None) else self._theme_for_hour(local_run_at.hour)
-            seen_times.add(time_text)
+            meta = self._photo_job_schedule_meta.get(job.id, {}) or {}
+            schedule_date = self._dynamic_job_schedule_date(job, local_run_at)
+            time_text = self._dynamic_job_slot_time(job, local_run_at)
+            if not time_text:
+                continue
+            hour, minute = (int(part) for part in time_text.split(":", 1))
+            theme = str(meta.get("theme") or "").strip()
+            if not theme:
+                theme = job.args[0] if getattr(job, "args", None) else self._theme_for_hour(hour)
+            if schedule_date == today_str:
+                seen_times.add(time_text)
+            activity = str(meta.get("activity") or "").strip()
+            if not activity and schedule_date == today_str:
+                activity = activity_by_time.get(time_text, "")
             jobs.append({
                 "id": job.id,
                 "type": "photo",
                 "status": "scheduled",
                 "theme": theme,
-                "period_label": self._schedule_period_label(local_run_at.hour, local_run_at.minute),
+                "period_label": self._schedule_period_label(hour, minute),
                 "time": time_text,
+                "schedule_date": schedule_date,
                 "run_at": local_run_at.isoformat(),
-                "activity": activity_by_time.get(time_text, ""),
+                "activity": activity,
                 "source": "apscheduler",
             })
 
@@ -3953,14 +4073,19 @@ class PortraitGalleryApp:
         jobs.sort(key=lambda item: item["time"])
         return jobs
 
-    def _slot_key_for_schedule_time(self, schedule_time: str) -> tuple[str, str, str]:
-        """Return (slot_key, HH:mm, activity) for a schedule-time string."""
+    def _slot_key_for_schedule_time(self, schedule_time: str, schedule_date: str = "") -> tuple[str, str, str]:
+        """Return (slot_key, HH:mm, activity) for a schedule-time string.
+
+        `schedule_date` (YYYY-MM-DD) pins the slot to the schedule day it belongs
+        to. Callers that don't know the schedule day (e.g. manual same-day retry)
+        may omit it and fall back to the current wall-clock date.
+        """
         match = re.match(r'\s*(\d{1,2}):(\d{2})\s*(.*)', schedule_time or "")
         if not match:
             return "", "", ""
         time_text = f"{int(match.group(1)):02d}:{int(match.group(2)):02d}"
-        today_str = self._today().isoformat()
-        return f"{today_str} {time_text}", time_text, match.group(3).strip()
+        date_str = schedule_date or self._today().isoformat()
+        return f"{date_str} {time_text}", time_text, match.group(3).strip()
 
     @staticmethod
     def _summarize_photo_failure(detail: str) -> str:
@@ -4139,14 +4264,38 @@ class PortraitGalleryApp:
         asyncio.create_task(self._backfill_photo_job(theme, schedule_text_for_job, slot_key))
         return {"status": "queued", "time": time_text, "theme": theme, "activity": activity}
 
-    async def photo_job(self, theme: str, schedule_time: str = "", quota_reserved: bool = False) -> bool:
-        """定时生图任务 - 调用 generate.py 完整链路"""
+    async def photo_job(
+        self,
+        theme: str,
+        schedule_time: str = "",
+        quota_reserved: bool = False,
+        schedule_date: str = "",
+        scheduled_job_id: str = "",
+    ) -> bool:
+        """定时生图任务 - 调用 generate.py 完整链路
+
+        `schedule_date` (YYYY-MM-DD) is the schedule day this slot belongs to.
+        It is required to be correct for overnight tail slots (00:00-01:59),
+        which run on the next calendar day but must still read/write against
+        the previous schedule day's entry, reference, quota, and failure state.
+        Defaults to today for backward-compatible manual/legacy callers.
+        """
         target_size = schedule_image_size(self.config)
-        logger.info(f"开始定时生图: theme={theme}, size={target_size}, schedule_time={schedule_time}")
-        slot_key, time_text, activity = self._slot_key_for_schedule_time(schedule_time)
-        job_id = self._photo_job_id_for_time(time_text)
-        if job_id:
-            self._photo_job_schedule_meta.pop(job_id, None)
+        logger.info(
+            f"开始定时生图: theme={theme}, size={target_size}, schedule_time={schedule_time}, "
+            f"schedule_date={schedule_date or '(today)'}"
+        )
+        if schedule_date:
+            slot_key, time_text, activity = self._slot_key_for_schedule_time(
+                schedule_time,
+                schedule_date,
+            )
+        else:
+            # Keep compatibility with older integrations/tests that replace
+            # this helper with a one-argument callable.
+            slot_key, time_text, activity = self._slot_key_for_schedule_time(schedule_time)
+        if scheduled_job_id:
+            self._photo_job_schedule_meta.pop(scheduled_job_id, None)
         if self._is_photo_quiet_now():
             logger.info("跳过生图任务（当前为 03:00-06:00 日程生成时段）: %s", time_text or schedule_time)
             return True
@@ -4185,6 +4334,7 @@ class PortraitGalleryApp:
                         f"复用已占用的生图额度: {time_text} "
                         f"slot_key={slot_key}"
                     )
+        resolved_schedule_date = schedule_date or self._today().isoformat()
         cmd = [
             self.image_gen.python_executable,
             self.image_gen.generate_script,
@@ -4192,8 +4342,13 @@ class PortraitGalleryApp:
             "--caption",
             "--source", "cron",
             "--size", target_size,
+            "--schedule-date", resolved_schedule_date,
         ]
-        daily_entry = self._today_schedule_entry()
+        if schedule_date:
+            daily_entry = self._today_schedule_entry(resolved_schedule_date)
+        else:
+            # Same backward-compatibility rule as the slot helper above.
+            daily_entry = self._today_schedule_entry()
         selected_reference = await self._select_reference_for_generation({
             "source": "cron",
             "theme": theme,
@@ -4786,8 +4941,92 @@ class PortraitGalleryApp:
         """启动所有服务（同步入口）"""
         asyncio.run(self._async_start())
 
+    def _recover_overnight_tail_jobs(self, now: Optional[datetime] = None) -> int:
+        """Recover yesterday's unexecuted overnight-tail photo slots after a restart.
+
+        APScheduler here uses an in-memory jobstore, so any pending dynamic photo
+        job is lost on restart. A restart landing in the 00:00-01:59 window means
+        yesterday's schedule may still have tail slots (00:00-01:59, physically
+        scheduled to run today) that never fired. This re-derives just those
+        slots from yesterday's saved schedule entry and reschedules them against
+        yesterday's `schedule_date`, so they still resolve daily entry / outfit /
+        reference / quota / failure bookkeeping under the correct schedule day.
+
+        Only called from `_restore_daily_schedule_state`, and only acts when the
+        current wall clock is within 00:00-01:59; it is a no-op otherwise. It is
+        idempotent across repeated restarts: already-generated, already-inflight
+        (job id already present), or already-recorded-as-failed slots are skipped,
+        and it never touches today's own (not yet generated) schedule.
+        """
+        now = now or self._naive_now()
+        if not (0 <= now.hour <= 1):
+            return 0
+
+        yesterday = now.date() - timedelta(days=1)
+        yesterday_str = yesterday.strftime("%Y-%m-%d")
+        schedule_text = self._today_schedule_text(yesterday_str)
+        if not schedule_text:
+            return 0
+
+        recovered = 0
+        for h_str, m_str, activity in re.findall(r'(\d{1,2}):(\d{2})\s*(.*)', schedule_text):
+            h, m = int(h_str), int(m_str)
+            if h not in (0, 1) or not (0 <= m <= 59):
+                continue
+            time_text = f"{h:02d}:{m:02d}"
+            if self._is_photo_quiet_time(h, m) or self._is_exact_hour_time(h, m):
+                continue
+            if self._check_photo_exists_for_slot(yesterday_str, time_text):
+                continue
+            slot_key = f"{yesterday_str} {time_text}"
+            if slot_key in self._failed_photo_jobs:
+                continue
+            job_id = self._photo_job_id_for_time(time_text, yesterday_str)
+            if self.aps.get_job(job_id):
+                continue
+            _max_daily, _completed, _failed, _inflight, _scheduled, _planned, remaining = (
+                self._photo_quota_snapshot(yesterday_str, include_scheduled=True)
+            )
+            if remaining <= 0:
+                continue
+
+            theme = self._theme_for_hour(h)
+            scheduled_run_time = self._photo_job_run_datetime(h, m, yesterday)
+            run_at = max(scheduled_run_time, now + timedelta(seconds=5))
+            self.aps.add_job(
+                self.photo_job,
+                'date',
+                run_date=run_at,
+                args=[theme, f"{time_text} {activity.strip()}".strip()],
+                kwargs={
+                    "schedule_date": yesterday_str,
+                    "scheduled_job_id": job_id,
+                },
+                id=job_id,
+                misfire_grace_time=PHOTO_JOB_MISFIRE_GRACE_SECONDS,
+                coalesce=True,
+                max_instances=1,
+            )
+            self._photo_job_schedule_meta[job_id] = {
+                "theme": theme,
+                "time": time_text,
+                "activity": activity.strip(),
+                "schedule_date": yesterday_str,
+            }
+            recovered += 1
+            logger.warning(
+                "恢复跨午夜未执行的生图任务: %s (schedule_date=%s) run_at=%s",
+                time_text, yesterday_str, run_at.strftime("%Y-%m-%d %H:%M:%S"),
+            )
+
+        if recovered:
+            logger.warning("跨午夜重启恢复了 %d 个尾部生图任务 (schedule_date=%s)", recovered, yesterday_str)
+        return recovered
+
     async def _restore_daily_schedule_state(self):
         """Recover today's schedule and in-memory photo jobs after any restart."""
+        self._recover_overnight_tail_jobs()
+
         today_schedule = ""
         need_generate = True
         today_entry = self._today_schedule_entry()
@@ -4806,7 +5045,7 @@ class PortraitGalleryApp:
 
         logger.info("今日已有数据")
         self._schedule_next_daily_job(force_tomorrow=True)
-        await self._schedule_dynamic_photos(today_schedule)
+        await self._schedule_dynamic_photos(today_schedule, today_entry.get("date") or self._today().isoformat())
 
     async def _async_start(self):
         """异步启动"""
