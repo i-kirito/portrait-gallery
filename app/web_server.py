@@ -80,6 +80,7 @@ from reference_profiles import (
 )
 from store import ImageMetadataStore, LockedJsonDictStore, ScheduleStore
 from text_repair import repair_mojibake_text
+from xiaohongshu_client import XiaohongshuClient, XiaohongshuError
 from settings import (
     DEFAULT_GITEE_IMAGE_URL,
     DEFAULT_OUTFIT_STYLES,
@@ -331,7 +332,15 @@ class GalleryServer:
         self.reference_dir = resolve_reference_dir(config, data_dir, config_path)
         self.uploaded_reference_dir = os.path.join(self.reference_dir, "uploads")
         self.wardrobe_reference_dir = os.path.join(self.reference_dir, "wardrobe")
+        self.xiaohongshu_reference_dir = os.path.join(self.reference_dir, "xiaohongshu")
         self.legacy_uploaded_reference_dir = os.path.join(self.app_reference_dir, "uploads")
+        self.xiaohongshu_reference_store = LockedJsonDictStore(
+            os.path.join(self.data_dir, "xiaohongshu_references.json"),
+            os.path.join(self.data_dir, ".xiaohongshu_references.lock"),
+        )
+        self.xiaohongshu_client = XiaohongshuClient(
+            workdir=os.path.join(self.data_dir, "xiaohongshu-mcp"),
+        )
         self.picxazz_sync = PicxazzSyncClient(config, data_dir)
         self._image_info_cache = {}
         self._registered_image_cache = {"signature": None, "filenames": set()}
@@ -351,6 +360,7 @@ class GalleryServer:
         os.makedirs(self.reference_dir, exist_ok=True)
         os.makedirs(self.uploaded_reference_dir, exist_ok=True)
         os.makedirs(self.wardrobe_reference_dir, exist_ok=True)
+        os.makedirs(self.xiaohongshu_reference_dir, exist_ok=True)
         self._recover_interrupted_wardrobe_image_statuses()
         ensure_reference_profiles(
             self.data_dir,
@@ -380,6 +390,7 @@ class GalleryServer:
         self.app = web.Application(middlewares=[self.gallery_auth_middleware])
         self._setup_routes()
         self.app.on_cleanup.append(self._cleanup_group_chat_background_tasks)
+        self.app.on_cleanup.append(self._cleanup_xiaohongshu_client)
 
     def _now(self) -> datetime:
         return datetime.now(configured_timezone(getattr(self, "config", {})))
@@ -646,6 +657,12 @@ class GalleryServer:
         self.app.router.add_get("/api/uploaded-refs", self.handle_uploaded_refs)
         self.app.router.add_post("/api/upload-ref", self.handle_upload_ref)
         self.app.router.add_delete("/api/uploaded-refs/{filename}", self.handle_delete_uploaded_ref)
+        self.app.router.add_get("/api/xiaohongshu/status", self.handle_xiaohongshu_status)
+        self.app.router.add_post("/api/xiaohongshu/login/qrcode", self.handle_xiaohongshu_login_qrcode)
+        self.app.router.add_post("/api/xiaohongshu/search", self.handle_xiaohongshu_search)
+        self.app.router.add_post("/api/xiaohongshu/detail", self.handle_xiaohongshu_detail)
+        self.app.router.add_post("/api/xiaohongshu/import", self.handle_xiaohongshu_import)
+        self.app.router.add_get("/api/xiaohongshu/references", self.handle_xiaohongshu_references)
         self.app.router.add_post("/api/generate", self.handle_generate)
         self.app.router.add_post("/api/refresh-schedule", self.handle_refresh_schedule)
         self.app.router.add_post("/api/generate-now", self.handle_generate_now)
@@ -1927,6 +1944,25 @@ class GalleryServer:
             "label": "衣柜",
             "style": "wardrobe",
             "source": "wardrobe",
+        }
+
+    def _xiaohongshu_reference_for_value(self, value: str) -> dict:
+        ref_name = self._reference_basename(value)
+        if not ref_name:
+            return {}
+        record = self.xiaohongshu_reference_store.load().get(ref_name)
+        if not isinstance(record, dict):
+            return {}
+        path = self._safe_reference_path(self.xiaohongshu_reference_dir, ref_name)
+        if not path:
+            return {}
+        return {
+            "id": str(record.get("id") or f"xiaohongshu_{hashlib.sha1(ref_name.encode('utf-8')).hexdigest()[:12]}"),
+            "filename": ref_name,
+            "url": f"/local-refs/xiaohongshu/{quote(ref_name)}",
+            "label": str(record.get("label") or "小红书穿搭"),
+            "source": "xiaohongshu",
+            "path": path,
         }
 
     def _ensure_entry_reference_label(self, entry: dict) -> dict:
@@ -6985,6 +7021,127 @@ class GalleryServer:
             logger.error(f"List uploaded refs error: {e}")
             return web.json_response([])
 
+    @staticmethod
+    def _xiaohongshu_error_response(exc: XiaohongshuError) -> web.Response:
+        return web.json_response(
+            {"error": exc.code, "message": exc.message},
+            status=exc.status,
+        )
+
+    async def _xiaohongshu_json_body(self, request: web.Request) -> dict:
+        try:
+            body = await request.json()
+        except Exception as exc:
+            raise XiaohongshuError("invalid_json", "请求内容不是有效 JSON。", status=400) from exc
+        if not isinstance(body, dict):
+            raise XiaohongshuError("invalid_json", "请求内容不是有效 JSON。", status=400)
+        return body
+
+    async def handle_xiaohongshu_status(self, request: web.Request):
+        """Return local MCP process and account login state."""
+        start_service = str(request.query.get("start") or "1").strip().lower() not in {"0", "false", "no"}
+        return web.json_response(await self.xiaohongshu_client.status(start_service=start_service))
+
+    async def handle_xiaohongshu_login_qrcode(self, request: web.Request):
+        """Return a QR image from the read-only local MCP bridge."""
+        try:
+            return web.json_response(await self.xiaohongshu_client.login_qrcode())
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+
+    async def handle_xiaohongshu_search(self, request: web.Request):
+        """Search image notes without exposing any write-capable MCP route."""
+        try:
+            body = await self._xiaohongshu_json_body(request)
+            items = await self.xiaohongshu_client.search(body.get("keyword", ""))
+            return web.json_response({"items": items, "count": len(items)})
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+
+    async def handle_xiaohongshu_detail(self, request: web.Request):
+        """Load the image list for one image note."""
+        try:
+            body = await self._xiaohongshu_json_body(request)
+            detail = await self.xiaohongshu_client.detail(
+                body.get("feed_id", ""),
+                body.get("xsec_token", ""),
+            )
+            return web.json_response(detail)
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+
+    def _xiaohongshu_reference_items(self) -> list[dict]:
+        records = self.xiaohongshu_reference_store.load()
+        items = []
+        for filename, record in records.items():
+            if not isinstance(record, dict):
+                continue
+            path = self._safe_reference_path(self.xiaohongshu_reference_dir, filename)
+            if not path:
+                continue
+            item = dict(record)
+            item.update({
+                "filename": filename,
+                "url": f"/local-refs/xiaohongshu/{quote(filename)}",
+                "source": "xiaohongshu",
+            })
+            item.pop("path", None)
+            items.append(item)
+        items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+        return items[:24]
+
+    async def handle_xiaohongshu_references(self, request: web.Request):
+        """List already imported local Xiaohongshu reference images."""
+        return web.json_response(self._xiaohongshu_reference_items())
+
+    async def handle_xiaohongshu_import(self, request: web.Request):
+        """Download and validate one Xiaohongshu image into local references."""
+        try:
+            body = await self._xiaohongshu_json_body(request)
+            downloaded = await self.xiaohongshu_client.import_image(
+                body.get("url", ""),
+                self.xiaohongshu_reference_dir,
+            )
+            path = downloaded["path"]
+            try:
+                self._verify_reference_image(path)
+                with Image.open(path) as image:
+                    width, height = image.size
+            except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError) as exc:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+                raise XiaohongshuError("invalid_image", "下载内容不是有效图片。", status=400) from exc
+
+            filename = downloaded["filename"]
+            title = str(body.get("title") or "小红书穿搭").strip()[:80] or "小红书穿搭"
+            author = str(body.get("author") or "").strip()[:60]
+            label = f"小红书 · {title}"
+            record = {
+                "id": f"xiaohongshu_{hashlib.sha1(filename.encode('utf-8')).hexdigest()[:12]}",
+                "filename": filename,
+                "label": label,
+                "title": title,
+                "author": author,
+                "source": "xiaohongshu",
+                "width": width,
+                "height": height,
+                "size_bytes": downloaded["size_bytes"],
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+            }
+
+            def _save(records: dict) -> dict:
+                records[filename] = record
+                return records
+
+            self.xiaohongshu_reference_store.update(_save)
+            response = dict(record)
+            response["url"] = f"/local-refs/xiaohongshu/{quote(filename)}"
+            return web.json_response(response)
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+
     async def handle_upload_ref(self, request: web.Request):
         """上传普通参考图，或按 style 替换固定默认底模。"""
         temp_path = ""
@@ -8334,6 +8491,9 @@ class GalleryServer:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._group_chat_background_tasks.clear()
         self._group_chat_reply_progress.clear()
+
+    async def _cleanup_xiaohongshu_client(self, _app) -> None:
+        await self.xiaohongshu_client.close()
 
     @staticmethod
     def _group_chat_normalized_placeholder_text(value: str) -> str:
@@ -10731,6 +10891,8 @@ JSON 格式：
                     or self._reference_profile_for_value(ref_image)
                     or self._wardrobe_reference_for_value(raw_ref_image)
                     or self._wardrobe_reference_for_value(ref_image)
+                    or self._xiaohongshu_reference_for_value(raw_ref_image)
+                    or self._xiaohongshu_reference_for_value(ref_image)
                 )
                 if selected_reference and not selected_reference.get("path"):
                     selected_reference["path"] = ref_image
