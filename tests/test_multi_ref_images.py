@@ -35,6 +35,20 @@ class MultiRefImageTests(unittest.TestCase):
         self.assertIn("pose", text.lower())
         self.assertIn("face", text.lower())
 
+    def test_xiaohongshu_instruction_does_not_copy_reference_body(self):
+        text = _multi_reference_edit_instruction(
+            ["xiaohongshu.webp", "face.png"],
+            outfit_reference_mode=True,
+        )
+        low = text.lower()
+
+        self.assertIn("outfit-reference mode", low)
+        self.assertIn("never copy image 1", low)
+        self.assertIn("configured body profile", low)
+        self.assertIn("re-tailor", low)
+        self.assertNotIn("immutable base photo", low)
+        self.assertNotIn("everything else must match image 1", low)
+
     def test_single_uses_legacy_path(self):
         text = _multi_reference_edit_instruction(["face.png"])
         self.assertTrue(text)

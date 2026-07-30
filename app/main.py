@@ -72,6 +72,7 @@ from characters import (
 from settings import (
     DEFAULT_PHOTO_REALISM_FLOOR,
     DEFAULT_QUALITY_PREFIX,
+    XIAOHONGSHU_OUTFIT_REFERENCE_MARKER,
     api_keys_path,
     apply_network_env,
     auto_push_agent,
@@ -892,6 +893,11 @@ class PortraitGalleryApp:
             ordered_refs.append(path)
         if ordered_refs and not ref_path:
             ref_path = ordered_refs[0]
+        generation_prompt = self._apply_custom_reference_role_guard(
+            generation_prompt,
+            ordered_refs,
+            selected_reference,
+        )
 
         kwargs = {}
         if ref_path:
@@ -1040,6 +1046,72 @@ class PortraitGalleryApp:
             # Last resort: a short head of the original appearance, not the full stack.
             return appearance[:120].rstrip(" ,.;")
         return ", ".join(parts)
+
+    def _configured_custom_body_profile(self) -> str:
+        """Extract the configured body traits without overriding a face reference."""
+        persona = load_runtime_persona(self.config, self.data_dir)
+        appearance = re.sub(r"\s+", " ", str(persona.get("appearance") or "")).strip()
+        if not appearance:
+            character = self.config.get("character") if isinstance(self.config.get("character"), dict) else {}
+            appearance = re.sub(r"\s+", " ", str((character or {}).get("appearance") or "")).strip()
+        if not appearance:
+            return "natural adult body proportions"
+
+        english_tokens = (
+            "body", "figure", "physique", "build", "proportion", "height",
+            "tall", "petite", "short", "slender", "slim", "lean", "athletic",
+            "curvy", "shoulder", "waist", "hip", "torso", "leg", "chest",
+            "bust",
+        )
+        chinese_tokens = (
+            "身材", "体型", "体态", "比例", "身高", "高挑", "娇小", "纤细",
+            "苗条", "匀称", "健美", "肩", "腰", "臀", "腿", "躯干", "胸",
+        )
+        parts: list[str] = []
+        for chunk in re.split(r"[,.;，。；]", appearance):
+            clause = chunk.strip(" .，,;；")
+            if not clause:
+                continue
+            low = clause.lower()
+            has_measurement = bool(re.search(r"\b\d{3}\s*cm\b", low))
+            if (
+                has_measurement
+                or any(token in low for token in english_tokens)
+                or any(token in clause for token in chinese_tokens)
+            ):
+                parts.append(clause)
+            if len(parts) >= 8:
+                break
+        return ", ".join(parts)[:600] if parts else "natural adult body proportions"
+
+    def _apply_custom_reference_role_guard(
+        self,
+        prompt: str,
+        refs: list[str],
+        selected_reference: dict,
+    ) -> str:
+        """Assign Xiaohongshu, face, and configured-body references explicitly."""
+        source = str((selected_reference or {}).get("source") or "").strip().lower()
+        first_ref = str(refs[0] if refs else "").replace("\\", "/").lower()
+        is_xiaohongshu = source == "xiaohongshu" or "/xiaohongshu/" in first_ref
+        if len(refs) < 2 or not is_xiaohongshu:
+            return prompt
+
+        body_profile = self._configured_custom_body_profile()
+        guard = (
+            f"{XIAOHONGSHU_OUTFIT_REFERENCE_MARKER} Strict reference-role assignment. "
+            "Image 1 is used ONLY for outfit design, garment details, colors, fabric and layering, "
+            "accessories, hairstyle styling, pose and body posture, hand gestures, props, scene, "
+            "lighting, camera angle, framing, and composition. "
+            "Image 1 is NOT a source for facial identity, body shape, height, shoulder width, torso, "
+            "bust, waist, hips, leg shape, or anatomical proportions. "
+            "Image 2 and later identity references are used ONLY for the face and facial identity; "
+            "do not copy their clothing, body shape, pose, scene, or camera treatment. "
+            f"The Gallery configured body profile is the ONLY source for the target physique: {body_profile}. "
+            "Re-tailor the outfit from Image 1 naturally onto that configured body. Never inherit or "
+            "blend either reference person's body silhouette."
+        )
+        return f"{prompt.rstrip()} {guard}".strip()
 
     def _build_light_custom_prompt(self, user_prompt: str, shot_prompt: str = "") -> str:
         """Build a short final custom prompt.

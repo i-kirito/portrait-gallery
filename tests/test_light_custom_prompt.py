@@ -5,6 +5,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / "app"
@@ -52,6 +53,34 @@ class LightCustomPromptTests(unittest.TestCase):
             identity,
         )
         self.assertNotIn("hourglass figure", low)
+
+    def test_xiaohongshu_multi_ref_uses_configured_body_profile(self) -> None:
+        appearance = (
+            "dusty rose hair, dark brown eyes, fair skin, 168 cm tall, "
+            "petite slender figure, narrow shoulders, balanced leg proportions"
+        )
+        with patch("main.load_runtime_persona", return_value={"appearance": appearance}):
+            prompt = self.app._apply_custom_reference_role_guard(
+                "summer street outfit.",
+                ["/local-refs/xiaohongshu/look.webp", "/refs/face.jpg"],
+                {"source": "xiaohongshu"},
+            )
+
+        self.assertIn("[XHS_OUTFIT_REFERENCE_MODE]", prompt)
+        self.assertIn("168 cm tall", prompt)
+        self.assertIn("petite slender figure", prompt)
+        self.assertIn("narrow shoulders", prompt)
+        self.assertIn("ONLY source for the target physique", prompt)
+        self.assertIn("Image 2", prompt)
+
+    def test_non_xiaohongshu_multi_ref_keeps_normal_prompt(self) -> None:
+        prompt = self.app._apply_custom_reference_role_guard(
+            "portrait scene.",
+            ["/refs/base.jpg", "/refs/face.jpg"],
+            {"source": "default"},
+        )
+
+        self.assertEqual("portrait scene.", prompt)
 
 
 if __name__ == "__main__":

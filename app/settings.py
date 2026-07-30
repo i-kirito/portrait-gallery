@@ -27,6 +27,8 @@ GENERIC_APPEARANCE = (
     "clear face, expressive eyes, and a coherent personal look — photographed as a real person, not a rendered model"
 )
 
+XIAOHONGSHU_OUTFIT_REFERENCE_MARKER = "[XHS_OUTFIT_REFERENCE_MODE]"
+
 DEFAULT_PHOTO_REALISM_FLOOR = (
     "Real photographed person. "
     "Natural skin texture. "
