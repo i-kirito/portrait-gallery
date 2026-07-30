@@ -663,6 +663,10 @@ class GalleryServer:
         self.app.router.add_post("/api/xiaohongshu/detail", self.handle_xiaohongshu_detail)
         self.app.router.add_post("/api/xiaohongshu/import", self.handle_xiaohongshu_import)
         self.app.router.add_get("/api/xiaohongshu/references", self.handle_xiaohongshu_references)
+        self.app.router.add_delete(
+            "/api/xiaohongshu/references/{filename}",
+            self.handle_delete_xiaohongshu_reference,
+        )
         self.app.router.add_post("/api/generate", self.handle_generate)
         self.app.router.add_post("/api/refresh-schedule", self.handle_refresh_schedule)
         self.app.router.add_post("/api/generate-now", self.handle_generate_now)
@@ -7093,6 +7097,38 @@ class GalleryServer:
     async def handle_xiaohongshu_references(self, request: web.Request):
         """List already imported local Xiaohongshu reference images."""
         return web.json_response(self._xiaohongshu_reference_items())
+
+    async def handle_delete_xiaohongshu_reference(self, request: web.Request):
+        """Delete one explicitly selected local Xiaohongshu reference."""
+        filename = str(request.match_info.get("filename") or "").strip()
+        if (
+            not filename
+            or not re.fullmatch(r"[a-zA-Z0-9_.-]+", filename)
+            or not self._is_reference_image_file(filename)
+        ):
+            return web.json_response({"error": "invalid_filename"}, status=400)
+
+        record = self.xiaohongshu_reference_store.load().get(filename)
+        if not isinstance(record, dict):
+            return web.json_response({"error": "not_found"}, status=404)
+
+        path = self._safe_reference_path(self.xiaohongshu_reference_dir, filename)
+        try:
+            if path:
+                os.remove(path)
+
+            def _remove(records: dict) -> dict:
+                records.pop(filename, None)
+                return records
+
+            self.xiaohongshu_reference_store.update(_remove)
+            return web.json_response({"success": True, "filename": filename})
+        except OSError as exc:
+            logger.error("Delete Xiaohongshu reference error: %s", exc)
+            return web.json_response(
+                {"error": "delete_failed", "message": "删除小红书参考图失败。"},
+                status=500,
+            )
 
     async def handle_xiaohongshu_import(self, request: web.Request):
         """Download and validate one Xiaohongshu image into local references."""

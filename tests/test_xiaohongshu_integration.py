@@ -186,6 +186,12 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
                 payload = await response.json()
                 list_response = await client.get("/api/xiaohongshu/references")
                 references = await list_response.json()
+                delete_response = await client.delete(
+                    "/api/xiaohongshu/references/xhs_test.png"
+                )
+                delete_payload = await delete_response.json()
+                after_delete_response = await client.get("/api/xiaohongshu/references")
+                references_after_delete = await after_delete_response.json()
             finally:
                 await client.close()
 
@@ -195,6 +201,27 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(48, payload["height"])
             self.assertEqual(1, len(references))
             self.assertEqual("xiaohongshu", references[0]["source"])
+            self.assertEqual(200, delete_response.status, delete_payload)
+            self.assertTrue(delete_payload["success"])
+            self.assertEqual([], references_after_delete)
+            self.assertFalse(
+                (root / "data" / "references" / "xiaohongshu" / "xhs_test.png").exists()
+            )
+
+    async def test_delete_rejects_non_image_filename(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            server = self._make_server(Path(tmpdir))
+            client = await self._start_client(server)
+            try:
+                response = await client.delete(
+                    "/api/xiaohongshu/references/not-an-image.txt"
+                )
+                payload = await response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(400, response.status, payload)
+            self.assertEqual("invalid_filename", payload["error"])
 
 
 if __name__ == "__main__":

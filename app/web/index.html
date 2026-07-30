@@ -12511,13 +12511,14 @@ function renderRefImages(defaultRefs, uploadRefs, options = {}) {
     </div>`;
   }
 
-  xiaohongshuRefs.forEach(ref => {
+  xiaohongshuRefs.forEach((ref, index) => {
     const label = escapeHtml(ref.label || "小红书穿搭");
     const title = escapeAttr(ref.label || "小红书穿搭");
     const url = escapeAttr(ref.url || "");
     if (!url) return;
     html += `<div class="cg-ref-item xiaohongshu" data-ref="${url}" title="${title}" role="button" tabindex="0">
       <img src="${url}" alt="${label}" loading="lazy" decoding="async">
+      <button class="cg-ref-del" type="button" aria-label="删除${label}" title="删除这张小红书参考图" onclick="event.stopPropagation();deleteXiaohongshuRef(${index})">✕</button>
     </div>`;
   });
 
@@ -12757,6 +12758,30 @@ function deleteUploadedRef(idx) {
       showToast("❌ " + e.message);
       loadRefImages();
     });
+}
+async function deleteXiaohongshuRef(index) {
+  const ref = xiaohongshuRefs[index];
+  if (!ref || !ref.filename || !confirm(`确定删除“${ref.label || "这张小红书图片"}”吗？删除后历史图片重抽可能无法继续使用它。`)) return;
+  try {
+    const response = await fetch(
+      `${API}/api/xiaohongshu/references/${encodeURIComponent(ref.filename)}`,
+      { method: "DELETE" }
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) {
+      throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    }
+    const state = readCustomGenState();
+    const deletedUrl = String(ref.url || "");
+    state.refs = (Array.isArray(state.refs) ? state.refs : [])
+      .filter(value => String(value || "") !== deletedUrl);
+    if (String(state.ref || "") === deletedUrl) state.ref = "";
+    window.galleryStorageSet("custom_gen_state", JSON.stringify(state));
+    await loadRefImages();
+    showToast("🗑 已删除小红书参考图");
+  } catch (error) {
+    showToast("❌ " + error.message);
+  }
 }
 async function submitCustomGen() {
   const payload = currentCustomGenPayload();
