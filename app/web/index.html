@@ -497,6 +497,73 @@ textarea:focus-visible,
   color: #888;
   font-size: 12px;
 }
+.xhs-schedule-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid #e6e1e4;
+  border-radius: 8px;
+  background: #fff;
+}
+.xhs-schedule-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.xhs-schedule-title {
+  min-width: 0;
+  color: #555;
+  font-size: 14px;
+  font-weight: 700;
+}
+.xhs-schedule-reference {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 10px;
+  min-height: 76px;
+  padding-top: 12px;
+  border-top: 1px solid #eee8eb;
+}
+.xhs-schedule-reference[hidden] { display: none; }
+.xhs-schedule-image {
+  width: 76px;
+  height: 76px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #f3f3f3;
+}
+.xhs-schedule-copy { min-width: 0; }
+.xhs-schedule-name {
+  overflow: hidden;
+  color: #444;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xhs-schedule-query {
+  display: -webkit-box;
+  margin-top: 5px;
+  overflow: hidden;
+  color: #888;
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.xhs-schedule-refresh {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid #ded8dc;
+  border-radius: 6px;
+  background: #fff;
+  color: #666;
+  cursor: pointer;
+}
+.xhs-schedule-refresh:disabled { cursor: wait; opacity: 0.55; }
 .sk-field {
   margin-bottom: 18px;
 }
@@ -6654,6 +6721,26 @@ textarea:focus-visible,
     </div>
     </div>
     <div class="sk-panel" id="skPanelXiaohongshu" data-settings-panel-content="xiaohongshu">
+      <div class="sk-field">
+        <div class="xhs-schedule-card">
+          <div class="xhs-schedule-head">
+            <span class="xhs-schedule-title"><i class="fa-regular fa-calendar" aria-hidden="true"></i> 日程使用小红书穿搭</span>
+            <label class="sk-switch" for="xhsScheduleMode" aria-label="日程使用小红书穿搭">
+              <input type="checkbox" id="xhsScheduleMode" onchange="setXiaohongshuScheduleMode(this.checked)">
+              <span class="sk-switch-knob"></span>
+            </label>
+          </div>
+          <div class="sk-status" id="xhsScheduleStatus">加载中...</div>
+          <div class="xhs-schedule-reference" id="xhsScheduleReference" hidden>
+            <img class="xhs-schedule-image" id="xhsScheduleImage" alt="今日小红书穿搭参考图">
+            <div class="xhs-schedule-copy">
+              <div class="xhs-schedule-name" id="xhsScheduleName"></div>
+              <div class="xhs-schedule-query" id="xhsScheduleQuery"></div>
+            </div>
+            <button type="button" class="xhs-schedule-refresh" id="xhsScheduleRefresh" onclick="refreshXiaohongshuScheduleReference()" title="重新选择今日穿搭" aria-label="重新选择今日穿搭"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
+          </div>
+        </div>
+      </div>
       <div class="sk-field">
         <label><i class="fa-solid fa-book-open" aria-hidden="true"></i> 小红书账号</label>
         <div class="xhs-login-card">
@@ -13191,6 +13278,88 @@ bootGalleryApp();
 let activeSettingsPanel = "persona";
 let xhsLoginPollTimer = null;
 let xhsLoginPollDeadline = 0;
+let xhsScheduleModeBusy = false;
+
+function renderXiaohongshuScheduleMode(data) {
+  const toggle = document.getElementById("xhsScheduleMode");
+  const status = document.getElementById("xhsScheduleStatus");
+  const wrap = document.getElementById("xhsScheduleReference");
+  const image = document.getElementById("xhsScheduleImage");
+  const name = document.getElementById("xhsScheduleName");
+  const query = document.getElementById("xhsScheduleQuery");
+  const refresh = document.getElementById("xhsScheduleRefresh");
+  const reference = data && data.today_reference && typeof data.today_reference === "object"
+    ? data.today_reference
+    : {};
+  if (toggle) {
+    toggle.checked = data?.enabled === true;
+    toggle.disabled = xhsScheduleModeBusy;
+  }
+  if (refresh) refresh.disabled = xhsScheduleModeBusy;
+  if (status) {
+    if (xhsScheduleModeBusy) status.textContent = "正在选择今日穿搭...";
+    else if (data?.status === "ready") status.textContent = "今日参考已就绪";
+    else if (data?.enabled && data?.last_error) status.textContent = data.last_error;
+    else if (data?.enabled) status.textContent = "等待今日日程";
+    else status.textContent = "已关闭，使用原日程参考";
+  }
+  const hasReference = data?.enabled === true && Boolean(reference.url);
+  if (wrap) wrap.hidden = !hasReference;
+  if (hasReference) {
+    if (image) image.src = `${API}${reference.url}`;
+    if (name) name.textContent = reference.title || reference.label || "今日穿搭";
+    if (query) query.textContent = reference.query || "";
+  } else if (image) {
+    image.removeAttribute("src");
+  }
+}
+
+async function loadXiaohongshuScheduleMode() {
+  try {
+    const response = await fetch(`${API}/api/xiaohongshu/schedule-mode`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    renderXiaohongshuScheduleMode(data);
+    return data;
+  } catch (error) {
+    renderXiaohongshuScheduleMode({enabled: false, status: "error", last_error: error.message});
+    const status = document.getElementById("xhsScheduleStatus");
+    if (status) status.textContent = `读取失败：${error.message}`;
+    return null;
+  }
+}
+
+async function updateXiaohongshuScheduleMode(enabled, refresh = false) {
+  if (xhsScheduleModeBusy) return;
+  xhsScheduleModeBusy = true;
+  renderXiaohongshuScheduleMode({enabled, status: enabled ? "missing" : "disabled"});
+  try {
+    const response = await fetch(`${API}/api/xiaohongshu/schedule-mode`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({enabled, refresh})
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    xhsScheduleModeBusy = false;
+    renderXiaohongshuScheduleMode(data);
+    if (enabled && data.status === "ready") showToast("今日小红书穿搭已就绪");
+    else if (enabled && data.last_error) showToast(data.last_error, 7000);
+    else if (!enabled) showToast("日程已恢复原参考图模式");
+  } catch (error) {
+    xhsScheduleModeBusy = false;
+    await loadXiaohongshuScheduleMode();
+    showToast(`小红书日程设置失败：${error.message}`, 7000);
+  }
+}
+
+function setXiaohongshuScheduleMode(enabled) {
+  updateXiaohongshuScheduleMode(Boolean(enabled), false);
+}
+
+function refreshXiaohongshuScheduleReference() {
+  updateXiaohongshuScheduleMode(true, true);
+}
 
 function setXiaohongshuLoginState(state, text) {
   const element = document.getElementById("xhsLoginState");
@@ -13301,7 +13470,10 @@ function setSettingsPanel(panel) {
   document.querySelectorAll("[data-settings-panel-content]").forEach(section => {
     section.classList.toggle("active", section.dataset.settingsPanelContent === normalized);
   });
-  if (normalized === "xiaohongshu") loadXiaohongshuStatus();
+  if (normalized === "xiaohongshu") {
+    loadXiaohongshuStatus();
+    loadXiaohongshuScheduleMode();
+  }
 }
 
 function openSettings() {

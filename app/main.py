@@ -412,6 +412,28 @@ class PortraitGalleryApp:
             ),
         )
 
+    async def _xiaohongshu_schedule_generation_reference(
+        self,
+        schedule_date: str,
+        daily: dict,
+        *,
+        force: bool = False,
+    ) -> tuple[dict, list[str]]:
+        """Return ordered outfit/identity refs when daily XHS mode is ready."""
+        web_server = getattr(self, "web_server", None)
+        ensure = getattr(web_server, "ensure_xiaohongshu_schedule_reference", None)
+        identity_selector = getattr(web_server, "_preferred_xiaohongshu_identity_reference", None)
+        if not asyncio.iscoroutinefunction(ensure) or not callable(identity_selector):
+            return {}, []
+        reference = await ensure(schedule_date, daily, force=force)
+        outfit_path = str((reference or {}).get("path") or "").strip()
+        identity_path = str(identity_selector("") or "").strip()
+        if not outfit_path or not identity_path or not os.path.isfile(identity_path):
+            if outfit_path and not identity_path:
+                logger.warning("小红书日程模式缺少脸部特写，回退原参考图")
+            return {}, []
+        return reference, [outfit_path, identity_path]
+
     @staticmethod
     def _selected_reference_metadata(selected_reference: dict) -> dict:
         if not isinstance(selected_reference, dict):
@@ -782,6 +804,12 @@ class PortraitGalleryApp:
         # 先保存 date-key 日程；后续图片条目会去掉全天计划字段，避免卡片重复承载大块日程。
         save_schedule_entry(self.data_dir, entry)
 
+        xiaohongshu_reference, xiaohongshu_refs = await self._xiaohongshu_schedule_generation_reference(
+            entry.date,
+            entry.to_dict(),
+            force=True,
+        )
+
         if self._is_photo_quiet_now():
             logger.info("当前为 03:00-06:00 生图静默时段，只保存日程并恢复后续动态任务")
             await self._schedule_dynamic_photos(entry.schedule, entry.date)
@@ -790,22 +818,26 @@ class PortraitGalleryApp:
         # 2. 生成图片
         selected_reference = {}
         if entry.prompt and entry.status == "ok":
-            selected_reference = await self._select_reference_for_generation({
-                "source": "daily_initial",
-                "outfit_style": entry.outfit_style,
-                "outfit": entry.outfit,
-                "reference_query": entry.reference_query,
-                "prompt": entry.prompt,
-                "schedule": entry.schedule,
-                "schedule_details": entry.schedule_details,
-            })
+            selected_reference = xiaohongshu_reference
+            if not selected_reference:
+                selected_reference = await self._select_reference_for_generation({
+                    "source": "daily_initial",
+                    "outfit_style": entry.outfit_style,
+                    "outfit": entry.outfit,
+                    "reference_query": entry.reference_query,
+                    "prompt": entry.prompt,
+                    "schedule": entry.schedule,
+                    "schedule_details": entry.schedule_details,
+                })
             filename = await self.image_gen.generate_for_outfit(
                 entry.prompt,
                 entry.outfit_style,
                 entry.base_style,
                 ref_image=selected_reference.get("path", ""),
+                ref_images=xiaohongshu_refs or None,
                 no_auto_style=not bool(selected_reference.get("path")),
                 size=schedule_image_size(self.config),
+                xiaohongshu_outfit_reference=bool(xiaohongshu_refs),
             )
             if filename:
                 entry.image_filename = filename
@@ -2726,6 +2758,11 @@ class PortraitGalleryApp:
         # save_schedule_entry performs the replacement under one exclusive lock.
         save_schedule_entry(self.data_dir, entry)
         logger.info(f"日程生成成功: {entry.outfit_style}")
+        await self._xiaohongshu_schedule_generation_reference(
+            entry.date,
+            entry.to_dict(),
+            force=True,
+        )
         await self._schedule_dynamic_photos(entry.schedule, entry.date)
 
         return entry
@@ -4444,25 +4481,34 @@ class PortraitGalleryApp:
         else:
             # Same backward-compatibility rule as the slot helper above.
             daily_entry = self._today_schedule_entry()
-        selected_reference = await self._select_reference_for_generation({
-            "source": "cron",
-            "theme": theme,
-            "schedule_time": schedule_time,
-            "activity": activity,
-            "outfit_style": daily_entry.get("outfit_style", ""),
-            "outfit": daily_entry.get("outfit", ""),
-            "reference_query": daily_entry.get("reference_query", ""),
-            "prompt": daily_entry.get("prompt", ""),
-            "schedule": daily_entry.get("schedule", ""),
-            "schedule_prompt": daily_entry.get("schedule_prompt", ""),
-            "schedule_details": daily_entry.get("schedule_details", []),
-        })
+        selected_reference, xiaohongshu_refs = await self._xiaohongshu_schedule_generation_reference(
+            resolved_schedule_date,
+            daily_entry,
+        )
+        if not selected_reference:
+            selected_reference = await self._select_reference_for_generation({
+                "source": "cron",
+                "theme": theme,
+                "schedule_time": schedule_time,
+                "activity": activity,
+                "outfit_style": daily_entry.get("outfit_style", ""),
+                "outfit": daily_entry.get("outfit", ""),
+                "reference_query": daily_entry.get("reference_query", ""),
+                "prompt": daily_entry.get("prompt", ""),
+                "schedule": daily_entry.get("schedule", ""),
+                "schedule_prompt": daily_entry.get("schedule_prompt", ""),
+                "schedule_details": daily_entry.get("schedule_details", []),
+            })
         if selected_reference.get("path"):
             cmd.extend(["--ref-image", selected_reference["path"]])
+            if xiaohongshu_refs:
+                cmd.extend(["--ref-images", ",".join(xiaohongshu_refs)])
+                cmd.append("--xiaohongshu-outfit-reference")
             logger.info(
-                "定时生图选择参考图: %s mode=%s",
+                "定时生图选择参考图: %s mode=%s refs=%s",
                 selected_reference.get("label") or selected_reference.get("filename"),
                 selected_reference.get("selection_mode", ""),
+                len(xiaohongshu_refs) if xiaohongshu_refs else 1,
             )
         else:
             cmd.append("--no-auto-style")

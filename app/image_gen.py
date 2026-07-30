@@ -122,6 +122,7 @@ class ImageGenerator:
         caption: bool = False,
         image_model: str = "",
         precise_edit: bool = False,
+        xiaohongshu_outfit_reference: bool = False,
     ) -> Optional[str]:
         """生成图片，返回图片文件名（相对路径）（异步，不阻塞事件循环）"""
         engine = engine or self.default_engine
@@ -166,6 +167,8 @@ class ImageGenerator:
             cmd.append("--no-auto-style")
         if precise_edit:
             cmd.append("--precise-edit")
+        if xiaohongshu_outfit_reference:
+            cmd.append("--xiaohongshu-outfit-reference")
         if prompt:
             cmd.extend(["--prompt", prompt])
 
@@ -229,14 +232,18 @@ class ImageGenerator:
         outfit_style: str,
         base_style: str = "",
         ref_image: str = "",
+        ref_images: Optional[list] = None,
         no_auto_style: bool = False,
         size: str = "",
+        xiaohongshu_outfit_reference: bool = False,
     ) -> Optional[str]:
         """根据穿搭描述生成图片，参考图由上层选择器决定。"""
         return await self.generate(
             outfit_prompt,
             ref_image=ref_image,
+            ref_images=ref_images,
             no_auto_style=no_auto_style,
             size=size,
             source="cron",
+            xiaohongshu_outfit_reference=xiaohongshu_outfit_reference,
         )

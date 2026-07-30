@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -15,6 +16,7 @@ sys.path.insert(0, str(APP_DIR))
 from web_server import GalleryServer  # noqa: E402
 from xiaohongshu_client import XiaohongshuClient, XiaohongshuError  # noqa: E402
 from data import DailyEntry  # noqa: E402
+from store import ScheduleStore  # noqa: E402
 
 
 class XiaohongshuClientTest(unittest.IsolatedAsyncioTestCase):
@@ -223,6 +225,117 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(
                 (root / "data" / "references" / "xiaohongshu" / "xhs_test.png").exists()
             )
+
+    async def test_schedule_mode_selects_hidden_persistent_daily_reference(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            server._now = lambda: datetime(2026, 7, 30, 10, 0)
+            ScheduleStore(str(root / "data")).save({
+                "2026-07-30": {
+                    "date": "2026-07-30",
+                    "reference_query": "白色衬衫 蓝色半身裙",
+                    "outfit_style": "清新通勤风",
+                    "schedule": "10:30 咖啡店办公",
+                }
+            })
+            server.xiaohongshu_client.status = AsyncMock(return_value={
+                "service_running": True,
+                "is_logged_in": True,
+            })
+            server.xiaohongshu_client.search = AsyncMock(return_value=[{
+                "id": "note-1",
+                "xsec_token": "token-1",
+                "title": "清新通勤穿搭 OOTD",
+                "author": "作者",
+                "width": 900,
+                "height": 1200,
+                "liked_count": "2.1万",
+            }])
+            server.xiaohongshu_client.detail = AsyncMock(return_value={
+                "id": "note-1",
+                "title": "清新通勤穿搭 OOTD",
+                "author": "作者",
+                "images": [{
+                    "index": 0,
+                    "url": "https://sns-webpic-qc.xhscdn.com/daily.webp",
+                    "width": 900,
+                    "height": 1200,
+                }],
+            })
+
+            async def fake_import(_url, output_dir):
+                path = Path(output_dir) / "xhs_daily.png"
+                Image.new("RGB", (900, 1200), "white").save(path)
+                return {"filename": path.name, "path": str(path), "size_bytes": path.stat().st_size}
+
+            server.xiaohongshu_client.import_image = AsyncMock(side_effect=fake_import)
+            client = await self._start_client(server)
+            try:
+                response = await client.post(
+                    "/api/xiaohongshu/schedule-mode",
+                    json={"enabled": True},
+                )
+                payload = await response.json()
+                references_response = await client.get("/api/xiaohongshu/references")
+                references = await references_response.json()
+                disabled_response = await client.post(
+                    "/api/xiaohongshu/schedule-mode",
+                    json={"enabled": False},
+                )
+                disabled = await disabled_response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(200, response.status, payload)
+            self.assertTrue(payload["enabled"])
+            self.assertEqual("ready", payload["status"])
+            self.assertEqual("daily_schedule", payload["today_reference"]["scope"])
+            self.assertEqual([], references)
+            schedule_filename = payload["today_reference"]["filename"]
+            schedule_path = root / "data" / "references" / "xiaohongshu" / schedule_filename
+            indexed = server.xiaohongshu_reference_store.load()[schedule_filename]
+            self.assertEqual("daily_schedule", indexed["scope"])
+            self.assertEqual("disabled", disabled["status"])
+            self.assertFalse(disabled["enabled"])
+            self.assertEqual([], server._xiaohongshu_reference_filenames_for_paths([
+                str(schedule_path)
+            ]))
+            self.assertFalse(server._delete_xiaohongshu_reference_file(schedule_filename))
+            self.assertTrue(schedule_path.exists())
+            self.assertFalse((root / "data" / "references" / "xiaohongshu" / "xhs_daily.png").exists())
+
+    async def test_schedule_mode_login_failure_keeps_enabled_for_runtime_fallback(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            server._now = lambda: datetime(2026, 7, 30, 10, 0)
+            ScheduleStore(str(root / "data")).save({
+                "2026-07-30": {
+                    "date": "2026-07-30",
+                    "reference_query": "夏季通勤穿搭",
+                }
+            })
+            server.xiaohongshu_client.status = AsyncMock(return_value={
+                "service_running": True,
+                "is_logged_in": False,
+            })
+            server.xiaohongshu_client.search = AsyncMock()
+            client = await self._start_client(server)
+            try:
+                response = await client.post(
+                    "/api/xiaohongshu/schedule-mode",
+                    json={"enabled": True},
+                )
+                payload = await response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(200, response.status, payload)
+            self.assertTrue(payload["enabled"])
+            self.assertEqual("error", payload["status"])
+            self.assertIn("未登录", payload["last_error"])
+            server.xiaohongshu_client.search.assert_not_called()
 
     async def test_delete_rejects_non_image_filename(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):

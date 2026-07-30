@@ -211,6 +211,56 @@ class PhotoJobSizeCommandTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("昨日穿搭", reference_context["outfit_style"])
         self.assertEqual("00:30 昨日尾部活动", reference_context["schedule"])
 
+    async def test_photo_job_uses_ordered_xiaohongshu_outfit_and_face_refs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            outfit = root / "today-outfit.png"
+            face = root / "reference_face_faceonly.jpg"
+            outfit.write_bytes(b"outfit")
+            face.write_bytes(b"face")
+
+            app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+            app.config = {"image_gen": {"metadata_size": "1536x2048"}}
+            app._photo_job_schedule_meta = {}
+            app._slot_key_for_schedule_time = lambda _value: ("", "", "")
+            app._is_photo_quiet_now = lambda: False
+            app._today_schedule_entry = lambda: {
+                "date": "2026-07-30",
+                "outfit_style": "通勤风",
+                "reference_query": "白衬衫半身裙",
+            }
+            app._select_reference_for_generation = AsyncMock(return_value={})
+            app.web_server = SimpleNamespace(
+                ensure_xiaohongshu_schedule_reference=AsyncMock(return_value={
+                    "path": str(outfit),
+                    "filename": outfit.name,
+                    "label": "今日穿搭",
+                    "source": "xiaohongshu",
+                    "selection_mode": "xiaohongshu_schedule",
+                }),
+                _preferred_xiaohongshu_identity_reference=lambda _current="": str(face),
+            )
+            app.image_gen = SimpleNamespace(
+                python_executable=sys.executable,
+                generate_script="/tmp/generate.py",
+                script_dir="/tmp",
+                build_env=lambda: {},
+            )
+            completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with patch.object(main_module.subprocess, "run", return_value=completed) as run:
+                result = await app.photo_job("morning")
+
+            self.assertTrue(result)
+            command = run.call_args.args[0]
+            self.assertEqual(str(outfit), command[command.index("--ref-image") + 1])
+            self.assertEqual(
+                f"{outfit},{face}",
+                command[command.index("--ref-images") + 1],
+            )
+            self.assertIn("--xiaohongshu-outfit-reference", command)
+            app._select_reference_for_generation.assert_not_awaited()
+
 
 if __name__ == "__main__":
     unittest.main()

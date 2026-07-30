@@ -33,6 +33,7 @@ from generate_gitee import generate as generate_with_gitee
 from generate_gptimage import GPTIMAGE_DIRECT_MODEL
 from generate_gptimage import generate as generate_with_gptimage
 from settings import (
+    XIAOHONGSHU_OUTFIT_REFERENCE_MARKER,
     apply_schedule_image_framing,
     llm_choice_text,
     llm_temperature_param_error,
@@ -858,6 +859,7 @@ def generate(
     prompt_final: bool = False,
     no_auto_style: bool = False,
     precise_edit: bool = False,
+    xiaohongshu_outfit_reference: bool = False,
 ):
     # If user didn't specify a hairstyle, let LLM pick one
     if prompt_override and not prompt_final and engine == "gptimage" and theme != "sexy":
@@ -943,6 +945,18 @@ def generate(
         if NATURAL_FACE_SHAPE_GUARD not in resolved_prompt:
             resolved_prompt = f"{resolved_prompt} {NATURAL_FACE_SHAPE_GUARD}".strip()
         print("🛡️ Applied adult everyday prompt safety normalization", file=sys.stderr)
+    if xiaohongshu_outfit_reference:
+        resolved_prompt = re.sub(r"\bexpressive eyes\b\s*,?", "", resolved_prompt, flags=re.IGNORECASE)
+        resolved_prompt = (
+            f"{resolved_prompt.rstrip()} {XIAOHONGSHU_OUTFIT_REFERENCE_MARKER} "
+            "Strict ordered reference roles: Image 1 supplies only the outfit design, garment details, "
+            "styling, hairstyle, pose, action, props, scene, lighting, camera and composition. "
+            "Image 2 is the sole authoritative facial identity source. Preserve its recognizable facial "
+            "features without beautification or blending with Image 1. The target physique and body "
+            "proportions must follow only the Gallery configured character description in this prompt; "
+            "never copy either reference person's body."
+        ).strip()
+        print("📕 Applied Xiaohongshu daily outfit reference roles", file=sys.stderr)
     if schedule_time_constraint:
         resolved_prompt = _apply_schedule_clock_render_guard(resolved_prompt, schedule_time)
         print("🕒 Applied invisible schedule-clock guard", file=sys.stderr)
@@ -1134,6 +1148,7 @@ if __name__ == "__main__":
     parser.add_argument("--prompt-final", action="store_true", help="prompt 已是完整生图提示词，不再注入画质/人设/发型")
     parser.add_argument("--no-auto-style", action="store_true", help="不自动选择底模参考图，用于纯文/纯图生图")
     parser.add_argument("--precise-edit", action="store_true", help="严格局部编辑，禁止丢失原图参考后降级")
+    parser.add_argument("--xiaohongshu-outfit-reference", action="store_true", help="按小红书穿搭图、脸模、画廊身材的顺序使用参考图")
     args = parser.parse_args()
 
     effective_theme = args.theme or ("custom" if args.prompt else "morning")
@@ -1156,6 +1171,7 @@ if __name__ == "__main__":
         prompt_final=args.prompt_final,
         no_auto_style=args.no_auto_style,
         precise_edit=args.precise_edit,
+        xiaohongshu_outfit_reference=args.xiaohongshu_outfit_reference,
     )
     if not path:
         print("ERROR: generation failed", file=sys.stderr)

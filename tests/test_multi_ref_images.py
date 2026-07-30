@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "app"))
 sys.path.insert(0, str(ROOT / "app" / "zhuzhu"))
 
 import generate_gptimage  # noqa: E402
+import generate as generate_main  # noqa: E402
 from generate_gptimage import (  # noqa: E402
     _face_only_fallback_instruction,
     _images_api_failure_kind,
@@ -55,6 +56,42 @@ class MultiRefImageTests(unittest.TestCase):
         text = _multi_reference_edit_instruction(["face.png"])
         self.assertTrue(text)
         self.assertNotIn("Multi-reference edit mode", text)
+
+    def test_daily_xiaohongshu_flag_marks_prompt_and_removes_generic_eye_cue(self):
+        captured = {}
+
+        def fake_generate(_theme, **kwargs):
+            captured["prompt"] = kwargs.get("prompt_override", "")
+            captured["refs"] = kwargs.get("ref_images")
+            return None
+
+        with patch.object(
+            generate_main,
+            "_get_schedule_context",
+            return_value=("Today's plan: cafe work", "10:30 cafe work", "white shirt", "cafe", "ponytail"),
+        ), patch.object(
+            generate_main,
+            "build_prompt",
+            return_value="adult woman, expressive eyes, configured slender body",
+        ), patch.object(
+            generate_main,
+            "generate_with_gptimage",
+            side_effect=fake_generate,
+        ), patch.object(generate_main, "_gitee_fallback_enabled", return_value=False):
+            result = generate_main.generate(
+                "morning",
+                source="cron",
+                ref_image="/tmp/outfit.png",
+                ref_images=["/tmp/outfit.png", "/tmp/face.jpg"],
+                schedule_time="10:30 cafe work",
+                xiaohongshu_outfit_reference=True,
+            )
+
+        self.assertIsNone(result)
+        self.assertIn("[XHS_OUTFIT_REFERENCE_MODE]", captured["prompt"])
+        self.assertNotIn("expressive eyes", captured["prompt"].lower())
+        self.assertIn("Image 2 is the sole authoritative facial identity", captured["prompt"])
+        self.assertEqual(["/tmp/outfit.png", "/tmp/face.jpg"], captured["refs"])
 
 
 class DualRefFallbackTests(unittest.TestCase):

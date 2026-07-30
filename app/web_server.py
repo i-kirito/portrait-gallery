@@ -27,7 +27,7 @@ import shutil
 import sys
 import subprocess
 import tempfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import time
 import re
@@ -340,9 +340,14 @@ class GalleryServer:
             os.path.join(self.data_dir, "xiaohongshu_references.json"),
             os.path.join(self.data_dir, ".xiaohongshu_references.lock"),
         )
+        self.xiaohongshu_schedule_store = LockedJsonDictStore(
+            os.path.join(self.data_dir, "xiaohongshu_schedule.json"),
+            os.path.join(self.data_dir, ".xiaohongshu_schedule.lock"),
+        )
         self.xiaohongshu_client = XiaohongshuClient(
             workdir=os.path.join(self.data_dir, "xiaohongshu-mcp"),
         )
+        self._xiaohongshu_schedule_lock = asyncio.Lock()
         self.picxazz_sync = PicxazzSyncClient(config, data_dir)
         self._image_info_cache = {}
         self._registered_image_cache = {"signature": None, "filenames": set()}
@@ -661,6 +666,8 @@ class GalleryServer:
         self.app.router.add_delete("/api/uploaded-refs/{filename}", self.handle_delete_uploaded_ref)
         self.app.router.add_get("/api/xiaohongshu/status", self.handle_xiaohongshu_status)
         self.app.router.add_post("/api/xiaohongshu/login/qrcode", self.handle_xiaohongshu_login_qrcode)
+        self.app.router.add_get("/api/xiaohongshu/schedule-mode", self.handle_xiaohongshu_schedule_mode)
+        self.app.router.add_post("/api/xiaohongshu/schedule-mode", self.handle_xiaohongshu_schedule_mode)
         self.app.router.add_post("/api/xiaohongshu/search", self.handle_xiaohongshu_search)
         self.app.router.add_post("/api/xiaohongshu/detail", self.handle_xiaohongshu_detail)
         self.app.router.add_post("/api/xiaohongshu/import", self.handle_xiaohongshu_import)
@@ -7086,6 +7093,339 @@ class GalleryServer:
         except XiaohongshuError as exc:
             return self._xiaohongshu_error_response(exc)
 
+    def xiaohongshu_schedule_enabled(self) -> bool:
+        return self.xiaohongshu_schedule_store.load().get("enabled") is True
+
+    @staticmethod
+    def _xiaohongshu_schedule_query(daily: dict) -> str:
+        """Build a compact outfit-first query from one generated daily plan."""
+        daily = daily if isinstance(daily, dict) else {}
+        values = [
+            daily.get("reference_query"),
+            daily.get("outfit_style"),
+            daily.get("outfit_keywords"),
+            daily.get("outfit"),
+        ]
+        parts = []
+        seen = set()
+        for value in values:
+            text = re.sub(r"\s+", " ", str(value or "")).strip()
+            text = re.sub(r"(?:风格|穿搭|关键词)[：:]\s*", "", text)
+            for part in re.split(r"[\n,，。；;|/]+", text):
+                part = part.strip(" -:：")
+                key = part.lower()
+                if not part or key in seen:
+                    continue
+                seen.add(key)
+                parts.append(part)
+                if len(" ".join(parts)) >= 58:
+                    break
+            if len(" ".join(parts)) >= 58:
+                break
+        base = " ".join(parts).strip()[:64]
+        return f"{base} 真人穿搭 全身 OOTD".strip()[:80] if base else ""
+
+    @staticmethod
+    def _xiaohongshu_schedule_candidate_score(item: dict, query: str) -> tuple:
+        title = str((item or {}).get("title") or "").lower()
+        keywords = [
+            token.lower()
+            for token in re.split(r"[\s,，。；;|/]+", str(query or ""))
+            if len(token.strip()) >= 2
+        ]
+        relevance = sum(3 for token in keywords if token in title)
+        relevance += sum(2 for token in ("穿搭", "ootd", "通勤", "约会", "全身") if token in title)
+        relevance -= sum(4 for token in ("美甲", "妆容", "探店", "食谱", "家居") if token in title)
+        width = int((item or {}).get("width") or 0)
+        height = int((item or {}).get("height") or 0)
+        portrait = 2 if height > width > 0 else 0
+        liked = str((item or {}).get("liked_count") or "").strip().lower()
+        liked_score = 0
+        try:
+            liked_score = int(float(liked.rstrip("万w")) * (10000 if liked.endswith(("万", "w")) else 1))
+        except ValueError:
+            pass
+        return relevance, portrait, liked_score
+
+    def _xiaohongshu_schedule_daily_entry(self, schedule_date: str) -> dict:
+        try:
+            data = ScheduleStore(self.data_dir).load()
+        except Exception as exc:
+            logger.warning("读取小红书日程选图上下文失败: %s", exc)
+            return {}
+        direct = data.get(schedule_date)
+        if isinstance(direct, dict):
+            return direct
+        for entry in data.values():
+            if (
+                isinstance(entry, dict)
+                and entry.get("date") == schedule_date
+                and not entry.get("image_filename")
+            ):
+                return entry
+        return {}
+
+    def _xiaohongshu_schedule_reference(self, schedule_date: str) -> dict:
+        state = self.xiaohongshu_schedule_store.load()
+        references = state.get("references") if isinstance(state.get("references"), dict) else {}
+        record = references.get(schedule_date)
+        if not isinstance(record, dict):
+            return {}
+        filename = str(record.get("filename") or "").strip()
+        path = self._safe_reference_path(self.xiaohongshu_reference_dir, filename)
+        indexed = self.xiaohongshu_reference_store.load().get(filename)
+        if not path or not isinstance(indexed, dict) or indexed.get("scope") != "daily_schedule":
+            return {}
+        result = dict(record)
+        result.update({
+            "path": path,
+            "url": f"/local-refs/xiaohongshu/{quote(filename)}",
+            "source": "xiaohongshu",
+            "scope": "daily_schedule",
+            "selection_mode": "xiaohongshu_schedule",
+            "selection_reason": f"xiaohongshu_schedule:{schedule_date}",
+        })
+        return result
+
+    def xiaohongshu_schedule_state(self, schedule_date: str = "") -> dict:
+        schedule_date = schedule_date or self._today().isoformat()
+        state = self.xiaohongshu_schedule_store.load()
+        reference = self._xiaohongshu_schedule_reference(schedule_date)
+        public_reference = {
+            key: reference.get(key)
+            for key in (
+                "id", "filename", "url", "label", "title", "author", "query",
+                "source", "scope", "schedule_date", "created_at",
+            )
+            if reference.get(key) not in (None, "")
+        }
+        enabled = state.get("enabled") is True
+        return {
+            "enabled": enabled,
+            "schedule_date": schedule_date,
+            "status": "disabled" if not enabled else ("ready" if reference else ("error" if state.get("last_error") else "missing")),
+            "today_reference": public_reference,
+            "last_error": str(state.get("last_error") or ""),
+            "updated_at": str(state.get("updated_at") or ""),
+        }
+
+    def _save_xiaohongshu_schedule_error(self, message: str) -> None:
+        def _update(state: dict) -> dict:
+            state["last_error"] = str(message or "小红书今日穿搭选择失败")[:300]
+            state["updated_at"] = self._now().isoformat(timespec="seconds")
+            return state
+        self.xiaohongshu_schedule_store.update(_update)
+
+    def _cleanup_old_xiaohongshu_schedule_references(self, schedule_date: str) -> None:
+        try:
+            cutoff = date.fromisoformat(schedule_date) - timedelta(days=1)
+        except ValueError:
+            return
+        state = self.xiaohongshu_schedule_store.load()
+        references = state.get("references") if isinstance(state.get("references"), dict) else {}
+        stale = []
+        for key, record in references.items():
+            try:
+                is_stale = date.fromisoformat(str(key)) < cutoff
+            except ValueError:
+                is_stale = True
+            if is_stale and isinstance(record, dict):
+                stale.append((str(key), str(record.get("filename") or "")))
+        if not stale:
+            return
+        stale_dates = {item[0] for item in stale}
+
+        def _remove_state(current: dict) -> dict:
+            current_refs = current.get("references") if isinstance(current.get("references"), dict) else {}
+            current["references"] = {key: value for key, value in current_refs.items() if key not in stale_dates}
+            return current
+
+        self.xiaohongshu_schedule_store.update(_remove_state)
+        for _key, filename in stale:
+            record = self.xiaohongshu_reference_store.load().get(filename)
+            if filename and isinstance(record, dict) and record.get("scope") == "daily_schedule":
+                try:
+                    self._delete_xiaohongshu_reference_file(filename, allow_daily_schedule=True)
+                except OSError as exc:
+                    logger.warning("清理过期小红书日程参考图失败: %s", exc)
+
+    async def ensure_xiaohongshu_schedule_reference(
+        self,
+        schedule_date: str,
+        daily: dict,
+        *,
+        force: bool = False,
+    ) -> dict:
+        """Return today's XHS outfit reference, falling back silently on every failure."""
+        if not self.xiaohongshu_schedule_enabled():
+            return {}
+        try:
+            date.fromisoformat(schedule_date)
+        except ValueError:
+            self._save_xiaohongshu_schedule_error("日程日期无效，已回退原参考图")
+            return {}
+
+        async with self._xiaohongshu_schedule_lock:
+            existing = self._xiaohongshu_schedule_reference(schedule_date)
+            if existing and not force:
+                return existing
+            query = self._xiaohongshu_schedule_query(daily)
+            if not query:
+                self._save_xiaohongshu_schedule_error("日程没有可用的穿搭关键词，已回退原参考图")
+                return {}
+            try:
+                status = await self.xiaohongshu_client.status(start_service=True)
+                if not status.get("is_logged_in"):
+                    raise XiaohongshuError("login_required", "小红书未登录，已回退原参考图", status=401)
+                items = await self.xiaohongshu_client.search(query, max_results=30)
+                items.sort(
+                    key=lambda item: self._xiaohongshu_schedule_candidate_score(item, query),
+                    reverse=True,
+                )
+                if not items:
+                    raise XiaohongshuError("no_results", "没有找到合适的小红书穿搭，已回退原参考图")
+
+                chosen = None
+                chosen_image = None
+                chosen_detail = None
+                for item in items[:6]:
+                    try:
+                        detail = await self.xiaohongshu_client.detail(
+                            item.get("id", ""),
+                            item.get("xsec_token", ""),
+                        )
+                    except XiaohongshuError as exc:
+                        logger.warning("读取小红书候选穿搭失败: %s", exc.message)
+                        continue
+                    images = detail.get("images") if isinstance(detail.get("images"), list) else []
+                    if not images:
+                        continue
+                    images.sort(
+                        key=lambda image: (
+                            1 if int(image.get("height") or 0) >= int(image.get("width") or 0) > 0 else 0,
+                            int(image.get("height") or 0) * int(image.get("width") or 0),
+                        ),
+                        reverse=True,
+                    )
+                    chosen, chosen_image, chosen_detail = item, images[0], detail
+                    break
+                if not chosen or not chosen_image:
+                    raise XiaohongshuError("no_images", "搜索结果没有可用穿搭图片，已回退原参考图")
+
+                downloaded = await self.xiaohongshu_client.import_image(
+                    chosen_image.get("url", ""),
+                    self.xiaohongshu_reference_dir,
+                )
+                imported_path = str(downloaded["path"])
+                imported_filename = os.path.basename(imported_path)
+                extension = Path(imported_path).suffix.lower()
+                schedule_digest = hashlib.sha256(
+                    f"{schedule_date}:{chosen_image.get('url', '')}".encode("utf-8")
+                ).hexdigest()[:24]
+                filename = f"xhs_schedule_{schedule_date.replace('-', '')}_{schedule_digest}{extension}"
+                path = os.path.join(self.xiaohongshu_reference_dir, filename)
+                if os.path.abspath(imported_path) != os.path.abspath(path):
+                    shutil.copy2(imported_path, path)
+                    imported_record = self.xiaohongshu_reference_store.load().get(imported_filename)
+                    if not isinstance(imported_record, dict):
+                        try:
+                            os.remove(imported_path)
+                        except OSError:
+                            pass
+                try:
+                    self._verify_reference_image(path)
+                    with Image.open(path) as image:
+                        width, height = image.size
+                except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError) as exc:
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+                    raise XiaohongshuError("invalid_image", "小红书今日参考图无效，已回退原参考图") from exc
+
+                title = str((chosen_detail or {}).get("title") or chosen.get("title") or "今日穿搭").strip()[:80]
+                author = str((chosen_detail or {}).get("author") or chosen.get("author") or "").strip()[:60]
+                created_at = self._now().isoformat(timespec="seconds")
+                record = {
+                    "id": f"xiaohongshu_schedule_{hashlib.sha1((schedule_date + filename).encode('utf-8')).hexdigest()[:12]}",
+                    "filename": filename,
+                    "label": f"今日穿搭 · {title}",
+                    "title": title,
+                    "author": author,
+                    "source": "xiaohongshu",
+                    "scope": "daily_schedule",
+                    "schedule_date": schedule_date,
+                    "query": query,
+                    "feed_id": str(chosen.get("id") or ""),
+                    "image_index": int(chosen_image.get("index") or 0),
+                    "width": width,
+                    "height": height,
+                    "size_bytes": os.path.getsize(path),
+                    "created_at": created_at,
+                }
+                self.xiaohongshu_reference_store.update(lambda records: {**records, filename: record})
+
+                old_filename = str(existing.get("filename") or "")
+                def _save_state(state: dict) -> dict:
+                    references = state.get("references") if isinstance(state.get("references"), dict) else {}
+                    references[schedule_date] = record
+                    state.update({
+                        "enabled": True,
+                        "references": references,
+                        "last_error": "",
+                        "updated_at": created_at,
+                    })
+                    return state
+                self.xiaohongshu_schedule_store.update(_save_state)
+                if old_filename and old_filename != filename:
+                    self._delete_xiaohongshu_reference_file(old_filename, allow_daily_schedule=True)
+                self._cleanup_old_xiaohongshu_schedule_references(schedule_date)
+                result = dict(record)
+                result.update({
+                    "path": path,
+                    "url": f"/local-refs/xiaohongshu/{quote(filename)}",
+                    "selection_mode": "xiaohongshu_schedule",
+                    "selection_reason": f"xiaohongshu_schedule:{schedule_date}",
+                })
+                logger.info("小红书今日穿搭已选择: date=%s title=%s query=%s", schedule_date, title, query)
+                return result
+            except XiaohongshuError as exc:
+                logger.warning("小红书日程穿搭选择失败，回退原流程: %s", exc.message)
+                self._save_xiaohongshu_schedule_error(exc.message)
+            except Exception as exc:
+                logger.warning("小红书日程穿搭选择异常，回退原流程: %s", exc, exc_info=True)
+                self._save_xiaohongshu_schedule_error("选择今日穿搭失败，已回退原参考图")
+            return {}
+
+    async def handle_xiaohongshu_schedule_mode(self, request: web.Request):
+        """Read/update daily XHS outfit mode and optionally choose today's reference."""
+        schedule_date = self._today().isoformat()
+        if request.method == "GET":
+            return web.json_response(self.xiaohongshu_schedule_state(schedule_date))
+        try:
+            body = await self._xiaohongshu_json_body(request)
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+        enabled_raw = body.get("enabled")
+        enabled = enabled_raw if isinstance(enabled_raw, bool) else str(enabled_raw or "").strip().lower() in {"1", "true", "yes", "on"}
+        previous_enabled = self.xiaohongshu_schedule_enabled()
+        now_text = self._now().isoformat(timespec="seconds")
+        def _update(state: dict) -> dict:
+            state["enabled"] = enabled
+            state["updated_at"] = now_text
+            if not enabled:
+                state["last_error"] = ""
+            return state
+        self.xiaohongshu_schedule_store.update(_update)
+        if enabled:
+            daily = self._xiaohongshu_schedule_daily_entry(schedule_date)
+            await self.ensure_xiaohongshu_schedule_reference(
+                schedule_date,
+                daily,
+                force=bool(body.get("refresh")) or not previous_enabled,
+            )
+        return web.json_response(self.xiaohongshu_schedule_state(schedule_date))
+
     async def handle_xiaohongshu_search(self, request: web.Request):
         """Search image notes without exposing any write-capable MCP route."""
         try:
@@ -7115,6 +7455,8 @@ class GalleryServer:
         items = []
         for filename, record in records.items():
             if not isinstance(record, dict):
+                continue
+            if record.get("scope") == "daily_schedule":
                 continue
             path = self._safe_reference_path(self.xiaohongshu_reference_dir, filename)
             if not path:
@@ -7152,15 +7494,18 @@ class GalleryServer:
             if (
                 filename not in result
                 and isinstance(records.get(filename), dict)
+                and records[filename].get("scope") != "daily_schedule"
                 and self._is_reference_image_file(filename)
             ):
                 result.append(filename)
         return result
 
-    def _delete_xiaohongshu_reference_file(self, filename: str) -> bool:
+    def _delete_xiaohongshu_reference_file(self, filename: str, *, allow_daily_schedule: bool = False) -> bool:
         """Delete one registered Xiaohongshu cache file and its index record."""
         record = self.xiaohongshu_reference_store.load().get(filename)
         if not isinstance(record, dict):
+            return False
+        if record.get("scope") == "daily_schedule" and not allow_daily_schedule:
             return False
         path = self._safe_reference_path(self.xiaohongshu_reference_dir, filename)
         if path:
