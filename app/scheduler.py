@@ -395,7 +395,7 @@ class DailyScheduler:
                 return text
         return ""
 
-    async def _call_llm(self, prompt: str, timeout: int = 60, json_mode: bool = False) -> Optional[str]:
+    async def _call_llm(self, prompt: str, timeout: int = 120, json_mode: bool = False) -> Optional[str]:
         """调用 CPA LLM（异步，不阻塞事件循环）"""
         request_config = llm_request_config(self.config, self.data_dir)
         chat_url = request_config["chat_url"]
@@ -1459,7 +1459,7 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
 【原始任务】
 {original_prompt}
 """
-        repaired_text = await self._call_llm(repair_prompt, timeout=60, json_mode=True)
+        repaired_text = await self._call_llm(repair_prompt, timeout=120, json_mode=True)
         if not repaired_text:
             logger.warning(f"JSON 修复请求返回为空 (attempt {attempt})")
             return None
