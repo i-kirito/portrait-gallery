@@ -46,6 +46,8 @@ class MultiRefImageTests(unittest.TestCase):
         self.assertIn("never copy image 1", low)
         self.assertIn("configured body profile", low)
         self.assertIn("re-tailor", low)
+        self.assertIn("sole and authoritative facial identity source", low)
+        self.assertIn("generic influencer face", low)
         self.assertNotIn("immutable base photo", low)
         self.assertNotIn("everything else must match image 1", low)
 

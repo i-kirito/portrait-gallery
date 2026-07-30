@@ -893,6 +893,20 @@ class PortraitGalleryApp:
             ordered_refs.append(path)
         if ordered_refs and not ref_path:
             ref_path = ordered_refs[0]
+        source = str(selected_reference.get("source") or "").strip().lower()
+        first_ref = str(ordered_refs[0] if ordered_refs else "").replace("\\", "/").lower()
+        xiaohongshu_identity_mode = (
+            len(ordered_refs) > 1
+            and (source == "xiaohongshu" or "/xiaohongshu/" in first_ref)
+        )
+        if xiaohongshu_identity_mode and not pure:
+            # The face image is authoritative here, so do not inject generic
+            # appearance cues such as "expressive eyes" that reshape it.
+            generation_prompt = self._build_light_custom_prompt(
+                user_prompt,
+                shot_prompt,
+                include_identity=False,
+            )
         generation_prompt = self._apply_custom_reference_role_guard(
             generation_prompt,
             ordered_refs,
@@ -1105,15 +1119,24 @@ class PortraitGalleryApp:
             "lighting, camera angle, framing, and composition. "
             "Image 1 is NOT a source for facial identity, body shape, height, shoulder width, torso, "
             "bust, waist, hips, leg shape, or anatomical proportions. "
-            "Image 2 and later identity references are used ONLY for the face and facial identity; "
-            "do not copy their clothing, body shape, pose, scene, or camera treatment. "
+            "Image 2 is the sole and authoritative facial identity source. Preserve its exact, "
+            "recognizable eyes, eyebrows, nose, lips, face shape, and facial proportions. "
+            "Do not average or blend the face with Image 1, and do not enlarge the eyes, sharpen "
+            "the chin, beautify the face, or turn it into a generic influencer face. Image 2 and "
+            "later identity references are used ONLY for facial identity; do not copy their "
+            "clothing, body shape, pose, scene, or camera treatment. "
             f"The Gallery configured body profile is the ONLY source for the target physique: {body_profile}. "
             "Re-tailor the outfit from Image 1 naturally onto that configured body. Never inherit or "
             "blend either reference person's body silhouette."
         )
         return f"{prompt.rstrip()} {guard}".strip()
 
-    def _build_light_custom_prompt(self, user_prompt: str, shot_prompt: str = "") -> str:
+    def _build_light_custom_prompt(
+        self,
+        user_prompt: str,
+        shot_prompt: str = "",
+        include_identity: bool = True,
+    ) -> str:
         """Build a short final custom prompt.
 
         Prefer scene first + compact identity + thin realism floor. Avoid the
@@ -1122,7 +1145,7 @@ class PortraitGalleryApp:
         """
         scene = re.sub(r"\s+", " ", str(user_prompt or "")).strip()
         camera = re.sub(r"\s+", " ", str(shot_prompt or "")).strip()
-        identity = self._compact_custom_appearance()
+        identity = self._compact_custom_appearance() if include_identity else ""
         floor = re.sub(r"\s+", " ", str(DEFAULT_PHOTO_REALISM_FLOOR or "")).strip()
 
         parts: list[str] = []

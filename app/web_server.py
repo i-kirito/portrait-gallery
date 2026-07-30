@@ -84,6 +84,8 @@ from xiaohongshu_client import XiaohongshuClient, XiaohongshuError
 from settings import (
     DEFAULT_GITEE_IMAGE_URL,
     DEFAULT_OUTFIT_STYLES,
+    DEFAULT_STYLE_REFERENCE_FILES,
+    XIAOHONGSHU_DEFAULT_FACE_REFERENCE_FILE,
     auto_push_agent,
     builtin_reference_map,
     build_child_env,
@@ -6880,6 +6882,37 @@ class GalleryServer:
             return random.choice(existing_refs)
         return {}
 
+    def _is_xiaohongshu_reference(self, raw_value: str, resolved_path: str = "") -> bool:
+        """Return whether a raw/resolved reference belongs to the XHS import area."""
+        normalized = unquote(str(raw_value or "").split("?", 1)[0]).replace("\\", "/").lower()
+        if "/xiaohongshu/" in normalized or self._xiaohongshu_reference_for_value(raw_value):
+            return True
+        if not resolved_path:
+            return False
+        try:
+            Path(resolved_path).resolve().relative_to(Path(self.xiaohongshu_reference_dir).resolve())
+            return True
+        except (OSError, ValueError):
+            return False
+
+    def _preferred_xiaohongshu_identity_reference(self, current_path: str = "") -> str:
+        """Prefer the face-only crop for built-in/default XHS identity references."""
+        current_path = str(current_path or "").strip()
+        default_filenames = set(DEFAULT_STYLE_REFERENCE_FILES.values())
+        should_use_face_crop = not current_path or os.path.basename(current_path) in default_filenames
+        if not should_use_face_crop:
+            return current_path
+
+        for base_dir in (self.reference_dir, self.app_reference_dir):
+            candidate = self._safe_reference_path(base_dir, XIAOHONGSHU_DEFAULT_FACE_REFERENCE_FILE)
+            if candidate and os.path.isfile(candidate) and self._is_reference_image_file(candidate):
+                return candidate
+
+        if current_path:
+            return current_path
+        fallback = self._select_default_custom_reference_sync()
+        return str(fallback.get("path") or "").strip()
+
     def _iter_uploaded_refs(self) -> list[dict]:
         refs = []
         seen = set()
@@ -10942,27 +10975,56 @@ JSON 格式：
                     continue
                 seen_raw.add(token)
                 unique_raw.append(token)
-            resolved_refs = []
+            resolved_pairs = []
             for token in unique_raw:
                 resolved = self._resolve_reference_image(token, allow_any_path=True)
                 if not resolved:
                     return web.json_response({"error": "invalid_ref_image", "ref": token}, status=400)
-                if resolved not in resolved_refs:
-                    resolved_refs.append(resolved)
+                if not any(path == resolved for _, path in resolved_pairs):
+                    resolved_pairs.append((token, resolved))
             temporary_xiaohongshu_filenames = self._xiaohongshu_reference_filenames_for_paths(
-                resolved_refs
+                [path for _, path in resolved_pairs]
             )
+
+            xiaohongshu_pairs = [
+                pair for pair in resolved_pairs
+                if self._is_xiaohongshu_reference(pair[0], pair[1])
+            ]
+            selected_raw_reference = str(raw_ref_image or "").strip()
+            if xiaohongshu_pairs:
+                # XHS mode always uses one outfit image first, then identity refs.
+                # If the caller forgot a face reference, append the default face-only crop.
+                xhs_token, xhs_path = xiaohongshu_pairs[0]
+                identity_paths = [
+                    path for token, path in resolved_pairs
+                    if not self._is_xiaohongshu_reference(token, path)
+                ]
+                preferred_identity = self._preferred_xiaohongshu_identity_reference(
+                    identity_paths[0] if identity_paths else ""
+                )
+                if identity_paths:
+                    identity_paths[0] = preferred_identity or identity_paths[0]
+                elif preferred_identity:
+                    identity_paths.append(preferred_identity)
+
+                resolved_refs = [xhs_path]
+                for identity_path in identity_paths:
+                    if identity_path and identity_path not in resolved_refs:
+                        resolved_refs.append(identity_path)
+                selected_raw_reference = xhs_token
+            else:
+                resolved_refs = [path for _, path in resolved_pairs]
             ref_image = resolved_refs[0] if resolved_refs else ""
             if raw_ref_image and not ref_image and not unique_raw:
                 return web.json_response({"error": "invalid_ref_image"}, status=400)
             selected_reference = {}
             if ref_image:
                 selected_reference = (
-                    self._reference_profile_for_value(raw_ref_image)
+                    self._reference_profile_for_value(selected_raw_reference)
                     or self._reference_profile_for_value(ref_image)
-                    or self._wardrobe_reference_for_value(raw_ref_image)
+                    or self._wardrobe_reference_for_value(selected_raw_reference)
                     or self._wardrobe_reference_for_value(ref_image)
-                    or self._xiaohongshu_reference_for_value(raw_ref_image)
+                    or self._xiaohongshu_reference_for_value(selected_raw_reference)
                     or self._xiaohongshu_reference_for_value(ref_image)
                 )
                 if selected_reference and not selected_reference.get("path"):

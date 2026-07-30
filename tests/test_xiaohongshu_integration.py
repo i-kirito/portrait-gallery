@@ -239,6 +239,88 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(400, response.status, payload)
             self.assertEqual("invalid_filename", payload["error"])
 
+    async def test_generate_custom_auto_appends_face_only_reference(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            xhs_path = Path(server.xiaohongshu_reference_dir) / "xhs_outfit.webp"
+            face_path = Path(server.app_reference_dir) / "reference_face_faceonly.jpg"
+            Image.new("RGB", (32, 48), "white").save(xhs_path)
+            Image.new("RGB", (48, 48), "white").save(face_path)
+            server.xiaohongshu_reference_store.update(lambda records: {
+                **records,
+                xhs_path.name: {
+                    "filename": xhs_path.name,
+                    "label": "小红书 · 夏季穿搭",
+                    "source": "xiaohongshu",
+                },
+            })
+            server.on_generate_custom = AsyncMock(return_value=DailyEntry(
+                date="2026-07-30",
+                image_filename="generated.png",
+                image_path="/images/generated.png",
+                status="ok",
+            ))
+            client = await self._start_client(server)
+            try:
+                response = await client.post("/api/generate-custom", json={
+                    "prompt": "生成一张自然的全身照",
+                    "ref_image": "/local-refs/xiaohongshu/xhs_outfit.webp",
+                    "source": "custom_ui",
+                })
+                payload = await response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(200, response.status, payload)
+            call = server.on_generate_custom.await_args
+            self.assertEqual(str(xhs_path), call.args[2])
+            self.assertEqual([str(xhs_path), str(face_path)], call.args[10])
+            self.assertEqual("xiaohongshu", call.args[9]["source"])
+
+    async def test_generate_custom_replaces_builtin_face_with_face_only_crop(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            xhs_path = Path(server.xiaohongshu_reference_dir) / "xhs_outfit.webp"
+            full_face_path = Path(server.app_reference_dir) / "reference_face.jpg"
+            face_only_path = Path(server.app_reference_dir) / "reference_face_faceonly.jpg"
+            Image.new("RGB", (32, 48), "white").save(xhs_path)
+            Image.new("RGB", (64, 64), "white").save(full_face_path)
+            Image.new("RGB", (48, 48), "white").save(face_only_path)
+            server.xiaohongshu_reference_store.update(lambda records: {
+                **records,
+                xhs_path.name: {
+                    "filename": xhs_path.name,
+                    "label": "小红书 · 夏季穿搭",
+                    "source": "xiaohongshu",
+                },
+            })
+            server.on_generate_custom = AsyncMock(return_value=DailyEntry(
+                date="2026-07-30",
+                image_filename="generated.png",
+                image_path="/images/generated.png",
+                status="ok",
+            ))
+            client = await self._start_client(server)
+            try:
+                response = await client.post("/api/generate-custom", json={
+                    "prompt": "生成一张自然的全身照",
+                    "ref_image": "/local-refs/xiaohongshu/xhs_outfit.webp",
+                    "ref_images": [
+                        "/local-refs/xiaohongshu/xhs_outfit.webp",
+                        "/refs/reference_face.jpg",
+                    ],
+                    "source": "custom_ui",
+                })
+                payload = await response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(200, response.status, payload)
+            call = server.on_generate_custom.await_args
+            self.assertEqual([str(xhs_path), str(face_only_path)], call.args[10])
+
     async def test_custom_generation_cleans_temporary_xiaohongshu_reference(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
             root = Path(tmpdir)

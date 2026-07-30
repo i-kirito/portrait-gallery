@@ -72,6 +72,23 @@ class LightCustomPromptTests(unittest.TestCase):
         self.assertIn("narrow shoulders", prompt)
         self.assertIn("ONLY source for the target physique", prompt)
         self.assertIn("Image 2", prompt)
+        self.assertIn("sole and authoritative facial identity source", prompt)
+        self.assertIn("generic influencer face", prompt)
+
+    def test_xiaohongshu_prompt_can_omit_generic_identity_cues(self) -> None:
+        with patch(
+            "main.load_runtime_persona",
+            return_value={"appearance": "long black hair, fair skin, expressive eyes"},
+        ):
+            prompt = self.app._build_light_custom_prompt(
+                "summer outfit",
+                "full-body photo",
+                include_identity=False,
+            )
+
+        self.assertNotIn("expressive eyes", prompt.lower())
+        self.assertNotIn("long black hair", prompt.lower())
+        self.assertIn("summer outfit", prompt)
 
     def test_non_xiaohongshu_multi_ref_keeps_normal_prompt(self) -> None:
         prompt = self.app._apply_custom_reference_role_guard(

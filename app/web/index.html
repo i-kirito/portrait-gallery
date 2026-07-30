@@ -12337,6 +12337,27 @@ function getSelectedCustomRefImages() {
   return one ? [one] : [];
 }
 
+function ensureXiaohongshuIdentityReference(refs) {
+  const ordered = (Array.isArray(refs) ? refs : [])
+    .map(ref => String(ref || "").trim())
+    .filter(Boolean);
+  const xhsIndex = ordered.findIndex(ref => ref.startsWith("/local-refs/xiaohongshu/"));
+  if (xhsIndex < 0) return ordered;
+
+  const xhsRef = ordered[xhsIndex];
+  const identityRefs = ordered.filter((ref, index) => (
+    index !== xhsIndex && !ref.startsWith("/local-refs/xiaohongshu/")
+  ));
+  if (!identityRefs.length) {
+    const defaultFace = document.querySelector(
+      '#cgRefGrid .cg-ref-item.default-style[data-ref]:not([data-ref=""])'
+    );
+    const defaultFaceRef = defaultFace ? String(defaultFace.dataset.ref || "").trim() : "";
+    if (defaultFaceRef) identityRefs.push(defaultFaceRef);
+  }
+  return [xhsRef, ...identityRefs];
+}
+
 function refreshCustomRefOrderBadges() {
   const grid = document.getElementById("cgRefGrid");
   if (!grid) return;
@@ -12365,6 +12386,7 @@ function currentCustomGenPayload(refImageOverride = "") {
   } else {
     refs = getSelectedCustomRefImages();
   }
+  refs = ensureXiaohongshuIdentityReference(refs);
   const body = {
     prompt,
     size_mode: customSize.mode,
@@ -12755,13 +12777,16 @@ async function importXiaohongshuOutfit(imageIndex) {
     const data = await response.json().catch(() => ({}));
     if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
     xiaohongshuRefs = [data];
-    const orderedRefs = [data.url, ...existingRefs].filter(Boolean);
+    const orderedRefs = ensureXiaohongshuIdentityReference([data.url, ...existingRefs]);
     await loadRefImages({ selectedRef: data.url, selectedRefs: orderedRefs });
     const prompt = document.getElementById("cgPrompt");
     if (prompt && !prompt.value.trim()) prompt.value = `参考图中的${note.title || "真人穿搭造型"}`;
     saveCustomGenState();
-    setXiaohongshuSearchStatus("已临时设为第 1 张穿搭参考图，生图后自动清理");
-    showToast("已临时调用小红书穿搭参考图");
+    const identityStatus = orderedRefs.length > 1
+      ? "，默认脸模已作为第 2 张"
+      : "，生成时将自动使用默认脸模";
+    setXiaohongshuSearchStatus(`已临时设为第 1 张穿搭参考图${identityStatus}；生图后自动清理`);
+    showToast(orderedRefs.length > 1 ? "已加入穿搭图并自动带上脸模" : "已临时调用小红书穿搭参考图");
   } catch (error) {
     setXiaohongshuSearchStatus(error.message);
   }
