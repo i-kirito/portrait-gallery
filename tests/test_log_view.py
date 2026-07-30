@@ -184,6 +184,20 @@ class LogViewFormattingTest(unittest.TestCase):
         self.assertIn("POST /api/generate-now", entry["message"])
         self.assertTrue(entry["important"])
 
+    def test_generate_now_quota_409_is_reported_as_business_limit(self):
+        text = (
+            '2026-07-30 22:49:08,414 [INFO] aiohttp.access: '
+            '127.0.0.1 "POST /api/generate-now HTTP/1.1" 409 439'
+        )
+
+        payload = GalleryServer._format_level_logs(text, max_items=100)
+
+        self.assertEqual(1, len(payload["entries"]))
+        entry = payload["entries"][0]
+        self.assertEqual("INFO", entry["level"])
+        self.assertIn("今日生图计划已达上限", entry["message"])
+        self.assertNotIn("接口异常", entry["message"])
+
     def test_favicon_probes_are_hidden_but_real_api_404_is_kept(self):
         text = "\n".join(
             [

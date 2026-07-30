@@ -165,6 +165,86 @@ class SchedulerRetryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual('{"文字":"中文"}', result)
 
+    async def test_xiaohongshu_vision_selects_only_strict_full_body_candidate(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = DailyScheduler({}, tmpdir)
+            scheduler._call_llm = AsyncMock(return_value=(
+                '{"selected_index":2,"is_real_photo":true,"is_collage":false,'
+                '"person_count":1,"single_outfit":true,"full_body_visible":true,'
+                '"clothing_clear":true,"quality_sufficient":true,'
+                '"keyword_match":true,"quality_score":93,"reason":"头脚完整且穿搭清楚"}'
+            ))
+
+            result = await scheduler.select_xiaohongshu_outfit_image(
+                "/tmp/contact-sheet.jpg",
+                "夏季通勤穿搭",
+                3,
+            )
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(2, result["selected_index"])
+        self.assertEqual(93, result["quality_score"])
+
+    async def test_xiaohongshu_vision_rejects_collage_even_if_model_selects_it(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = DailyScheduler({}, tmpdir)
+            scheduler._call_llm = AsyncMock(return_value=(
+                '{"selected_index":1,"is_real_photo":true,"is_collage":true,'
+                '"person_count":1,"single_outfit":false,"full_body_visible":true,'
+                '"clothing_clear":true,"quality_sufficient":true,'
+                '"keyword_match":true,"quality_score":90,"reason":"包含多套穿搭拼图"}'
+            ))
+
+            result = await scheduler.select_xiaohongshu_outfit_image(
+                "/tmp/contact-sheet.jpg",
+                "夏季通勤穿搭",
+                2,
+            )
+
+        self.assertFalse(result["accepted"])
+        self.assertEqual(0, result["selected_index"])
+
+    async def test_xiaohongshu_vision_rejects_missing_required_field(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = DailyScheduler({}, tmpdir)
+            scheduler._call_llm = AsyncMock(return_value=(
+                '{"selected_index":1,"is_real_photo":true,'
+                '"person_count":1,"single_outfit":true,"full_body_visible":true,'
+                '"clothing_clear":true,"quality_sufficient":true,'
+                '"keyword_match":true,"quality_score":95,"reason":"漏了拼图字段"}'
+            ))
+
+            result = await scheduler.select_xiaohongshu_outfit_image(
+                "/tmp/contact-sheet.jpg",
+                "夏季通勤穿搭",
+                1,
+            )
+
+        self.assertFalse(result["accepted"])
+        self.assertEqual(0, result["selected_index"])
+
+    async def test_required_vision_image_never_falls_back_to_text_only(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = DailyScheduler({}, tmpdir)
+            with (
+                patch.object(
+                    scheduler_module,
+                    "llm_request_config",
+                    return_value=self.request_config(),
+                ),
+                patch("requests.post") as post,
+            ):
+                result = await scheduler._call_llm(
+                    "vision probe",
+                    timeout=1,
+                    json_mode=True,
+                    image_path=str(Path(tmpdir) / "missing.jpg"),
+                    require_image=True,
+                )
+
+        self.assertIsNone(result)
+        post.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

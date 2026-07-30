@@ -358,6 +358,9 @@ class PortraitGalleryApp:
         self.web_server.on_photo_quota_snapshot = self._photo_quota_snapshot
         self.web_server.on_update_photo_plan = self.update_photo_plan
         self.web_server.on_update_outfit_plan = self.update_outfit_plan
+        self.web_server.on_validate_xiaohongshu_outfit = (
+            self.scheduler_gen.select_xiaohongshu_outfit_image
+        )
         self.web_server.on_reroll_image = self.reroll_image
         self.web_server.on_edit_image = self.edit_image
 

@@ -37,7 +37,7 @@ import uuid
 
 import aiohttp
 from aiohttp import web
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
 from characters import (
     LOCAL_CHARACTER_SOURCE,
@@ -392,6 +392,7 @@ class GalleryServer:
         self.on_photo_quota_snapshot = None
         self.on_update_photo_plan = None
         self.on_update_outfit_plan = None
+        self.on_validate_xiaohongshu_outfit = None
         self.on_image_dir_changed = None
 
         self.app = web.Application(middlewares=[self.gallery_auth_middleware])
@@ -1687,10 +1688,18 @@ class GalleryServer:
                     ):
                         hidden_access_count += 1
                         continue
-                    message_text = f"接口异常：{access['method']} {access['path']} -> {access['status']}"
+                    if (
+                        access["status"] == 409
+                        and access["method"] == "POST"
+                        and access["path"] == "/api/generate-now"
+                    ):
+                        message_text = "现在在干嘛未执行：今日生图计划已达上限"
+                        display_level = "INFO"
+                    else:
+                        message_text = f"接口异常：{access['method']} {access['path']} -> {access['status']}"
                     if access["status"] >= 500:
                         display_level = "ERROR"
-                    elif access["status"] >= 400:
+                    elif access["status"] >= 400 and display_level != "INFO":
                         display_level = "WARN"
                 else:
                     message_text = message.strip()
@@ -7144,6 +7153,72 @@ class GalleryServer:
             pass
         return relevance, portrait, liked_score
 
+    @staticmethod
+    def _xiaohongshu_detail_image_score(item: dict) -> tuple:
+        width = max(0, int((item or {}).get("width") or 0))
+        height = max(0, int((item or {}).get("height") or 0))
+        ratio = (height / width) if width else 0
+        portrait_fit = 2 if 1.15 <= ratio <= 2.2 else (1 if height > width > 0 else 0)
+        return portrait_fit, width * height, -int((item or {}).get("index") or 0)
+
+    @staticmethod
+    def _xiaohongshu_image_identity(value: str) -> str:
+        """Normalize CDN variants enough to exclude a search-selected cover from detail images."""
+        try:
+            basename = unquote(urlparse(str(value or "")).path).rstrip("/").rsplit("/", 1)[-1]
+        except Exception:
+            return ""
+        basename = basename.split("!", 1)[0]
+        basename = re.sub(r"\.(?:jpe?g|png|webp|avif)$", "", basename, flags=re.IGNORECASE)
+        return basename.strip().lower()
+
+    @staticmethod
+    def _create_xiaohongshu_validation_sheet(candidate_paths: list[str], output_dir: str) -> str:
+        """Create one numbered contact sheet so vision selection needs a single LLM call."""
+        if not candidate_paths:
+            return ""
+        cell_width, cell_height = 512, 768
+        columns = 2
+        rows = (len(candidate_paths) + columns - 1) // columns
+        canvas = Image.new("RGB", (columns * cell_width, rows * cell_height), (238, 238, 238))
+        draw = ImageDraw.Draw(canvas)
+        try:
+            font = ImageFont.truetype("DejaVuSans-Bold.ttf", 36)
+        except OSError:
+            font = ImageFont.load_default()
+        for offset, path in enumerate(candidate_paths):
+            column = offset % columns
+            row = offset // columns
+            left = column * cell_width
+            top = row * cell_height
+            with Image.open(path) as source:
+                tile = ImageOps.contain(
+                    ImageOps.exif_transpose(source).convert("RGB"),
+                    (cell_width - 24, cell_height - 24),
+                    method=Image.Resampling.LANCZOS,
+                )
+            x = left + (cell_width - tile.width) // 2
+            y = top + (cell_height - tile.height) // 2
+            canvas.paste(tile, (x, y))
+            draw.rectangle((left + 10, top + 10, left + 72, top + 64), fill=(211, 34, 42))
+            draw.text((left + 29, top + 16), str(offset + 1), fill="white", font=font)
+        os.makedirs(output_dir, exist_ok=True)
+        target = os.path.join(output_dir, f".xhs_validation_{uuid.uuid4().hex}.jpg")
+        canvas.save(target, format="JPEG", quality=88, optimize=True)
+        return target
+
+    def _discard_xiaohongshu_candidate_path(self, path: str) -> None:
+        filename = os.path.basename(str(path or ""))
+        safe_path = self._safe_reference_path(self.xiaohongshu_reference_dir, filename)
+        if not safe_path or self.xiaohongshu_reference_store.load().get(filename):
+            return
+        try:
+            os.remove(safe_path)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("清理小红书候选临时图失败: %s", exc)
+
     def _xiaohongshu_schedule_daily_entry(self, schedule_date: str) -> dict:
         try:
             data = ScheduleStore(self.data_dir).load()
@@ -7192,24 +7267,44 @@ class GalleryServer:
             key: reference.get(key)
             for key in (
                 "id", "filename", "url", "label", "title", "author", "query",
-                "source", "scope", "schedule_date", "created_at",
+                "source", "scope", "schedule_date", "created_at", "image_index",
+                "validation_score", "validation_reason",
             )
             if reference.get(key) not in (None, "")
         }
         enabled = state.get("enabled") is True
+        last_error = str(state.get("last_error") or "")
+        last_error_at = str(state.get("last_error_at") or "")
+        reference_created_at = str(reference.get("created_at") or "")
+        state_updated_at = str(state.get("updated_at") or "")
+        if (
+            reference
+            and last_error
+            and not last_error_at
+            and reference_created_at
+            and state_updated_at <= reference_created_at
+        ):
+            last_error = ""
+        status = (
+            "disabled"
+            if not enabled
+            else ("stale" if reference and last_error else ("ready" if reference else ("error" if last_error else "missing")))
+        )
         return {
             "enabled": enabled,
             "schedule_date": schedule_date,
-            "status": "disabled" if not enabled else ("ready" if reference else ("error" if state.get("last_error") else "missing")),
+            "status": status,
             "today_reference": public_reference,
-            "last_error": str(state.get("last_error") or ""),
-            "updated_at": str(state.get("updated_at") or ""),
+            "last_error": last_error,
+            "updated_at": state_updated_at,
         }
 
     def _save_xiaohongshu_schedule_error(self, message: str) -> None:
         def _update(state: dict) -> dict:
             state["last_error"] = str(message or "小红书今日穿搭选择失败")[:300]
-            state["updated_at"] = self._now().isoformat(timespec="seconds")
+            now_text = self._now().isoformat(timespec="seconds")
+            state["last_error_at"] = now_text
+            state["updated_at"] = now_text
             return state
         self.xiaohongshu_schedule_store.update(_update)
 
@@ -7270,9 +7365,24 @@ class GalleryServer:
             if not query:
                 self._save_xiaohongshu_schedule_error("日程没有可用的穿搭关键词，已回退原参考图")
                 return {}
+            selection_deadline = time.monotonic() + 120
+            cleanup_paths: list[str] = []
+            new_schedule_filename = ""
+            schedule_state_saved = False
+            old_filename = str(existing.get("filename") or "")
+
+            def _remaining_timeout(cap: float) -> float:
+                return min(cap, selection_deadline - time.monotonic())
+
             stage = "login_status"
             try:
-                status = await self.xiaohongshu_client.status(start_service=True)
+                timeout = _remaining_timeout(20)
+                if timeout <= 0:
+                    raise asyncio.TimeoutError
+                status = await asyncio.wait_for(
+                    self.xiaohongshu_client.status(start_service=True),
+                    timeout=timeout,
+                )
                 if not status.get("is_logged_in"):
                     raise XiaohongshuError("login_required", "小红书未登录，已回退原参考图", status=401)
                 stage = "search"
@@ -7282,7 +7392,13 @@ class GalleryServer:
                     schedule_date,
                     query,
                 )
-                items = await self.xiaohongshu_client.search(query, max_results=10)
+                timeout = _remaining_timeout(55)
+                if timeout <= 0:
+                    raise asyncio.TimeoutError
+                items = await asyncio.wait_for(
+                    self.xiaohongshu_client.search(query, max_results=10),
+                    timeout=timeout,
+                )
                 logger.info(
                     "小红书日程穿搭搜索完成: date=%s results=%s elapsed=%.1fs",
                     schedule_date,
@@ -7296,43 +7412,219 @@ class GalleryServer:
                 if not items:
                     raise XiaohongshuError("no_results", "没有找到合适的小红书穿搭，已回退原参考图")
 
-                chosen = None
-                chosen_image = None
-                downloaded = None
+                candidates = []
+                seen_urls = set()
                 for item in items[:3]:
-                    cover_url = str(item.get("cover_url") or "").strip()
-                    if not cover_url:
+                    if _remaining_timeout(1) <= 0:
+                        break
+                    feed_id = str(item.get("id") or "").strip()
+                    xsec_token = str(item.get("xsec_token") or "").strip()
+                    cover_identity = self._xiaohongshu_image_identity(item.get("cover_url") or "")
+                    if not feed_id or not xsec_token:
                         continue
-                    candidate_image = {
-                        "index": 0,
-                        "url": cover_url,
-                        "width": int(item.get("width") or 0),
-                        "height": int(item.get("height") or 0),
-                    }
-                    stage = f"download:{item.get('id', '')}"
+                    stage = f"detail:{feed_id}"
                     started = time.monotonic()
                     try:
-                        downloaded = await self.xiaohongshu_client.import_image(
-                            cover_url,
-                            self.xiaohongshu_reference_dir,
+                        timeout = _remaining_timeout(30)
+                        if timeout <= 0:
+                            raise asyncio.TimeoutError
+                        detail = await asyncio.wait_for(
+                            self.xiaohongshu_client.detail(feed_id, xsec_token),
+                            timeout=timeout,
                         )
-                    except XiaohongshuError as exc:
+                    except (XiaohongshuError, asyncio.TimeoutError) as exc:
+                        code = exc.code if isinstance(exc, XiaohongshuError) else "detail_timeout"
+                        message = exc.message if isinstance(exc, XiaohongshuError) else "读取笔记详情超时"
                         logger.warning(
-                            "下载小红书日程候选图失败: feed_id=%s code=%s message=%s",
-                            item.get("id", ""),
-                            exc.code,
-                            exc.message,
+                            "读取小红书日程候选笔记失败: feed_id=%s code=%s message=%s",
+                            feed_id,
+                            code,
+                            message,
                         )
                         continue
                     logger.info(
-                        "小红书日程候选图下载完成: feed_id=%s elapsed=%.1fs",
-                        item.get("id", ""),
+                        "小红书日程候选笔记读取完成: feed_id=%s images=%s elapsed=%.1fs",
+                        feed_id,
+                        len(detail.get("images") or []),
                         time.monotonic() - started,
                     )
-                    chosen, chosen_image = item, candidate_image
-                    break
-                if not chosen or not chosen_image or not downloaded:
-                    raise XiaohongshuError("no_images", "搜索结果没有可用穿搭图片，已回退原参考图")
+                    detail_images = [
+                        image
+                        for image in (detail.get("images") or [])
+                        if isinstance(image, dict)
+                        and int(image.get("index") or 0) > 0
+                        and str(image.get("url") or "").strip()
+                    ]
+                    detail_images.sort(key=self._xiaohongshu_detail_image_score, reverse=True)
+                    note_candidates = 0
+                    for candidate_image in detail_images:
+                        if len(candidates) >= 4 or note_candidates >= 2:
+                            break
+                        image_url = str(candidate_image.get("url") or "").strip()
+                        image_identity = self._xiaohongshu_image_identity(image_url)
+                        if (
+                            not image_url
+                            or image_url in seen_urls
+                            or (cover_identity and image_identity == cover_identity)
+                        ):
+                            continue
+                        seen_urls.add(image_url)
+                        known_width = int(candidate_image.get("width") or 0)
+                        known_height = int(candidate_image.get("height") or 0)
+                        if known_width and known_height and (
+                            min(known_width, known_height) < 400 or known_height < known_width
+                        ):
+                            continue
+                        stage = f"download:{feed_id}:{candidate_image.get('index', '')}"
+                        started = time.monotonic()
+                        imported_path = ""
+                        try:
+                            timeout = _remaining_timeout(20)
+                            if timeout <= 0:
+                                raise asyncio.TimeoutError
+                            downloaded = await asyncio.wait_for(
+                                self.xiaohongshu_client.import_image(
+                                    image_url,
+                                    self.xiaohongshu_reference_dir,
+                                ),
+                                timeout=timeout,
+                            )
+                            imported_path = str(downloaded.get("path") or "")
+                            if imported_path:
+                                cleanup_paths.append(imported_path)
+                            self._verify_reference_image(imported_path)
+                            with Image.open(imported_path) as source:
+                                actual_width, actual_height = source.size
+                            if min(actual_width, actual_height) < 400 or actual_height < actual_width:
+                                self._discard_xiaohongshu_candidate_path(imported_path)
+                                continue
+                        except (
+                            XiaohongshuError,
+                            asyncio.TimeoutError,
+                            Image.DecompressionBombError,
+                            UnidentifiedImageError,
+                            OSError,
+                            ValueError,
+                        ) as exc:
+                            if not isinstance(exc, XiaohongshuError):
+                                self._discard_xiaohongshu_candidate_path(imported_path)
+                            message = exc.message if isinstance(exc, XiaohongshuError) else (str(exc) or "候选图处理超时")
+                            code = exc.code if isinstance(exc, XiaohongshuError) else "invalid_image"
+                            logger.warning(
+                                "下载小红书日程候选图失败: feed_id=%s image_index=%s code=%s message=%s",
+                                feed_id,
+                                candidate_image.get("index", ""),
+                                code,
+                                message,
+                            )
+                            continue
+                        logger.info(
+                            "小红书日程候选正文图已准备: feed_id=%s image_index=%s elapsed=%.1fs",
+                            feed_id,
+                            candidate_image.get("index", ""),
+                            time.monotonic() - started,
+                        )
+                        candidates.append({
+                            "item": {
+                                **item,
+                                "title": str(detail.get("title") or item.get("title") or "").strip(),
+                                "author": str(detail.get("author") or item.get("author") or "").strip(),
+                            },
+                            "image": candidate_image,
+                            "downloaded": downloaded,
+                            "path": imported_path,
+                        })
+                        note_candidates += 1
+                    if len(candidates) >= 4:
+                        break
+                if not candidates:
+                    raise XiaohongshuError(
+                        "no_inner_images",
+                        "候选笔记没有可用的非封面正文图片，已回退原参考图",
+                    )
+
+                validator = self.on_validate_xiaohongshu_outfit
+                if not callable(validator):
+                    for candidate in candidates:
+                        self._discard_xiaohongshu_candidate_path(candidate.get("path", ""))
+                    raise XiaohongshuError(
+                        "vision_unavailable",
+                        "穿搭图片视觉质检不可用，已回退原参考图",
+                    )
+                validation_sheet = ""
+                stage = "vision_validation"
+                try:
+                    validation_sheet = self._create_xiaohongshu_validation_sheet(
+                        [candidate["path"] for candidate in candidates],
+                        self.xiaohongshu_reference_dir,
+                    )
+                    timeout = _remaining_timeout(60)
+                    if timeout <= 0:
+                        raise asyncio.TimeoutError
+                    validation = await asyncio.wait_for(
+                        validator(validation_sheet, query, len(candidates)),
+                        timeout=timeout,
+                    )
+                except Exception as exc:
+                    logger.warning("小红书穿搭视觉质检失败: %s", exc)
+                    validation = {
+                        "accepted": False,
+                        "selected_index": 0,
+                        "reason": "视觉质检超时或不可用",
+                    }
+                finally:
+                    if validation_sheet:
+                        try:
+                            os.remove(validation_sheet)
+                        except FileNotFoundError:
+                            pass
+
+                try:
+                    selected_index = int((validation or {}).get("selected_index") or 0)
+                except (TypeError, ValueError):
+                    selected_index = 0
+                try:
+                    validation_person_count = int((validation or {}).get("person_count") or 0)
+                    validation_score = int((validation or {}).get("quality_score") or 0)
+                except (TypeError, ValueError):
+                    validation_person_count = 0
+                    validation_score = 0
+                accepted = (
+                    (validation or {}).get("accepted") is True
+                    and (validation or {}).get("is_real_photo") is True
+                    and (validation or {}).get("is_collage") is False
+                    and validation_person_count == 1
+                    and (validation or {}).get("single_outfit") is True
+                    and (validation or {}).get("full_body_visible") is True
+                    and (validation or {}).get("clothing_clear") is True
+                    and (validation or {}).get("quality_sufficient") is True
+                    and (validation or {}).get("keyword_match") is True
+                    and validation_score >= 70
+                )
+                if not accepted or not 1 <= selected_index <= len(candidates):
+                    reason = str((validation or {}).get("reason") or "没有合格的单人全身穿搭照")[:160]
+                    for candidate in candidates:
+                        self._discard_xiaohongshu_candidate_path(candidate.get("path", ""))
+                    logger.warning("小红书穿搭视觉质检未选中图片: %s", reason)
+                    raise XiaohongshuError(
+                        "no_qualified_full_body_image",
+                        f"没有找到合格的单人全身穿搭照：{reason}",
+                    )
+
+                selected_candidate = candidates[selected_index - 1]
+                for offset, candidate in enumerate(candidates, start=1):
+                    if offset != selected_index:
+                        self._discard_xiaohongshu_candidate_path(candidate.get("path", ""))
+                chosen = selected_candidate["item"]
+                chosen_image = selected_candidate["image"]
+                downloaded = selected_candidate["downloaded"]
+                logger.info(
+                    "小红书穿搭视觉质检通过: feed_id=%s image_index=%s score=%s reason=%s",
+                    chosen.get("id", ""),
+                    chosen_image.get("index", ""),
+                    (validation or {}).get("quality_score", ""),
+                    (validation or {}).get("reason", ""),
+                )
 
                 stage = "verify"
                 imported_path = str(downloaded["path"])
@@ -7343,6 +7635,8 @@ class GalleryServer:
                 ).hexdigest()[:24]
                 filename = f"xhs_schedule_{schedule_date.replace('-', '')}_{schedule_digest}{extension}"
                 path = os.path.join(self.xiaohongshu_reference_dir, filename)
+                new_schedule_filename = filename
+                cleanup_paths.append(path)
                 if os.path.abspath(imported_path) != os.path.abspath(path):
                     shutil.copy2(imported_path, path)
                     imported_record = self.xiaohongshu_reference_store.load().get(imported_filename)
@@ -7360,6 +7654,7 @@ class GalleryServer:
                         os.remove(path)
                     except OSError:
                         pass
+                    self._discard_xiaohongshu_candidate_path(imported_path)
                     raise XiaohongshuError("invalid_image", "小红书今日参考图无效，已回退原参考图") from exc
 
                 title = str(chosen.get("title") or "今日穿搭").strip()[:80]
@@ -7377,6 +7672,16 @@ class GalleryServer:
                     "query": query,
                     "feed_id": str(chosen.get("id") or ""),
                     "image_index": int(chosen_image.get("index") or 0),
+                    "validation_score": validation_score,
+                    "validation_reason": str((validation or {}).get("reason") or "")[:160],
+                    "visual_validation": {
+                        key: (validation or {}).get(key)
+                        for key in (
+                            "person_count", "is_real_photo", "is_collage", "single_outfit",
+                            "full_body_visible", "clothing_clear", "quality_sufficient", "keyword_match",
+                        )
+                        if (validation or {}).get(key) is not None
+                    },
                     "width": width,
                     "height": height,
                     "size_bytes": os.path.getsize(path),
@@ -7384,7 +7689,6 @@ class GalleryServer:
                 }
                 self.xiaohongshu_reference_store.update(lambda records: {**records, filename: record})
 
-                old_filename = str(existing.get("filename") or "")
                 def _save_state(state: dict) -> dict:
                     references = state.get("references") if isinstance(state.get("references"), dict) else {}
                     references[schedule_date] = record
@@ -7392,10 +7696,12 @@ class GalleryServer:
                         "enabled": True,
                         "references": references,
                         "last_error": "",
+                        "last_error_at": "",
                         "updated_at": created_at,
                     })
                     return state
                 self.xiaohongshu_schedule_store.update(_save_state)
+                schedule_state_saved = True
                 if old_filename and old_filename != filename:
                     self._delete_xiaohongshu_reference_file(old_filename, allow_daily_schedule=True)
                 self._cleanup_old_xiaohongshu_schedule_references(schedule_date)
@@ -7408,6 +7714,10 @@ class GalleryServer:
                 })
                 logger.info("小红书今日穿搭已选择: date=%s title=%s query=%s", schedule_date, title, query)
                 return result
+            except asyncio.TimeoutError:
+                message = "小红书选图超过 120 秒，已停止并回退原参考图"
+                logger.warning("小红书日程穿搭选择超时: stage=%s", stage)
+                self._save_xiaohongshu_schedule_error(message)
             except XiaohongshuError as exc:
                 logger.warning(
                     "小红书日程穿搭选择失败，回退原流程: stage=%s code=%s message=%s",
@@ -7419,6 +7729,23 @@ class GalleryServer:
             except Exception as exc:
                 logger.warning("小红书日程穿搭选择异常，回退原流程: %s", exc, exc_info=True)
                 self._save_xiaohongshu_schedule_error("选择今日穿搭失败，已回退原参考图")
+            finally:
+                if (
+                    new_schedule_filename
+                    and not schedule_state_saved
+                    and new_schedule_filename != old_filename
+                ):
+                    record = self.xiaohongshu_reference_store.load().get(new_schedule_filename)
+                    if isinstance(record, dict) and record.get("scope") == "daily_schedule":
+                        try:
+                            self._delete_xiaohongshu_reference_file(
+                                new_schedule_filename,
+                                allow_daily_schedule=True,
+                            )
+                        except OSError as exc:
+                            logger.warning("清理未完成的小红书日程参考图失败: %s", exc)
+                for cleanup_path in cleanup_paths:
+                    self._discard_xiaohongshu_candidate_path(cleanup_path)
             return {}
 
     async def handle_xiaohongshu_schedule_mode(self, request: web.Request):
@@ -7439,6 +7766,7 @@ class GalleryServer:
             state["updated_at"] = now_text
             if not enabled:
                 state["last_error"] = ""
+                state["last_error_at"] = ""
             return state
         self.xiaohongshu_schedule_store.update(_update)
         if enabled:
@@ -11086,7 +11414,10 @@ JSON 格式：
                     {
                         "error": "limit_reached",
                         "status": "limit_reached",
-                        "message": f"今日生图计划已达上限 {planned_total}/{max_daily}",
+                        "message": (
+                            f"今日生图计划已达上限 {planned_total}/{max_daily}"
+                            f"（已完成 {completed}、失败 {failed}、进行中 {inflight}、待执行 {scheduled}）"
+                        ),
                         "max_daily": max_daily,
                         "completed_today": completed,
                         "failed_today": failed,

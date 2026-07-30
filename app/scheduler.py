@@ -1270,6 +1270,7 @@ class DailyScheduler:
         models_override: Optional[list[str]] = None,
         temperature: Optional[float] = 0.3,
         image_path: str = "",
+        require_image: bool = False,
     ) -> Optional[str]:
         """调用 CPA LLM（异步，不阻塞事件循环）"""
         request_config = llm_request_config(self.config, self.data_dir)
@@ -1307,6 +1308,9 @@ class DailyScheduler:
                     {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}"}},
                 ]
             except (OSError, ValueError) as exc:
+                if require_image:
+                    logger.warning("视觉请求图片读取失败，拒绝退回纯文本 LLM: %s", exc)
+                    return None
                 logger.warning("日程参考图读取失败，退回纯文本 LLM: %s", exc)
         messages = [
             {"role": "user", "content": user_content},
@@ -2527,6 +2531,112 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
         )
         logger.warning("小红书搜索词 LLM 返回无效，使用兜底词: %s", fallback)
         return fallback
+
+    @staticmethod
+    def _xiaohongshu_validation_bool(value: object) -> Optional[bool]:
+        if isinstance(value, bool):
+            return value
+        normalized = str(value or "").strip().lower()
+        if normalized in {"1", "true", "yes", "是", "符合"}:
+            return True
+        if normalized in {"0", "false", "no", "否", "不符合"}:
+            return False
+        return None
+
+    async def select_xiaohongshu_outfit_image(
+        self,
+        contact_sheet_path: str,
+        search_query: str = "",
+        candidate_count: int = 1,
+    ) -> dict:
+        """Choose one numbered candidate only after strict vision validation."""
+        candidate_count = max(1, min(4, int(candidate_count or 1)))
+        prompt = f"""你是穿搭参考图质检员。附图是一张带 1-{candidate_count} 编号的候选联系表，每个编号格代表一张独立的小红书正文图片。
+请在这些编号格中选择最适合直接作为图生图真人穿搭参考的一张；如果没有任何一张完全合格，selected_index 必须填 0。
+
+搜索意图：{str(search_query or '日常真人穿搭').strip()[:80]}
+
+被选中的单个编号格必须同时满足以下全部条件：
+1. 是自然拍摄的真人照片，不是插画、商品平铺、模特截图或纯服装图；
+2. 画面主体只能有一位清晰可辨的成年人，不能是多人合照；
+3. 只能展示这一位主体的一套完整穿搭，不能是拼图、九宫格、前后对比或多套造型合集；
+4. 从头顶到双脚/鞋子完整可见，不能是半身照、局部特写、裁掉头部或脚部；
+5. 上衣、下装和鞋子轮廓清楚，没有被大面积文字、贴纸、物品或姿势遮挡；
+6. 清晰度足够，且穿搭与搜索意图大致相关。
+
+联系表本身的分格不算拼图；is_collage 是指被选中编号格内部是否仍是拼图或多套合集。宁可全部拒绝也不要猜测。只输出 JSON，不要解释：
+{{
+  "selected_index": 0,
+  "is_real_photo": true,
+  "is_collage": false,
+  "person_count": 1,
+  "single_outfit": true,
+  "full_body_visible": true,
+  "clothing_clear": true,
+  "quality_sufficient": true,
+  "keyword_match": true,
+  "quality_score": 0,
+  "reason": "一句中文理由"
+}}"""
+        text = await self._call_llm(
+            prompt,
+            timeout=45,
+            json_mode=True,
+            temperature=0.1,
+            image_path=contact_sheet_path,
+            require_image=True,
+        )
+        data = self._parse_llm_response(text or "") if text else None
+        if not isinstance(data, dict):
+            return {
+                "accepted": False,
+                "selected_index": 0,
+                "quality_score": 0,
+                "reason": "视觉模型没有返回有效的质检结果",
+            }
+
+        try:
+            selected_index = int(data.get("selected_index") or 0)
+        except (TypeError, ValueError):
+            selected_index = 0
+        try:
+            person_count = int(data.get("person_count"))
+        except (TypeError, ValueError):
+            person_count = 0
+        try:
+            quality_score = max(0, min(100, int(float(data.get("quality_score") or 0))))
+        except (TypeError, ValueError):
+            quality_score = 0
+
+        checks = {
+            "is_real_photo": self._xiaohongshu_validation_bool(data.get("is_real_photo")),
+            "is_collage": self._xiaohongshu_validation_bool(data.get("is_collage")),
+            "single_outfit": self._xiaohongshu_validation_bool(data.get("single_outfit")),
+            "full_body_visible": self._xiaohongshu_validation_bool(data.get("full_body_visible")),
+            "clothing_clear": self._xiaohongshu_validation_bool(data.get("clothing_clear")),
+            "quality_sufficient": self._xiaohongshu_validation_bool(data.get("quality_sufficient")),
+            "keyword_match": self._xiaohongshu_validation_bool(data.get("keyword_match")),
+        }
+        accepted = (
+            1 <= selected_index <= candidate_count
+            and checks["is_real_photo"] is True
+            and checks["is_collage"] is False
+            and person_count == 1
+            and checks["single_outfit"] is True
+            and checks["full_body_visible"] is True
+            and checks["clothing_clear"] is True
+            and checks["quality_sufficient"] is True
+            and checks["keyword_match"] is True
+            and quality_score >= 70
+        )
+        return {
+            "accepted": accepted,
+            "selected_index": selected_index if accepted else 0,
+            "person_count": person_count,
+            "quality_score": quality_score,
+            "reason": str(data.get("reason") or ("符合全身穿搭参考标准" if accepted else "未通过全身穿搭参考标准"))[:160],
+            **checks,
+        }
 
     @staticmethod
     def _xiaohongshu_reference_prompt_block(search_query: str) -> str:

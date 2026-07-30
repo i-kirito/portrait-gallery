@@ -284,12 +284,20 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
                 "id": "note-1",
                 "title": "清新通勤穿搭 OOTD",
                 "author": "作者",
-                "images": [{
-                    "index": 0,
-                    "url": "https://sns-webpic-qc.xhscdn.com/daily.webp",
-                    "width": 900,
-                    "height": 1200,
-                }],
+                "images": [
+                    {
+                        "index": 0,
+                        "url": "https://sns-webpic-qc.xhscdn.com/daily.webp",
+                        "width": 900,
+                        "height": 1200,
+                    },
+                    {
+                        "index": 1,
+                        "url": "https://sns-webpic-qc.xhscdn.com/full-body.webp",
+                        "width": 900,
+                        "height": 1200,
+                    },
+                ],
             })
 
             async def fake_import(_url, output_dir):
@@ -298,6 +306,20 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
                 return {"filename": path.name, "path": str(path), "size_bytes": path.stat().st_size}
 
             server.xiaohongshu_client.import_image = AsyncMock(side_effect=fake_import)
+            server.on_validate_xiaohongshu_outfit = AsyncMock(return_value={
+                "accepted": True,
+                "selected_index": 1,
+                "quality_score": 92,
+                "reason": "单人单套且头脚完整可见",
+                "person_count": 1,
+                "is_real_photo": True,
+                "is_collage": False,
+                "single_outfit": True,
+                "full_body_visible": True,
+                "clothing_clear": True,
+                "quality_sufficient": True,
+                "keyword_match": True,
+            })
             client = await self._start_client(server)
             try:
                 response = await client.post(
@@ -328,7 +350,14 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
                 "清新通勤风 通勤 真人穿搭 全身 OOTD",
                 max_results=10,
             )
-            server.xiaohongshu_client.detail.assert_not_called()
+            server.xiaohongshu_client.detail.assert_awaited_once_with("note-1", "token-1")
+            self.assertEqual(
+                "https://sns-webpic-qc.xhscdn.com/full-body.webp",
+                server.xiaohongshu_client.import_image.await_args.args[0],
+            )
+            self.assertEqual(1, indexed["image_index"])
+            self.assertEqual(92, indexed["validation_score"])
+            server.on_validate_xiaohongshu_outfit.assert_awaited_once()
             self.assertEqual("disabled", disabled["status"])
             self.assertFalse(disabled["enabled"])
             self.assertEqual([], server._xiaohongshu_reference_filenames_for_paths([
@@ -370,6 +399,83 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn("未登录", payload["last_error"])
             server.xiaohongshu_client.search.assert_not_called()
 
+    async def test_schedule_mode_rejects_unqualified_inner_images_and_never_uses_cover(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            server._now = lambda: datetime(2026, 7, 30, 10, 0)
+            ScheduleStore(str(root / "data")).save({
+                "2026-07-30": {
+                    "date": "2026-07-30",
+                    "outfit_style": "清新通勤风",
+                    "schedule": "10:30 咖啡店办公",
+                }
+            })
+            server.xiaohongshu_client.status = AsyncMock(return_value={
+                "service_running": True,
+                "is_logged_in": True,
+            })
+            cover_url = "https://sns-webpic-qc.xhscdn.com/collage-cover.webp"
+            inner_url = "https://sns-webpic-qc.xhscdn.com/half-body.webp"
+            server.xiaohongshu_client.search = AsyncMock(return_value=[{
+                "id": "note-rejected",
+                "xsec_token": "token-rejected",
+                "title": "通勤穿搭合集",
+                "author": "作者",
+                "cover_url": cover_url,
+                "width": 900,
+                "height": 1200,
+            }])
+            server.xiaohongshu_client.detail = AsyncMock(return_value={
+                "id": "note-rejected",
+                "title": "通勤穿搭合集",
+                "author": "作者",
+                "images": [
+                    {
+                        "index": 0,
+                        "url": "https://sns-webpic-qc.xhscdn.com/first-page.webp",
+                        "width": 900,
+                        "height": 1200,
+                    },
+                    {
+                        "index": 1,
+                        "url": "https://sns-webpic-qc.xhscdn.net/path/collage-cover.jpg?format=webp",
+                        "width": 900,
+                        "height": 1200,
+                    },
+                    {"index": 2, "url": inner_url, "width": 900, "height": 1200},
+                ],
+            })
+
+            async def fake_import(url, output_dir):
+                self.assertEqual(inner_url, url)
+                path = Path(output_dir) / "xhs_rejected.png"
+                Image.new("RGB", (900, 1200), "white").save(path)
+                return {"filename": path.name, "path": str(path), "size_bytes": path.stat().st_size}
+
+            server.xiaohongshu_client.import_image = AsyncMock(side_effect=fake_import)
+            server.on_validate_xiaohongshu_outfit = AsyncMock(
+                side_effect=RuntimeError("vision backend unavailable")
+            )
+            client = await self._start_client(server)
+            try:
+                response = await client.post(
+                    "/api/xiaohongshu/schedule-mode",
+                    json={"enabled": True},
+                )
+                payload = await response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(200, response.status, payload)
+            self.assertEqual("error", payload["status"])
+            self.assertIn("全身", payload["last_error"])
+            self.assertFalse((root / "data" / "references" / "xiaohongshu" / "xhs_rejected.png").exists())
+            self.assertNotIn(
+                cover_url,
+                [call.args[0] for call in server.xiaohongshu_client.import_image.await_args_list],
+            )
+
     async def test_schedule_mode_search_timeout_keeps_runtime_fallback(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
             root = Path(tmpdir)
@@ -409,6 +515,60 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
                 max_results=10,
             )
             server.xiaohongshu_client.import_image.assert_not_called()
+
+    async def test_schedule_selection_timeout_is_reported_without_starting_search(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            server = self._make_server(Path(tmpdir))
+            server._now = lambda: datetime(2026, 7, 30, 10, 0)
+            server.xiaohongshu_schedule_store.update(
+                lambda state: {**state, "enabled": True}
+            )
+            server.xiaohongshu_client.status = AsyncMock(side_effect=asyncio.TimeoutError())
+            server.xiaohongshu_client.search = AsyncMock()
+
+            result = await server.ensure_xiaohongshu_schedule_reference(
+                "2026-07-30",
+                {"xiaohongshu_search_query": "夏季通勤穿搭"},
+                force=True,
+            )
+            state = server.xiaohongshu_schedule_state("2026-07-30")
+
+            self.assertEqual({}, result)
+            self.assertEqual("error", state["status"])
+            self.assertIn("120 秒", state["last_error"])
+            server.xiaohongshu_client.search.assert_not_called()
+
+    def test_failed_refresh_keeps_old_reference_but_exposes_warning(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            filename = "xhs_schedule_20260730_old.png"
+            path = root / "data" / "references" / "xiaohongshu" / filename
+            Image.new("RGB", (900, 1200), "white").save(path)
+            record = {
+                "filename": filename,
+                "scope": "daily_schedule",
+                "schedule_date": "2026-07-30",
+                "created_at": "2026-07-30T10:00:00",
+                "title": "旧的合格穿搭",
+            }
+            server.xiaohongshu_reference_store.update(
+                lambda records: {**records, filename: record}
+            )
+            server.xiaohongshu_schedule_store.update(lambda state: {
+                **state,
+                "enabled": True,
+                "references": {"2026-07-30": record},
+                "last_error": "本次刷新没有找到合格全身照",
+                "last_error_at": "2026-07-30T10:05:00",
+                "updated_at": "2026-07-30T10:05:00",
+            })
+
+            state = server.xiaohongshu_schedule_state("2026-07-30")
+
+            self.assertEqual("stale", state["status"])
+            self.assertEqual("旧的合格穿搭", state["today_reference"]["title"])
+            self.assertIn("本次刷新", state["last_error"])
 
     async def test_delete_rejects_non_image_filename(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
