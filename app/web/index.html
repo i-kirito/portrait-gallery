@@ -351,6 +351,31 @@ textarea:focus-visible,
   color: #999;
   margin-bottom: 6px;
 }
+.sk-field-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.sk-field-heading > label {
+  margin: 0;
+}
+.sk-prompt-compact-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #777;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.sk-prompt-compact-control.enabled {
+  color: #c2185b;
+}
+.sk-prompt-compact-control .sk-switch {
+  margin: 0;
+}
 .sk-field input[type="password"],
 .sk-field input[type="text"],
 .sk-field input[type="number"] {
@@ -5289,10 +5314,20 @@ textarea:focus-visible,
       </div>
     </div>
     <div class="sk-field">
-      <label for="skGptBaseUrl">GPT Image Base URL</label>
+      <div class="sk-field-heading">
+        <label for="skGptBaseUrl">GPT Image Base URL</label>
+        <div class="sk-prompt-compact-control" id="skGptPromptCompactRow">
+          <span>精简提示词</span>
+          <label class="sk-switch" for="skGptPromptCompact" aria-label="使用画廊 LLM 精简 GPT Image 提示词">
+            <input type="checkbox" id="skGptPromptCompact" onchange="syncPromptCompactVisual(this.checked)">
+            <span class="sk-switch-knob"></span>
+          </label>
+        </div>
+      </div>
       <div class="sk-desc">OpenAI 兼容生图基础地址；必须填写，填到 /v1 即可</div>
       <input type="text" id="skGptBaseUrl" placeholder="必填：填写你的 GPT Image /v1 地址">
       <div class="sk-status" id="skGptBaseUrlStatus">加载中...</div>
+      <div class="sk-status" id="skGptPromptCompactStatus">加载中...</div>
     </div>
     <div class="sk-field">
       <label for="skGptKey">GPT Image Key</label>
@@ -9688,10 +9723,12 @@ function openSettings() {
   document.getElementById("skAppearance").value = "";
   document.getElementById("skPersona").value = "";
   document.getElementById("skGiteeFallback").checked = false;
+  document.getElementById("skGptPromptCompact").checked = false;
   availableLlmModels = [];
   setLlmModelChain([]);
   setPushChannel("wechat");
   syncGiteeFallbackVisual(false);
+  syncPromptCompactVisual(false);
   const cleanupResult = document.getElementById("skCleanupResult");
   if (cleanupResult) cleanupResult.textContent = "";
   updateCleanupCustomVisibility();
@@ -9804,6 +9841,16 @@ function syncGiteeFallbackVisual(enabled) {
   if (row) row.classList.toggle("enabled", enabled === true);
   if (status) {
     status.textContent = enabled ? "✓ 回退开" : "○ 回退关";
+    status.className = "sk-status " + (enabled ? "set" : "unset");
+  }
+}
+
+function syncPromptCompactVisual(enabled, targetChars = 480) {
+  const row = document.getElementById("skGptPromptCompactRow");
+  const status = document.getElementById("skGptPromptCompactStatus");
+  if (row) row.classList.toggle("enabled", enabled === true);
+  if (status) {
+    status.textContent = enabled ? `✓ LLM 精简至约 ${targetChars} 字符` : "○ 使用原始提示词";
     status.className = "sk-status " + (enabled ? "set" : "unset");
   }
 }
@@ -10312,6 +10359,14 @@ async function loadSettingsStatus() {
     } else {
       gptBaseUrlStatus.textContent = "○ 必填";
       gptBaseUrlStatus.className = "sk-status unset";
+    }
+    const promptCompactEl = document.getElementById("skGptPromptCompact");
+    if (promptCompactEl) {
+      promptCompactEl.checked = data.gpt_prompt_compact_enabled === true;
+      syncPromptCompactVisual(
+        promptCompactEl.checked,
+        Number(data.gpt_prompt_compact_target_chars || 480)
+      );
     }
     const gptStatus = document.getElementById("skGptStatus");
     if (data.gpt_key) {
@@ -10858,6 +10913,7 @@ async function saveSettings() {
   const llmModel = document.getElementById("skLlmModel").value;
   const llmModels = fullLlmModelChain();
   const giteeFallbackEnabled = document.getElementById("skGiteeFallback").checked;
+  const gptPromptCompactEnabled = document.getElementById("skGptPromptCompact").checked;
   const missing = [];
   requireSettingsValue("Gitee API URL", giteeUrl, missing);
   if (!giteeKey && !hasSavedSecret("gitee_key")) missing.push("Gitee API Key");
@@ -10887,6 +10943,7 @@ async function saveSettings() {
     body.gitee_url = giteeUrl;
     if (gptKey) body.gpt_key = gptKey;
     body.gpt_base_url = gptBaseUrl;
+    body.gpt_prompt_compact_enabled = gptPromptCompactEnabled;
     body.gpt_image_endpoints = collectGptEndpoints();
     body.cpa_url = cpaUrl;
     if (cpaKey) body.cpa_key = cpaKey;

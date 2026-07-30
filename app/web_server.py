@@ -59,6 +59,7 @@ from settings import (
     auto_push_agent,
     builtin_reference_map,
     build_child_env,
+    config_int,
     configured_llm_models,
     configured_python,
     image_process_timeout,
@@ -3134,6 +3135,12 @@ class GalleryServer:
 
         image_config = self.config.get("image_gen", {})
         llm_config = self.config.get("llm", {})
+        prompt_compact_default = self._body_bool(image_config, "prompt_compact_enabled", False)
+        prompt_compact_enabled = self._body_bool(
+            keys_config,
+            "gpt_prompt_compact_enabled",
+            prompt_compact_default,
+        )
         raw_default_gpt_base_url = str(image_config.get("gpt_base_url", "") or "").strip()
         default_gpt_base_url = self._configured_image_base_url(raw_default_gpt_base_url)
         local_gpt_base_url = str(keys_config.get("gpt_base_url", "") or "").strip()
@@ -3179,6 +3186,14 @@ class GalleryServer:
             "gpt_base_url": local_gpt_base_url or default_gpt_base_url,
             "gpt_base_url_local": local_gpt_base_url,
             "gpt_base_url_default": default_gpt_base_url,
+            "gpt_prompt_compact_enabled": prompt_compact_enabled,
+            "gpt_prompt_compact_target_chars": config_int(
+                self.config,
+                "image_gen.prompt_compact_target_chars",
+                480,
+                200,
+                1200,
+            ),
             "gpt_image_endpoints": [
                 {
                     "label": str(endpoint.get("label", "") or "").strip(),
@@ -4065,6 +4080,12 @@ class GalleryServer:
                             body.get("gpt_base_url"),
                             default_gpt_base_url,
                         )
+                    if "gpt_prompt_compact_enabled" in body:
+                        keys_config["gpt_prompt_compact_enabled"] = self._body_bool(
+                            body,
+                            "gpt_prompt_compact_enabled",
+                            False,
+                        )
                     if "gpt_image_endpoints" in body:
                         cleaned_endpoints, endpoint_error = self._clean_gpt_image_endpoints(
                             body.get("gpt_image_endpoints"),
@@ -4134,11 +4155,11 @@ class GalleryServer:
                         gitee_keys = plugin_config.get("gitee_config", {}).get("api_keys", [])
                         existing_gitee_key = str((gitee_keys[0] if gitee_keys else "") or "").strip()
                         required_fields = [
-                            ("Gitee API URL", keys_config.get("gitee_url")),
+                            ("Gitee API URL", keys_config.get("gitee_url") or default_gitee_url),
                             ("Gitee API Key", body.get("gitee_key") or existing_gitee_key),
-                            ("GPT Image Base URL", keys_config.get("gpt_base_url")),
+                            ("GPT Image Base URL", keys_config.get("gpt_base_url") or default_gpt_base_url),
                             ("GPT Image Key", body.get("gpt_key") or keys_config.get("gpt_key")),
-                            ("CPA Base URL", keys_config.get("cpa_url")),
+                            ("CPA Base URL", keys_config.get("cpa_url") or llm_config.get("base_url")),
                             ("CPA API Key", body.get("cpa_key") or keys_config.get("cpa_key")),
                             ("GitHub API 代理", keys_config.get("github_proxy")),
                         ]
@@ -8774,7 +8795,11 @@ JSON 格式：
         if not result:
             return None
 
-        img_data, elapsed = result
+        submitted_prompt = prompt
+        if engine == "gptimage":
+            img_data, elapsed, submitted_prompt = result
+        else:
+            img_data, elapsed = result
         created_at = int(time.time())
         generation_mode = "img2img" if ref_image else "text2img"
         base_style = ""
@@ -8808,7 +8833,7 @@ JSON 格式：
 
         meta_entry = {
             "category": category,
-            "prompt": prompt,
+            "prompt": submitted_prompt,
             "custom_prompt": prompt,
             "user_prompt": prompt,
             "model": model_name,

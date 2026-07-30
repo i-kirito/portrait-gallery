@@ -20,15 +20,19 @@ from core import (
     RETRY_DELAY_SECONDS,
     build_caption_for_image,
     build_prompt,
+    get_cpa_chat_url,
+    get_cpa_key,
     get_image_int,
     get_image_request_timeout,
     get_image_model,
+    get_llm_models,
     sync_to_gallery,
     save_image,
     send_photo,
     update_metadata,
     _API_KEYS_CONFIG_PATH,
 )
+from settings import llm_choice_text
 
 GPTIMAGE_DIRECT_URL = get_image_model("gpt_base_url")
 
@@ -57,7 +61,139 @@ TEXT2IMG_TIMEOUT = get_image_request_timeout("text2img")
 IMG2IMG_TIMEOUT = get_image_request_timeout("img2img")
 IMG2IMG_MAX_SIZE = get_image_int("img2img_max_size", 512, 64)
 IMG2IMG_QUALITY = get_image_int("img2img_quality", 75, 1, 100)
+PROMPT_COMPACT_TARGET_CHARS = get_image_int("prompt_compact_target_chars", 480, 200, 1200)
+PROMPT_COMPACT_TIMEOUT = get_image_int("prompt_compact_timeout", 20, 5, 60)
 _IMAGES_API_UNSUPPORTED_BASES: set[str] = set()
+
+
+def _config_bool(value, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", ""}:
+        return False
+    return default
+
+
+def _prompt_compact_enabled() -> bool:
+    env_value = os.getenv("GPT_IMAGE_PROMPT_COMPACT_ENABLED")
+    if env_value is not None:
+        return _config_bool(env_value)
+    if os.path.exists(_API_KEYS_CONFIG_PATH):
+        try:
+            with open(_API_KEYS_CONFIG_PATH, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            if "gpt_prompt_compact_enabled" in config:
+                return _config_bool(config.get("gpt_prompt_compact_enabled"))
+        except Exception as e:
+            print(f"Failed to read prompt compact setting: {e}", file=sys.stderr)
+    return _config_bool(get_image_model("prompt_compact_enabled", "false"))
+
+
+def _clean_compacted_prompt(value: str) -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"^```(?:text|markdown)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text)
+    text = text.strip().strip('"').strip("'")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _hard_limit_prompt(prompt: str, target_chars: int, has_reference: bool = False) -> str:
+    text = re.sub(r"\s+", " ", str(prompt or "")).strip()
+    embedded_reference_rules = "[IMPORTANT]" in text
+    if embedded_reference_rules:
+        text = text.split("[IMPORTANT]", 1)[0].strip()
+    lower = text.lower()
+    has_compact_reference_rule = "reference" in lower and any(
+        marker in lower for marker in ("face", "facial", "identity")
+    )
+    reference_suffix = (
+        " Use the reference image only to match facial identity; "
+        "follow the text for everything else."
+        if has_reference and (embedded_reference_rules or not has_compact_reference_rule)
+        else ""
+    )
+    if len(text) <= target_chars and not reference_suffix:
+        return text
+    budget = max(40, target_chars - len(reference_suffix))
+    if len(text) > budget:
+        candidate = text[:budget].rstrip(" ,;:")
+        sentence_end = max(candidate.rfind(". "), candidate.rfind("。"))
+        if sentence_end >= max(40, budget // 2):
+            candidate = candidate[: sentence_end + 1]
+        text = candidate.rstrip(" ,;:")
+    return (text + reference_suffix)[:target_chars].strip()
+
+
+def _llm_compact_prompt(prompt: str, target_chars: int) -> tuple[str, str]:
+    chat_url = get_cpa_chat_url()
+    api_key = get_cpa_key()
+    models = get_llm_models()
+    if not chat_url or not api_key or not models:
+        return "", ""
+
+    instruction = (
+        f"Compress the image-generation prompt below to at most {target_chars} characters. "
+        "Output one concise English prompt only, with no quotes, markdown, explanation, or character count. "
+        "Preserve unique visual essentials: subject identity, current activity/action, important scene or outfit details, "
+        "and the role of any reference image. Remove repetition, verbose negative lists, and redundant camera or quality wording. "
+        "If reference-image instructions are present, reduce them to one short rule that the reference matches facial identity only "
+        "and does not override the text for other details.\n\nPROMPT:\n"
+        + prompt
+    )
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    for model in models:
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": instruction}],
+            "max_tokens": 400,
+            "stream": False,
+        }
+        try:
+            response = REQUEST_SESSION.post(chat_url, headers=headers, json=payload, timeout=PROMPT_COMPACT_TIMEOUT)
+        except requests.RequestException as e:
+            print(f"Prompt compact LLM request failed: model={model}, {e}", file=sys.stderr)
+            continue
+        if response.status_code != 200:
+            print(
+                f"Prompt compact LLM error: model={model}, status={response.status_code}, {response.text[:180]}",
+                file=sys.stderr,
+            )
+            continue
+        try:
+            data = response.json()
+        except ValueError:
+            continue
+        choices = data.get("choices") if isinstance(data, dict) else None
+        compacted = _clean_compacted_prompt(llm_choice_text(choices[0]) if choices else "")
+        if compacted:
+            return compacted, model
+    return "", ""
+
+
+def _compact_request_prompt(prompt: str, target_chars: int = PROMPT_COMPACT_TARGET_CHARS) -> str:
+    text = re.sub(r"\s+", " ", str(prompt or "")).strip()
+    if not _prompt_compact_enabled() or len(text) <= target_chars:
+        return text
+    has_reference = "[IMPORTANT]" in text
+    compacted, model = _llm_compact_prompt(text, target_chars)
+    if compacted:
+        limited = _hard_limit_prompt(compacted, target_chars, has_reference=has_reference)
+        print(
+            f"Prompt compacted by gallery LLM ({model}): {len(text)} -> {len(limited)} chars",
+            file=sys.stderr,
+        )
+        return limited
+    limited = _hard_limit_prompt(text, target_chars, has_reference=has_reference)
+    print(
+        f"Prompt compact LLM unavailable; applied local limit: {len(text)} -> {len(limited)} chars",
+        file=sys.stderr,
+    )
+    return limited
 
 
 def _configured_image_base_url(url: str) -> str:
@@ -362,16 +498,12 @@ def _generate_via_images_api(prompt: str, ref_image: Optional[str], size: Option
     timeout = IMG2IMG_TIMEOUT if ref_image else TEXT2IMG_TIMEOUT
     start = time.time()
 
-    edit_prompt = prompt
-    if ref_image:
-        edit_prompt += _reference_edit_instruction(ref_image)
-
     for attempt in range(MAX_RETRIES):
         try:
             if ref_image and agnes_img2img:
                 payload = {
                     "model": GPTIMAGE_DIRECT_MODEL,
-                    "prompt": edit_prompt,
+                    "prompt": prompt,
                     "n": 1,
                     "extra_body": {
                         "image": [_compress_image_for_img2img(ref_image)],
@@ -390,7 +522,7 @@ def _generate_via_images_api(prompt: str, ref_image: Optional[str], size: Option
                 image_bytes = _image_bytes_for_edit(ref_image)
                 data = {
                     "model": GPTIMAGE_DIRECT_MODEL,
-                    "prompt": edit_prompt,
+                    "prompt": prompt,
                     "n": "1",
                 }
                 if size:
@@ -472,10 +604,9 @@ def _generate_via_chat_gpt(prompt: str, ref_image: Optional[str] = None, size: O
     if ref_image:
         try:
             compressed_img = _compress_image_for_img2img(ref_image)
-            face_instruction = _reference_edit_instruction(ref_image)
             content = [
                 {"type": "image_url", "image_url": {"url": compressed_img}},
-                {"type": "text", "text": prompt + face_instruction},
+                {"type": "text", "text": prompt},
             ]
         except Exception as e:
             print(f"Failed to compress reference image: {e}", file=sys.stderr)
@@ -580,10 +711,14 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size:
 
     engine_label = _image_engine_label()
     is_agnes = _is_agnes_model(GPTIMAGE_DIRECT_MODEL)
+    request_prompt = prompt + (_reference_edit_instruction(ref_image) if ref_image else "")
+    compact_enabled = _prompt_compact_enabled()
+    request_prompt = _compact_request_prompt(request_prompt)
+    metadata_prompt = request_prompt if compact_enabled else prompt
     if not _is_explicit_chat_url(raw_base_url) and not _images_api_known_unsupported(raw_base_url):
-        result = _generate_via_images_api(prompt, ref_image, size, raw_base_url)
+        result = _generate_via_images_api(request_prompt, ref_image, size, raw_base_url)
         if result or _is_explicit_images_url(raw_base_url):
-            return result
+            return (*result, metadata_prompt) if result else None
         if is_agnes:
             reason = "unsupported" if _images_api_known_unsupported(raw_base_url) else "failed"
             print(
@@ -601,7 +736,8 @@ def _generate_via_direct_gpt(prompt: str, ref_image: Optional[str] = None, size:
             file=sys.stderr,
         )
         return None
-    return _generate_via_chat_gpt(prompt, ref_image, size)
+    result = _generate_via_chat_gpt(request_prompt, ref_image, size)
+    return (*result, metadata_prompt) if result else None
 
 
 def generate(theme: str, send: bool = False, caption: bool = False,
@@ -656,12 +792,12 @@ def generate(theme: str, send: bool = False, caption: bool = False,
         print(f"ERROR: {engine_label} endpoint failed: {endpoint_label}", file=sys.stderr)
         return None
 
-    img_data, gen_time = result
+    img_data, gen_time, submitted_prompt = result
     path, filename, ts = save_image(img_data, theme, GPTIMAGE_DIRECT_MODEL, style=style, target_size=size)
     update_metadata(
         filename,
         theme,
-        prompt,
+        submitted_prompt,
         GPTIMAGE_DIRECT_MODEL,
         ts,
         gen_time,
@@ -692,7 +828,7 @@ def generate(theme: str, send: bool = False, caption: bool = False,
             filename,
             theme,
             style,
-            prompt=prompt,
+            prompt=submitted_prompt,
             caption=cap_text or "",
             gen_time=gen_time,
             model_name=GPTIMAGE_DIRECT_MODEL,
