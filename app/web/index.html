@@ -3161,6 +3161,36 @@ textarea:focus-visible,
   padding: 2px 1px 7px;
   scrollbar-width: thin;
 }
+.xhs-search-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.xhs-search-pagination button {
+  min-width: 72px;
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid #ded9dc;
+  border-radius: 8px;
+  background: #fff;
+  color: #555;
+  cursor: pointer;
+}
+.xhs-search-pagination button:hover:not(:disabled) {
+  border-color: #e91e63;
+  color: #e91e63;
+}
+.xhs-search-pagination button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.xhs-search-pagination span {
+  min-width: 54px;
+  color: #777;
+  font-size: 12px;
+  text-align: center;
+}
 .xhs-result-card,
 .xhs-note-image {
   width: 132px;
@@ -6799,6 +6829,7 @@ textarea:focus-visible,
         </div>
         <div class="xhs-search-status" id="xhsSearchStatus"></div>
         <div class="xhs-search-results" id="xhsSearchResults" hidden></div>
+        <div class="xhs-search-pagination" id="xhsSearchPagination" hidden></div>
         <div class="xhs-note-images" id="xhsNoteImages" hidden></div>
       </div>
       <div class="cg-ref-grid" id="cgRefGrid">
@@ -12407,6 +12438,8 @@ document.addEventListener("DOMContentLoaded", () => {
 let uploadedRefs = [];
 let xiaohongshuRefs = []; // Only the Xiaohongshu images selected in this open dialog.
 let xiaohongshuSearchResults = [];
+let xiaohongshuSearchPage = 0;
+const XIAOHONGSHU_SEARCH_PAGE_SIZE = 10;
 let xiaohongshuActiveNote = null;
 let customGenXiaohongshuInFlight = new Set();
 let activeCustomWardrobeRef = null;
@@ -12577,6 +12610,7 @@ function setXiaohongshuSearchStatus(message) {
 
 function renderXiaohongshuSearchResults() {
   const container = document.getElementById("xhsSearchResults");
+  const pagination = document.getElementById("xhsSearchPagination");
   const imageContainer = document.getElementById("xhsNoteImages");
   if (!container) return;
   if (imageContainer) {
@@ -12586,17 +12620,51 @@ function renderXiaohongshuSearchResults() {
   if (!xiaohongshuSearchResults.length) {
     container.hidden = true;
     container.innerHTML = "";
+    if (pagination) {
+      pagination.hidden = true;
+      pagination.innerHTML = "";
+    }
     return;
   }
-  container.innerHTML = xiaohongshuSearchResults.map((item, index) => `
+  const totalPages = Math.ceil(xiaohongshuSearchResults.length / XIAOHONGSHU_SEARCH_PAGE_SIZE);
+  xiaohongshuSearchPage = Math.max(0, Math.min(xiaohongshuSearchPage, totalPages - 1));
+  const start = xiaohongshuSearchPage * XIAOHONGSHU_SEARCH_PAGE_SIZE;
+  const pageItems = xiaohongshuSearchResults.slice(start, start + XIAOHONGSHU_SEARCH_PAGE_SIZE);
+  container.innerHTML = pageItems.map((item, pageIndex) => {
+    const index = start + pageIndex;
+    return `
     <button type="button" class="xhs-result-card" data-xhs-result="${index}" onclick="loadXiaohongshuNote(${index})" title="${escapeAttr(item.title || "小红书穿搭")}">
       <img src="${escapeAttr(item.cover_url || "")}" alt="${escapeAttr(item.title || "小红书穿搭")}" loading="lazy" decoding="async" referrerpolicy="no-referrer">
       <span class="xhs-result-copy">
         <span class="xhs-result-title">${escapeHtml(item.title || "未命名穿搭")}</span>
         <span class="xhs-result-author">${escapeHtml(item.author || "小红书用户")}</span>
       </span>
-    </button>`).join("");
+    </button>`;
+  }).join("");
   container.hidden = false;
+  if (pagination) {
+    pagination.innerHTML = `
+      <button type="button" onclick="changeXiaohongshuSearchPage(-1)" ${xiaohongshuSearchPage === 0 ? "disabled" : ""}>上一页</button>
+      <span>${xiaohongshuSearchPage + 1} / ${totalPages}</span>
+      <button type="button" onclick="changeXiaohongshuSearchPage(1)" ${xiaohongshuSearchPage >= totalPages - 1 ? "disabled" : ""}>下一页</button>`;
+    pagination.hidden = totalPages <= 1;
+  }
+}
+
+function xiaohongshuSearchSummary() {
+  if (!xiaohongshuSearchResults.length) return "没有找到图文笔记";
+  const totalPages = Math.ceil(xiaohongshuSearchResults.length / XIAOHONGSHU_SEARCH_PAGE_SIZE);
+  return `找到 ${xiaohongshuSearchResults.length} 条图文笔记 · 第 ${xiaohongshuSearchPage + 1}/${totalPages} 页`;
+}
+
+function changeXiaohongshuSearchPage(offset) {
+  const totalPages = Math.ceil(xiaohongshuSearchResults.length / XIAOHONGSHU_SEARCH_PAGE_SIZE);
+  const nextPage = Math.max(0, Math.min(xiaohongshuSearchPage + Number(offset || 0), totalPages - 1));
+  if (nextPage === xiaohongshuSearchPage) return;
+  xiaohongshuSearchPage = nextPage;
+  xiaohongshuActiveNote = null;
+  renderXiaohongshuSearchResults();
+  setXiaohongshuSearchStatus(xiaohongshuSearchSummary());
 }
 
 async function searchXiaohongshuOutfits() {
@@ -12609,20 +12677,22 @@ async function searchXiaohongshuOutfits() {
   }
   if (button) button.disabled = true;
   xiaohongshuActiveNote = null;
+  xiaohongshuSearchPage = 0;
   setXiaohongshuSearchStatus("正在搜索小红书图文笔记");
   try {
     const response = await fetch(`${API}/api/xiaohongshu/search`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ keyword })
+      body: JSON.stringify({ keyword, max_results: 30 })
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
     xiaohongshuSearchResults = Array.isArray(data.items) ? data.items : [];
     renderXiaohongshuSearchResults();
-    setXiaohongshuSearchStatus(xiaohongshuSearchResults.length ? `找到 ${xiaohongshuSearchResults.length} 条图文笔记` : "没有找到图文笔记");
+    setXiaohongshuSearchStatus(xiaohongshuSearchSummary());
   } catch (error) {
     xiaohongshuSearchResults = [];
+    xiaohongshuSearchPage = 0;
     renderXiaohongshuSearchResults();
     setXiaohongshuSearchStatus(error.message);
   } finally {
@@ -12635,7 +12705,7 @@ async function loadXiaohongshuNote(index) {
   const container = document.getElementById("xhsNoteImages");
   if (!item || !container) return;
   document.querySelectorAll("[data-xhs-result]").forEach((card, cardIndex) => {
-    card.classList.toggle("active", cardIndex === index);
+    card.classList.toggle("active", Number(card.dataset.xhsResult) === index);
   });
   setXiaohongshuSearchStatus("正在读取笔记图片");
   container.hidden = true;

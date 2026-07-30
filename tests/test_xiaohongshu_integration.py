@@ -74,9 +74,21 @@ class XiaohongshuClientTest(unittest.IsolatedAsyncioTestCase):
         client._request.assert_awaited_once_with(
             "POST",
             "/api/v1/feeds/search",
-            json_body={"keyword": "通勤"},
+            json_body={
+                "keyword": "通勤",
+                "max_results": 30,
+                "filters": {"note_type": "图文"},
+            },
             timeout_seconds=90,
         )
+
+    async def test_search_rejects_result_limit_outside_supported_range(self):
+        client = XiaohongshuClient()
+
+        with self.assertRaises(XiaohongshuError) as raised:
+            await client.search("通勤", max_results=51)
+
+        self.assertEqual("invalid_max_results", raised.exception.code)
 
     async def test_search_retries_one_transient_upstream_error(self):
         client = XiaohongshuClient()
@@ -160,7 +172,10 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(status["is_logged_in"])
             self.assertEqual(200, search_response.status)
             self.assertEqual(1, search["count"])
-            server.xiaohongshu_client.search.assert_awaited_once_with("夏季穿搭")
+            server.xiaohongshu_client.search.assert_awaited_once_with(
+                "夏季穿搭",
+                max_results=30,
+            )
 
     async def test_import_persists_verified_local_reference(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):

@@ -27,7 +27,8 @@ DEFAULT_IMAGE_HOST_SUFFIXES = (
     "xhscdn.net",
     "xiaohongshu.com",
 )
-MAX_SEARCH_RESULTS = 20
+DEFAULT_SEARCH_RESULTS = 30
+MAX_SEARCH_RESULTS = 50
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_REDIRECTS = 3
 TRUSTED_PROXY_SYNTHETIC_NETWORKS = (
@@ -249,17 +250,27 @@ class XiaohongshuClient:
             "image": image,
         }
 
-    async def search(self, keyword: str) -> list[dict]:
+    async def search(self, keyword: str, *, max_results: int = DEFAULT_SEARCH_RESULTS) -> list[dict]:
         keyword = str(keyword or "").strip()
         if not keyword:
             raise XiaohongshuError("keyword_required", "请输入小红书搜索关键词。", status=400)
         if len(keyword) > 80:
             raise XiaohongshuError("keyword_too_long", "搜索关键词不能超过 80 个字符。", status=400)
         try:
+            max_results = int(max_results)
+        except (TypeError, ValueError) as exc:
+            raise XiaohongshuError("invalid_max_results", "搜索数量必须是 1 到 50 的整数。", status=400) from exc
+        if not 1 <= max_results <= MAX_SEARCH_RESULTS:
+            raise XiaohongshuError("invalid_max_results", "搜索数量必须是 1 到 50 的整数。", status=400)
+        try:
             data = await self._request(
                 "POST",
                 "/api/v1/feeds/search",
-                json_body={"keyword": keyword},
+                json_body={
+                    "keyword": keyword,
+                    "max_results": max_results,
+                    "filters": {"note_type": "图文"},
+                },
                 timeout_seconds=90,
             )
         except XiaohongshuError as exc:
@@ -269,7 +280,11 @@ class XiaohongshuClient:
             data = await self._request(
                 "POST",
                 "/api/v1/feeds/search",
-                json_body={"keyword": keyword},
+                json_body={
+                    "keyword": keyword,
+                    "max_results": max_results,
+                    "filters": {"note_type": "图文"},
+                },
                 timeout_seconds=90,
             )
         feeds = data.get("feeds") if isinstance(data.get("feeds"), list) else []
@@ -298,7 +313,7 @@ class XiaohongshuClient:
                 "height": int(cover.get("height") or 0),
                 "liked_count": str(interact.get("likedCount") or "").strip(),
             })
-            if len(results) >= MAX_SEARCH_RESULTS:
+            if len(results) >= max_results:
                 break
         return results
 

@@ -7057,7 +7057,10 @@ class GalleryServer:
         """Search image notes without exposing any write-capable MCP route."""
         try:
             body = await self._xiaohongshu_json_body(request)
-            items = await self.xiaohongshu_client.search(body.get("keyword", ""))
+            items = await self.xiaohongshu_client.search(
+                body.get("keyword", ""),
+                max_results=body.get("max_results", 30),
+            )
             return web.json_response({"items": items, "count": len(items)})
         except XiaohongshuError as exc:
             return self._xiaohongshu_error_response(exc)
