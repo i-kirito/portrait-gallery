@@ -2563,6 +2563,7 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
 4. 从头顶到双脚/鞋子完整可见，不能是半身照、局部特写、裁掉头部或脚部；
 5. 上衣、下装和鞋子轮廓清楚，没有被大面积文字、贴纸、物品或姿势遮挡；
 6. 清晰度足够，且穿搭与搜索意图大致相关。
+7. quality_score 必须按 0-100 给出真实综合评分；完全满足上述条件时应为 70-100，任一硬条件不满足时必须低于 70。
 
 联系表本身的分格不算拼图；is_collage 是指被选中编号格内部是否仍是拼图或多套合集。宁可全部拒绝也不要猜测。只输出 JSON，不要解释：
 {{
@@ -2575,7 +2576,7 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
   "clothing_clear": true,
   "quality_sufficient": true,
   "keyword_match": true,
-  "quality_score": 0,
+  "quality_score": 85,
   "reason": "一句中文理由"
 }}"""
         text = await self._call_llm(
@@ -2628,6 +2629,16 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             and checks["quality_sufficient"] is True
             and checks["keyword_match"] is True
             and quality_score >= 70
+        )
+        logger.info(
+            "小红书穿搭视觉质检结果: accepted=%s selected_index=%s score=%s "
+            "person_count=%s checks=%s reason=%s",
+            accepted,
+            selected_index,
+            quality_score,
+            person_count,
+            checks,
+            str(data.get("reason") or "")[:160],
         )
         return {
             "accepted": accepted,

@@ -79,9 +79,8 @@ class XiaohongshuClientTest(unittest.IsolatedAsyncioTestCase):
             json_body={
                 "keyword": "通勤",
                 "max_results": 30,
-                "filters": {"note_type": "图文"},
             },
-            timeout_seconds=90,
+            timeout_seconds=70,
         )
 
     async def test_search_rejects_result_limit_outside_supported_range(self):
@@ -155,7 +154,7 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
         })
 
         self.assertEqual(
-            "温柔风 居家 真人穿搭 全身 OOTD",
+            "温柔风居家穿搭",
             query,
         )
         self.assertNotIn("针织上衣", query)
@@ -169,7 +168,7 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             "outfit": "穿搭：LLM 设计的具体衣服不应进入搜索",
         })
 
-        self.assertEqual("夏季温柔居家穿搭 真人穿搭 全身 OOTD", query)
+        self.assertEqual("夏季温柔居家穿搭", query)
 
     async def test_status_and_search_use_read_only_client(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
@@ -347,7 +346,7 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             indexed = server.xiaohongshu_reference_store.load()[schedule_filename]
             self.assertEqual("daily_schedule", indexed["scope"])
             server.xiaohongshu_client.search.assert_awaited_once_with(
-                "清新通勤风 通勤 真人穿搭 全身 OOTD",
+                "清新通勤风通勤穿搭",
                 max_results=10,
             )
             server.xiaohongshu_client.detail.assert_awaited_once_with("note-1", "token-1")
@@ -476,6 +475,99 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
                 [call.args[0] for call in server.xiaohongshu_client.import_image.await_args_list],
             )
 
+    async def test_schedule_mode_checks_all_inner_images_after_collage_cover(self):
+        """A collage cover must not hide a later valid outfit photo in the same note."""
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            server._now = lambda: datetime(2026, 7, 30, 10, 0)
+            ScheduleStore(str(root / "data")).save({
+                "2026-07-30": {
+                    "date": "2026-07-30",
+                    "xiaohongshu_search_query": "法式温柔风穿搭",
+                }
+            })
+            server.xiaohongshu_client.status = AsyncMock(return_value={
+                "service_running": True,
+                "is_logged_in": True,
+            })
+            cover_url = "https://sns-webpic-qc.xhscdn.com/french-cover.webp"
+            inner_urls = [
+                f"https://sns-webpic-qc.xhscdn.com/french-inner-{index}.webp"
+                for index in range(1, 7)
+            ]
+            server.xiaohongshu_client.search = AsyncMock(return_value=[{
+                "id": "note-french",
+                "xsec_token": "token-french",
+                "title": "法式温柔风穿搭合集",
+                "author": "作者",
+                "cover_url": cover_url,
+                "width": 900,
+                "height": 1200,
+            }])
+            server.xiaohongshu_client.detail = AsyncMock(return_value={
+                "id": "note-french",
+                "title": "法式温柔风穿搭合集",
+                "author": "作者",
+                "images": [
+                    {"index": 0, "url": cover_url, "width": 900, "height": 1200},
+                    *[
+                        {"index": index, "url": url, "width": 900, "height": 1200}
+                        for index, url in enumerate(inner_urls, start=1)
+                    ],
+                ],
+            })
+
+            async def fake_import(url, output_dir):
+                index = inner_urls.index(url) + 1
+                path = Path(output_dir) / f"xhs_french_inner_{index}.png"
+                Image.new("RGB", (900, 1200), "white").save(path)
+                return {"filename": path.name, "path": str(path), "size_bytes": path.stat().st_size}
+
+            server.xiaohongshu_client.import_image = AsyncMock(side_effect=fake_import)
+
+            async def validate(_sheet, _query, candidate_count):
+                if candidate_count == 4:
+                    return {
+                        "accepted": False,
+                        "selected_index": 0,
+                        "quality_score": 0,
+                        "reason": "前四张没有合格全身照",
+                    }
+                return {
+                    "accepted": True,
+                    "selected_index": 2,
+                    "quality_score": 93,
+                    "reason": "第六张为单人单套全身照",
+                    "person_count": 1,
+                    "is_real_photo": True,
+                    "is_collage": False,
+                    "single_outfit": True,
+                    "full_body_visible": True,
+                    "clothing_clear": True,
+                    "quality_sufficient": True,
+                    "keyword_match": True,
+                }
+
+            server.on_validate_xiaohongshu_outfit = AsyncMock(side_effect=validate)
+            client = await self._start_client(server)
+            try:
+                response = await client.post(
+                    "/api/xiaohongshu/schedule-mode",
+                    json={"enabled": True},
+                )
+                payload = await response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(200, response.status, payload)
+            self.assertEqual("ready", payload["status"])
+            imported_urls = [call.args[0] for call in server.xiaohongshu_client.import_image.await_args_list]
+            self.assertEqual(len(inner_urls), len(imported_urls))
+            self.assertCountEqual(inner_urls, imported_urls)
+            self.assertNotIn(cover_url, imported_urls)
+            self.assertEqual(2, server.on_validate_xiaohongshu_outfit.await_count)
+
     async def test_schedule_mode_search_timeout_keeps_runtime_fallback(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
             root = Path(tmpdir)
@@ -511,7 +603,7 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual("error", payload["status"])
             self.assertIn("超时", payload["last_error"])
             server.xiaohongshu_client.search.assert_awaited_once_with(
-                "通勤 真人穿搭 全身 OOTD",
+                "通勤穿搭",
                 max_results=10,
             )
             server.xiaohongshu_client.import_image.assert_not_called()
@@ -535,7 +627,7 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual({}, result)
             self.assertEqual("error", state["status"])
-            self.assertIn("120 秒", state["last_error"])
+            self.assertIn("240 秒", state["last_error"])
             server.xiaohongshu_client.search.assert_not_called()
 
     def test_failed_refresh_keeps_old_reference_but_exposes_warning(self):

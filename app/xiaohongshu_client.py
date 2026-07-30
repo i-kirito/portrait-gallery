@@ -269,13 +269,13 @@ class XiaohongshuClient:
                 json_body={
                     "keyword": keyword,
                     "max_results": max_results,
-                    "filters": {"note_type": "图文"},
                 },
-                timeout_seconds=90,
+                timeout_seconds=70,
             )
         except XiaohongshuError as exc:
-            if exc.code != "upstream_error":
+            if exc.code not in {"upstream_error", "request_timeout", "service_unavailable"}:
                 raise
+            await self.close()
             await asyncio.sleep(0.5)
             data = await self._request(
                 "POST",
@@ -283,9 +283,8 @@ class XiaohongshuClient:
                 json_body={
                     "keyword": keyword,
                     "max_results": max_results,
-                    "filters": {"note_type": "图文"},
                 },
-                timeout_seconds=90,
+                timeout_seconds=70,
             )
         feeds = data.get("feeds") if isinstance(data.get("feeds"), list) else []
         results = []

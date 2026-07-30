@@ -450,12 +450,26 @@ class PortraitGalleryApp:
         web_server = getattr(self, "web_server", None)
         enabled = getattr(web_server, "xiaohongshu_schedule_enabled", None)
         ensure = getattr(web_server, "ensure_xiaohongshu_schedule_reference", None)
+        existing_selector = getattr(web_server, "_xiaohongshu_schedule_reference", None)
         keyword_generator = getattr(self.scheduler_gen, "generate_xiaohongshu_search_query", None)
         if not callable(enabled) or not enabled():
             return {}, ""
         if not asyncio.iscoroutinefunction(ensure) or not asyncio.iscoroutinefunction(keyword_generator):
             logger.warning("小红书日程前置选图接口不可用，回退原日程生成")
             return {}, ""
+        if not force and callable(existing_selector):
+            existing = dict(existing_selector(schedule_date) or {})
+            if existing.get("path"):
+                existing_query = str(existing.get("query") or "").strip()
+                reused = await ensure(
+                    schedule_date,
+                    {
+                        "date": schedule_date,
+                        "xiaohongshu_search_query": existing_query,
+                    },
+                    force=False,
+                )
+                return dict(reused or existing), existing_query
         keyword = str(await keyword_generator() or "").strip()
         if not keyword:
             logger.warning("小红书日程搜索词为空，回退原日程生成")
@@ -2793,7 +2807,7 @@ class PortraitGalleryApp:
         # 小红书模式先选真人穿搭，再让视觉 LLM 依据图片重写日程。
         schedule_date = self._today().isoformat()
         prepared_xiaohongshu_reference, xiaohongshu_search_query = (
-            await self._prepare_xiaohongshu_schedule_reference(schedule_date, force=True)
+            await self._prepare_xiaohongshu_schedule_reference(schedule_date, force=False)
         )
         schedule_kwargs = {}
         if prepared_xiaohongshu_reference.get("path"):

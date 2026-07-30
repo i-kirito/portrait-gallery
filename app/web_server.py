@@ -7115,8 +7115,11 @@ class GalleryServer:
             str(daily.get("xiaohongshu_search_query") or ""),
         ).strip(" -:：")
         if explicit:
-            explicit = re.sub(r"(?:真人穿搭|全身|OOTD)+$", "", explicit, flags=re.IGNORECASE).strip()
-            return f"{explicit[:32]} 真人穿搭 全身 OOTD".strip()[:64]
+            explicit = re.sub(r"(?:真人穿搭|真人|全身|OOTD)", "", explicit, flags=re.IGNORECASE)
+            explicit = re.sub(r"[\s,，]+", "", explicit).strip(" -:：")
+            if "穿搭" not in explicit:
+                explicit = f"{explicit}穿搭"
+            return explicit[:24]
 
         style = re.sub(r"\s+", " ", str(daily.get("outfit_style") or "")).strip()
         style = re.sub(r"^(?:风格|穿搭风格)[：:]\s*", "", style)[:16]
@@ -7126,10 +7129,12 @@ class GalleryServer:
         )
         contexts = ("居家", "通勤", "约会", "休闲", "度假", "运动", "复古", "甜美", "清新", "街头", "学院", "法式", "韩系")
         context = next((item for item in contexts if item in source_text or item in style), "")
-        base = " ".join(part for part in (style, context) if part).strip()
+        base = "".join(part for part in (style, context) if part).strip()
         if not base:
             base = "当季自然日常穿搭"
-        return f"{base[:32]} 真人穿搭 全身 OOTD".strip()[:64]
+        if "穿搭" not in base:
+            base = f"{base}穿搭"
+        return base[:24]
 
     @staticmethod
     def _xiaohongshu_schedule_candidate_score(item: dict, query: str) -> tuple:
@@ -7360,12 +7365,17 @@ class GalleryServer:
         async with self._xiaohongshu_schedule_lock:
             existing = self._xiaohongshu_schedule_reference(schedule_date)
             if existing and not force:
+                def _clear_reuse_error(state: dict) -> dict:
+                    state["last_error"] = ""
+                    state["last_error_at"] = ""
+                    return state
+                self.xiaohongshu_schedule_store.update(_clear_reuse_error)
                 return existing
             query = self._xiaohongshu_schedule_query(daily)
             if not query:
                 self._save_xiaohongshu_schedule_error("日程没有可用的穿搭关键词，已回退原参考图")
                 return {}
-            selection_deadline = time.monotonic() + 120
+            selection_deadline = time.monotonic() + 240
             cleanup_paths: list[str] = []
             new_schedule_filename = ""
             schedule_state_saved = False
@@ -7392,7 +7402,7 @@ class GalleryServer:
                     schedule_date,
                     query,
                 )
-                timeout = _remaining_timeout(55)
+                timeout = _remaining_timeout(150)
                 if timeout <= 0:
                     raise asyncio.TimeoutError
                 items = await asyncio.wait_for(
@@ -7414,7 +7424,10 @@ class GalleryServer:
 
                 candidates = []
                 seen_urls = set()
-                for item in items[:3]:
+                # The cover is only an entry point. A single outfit note often contains
+                # several useful full-body photos after its collage cover, so inspect
+                # multiple inner images from each strong note and validate them in batches.
+                for item in items[:4]:
                     if _remaining_timeout(1) <= 0:
                         break
                     feed_id = str(item.get("id") or "").strip()
@@ -7456,10 +7469,7 @@ class GalleryServer:
                         and str(image.get("url") or "").strip()
                     ]
                     detail_images.sort(key=self._xiaohongshu_detail_image_score, reverse=True)
-                    note_candidates = 0
                     for candidate_image in detail_images:
-                        if len(candidates) >= 4 or note_candidates >= 2:
-                            break
                         image_url = str(candidate_image.get("url") or "").strip()
                         image_identity = self._xiaohongshu_image_identity(image_url)
                         if (
@@ -7471,9 +7481,11 @@ class GalleryServer:
                         seen_urls.add(image_url)
                         known_width = int(candidate_image.get("width") or 0)
                         known_height = int(candidate_image.get("height") or 0)
-                        if known_width and known_height and (
-                            min(known_width, known_height) < 400 or known_height < known_width
-                        ):
+                        # Only discard obviously tiny assets here.  Orientation and
+                        # whether this is really a full-body outfit are visual
+                        # questions; leave those to the vision validator instead of
+                        # rejecting a legitimate landscape full-body photo early.
+                        if known_width and known_height and min(known_width, known_height) < 400:
                             continue
                         stage = f"download:{feed_id}:{candidate_image.get('index', '')}"
                         started = time.monotonic()
@@ -7495,7 +7507,7 @@ class GalleryServer:
                             self._verify_reference_image(imported_path)
                             with Image.open(imported_path) as source:
                                 actual_width, actual_height = source.size
-                            if min(actual_width, actual_height) < 400 or actual_height < actual_width:
+                            if min(actual_width, actual_height) < 400:
                                 self._discard_xiaohongshu_candidate_path(imported_path)
                                 continue
                         except (
@@ -7534,9 +7546,6 @@ class GalleryServer:
                             "downloaded": downloaded,
                             "path": imported_path,
                         })
-                        note_candidates += 1
-                    if len(candidates) >= 4:
-                        break
                 if not candidates:
                     raise XiaohongshuError(
                         "no_inner_images",
@@ -7551,58 +7560,80 @@ class GalleryServer:
                         "vision_unavailable",
                         "穿搭图片视觉质检不可用，已回退原参考图",
                     )
-                validation_sheet = ""
                 stage = "vision_validation"
-                try:
-                    validation_sheet = self._create_xiaohongshu_validation_sheet(
-                        [candidate["path"] for candidate in candidates],
-                        self.xiaohongshu_reference_dir,
-                    )
-                    timeout = _remaining_timeout(60)
-                    if timeout <= 0:
-                        raise asyncio.TimeoutError
-                    validation = await asyncio.wait_for(
-                        validator(validation_sheet, query, len(candidates)),
-                        timeout=timeout,
-                    )
-                except Exception as exc:
-                    logger.warning("小红书穿搭视觉质检失败: %s", exc)
-                    validation = {
-                        "accepted": False,
-                        "selected_index": 0,
-                        "reason": "视觉质检超时或不可用",
-                    }
-                finally:
-                    if validation_sheet:
-                        try:
-                            os.remove(validation_sheet)
-                        except FileNotFoundError:
-                            pass
+                validation = {}
+                validation_score = 0
+                selected_index = 0
+                rejection_reasons = []
+                for batch_start in range(0, len(candidates), 4):
+                    batch = candidates[batch_start:batch_start + 4]
+                    validation_sheet = ""
+                    try:
+                        validation_sheet = self._create_xiaohongshu_validation_sheet(
+                            [candidate["path"] for candidate in batch],
+                            self.xiaohongshu_reference_dir,
+                        )
+                        timeout = _remaining_timeout(60)
+                        if timeout <= 0:
+                            raise asyncio.TimeoutError
+                        batch_validation = await asyncio.wait_for(
+                            validator(validation_sheet, query, len(batch)),
+                            timeout=timeout,
+                        )
+                    except asyncio.TimeoutError:
+                        raise
+                    except Exception as exc:
+                        logger.warning("小红书穿搭视觉质检失败: %s", exc)
+                        batch_validation = {
+                            "accepted": False,
+                            "selected_index": 0,
+                            "reason": "视觉质检不可用",
+                        }
+                    finally:
+                        if validation_sheet:
+                            try:
+                                os.remove(validation_sheet)
+                            except FileNotFoundError:
+                                pass
 
-                try:
-                    selected_index = int((validation or {}).get("selected_index") or 0)
-                except (TypeError, ValueError):
-                    selected_index = 0
-                try:
-                    validation_person_count = int((validation or {}).get("person_count") or 0)
-                    validation_score = int((validation or {}).get("quality_score") or 0)
-                except (TypeError, ValueError):
-                    validation_person_count = 0
-                    validation_score = 0
-                accepted = (
-                    (validation or {}).get("accepted") is True
-                    and (validation or {}).get("is_real_photo") is True
-                    and (validation or {}).get("is_collage") is False
-                    and validation_person_count == 1
-                    and (validation or {}).get("single_outfit") is True
-                    and (validation or {}).get("full_body_visible") is True
-                    and (validation or {}).get("clothing_clear") is True
-                    and (validation or {}).get("quality_sufficient") is True
-                    and (validation or {}).get("keyword_match") is True
-                    and validation_score >= 70
-                )
-                if not accepted or not 1 <= selected_index <= len(candidates):
-                    reason = str((validation or {}).get("reason") or "没有合格的单人全身穿搭照")[:160]
+                    try:
+                        local_index = int((batch_validation or {}).get("selected_index") or 0)
+                    except (TypeError, ValueError):
+                        local_index = 0
+                    try:
+                        validation_person_count = int((batch_validation or {}).get("person_count") or 0)
+                        batch_score = int((batch_validation or {}).get("quality_score") or 0)
+                    except (TypeError, ValueError):
+                        validation_person_count = 0
+                        batch_score = 0
+                    accepted = (
+                        (batch_validation or {}).get("accepted") is True
+                        and (batch_validation or {}).get("is_real_photo") is True
+                        and (batch_validation or {}).get("is_collage") is False
+                        and validation_person_count == 1
+                        and (batch_validation or {}).get("single_outfit") is True
+                        and (batch_validation or {}).get("full_body_visible") is True
+                        and (batch_validation or {}).get("clothing_clear") is True
+                        and (batch_validation or {}).get("quality_sufficient") is True
+                        and (batch_validation or {}).get("keyword_match") is True
+                        and batch_score >= 70
+                        and 1 <= local_index <= len(batch)
+                    )
+                    if accepted:
+                        validation = batch_validation
+                        validation_score = batch_score
+                        selected_index = batch_start + local_index
+                        break
+                    reason = str((batch_validation or {}).get("reason") or "该批没有合格图片")[:160]
+                    rejection_reasons.append(reason)
+                    logger.warning(
+                        "小红书穿搭视觉质检第 %s 批未选中图片: %s",
+                        batch_start // 4 + 1,
+                        reason,
+                    )
+
+                if not selected_index:
+                    reason = "；".join(rejection_reasons)[:240] or "没有合格的单人全身穿搭照"
                     for candidate in candidates:
                         self._discard_xiaohongshu_candidate_path(candidate.get("path", ""))
                     logger.warning("小红书穿搭视觉质检未选中图片: %s", reason)
@@ -7715,7 +7746,7 @@ class GalleryServer:
                 logger.info("小红书今日穿搭已选择: date=%s title=%s query=%s", schedule_date, title, query)
                 return result
             except asyncio.TimeoutError:
-                message = "小红书选图超过 120 秒，已停止并回退原参考图"
+                message = "小红书选图超过 240 秒，已停止并回退原参考图"
                 logger.warning("小红书日程穿搭选择超时: stage=%s", stage)
                 self._save_xiaohongshu_schedule_error(message)
             except XiaohongshuError as exc:
@@ -7771,6 +7802,10 @@ class GalleryServer:
         self.xiaohongshu_schedule_store.update(_update)
         if enabled:
             daily = self._xiaohongshu_schedule_daily_entry(schedule_date)
+            manual_query = str(body.get("keyword") or "").strip()
+            if manual_query:
+                daily = dict(daily or {})
+                daily["xiaohongshu_search_query"] = manual_query[:80]
             await self.ensure_xiaohongshu_schedule_reference(
                 schedule_date,
                 daily,
