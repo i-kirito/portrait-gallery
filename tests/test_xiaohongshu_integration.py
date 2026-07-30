@@ -144,6 +144,33 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
         await client.start_server()
         return client
 
+    def test_schedule_query_ignores_llm_garment_description(self):
+        query = GalleryServer._xiaohongshu_schedule_query({
+            "outfit_style": "温柔风",
+            "reference_query": (
+                "成年女性温柔风白色心情居家日常穿搭参考，"
+                "米白不透肤全覆盖棉质圆领短袖针织上衣搭配"
+                "浅燕麦色高腰阔腿家居裤，室内自然光单人摄影"
+            ),
+        })
+
+        self.assertEqual(
+            "温柔风 居家 真人穿搭 全身 OOTD",
+            query,
+        )
+        self.assertNotIn("针织上衣", query)
+        self.assertNotIn("家居裤", query)
+        self.assertLessEqual(len(query), 64)
+
+    def test_schedule_query_prefers_preselected_keyword(self):
+        query = GalleryServer._xiaohongshu_schedule_query({
+            "xiaohongshu_search_query": "夏季温柔居家穿搭",
+            "outfit_style": "LLM 不应覆盖",
+            "outfit": "穿搭：LLM 设计的具体衣服不应进入搜索",
+        })
+
+        self.assertEqual("夏季温柔居家穿搭 真人穿搭 全身 OOTD", query)
+
     async def test_status_and_search_use_read_only_client(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
             server = self._make_server(Path(tmpdir))
@@ -248,6 +275,7 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
                 "xsec_token": "token-1",
                 "title": "清新通勤穿搭 OOTD",
                 "author": "作者",
+                "cover_url": "https://sns-webpic-qc.xhscdn.com/daily.webp",
                 "width": 900,
                 "height": 1200,
                 "liked_count": "2.1万",
@@ -296,6 +324,11 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             schedule_path = root / "data" / "references" / "xiaohongshu" / schedule_filename
             indexed = server.xiaohongshu_reference_store.load()[schedule_filename]
             self.assertEqual("daily_schedule", indexed["scope"])
+            server.xiaohongshu_client.search.assert_awaited_once_with(
+                "清新通勤风 通勤 真人穿搭 全身 OOTD",
+                max_results=10,
+            )
+            server.xiaohongshu_client.detail.assert_not_called()
             self.assertEqual("disabled", disabled["status"])
             self.assertFalse(disabled["enabled"])
             self.assertEqual([], server._xiaohongshu_reference_filenames_for_paths([
@@ -336,6 +369,46 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual("error", payload["status"])
             self.assertIn("未登录", payload["last_error"])
             server.xiaohongshu_client.search.assert_not_called()
+
+    async def test_schedule_mode_search_timeout_keeps_runtime_fallback(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            server._now = lambda: datetime(2026, 7, 30, 10, 0)
+            ScheduleStore(str(root / "data")).save({
+                "2026-07-30": {
+                    "date": "2026-07-30",
+                    "reference_query": "夏季通勤穿搭",
+                }
+            })
+            server.xiaohongshu_client.status = AsyncMock(return_value={
+                "service_running": True,
+                "is_logged_in": True,
+            })
+            server.xiaohongshu_client.search = AsyncMock(side_effect=XiaohongshuError(
+                "timeout",
+                "小红书请求超时，请稍后重试。",
+            ))
+            server.xiaohongshu_client.import_image = AsyncMock()
+            client = await self._start_client(server)
+            try:
+                response = await client.post(
+                    "/api/xiaohongshu/schedule-mode",
+                    json={"enabled": True},
+                )
+                payload = await response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(200, response.status, payload)
+            self.assertTrue(payload["enabled"])
+            self.assertEqual("error", payload["status"])
+            self.assertIn("超时", payload["last_error"])
+            server.xiaohongshu_client.search.assert_awaited_once_with(
+                "通勤 真人穿搭 全身 OOTD",
+                max_results=10,
+            )
+            server.xiaohongshu_client.import_image.assert_not_called()
 
     async def test_delete_rejects_non_image_filename(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):

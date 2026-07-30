@@ -7098,32 +7098,29 @@ class GalleryServer:
 
     @staticmethod
     def _xiaohongshu_schedule_query(daily: dict) -> str:
-        """Build a compact outfit-first query from one generated daily plan."""
+        """Use the preselected keyword; never derive concrete garments from LLM output."""
         daily = daily if isinstance(daily, dict) else {}
-        values = [
-            daily.get("reference_query"),
-            daily.get("outfit_style"),
-            daily.get("outfit_keywords"),
-            daily.get("outfit"),
-        ]
-        parts = []
-        seen = set()
-        for value in values:
-            text = re.sub(r"\s+", " ", str(value or "")).strip()
-            text = re.sub(r"(?:风格|穿搭|关键词)[：:]\s*", "", text)
-            for part in re.split(r"[\n,，。；;|/]+", text):
-                part = part.strip(" -:：")
-                key = part.lower()
-                if not part or key in seen:
-                    continue
-                seen.add(key)
-                parts.append(part)
-                if len(" ".join(parts)) >= 58:
-                    break
-            if len(" ".join(parts)) >= 58:
-                break
-        base = " ".join(parts).strip()[:64]
-        return f"{base} 真人穿搭 全身 OOTD".strip()[:80] if base else ""
+        explicit = re.sub(
+            r"\s+",
+            " ",
+            str(daily.get("xiaohongshu_search_query") or ""),
+        ).strip(" -:：")
+        if explicit:
+            explicit = re.sub(r"(?:真人穿搭|全身|OOTD)+$", "", explicit, flags=re.IGNORECASE).strip()
+            return f"{explicit[:32]} 真人穿搭 全身 OOTD".strip()[:64]
+
+        style = re.sub(r"\s+", " ", str(daily.get("outfit_style") or "")).strip()
+        style = re.sub(r"^(?:风格|穿搭风格)[：:]\s*", "", style)[:16]
+        source_text = "\n".join(
+            str(daily.get(field) or "")
+            for field in ("reference_query", "outfit", "schedule")
+        )
+        contexts = ("居家", "通勤", "约会", "休闲", "度假", "运动", "复古", "甜美", "清新", "街头", "学院", "法式", "韩系")
+        context = next((item for item in contexts if item in source_text or item in style), "")
+        base = " ".join(part for part in (style, context) if part).strip()
+        if not base:
+            base = "当季自然日常穿搭"
+        return f"{base[:32]} 真人穿搭 全身 OOTD".strip()[:64]
 
     @staticmethod
     def _xiaohongshu_schedule_candidate_score(item: dict, query: str) -> tuple:
@@ -7273,11 +7270,25 @@ class GalleryServer:
             if not query:
                 self._save_xiaohongshu_schedule_error("日程没有可用的穿搭关键词，已回退原参考图")
                 return {}
+            stage = "login_status"
             try:
                 status = await self.xiaohongshu_client.status(start_service=True)
                 if not status.get("is_logged_in"):
                     raise XiaohongshuError("login_required", "小红书未登录，已回退原参考图", status=401)
-                items = await self.xiaohongshu_client.search(query, max_results=30)
+                stage = "search"
+                started = time.monotonic()
+                logger.info(
+                    "小红书日程穿搭搜索开始: date=%s max_results=10 query=%s",
+                    schedule_date,
+                    query,
+                )
+                items = await self.xiaohongshu_client.search(query, max_results=10)
+                logger.info(
+                    "小红书日程穿搭搜索完成: date=%s results=%s elapsed=%.1fs",
+                    schedule_date,
+                    len(items),
+                    time.monotonic() - started,
+                )
                 items.sort(
                     key=lambda item: self._xiaohongshu_schedule_candidate_score(item, query),
                     reverse=True,
@@ -7287,35 +7298,43 @@ class GalleryServer:
 
                 chosen = None
                 chosen_image = None
-                chosen_detail = None
-                for item in items[:6]:
+                downloaded = None
+                for item in items[:3]:
+                    cover_url = str(item.get("cover_url") or "").strip()
+                    if not cover_url:
+                        continue
+                    candidate_image = {
+                        "index": 0,
+                        "url": cover_url,
+                        "width": int(item.get("width") or 0),
+                        "height": int(item.get("height") or 0),
+                    }
+                    stage = f"download:{item.get('id', '')}"
+                    started = time.monotonic()
                     try:
-                        detail = await self.xiaohongshu_client.detail(
-                            item.get("id", ""),
-                            item.get("xsec_token", ""),
+                        downloaded = await self.xiaohongshu_client.import_image(
+                            cover_url,
+                            self.xiaohongshu_reference_dir,
                         )
                     except XiaohongshuError as exc:
-                        logger.warning("读取小红书候选穿搭失败: %s", exc.message)
+                        logger.warning(
+                            "下载小红书日程候选图失败: feed_id=%s code=%s message=%s",
+                            item.get("id", ""),
+                            exc.code,
+                            exc.message,
+                        )
                         continue
-                    images = detail.get("images") if isinstance(detail.get("images"), list) else []
-                    if not images:
-                        continue
-                    images.sort(
-                        key=lambda image: (
-                            1 if int(image.get("height") or 0) >= int(image.get("width") or 0) > 0 else 0,
-                            int(image.get("height") or 0) * int(image.get("width") or 0),
-                        ),
-                        reverse=True,
+                    logger.info(
+                        "小红书日程候选图下载完成: feed_id=%s elapsed=%.1fs",
+                        item.get("id", ""),
+                        time.monotonic() - started,
                     )
-                    chosen, chosen_image, chosen_detail = item, images[0], detail
+                    chosen, chosen_image = item, candidate_image
                     break
-                if not chosen or not chosen_image:
+                if not chosen or not chosen_image or not downloaded:
                     raise XiaohongshuError("no_images", "搜索结果没有可用穿搭图片，已回退原参考图")
 
-                downloaded = await self.xiaohongshu_client.import_image(
-                    chosen_image.get("url", ""),
-                    self.xiaohongshu_reference_dir,
-                )
+                stage = "verify"
                 imported_path = str(downloaded["path"])
                 imported_filename = os.path.basename(imported_path)
                 extension = Path(imported_path).suffix.lower()
@@ -7343,8 +7362,8 @@ class GalleryServer:
                         pass
                     raise XiaohongshuError("invalid_image", "小红书今日参考图无效，已回退原参考图") from exc
 
-                title = str((chosen_detail or {}).get("title") or chosen.get("title") or "今日穿搭").strip()[:80]
-                author = str((chosen_detail or {}).get("author") or chosen.get("author") or "").strip()[:60]
+                title = str(chosen.get("title") or "今日穿搭").strip()[:80]
+                author = str(chosen.get("author") or "").strip()[:60]
                 created_at = self._now().isoformat(timespec="seconds")
                 record = {
                     "id": f"xiaohongshu_schedule_{hashlib.sha1((schedule_date + filename).encode('utf-8')).hexdigest()[:12]}",
@@ -7390,7 +7409,12 @@ class GalleryServer:
                 logger.info("小红书今日穿搭已选择: date=%s title=%s query=%s", schedule_date, title, query)
                 return result
             except XiaohongshuError as exc:
-                logger.warning("小红书日程穿搭选择失败，回退原流程: %s", exc.message)
+                logger.warning(
+                    "小红书日程穿搭选择失败，回退原流程: stage=%s code=%s message=%s",
+                    stage,
+                    exc.code,
+                    exc.message,
+                )
                 self._save_xiaohongshu_schedule_error(exc.message)
             except Exception as exc:
                 logger.warning("小红书日程穿搭选择异常，回退原流程: %s", exc, exc_info=True)

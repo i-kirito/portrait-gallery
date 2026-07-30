@@ -418,6 +418,7 @@ class PortraitGalleryApp:
         daily: dict,
         *,
         force: bool = False,
+        prepared_reference: Optional[dict] = None,
     ) -> tuple[dict, list[str]]:
         """Return ordered outfit/identity refs when daily XHS mode is ready."""
         web_server = getattr(self, "web_server", None)
@@ -425,7 +426,9 @@ class PortraitGalleryApp:
         identity_selector = getattr(web_server, "_preferred_xiaohongshu_identity_reference", None)
         if not asyncio.iscoroutinefunction(ensure) or not callable(identity_selector):
             return {}, []
-        reference = await ensure(schedule_date, daily, force=force)
+        reference = dict(prepared_reference or {})
+        if not reference:
+            reference = await ensure(schedule_date, daily, force=force)
         outfit_path = str((reference or {}).get("path") or "").strip()
         identity_path = str(identity_selector("") or "").strip()
         if not outfit_path or not identity_path or not os.path.isfile(identity_path):
@@ -433,6 +436,45 @@ class PortraitGalleryApp:
                 logger.warning("小红书日程模式缺少脸部特写，回退原参考图")
             return {}, []
         return reference, [outfit_path, identity_path]
+
+    async def _prepare_xiaohongshu_schedule_reference(
+        self,
+        schedule_date: str,
+        *,
+        force: bool = True,
+    ) -> tuple[dict, str]:
+        """Choose a broad keyword and download the real outfit before schedule generation."""
+        web_server = getattr(self, "web_server", None)
+        enabled = getattr(web_server, "xiaohongshu_schedule_enabled", None)
+        ensure = getattr(web_server, "ensure_xiaohongshu_schedule_reference", None)
+        keyword_generator = getattr(self.scheduler_gen, "generate_xiaohongshu_search_query", None)
+        if not callable(enabled) or not enabled():
+            return {}, ""
+        if not asyncio.iscoroutinefunction(ensure) or not asyncio.iscoroutinefunction(keyword_generator):
+            logger.warning("小红书日程前置选图接口不可用，回退原日程生成")
+            return {}, ""
+        keyword = str(await keyword_generator() or "").strip()
+        if not keyword:
+            logger.warning("小红书日程搜索词为空，回退原日程生成")
+            return {}, ""
+        reference = await ensure(
+            schedule_date,
+            {
+                "date": schedule_date,
+                "xiaohongshu_search_query": keyword,
+            },
+            force=force,
+        )
+        if not reference:
+            logger.warning("小红书真人穿搭未选中，回退原日程生成: query=%s", keyword)
+            return {}, keyword
+        logger.info(
+            "小红书真人穿搭已先于日程准备: date=%s query=%s title=%s",
+            schedule_date,
+            keyword,
+            reference.get("title") or reference.get("label") or "",
+        )
+        return reference, keyword
 
     @staticmethod
     def _selected_reference_metadata(selected_reference: dict) -> dict:
@@ -791,8 +833,18 @@ class PortraitGalleryApp:
 
     async def generate_and_save(self) -> DailyEntry:
         """生成日程 → 生图 → 保存"""
-        # 1. 生成日程
-        entry = await self.scheduler_gen.generate_today()
+        # 1. 小红书模式先选真人穿搭，再让视觉 LLM 围绕该穿搭生成日程。
+        schedule_date = self._today().isoformat()
+        prepared_xiaohongshu_reference, xiaohongshu_search_query = (
+            await self._prepare_xiaohongshu_schedule_reference(schedule_date, force=True)
+        )
+        schedule_kwargs = {}
+        if prepared_xiaohongshu_reference.get("path"):
+            schedule_kwargs = {
+                "outfit_reference_path": prepared_xiaohongshu_reference["path"],
+                "xiaohongshu_search_query": xiaohongshu_search_query,
+            }
+        entry = await self.scheduler_gen.generate_today(**schedule_kwargs)
         if not entry or entry.status != "ok" or entry.source == "fallback":
             logger.error("日程生成失败")
             if entry and entry.source != "fallback":
@@ -804,11 +856,13 @@ class PortraitGalleryApp:
         # 先保存 date-key 日程；后续图片条目会去掉全天计划字段，避免卡片重复承载大块日程。
         save_schedule_entry(self.data_dir, entry)
 
-        xiaohongshu_reference, xiaohongshu_refs = await self._xiaohongshu_schedule_generation_reference(
-            entry.date,
-            entry.to_dict(),
-            force=True,
-        )
+        xiaohongshu_reference, xiaohongshu_refs = {}, []
+        if prepared_xiaohongshu_reference:
+            xiaohongshu_reference, xiaohongshu_refs = await self._xiaohongshu_schedule_generation_reference(
+                entry.date,
+                entry.to_dict(),
+                prepared_reference=prepared_xiaohongshu_reference,
+            )
 
         if self._is_photo_quiet_now():
             logger.info("当前为 03:00-06:00 生图静默时段，只保存日程并恢复后续动态任务")
@@ -2733,8 +2787,18 @@ class PortraitGalleryApp:
 
     async def _refresh_schedule_impl(self):
         """Regenerate today's schedule and rebuild dynamic photo jobs."""
-        # 生成新日程
-        entry = await self.scheduler_gen.generate_today()
+        # 小红书模式先选真人穿搭，再让视觉 LLM 依据图片重写日程。
+        schedule_date = self._today().isoformat()
+        prepared_xiaohongshu_reference, xiaohongshu_search_query = (
+            await self._prepare_xiaohongshu_schedule_reference(schedule_date, force=True)
+        )
+        schedule_kwargs = {}
+        if prepared_xiaohongshu_reference.get("path"):
+            schedule_kwargs = {
+                "outfit_reference_path": prepared_xiaohongshu_reference["path"],
+                "xiaohongshu_search_query": xiaohongshu_search_query,
+            }
+        entry = await self.scheduler_gen.generate_today(**schedule_kwargs)
         
         # LLM 不通时 scheduler 会返回 fallback；刷新按钮不应因此覆盖已有可用日程。
         if not entry or entry.source == "fallback" or entry.status != "ok":
@@ -2758,11 +2822,6 @@ class PortraitGalleryApp:
         # save_schedule_entry performs the replacement under one exclusive lock.
         save_schedule_entry(self.data_dir, entry)
         logger.info(f"日程生成成功: {entry.outfit_style}")
-        await self._xiaohongshu_schedule_generation_reference(
-            entry.date,
-            entry.to_dict(),
-            force=True,
-        )
         await self._schedule_dynamic_photos(entry.schedule, entry.date)
 
         return entry

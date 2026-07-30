@@ -133,6 +133,36 @@ class ScheduleImageSizeTest(unittest.TestCase):
 
 
 class PhotoJobSizeCommandTest(unittest.IsolatedAsyncioTestCase):
+    async def test_xiaohongshu_reference_is_prepared_before_schedule_generation(self):
+        app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+        reference = {
+            "path": "/tmp/today-xhs.webp",
+            "title": "真人夏季穿搭",
+        }
+        app.scheduler_gen = SimpleNamespace(
+            generate_xiaohongshu_search_query=AsyncMock(return_value="夏季温柔居家穿搭"),
+        )
+        app.web_server = SimpleNamespace(
+            xiaohongshu_schedule_enabled=lambda: True,
+            ensure_xiaohongshu_schedule_reference=AsyncMock(return_value=reference),
+        )
+
+        selected, keyword = await app._prepare_xiaohongshu_schedule_reference(
+            "2026-07-30",
+            force=True,
+        )
+
+        self.assertEqual(reference, selected)
+        self.assertEqual("夏季温柔居家穿搭", keyword)
+        app.web_server.ensure_xiaohongshu_schedule_reference.assert_awaited_once_with(
+            "2026-07-30",
+            {
+                "date": "2026-07-30",
+                "xiaohongshu_search_query": "夏季温柔居家穿搭",
+            },
+            force=True,
+        )
+
     async def test_photo_job_passes_stable_schedule_size(self):
         app = PortraitGalleryApp.__new__(PortraitGalleryApp)
         app.config = {"image_gen": {"metadata_size": "1536x2048"}}
