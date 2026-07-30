@@ -12184,6 +12184,11 @@ function saveCustomGenState() {
   const promptEl = document.getElementById("cgPrompt");
   const customSize = getCustomGenSize();
   const customDimensions = getCustomDimensions();
+  const selectedRefs = getSelectedCustomRefImages()
+    .filter(value => !String(value || "").startsWith("/local-refs/xiaohongshu/"));
+  const activeRef = String(
+    (document.querySelector("#cgRefGrid .cg-ref-item.active") || {}).dataset?.ref || ""
+  );
   const state = {
     prompt: promptEl ? promptEl.value : "",
     sizeMode: customSize.mode,
@@ -12193,8 +12198,8 @@ function saveCustomGenState() {
     customHeight: customDimensions.height,
     shot: getCustomShotType(),
     model: getCustomImageModel(),
-    ref: (document.querySelector("#cgRefGrid .cg-ref-item.active") || {}).dataset?.ref || "",
-    refs: getSelectedCustomRefImages()
+    ref: activeRef.startsWith("/local-refs/xiaohongshu/") ? (selectedRefs[0] || "") : activeRef,
+    refs: selectedRefs
   };
   window.galleryStorageSet("custom_gen_state", JSON.stringify(state));
 }
@@ -12374,6 +12379,9 @@ async function openCustomGenFromWardrobe(btn) {
 }
 
 function closeCustomGen() {
+  void releaseTransientXiaohongshuRefs({
+    skipFilenames: Array.from(customGenXiaohongshuInFlight)
+  });
   saveCustomGenState();
   const overlay = document.getElementById("cgOverlay");
   overlay.classList.remove("open");
@@ -12397,9 +12405,10 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 // Reference image selector
 let uploadedRefs = [];
-let xiaohongshuRefs = [];
+let xiaohongshuRefs = []; // Only the Xiaohongshu images selected in this open dialog.
 let xiaohongshuSearchResults = [];
 let xiaohongshuActiveNote = null;
+let customGenXiaohongshuInFlight = new Set();
 let activeCustomWardrobeRef = null;
 let pendingDefaultStyleUpload = "";
 function mergeDefaultStyleRefs(refList) {
@@ -12518,7 +12527,7 @@ function renderRefImages(defaultRefs, uploadRefs, options = {}) {
     if (!url) return;
     html += `<div class="cg-ref-item xiaohongshu" data-ref="${url}" title="${title}" role="button" tabindex="0">
       <img src="${url}" alt="${label}" loading="lazy" decoding="async">
-      <button class="cg-ref-del" type="button" aria-label="删除${label}" title="删除这张小红书参考图" onclick="event.stopPropagation();deleteXiaohongshuRef(${index})">✕</button>
+      <button class="cg-ref-del" type="button" aria-label="移除${label}" title="移除这张临时小红书参考图" onclick="event.stopPropagation();deleteXiaohongshuRef(${index})">✕</button>
     </div>`;
   });
 
@@ -12531,7 +12540,7 @@ function renderRefImages(defaultRefs, uploadRefs, options = {}) {
     </div>`;
   });
 
-  if (defaultRefs.length === 0 && uploadRefs.length === 0 && !(wardrobeRef && wardrobeRef.url)) {
+  if (defaultRefs.length === 0 && uploadRefs.length === 0 && xiaohongshuRefs.length === 0 && !(wardrobeRef && wardrobeRef.url)) {
     html += `<div style="padding:10px;color:#999;font-size:13px;">暂无参考图，点击"📤 上传参考图"添加</div>`;
   }
 
@@ -12547,16 +12556,13 @@ function renderRefImages(defaultRefs, uploadRefs, options = {}) {
 async function loadRefImages(options = {}) {
   renderRefImages(mergeDefaultStyleRefs([]), uploadedRefs, options);
   try {
-    const [refListRes, uploadedRes, xiaohongshuRes] = await Promise.all([
+    const [refListRes, uploadedRes] = await Promise.all([
       fetch(`${API}/api/ref-list`),
-      fetch(`${API}/api/uploaded-refs`),
-      fetch(`${API}/api/xiaohongshu/references`)
+      fetch(`${API}/api/uploaded-refs`)
     ]);
     const refList = await refListRes.json();
     const uploadedRefsFromServer = await uploadedRes.json();
-    const xiaohongshuRefsFromServer = await xiaohongshuRes.json();
     uploadedRefs = Array.isArray(uploadedRefsFromServer) ? uploadedRefsFromServer : [];
-    xiaohongshuRefs = Array.isArray(xiaohongshuRefsFromServer) ? xiaohongshuRefsFromServer : [];
     renderRefImages(mergeDefaultStyleRefs(refList), uploadedRefs, options);
   } catch(e) {
     console.error("load refs:", e);
@@ -12664,6 +12670,7 @@ async function importXiaohongshuOutfit(imageIndex) {
   if (!note || !image) return;
   const existingRefs = getSelectedCustomRefImages()
     .filter(ref => !String(ref).startsWith("/local-refs/xiaohongshu/"));
+  await releaseTransientXiaohongshuRefs();
   setXiaohongshuSearchStatus("正在导入参考图");
   try {
     const response = await fetch(`${API}/api/xiaohongshu/import`, {
@@ -12677,16 +12684,47 @@ async function importXiaohongshuOutfit(imageIndex) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    xiaohongshuRefs = [data];
     const orderedRefs = [data.url, ...existingRefs].filter(Boolean);
     await loadRefImages({ selectedRef: data.url, selectedRefs: orderedRefs });
     const prompt = document.getElementById("cgPrompt");
     if (prompt && !prompt.value.trim()) prompt.value = `参考图中的${note.title || "真人穿搭造型"}`;
     saveCustomGenState();
-    setXiaohongshuSearchStatus("已设为第 1 张穿搭参考图");
-    showToast("已加入小红书穿搭参考图");
+    setXiaohongshuSearchStatus("已临时设为第 1 张穿搭参考图，生图后自动清理");
+    showToast("已临时调用小红书穿搭参考图");
   } catch (error) {
     setXiaohongshuSearchStatus(error.message);
   }
+}
+
+function clearStoredXiaohongshuRefSelection() {
+  const state = readCustomGenState();
+  state.refs = (Array.isArray(state.refs) ? state.refs : [])
+    .filter(value => !String(value || "").startsWith("/local-refs/xiaohongshu/"));
+  if (String(state.ref || "").startsWith("/local-refs/xiaohongshu/")) state.ref = "";
+  window.galleryStorageSet("custom_gen_state", JSON.stringify(state));
+}
+
+async function releaseTransientXiaohongshuRefs(options = {}) {
+  const refs = xiaohongshuRefs.slice();
+  const skipFilenames = new Set(Array.isArray(options.skipFilenames) ? options.skipFilenames : []);
+  xiaohongshuRefs = [];
+  clearStoredXiaohongshuRefSelection();
+  await Promise.all(refs.map(async ref => {
+    if (!ref || !ref.filename || skipFilenames.has(ref.filename)) return;
+    try {
+      const response = await fetch(
+        `${API}/api/xiaohongshu/references/${encodeURIComponent(ref.filename)}`,
+        { method: "DELETE" }
+      );
+      if (!response.ok && response.status !== 404) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.message || data.error || `HTTP ${response.status}`);
+      }
+    } catch (error) {
+      console.warn("release temporary Xiaohongshu reference:", error);
+    }
+  }));
 }
 function requestDefaultStyleUpload(style) {
   const slot = DEFAULT_STYLE_REF_FALLBACKS.find(ref => ref.style === style);
@@ -12761,7 +12799,7 @@ function deleteUploadedRef(idx) {
 }
 async function deleteXiaohongshuRef(index) {
   const ref = xiaohongshuRefs[index];
-  if (!ref || !ref.filename || !confirm(`确定删除“${ref.label || "这张小红书图片"}”吗？删除后历史图片重抽可能无法继续使用它。`)) return;
+  if (!ref || !ref.filename || !confirm(`确定移除“${ref.label || "这张小红书图片"}”吗？`)) return;
   try {
     const response = await fetch(
       `${API}/api/xiaohongshu/references/${encodeURIComponent(ref.filename)}`,
@@ -12771,14 +12809,10 @@ async function deleteXiaohongshuRef(index) {
     if (!response.ok || data.error) {
       throw new Error(data.message || data.error || `HTTP ${response.status}`);
     }
-    const state = readCustomGenState();
-    const deletedUrl = String(ref.url || "");
-    state.refs = (Array.isArray(state.refs) ? state.refs : [])
-      .filter(value => String(value || "") !== deletedUrl);
-    if (String(state.ref || "") === deletedUrl) state.ref = "";
-    window.galleryStorageSet("custom_gen_state", JSON.stringify(state));
+    xiaohongshuRefs = xiaohongshuRefs.filter(item => item !== ref);
+    clearStoredXiaohongshuRefSelection();
     await loadRefImages();
-    showToast("🗑 已删除小红书参考图");
+    showToast("🗑 已移除临时小红书参考图");
   } catch (error) {
     showToast("❌ " + error.message);
   }
@@ -12786,6 +12820,16 @@ async function deleteXiaohongshuRef(index) {
 async function submitCustomGen() {
   const payload = currentCustomGenPayload();
   if (payload.error === "prompt_required") { showToast("✍️ 先输入穿搭描述呀～"); return; }
+
+  const submittedRefs = [payload.body.ref_image, ...(payload.body.ref_images || [])]
+    .map(value => String(value || "").trim())
+    .filter(Boolean);
+  customGenXiaohongshuInFlight = new Set(
+    xiaohongshuRefs
+      .filter(ref => submittedRefs.includes(String(ref.url || "")))
+      .map(ref => ref.filename)
+      .filter(Boolean)
+  );
   
   const btn = document.getElementById("cgSubmitBtn");
   btn.disabled = true; btn.textContent = "⏳ 正在打扮...";
@@ -12798,14 +12842,24 @@ async function submitCustomGen() {
       body: JSON.stringify(payload.body)
     }, IMAGE_OPERATION_TIMEOUT_MS, '定制生图请求超时，后台可能仍在处理，请稍后刷新画廊');
     const data = await res.json();
-    if (data.error) showToast("❌ " + data.error);
+    if (data.error) {
+      showToast("❌ " + data.error);
+      await releaseTransientXiaohongshuRefs({
+        skipFilenames: Array.from(customGenXiaohongshuInFlight)
+      });
+      await loadRefImages();
+    }
     else {
       showToast("✨ 定制造型生成完成啦！");
       closeCustomGen();
       await loadGallery();
     }
   } catch(e) { showToast("❌ " + e.message); }
-  finally { btn.disabled = false; btn.textContent = "✨ 开始生成"; }
+  finally {
+    customGenXiaohongshuInFlight = new Set();
+    btn.disabled = false;
+    btn.textContent = "✨ 开始生成";
+  }
 }
 
 async function quickCustomImg2ImgFromModal(event, btn) {

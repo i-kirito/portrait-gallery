@@ -14,6 +14,7 @@ sys.path.insert(0, str(APP_DIR))
 
 from web_server import GalleryServer  # noqa: E402
 from xiaohongshu_client import XiaohongshuClient, XiaohongshuError  # noqa: E402
+from data import DailyEntry  # noqa: E402
 
 
 class XiaohongshuClientTest(unittest.IsolatedAsyncioTestCase):
@@ -222,6 +223,56 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(400, response.status, payload)
             self.assertEqual("invalid_filename", payload["error"])
+
+    async def test_custom_generation_cleans_temporary_xiaohongshu_reference(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            root = Path(tmpdir)
+            server = self._make_server(root)
+
+            async def fake_import(_url, output_dir):
+                path = Path(output_dir) / "xhs_temporary.png"
+                Image.new("RGB", (32, 48), "white").save(path)
+                return {
+                    "filename": path.name,
+                    "path": str(path),
+                    "size_bytes": path.stat().st_size,
+                }
+
+            server.xiaohongshu_client.import_image = AsyncMock(side_effect=fake_import)
+            server.on_generate_custom = AsyncMock(return_value=DailyEntry(
+                date="2026-07-30",
+                image_filename="generated.png",
+                image_path="/images/generated.png",
+                status="ok",
+            ))
+            client = await self._start_client(server)
+            try:
+                import_response = await client.post("/api/xiaohongshu/import", json={
+                    "url": "https://sns-webpic-qc.xhscdn.com/outfit.webp",
+                    "title": "临时穿搭",
+                })
+                imported = await import_response.json()
+                temporary_path = root / "data" / "references" / "xiaohongshu" / "xhs_temporary.png"
+                self.assertTrue(temporary_path.exists())
+
+                generate_response = await client.post("/api/generate-custom", json={
+                    "prompt": "参考这套穿搭",
+                    "ref_image": imported["url"],
+                })
+                generated = await generate_response.json()
+                list_response = await client.get("/api/xiaohongshu/references")
+                references = await list_response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(200, generate_response.status, generated)
+            self.assertEqual([], references)
+            self.assertFalse(temporary_path.exists())
+            server.on_generate_custom.assert_awaited_once()
+            generated_args = server.on_generate_custom.await_args.args
+            resolved_temporary_path = str(temporary_path.resolve())
+            self.assertEqual(resolved_temporary_path, generated_args[2])
+            self.assertEqual([resolved_temporary_path], generated_args[-1])
 
 
 if __name__ == "__main__":

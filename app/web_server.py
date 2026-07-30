@@ -7098,6 +7098,45 @@ class GalleryServer:
         """List already imported local Xiaohongshu reference images."""
         return web.json_response(self._xiaohongshu_reference_items())
 
+    def _xiaohongshu_reference_filenames_for_paths(self, paths: list[str]) -> list[str]:
+        """Return registered Xiaohongshu filenames contained in the local cache."""
+        records = self.xiaohongshu_reference_store.load()
+        result = []
+        try:
+            reference_root = Path(self.xiaohongshu_reference_dir).resolve()
+        except OSError:
+            return result
+        for raw_path in paths:
+            try:
+                path = Path(str(raw_path or "")).resolve()
+                path.relative_to(reference_root)
+            except (OSError, ValueError):
+                continue
+            filename = path.name
+            if (
+                filename not in result
+                and isinstance(records.get(filename), dict)
+                and self._is_reference_image_file(filename)
+            ):
+                result.append(filename)
+        return result
+
+    def _delete_xiaohongshu_reference_file(self, filename: str) -> bool:
+        """Delete one registered Xiaohongshu cache file and its index record."""
+        record = self.xiaohongshu_reference_store.load().get(filename)
+        if not isinstance(record, dict):
+            return False
+        path = self._safe_reference_path(self.xiaohongshu_reference_dir, filename)
+        if path:
+            os.remove(path)
+
+        def _remove(records: dict) -> dict:
+            records.pop(filename, None)
+            return records
+
+        self.xiaohongshu_reference_store.update(_remove)
+        return True
+
     async def handle_delete_xiaohongshu_reference(self, request: web.Request):
         """Delete one explicitly selected local Xiaohongshu reference."""
         filename = str(request.match_info.get("filename") or "").strip()
@@ -7108,20 +7147,9 @@ class GalleryServer:
         ):
             return web.json_response({"error": "invalid_filename"}, status=400)
 
-        record = self.xiaohongshu_reference_store.load().get(filename)
-        if not isinstance(record, dict):
-            return web.json_response({"error": "not_found"}, status=404)
-
-        path = self._safe_reference_path(self.xiaohongshu_reference_dir, filename)
         try:
-            if path:
-                os.remove(path)
-
-            def _remove(records: dict) -> dict:
-                records.pop(filename, None)
-                return records
-
-            self.xiaohongshu_reference_store.update(_remove)
+            if not self._delete_xiaohongshu_reference_file(filename):
+                return web.json_response({"error": "not_found"}, status=404)
             return web.json_response({"success": True, "filename": filename})
         except OSError as exc:
             logger.error("Delete Xiaohongshu reference error: %s", exc)
@@ -10872,6 +10900,7 @@ JSON 格式：
         """自定义 prompt 生图"""
         if not self.on_generate_custom:
             return web.json_response({"error": "no_generator"}, status=500)
+        temporary_xiaohongshu_filenames: list[str] = []
         try:
             body = await request.json()
             user_prompt = body.get("prompt", "").strip()
@@ -10917,6 +10946,9 @@ JSON 格式：
                     return web.json_response({"error": "invalid_ref_image", "ref": token}, status=400)
                 if resolved not in resolved_refs:
                     resolved_refs.append(resolved)
+            temporary_xiaohongshu_filenames = self._xiaohongshu_reference_filenames_for_paths(
+                resolved_refs
+            )
             ref_image = resolved_refs[0] if resolved_refs else ""
             if raw_ref_image and not ref_image and not unique_raw:
                 return web.json_response({"error": "invalid_ref_image"}, status=400)
@@ -10992,6 +11024,16 @@ JSON 格式：
         except Exception as e:
             logger.error(f"Custom generate error: {e}")
             return web.json_response({"error": str(e)}, status=500)
+        finally:
+            for filename in temporary_xiaohongshu_filenames:
+                try:
+                    self._delete_xiaohongshu_reference_file(filename)
+                except OSError as exc:
+                    logger.warning(
+                        "Cleanup temporary Xiaohongshu reference failed: %s (%s)",
+                        filename,
+                        exc,
+                    )
 
     def _delete_cleanup_candidate(self, filename: str, errors: list) -> Optional[int]:
         """Delete one cleanup candidate's file, entry, metadata, and versions.
