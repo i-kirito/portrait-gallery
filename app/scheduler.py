@@ -1,7 +1,9 @@
 """日程生成器 - 调用 LLM 生成每日穿搭+日程"""
 import asyncio
+import base64
 import json
 import logging
+import mimetypes
 import os
 import random
 import re
@@ -1267,6 +1269,8 @@ class DailyScheduler:
         json_mode: bool = False,
         models_override: Optional[list[str]] = None,
         temperature: Optional[float] = 0.3,
+        image_path: str = "",
+        require_image: bool = False,
     ) -> Optional[str]:
         """调用 CPA LLM（异步，不阻塞事件循环）"""
         request_config = llm_request_config(self.config, self.data_dir)
@@ -1288,9 +1292,28 @@ class DailyScheduler:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        # deepseek 模型对 system 角色有 reasoning 问题，全放 user 消息
+        # deepseek 模型对 system 角色有 reasoning 问题，全放 user 消息。
+        # 视觉日程同样只使用一个 user 消息，保持各 OpenAI-compatible 中转兼容。
+        user_content: object = prompt
+        image_path = str(image_path or "").strip()
+        if image_path:
+            try:
+                if os.path.getsize(image_path) > 12 * 1024 * 1024:
+                    raise ValueError("reference image exceeds 12 MB")
+                with open(image_path, "rb") as image_file:
+                    image_b64 = base64.b64encode(image_file.read()).decode("ascii")
+                mime = mimetypes.guess_type(image_path)[0] or "image/jpeg"
+                user_content = [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}"}},
+                ]
+            except (OSError, ValueError) as exc:
+                if require_image:
+                    logger.warning("视觉请求图片读取失败，拒绝退回纯文本 LLM: %s", exc)
+                    return None
+                logger.warning("日程参考图读取失败，退回纯文本 LLM: %s", exc)
         messages = [
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": user_content},
         ]
 
         loop = asyncio.get_running_loop()
@@ -2412,7 +2435,13 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
         logger.error(f"JSON parse error: no valid object, text={text[:200]}")
         return None
 
-    async def _repair_schedule_json(self, original_prompt: str, bad_text: str, attempt: int) -> Optional[dict]:
+    async def _repair_schedule_json(
+        self,
+        original_prompt: str,
+        bad_text: str,
+        attempt: int,
+        image_path: str = "",
+    ) -> Optional[dict]:
         """Ask the LLM once to regenerate strict JSON when it answered with prose."""
         bad_excerpt = llm_response_excerpt(bad_text, limit=1200)
         repair_prompt = f"""{JSON_OUTPUT_CONTRACT}
@@ -2426,11 +2455,13 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
 【原始任务】
 {original_prompt}
 """
+        repair_kwargs = {"image_path": image_path} if image_path else {}
         repaired_text = await self._call_llm(
             repair_prompt,
             timeout=60,
             json_mode=True,
             temperature=0.1,
+            **repair_kwargs,
         )
         if not repaired_text:
             logger.warning(f"JSON 修复请求返回为空 (attempt {attempt})")
@@ -2442,7 +2473,202 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
         logger.info(f"JSON 修复请求成功 (attempt {attempt})")
         return repaired_data
 
-    async def generate_today(self) -> Optional[DailyEntry]:
+    @staticmethod
+    def _season_label(today: date) -> str:
+        if today.month in (3, 4, 5):
+            return "春季"
+        if today.month in (6, 7, 8):
+            return "夏季"
+        if today.month in (9, 10, 11):
+            return "秋季"
+        return "冬季"
+
+    @staticmethod
+    def _normalize_xiaohongshu_search_query(value: str) -> str:
+        text = re.sub(r"\s+", "", str(value or "")).strip("`'\"“”‘’。，,；;：: ")
+        text = re.sub(r"^(?:关键词|搜索词|keyword)[：:]?", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"(?:真人|全身|OOTD)+$", "", text, flags=re.IGNORECASE).strip()
+        text = text[:24]
+        if text and "穿搭" not in text:
+            text += "穿搭"
+        return text[:28]
+
+    async def generate_xiaohongshu_search_query(self) -> str:
+        """Choose one broad XHS keyword before any outfit or schedule is designed."""
+        today = self._configured_today()
+        day_context = self._day_context(today)
+        enabled_styles = load_enabled_outfit_styles(self.config, self.data_dir)
+        styles = "、".join(enabled_styles) or "自然日常风"
+        history = self._get_history(today)
+        prompt = f"""只输出一个 JSON 对象：{{"keyword":"搜索词"}}。
+为 {today.isoformat()} 选择一个适合去小红书搜索真人穿搭照片的中文关键词。
+季节：{self._season_label(today)}
+日期属性：{day_context.day_type_label}
+可选审美方向：{styles}
+近三天穿搭（今天尽量换一种方向）：{history[:900]}
+
+规则：
+1. 此时还没有生成今日日程，也不要设计具体衣服；只选宽泛的季节、风格或场合方向。
+2. 搜索词控制在 6-16 个汉字，必须包含“穿搭”，例如“夏季温柔居家穿搭”“夏日休闲通勤穿搭”。
+3. 不写具体上衣、裙裤、鞋履、首饰、颜色清单，不写人物长相、身材、动作、摄影参数。
+4. 只输出 JSON，不解释。"""
+        text = await self._call_llm(
+            prompt,
+            timeout=60,
+            json_mode=True,
+            temperature=self._llm_config.get("schedule_temperature", 0.8),
+        )
+        data = self._parse_llm_response(text or "") if text else None
+        keyword = self._normalize_xiaohongshu_search_query(
+            data.get("keyword", "") if isinstance(data, dict) else ""
+        )
+        if keyword:
+            logger.info("今日小红书穿搭搜索词已选择: %s", keyword)
+            return keyword
+        style = random.choice(enabled_styles) if enabled_styles else "自然日常风"
+        fallback = self._normalize_xiaohongshu_search_query(
+            f"{self._season_label(today)}{style}穿搭"
+        )
+        logger.warning("小红书搜索词 LLM 返回无效，使用兜底词: %s", fallback)
+        return fallback
+
+    @staticmethod
+    def _xiaohongshu_validation_bool(value: object) -> Optional[bool]:
+        if isinstance(value, bool):
+            return value
+        normalized = str(value or "").strip().lower()
+        if normalized in {"1", "true", "yes", "是", "符合"}:
+            return True
+        if normalized in {"0", "false", "no", "否", "不符合"}:
+            return False
+        return None
+
+    async def select_xiaohongshu_outfit_image(
+        self,
+        contact_sheet_path: str,
+        search_query: str = "",
+        candidate_count: int = 1,
+    ) -> dict:
+        """Choose one numbered candidate only after strict vision validation."""
+        candidate_count = max(1, min(4, int(candidate_count or 1)))
+        prompt = f"""你是穿搭参考图质检员。附图是一张带 1-{candidate_count} 编号的候选联系表，每个编号格代表一张独立的小红书正文图片。
+请在这些编号格中选择最适合直接作为图生图真人穿搭参考的一张；如果没有任何一张完全合格，selected_index 必须填 0。
+
+搜索意图：{str(search_query or '日常真人穿搭').strip()[:80]}
+
+被选中的单个编号格必须同时满足以下全部条件：
+1. 是自然拍摄的真人照片，不是插画、商品平铺、模特截图或纯服装图；
+2. 画面主体只能有一位清晰可辨的成年人，不能是多人合照；
+3. 只能展示这一位主体的一套完整穿搭，不能是拼图、九宫格、前后对比或多套造型合集；
+4. 从头顶到双脚/鞋子完整可见，不能是半身照、局部特写、裁掉头部或脚部；
+5. 上衣、下装和鞋子轮廓清楚，没有被大面积文字、贴纸、物品或姿势遮挡；
+6. 清晰度足够，且穿搭与搜索意图大致相关。
+7. quality_score 必须按 0-100 给出真实综合评分；完全满足上述条件时应为 70-100，任一硬条件不满足时必须低于 70。
+
+联系表本身的分格不算拼图；is_collage 是指被选中编号格内部是否仍是拼图或多套合集。宁可全部拒绝也不要猜测。只输出 JSON，不要解释：
+{{
+  "selected_index": 0,
+  "is_real_photo": true,
+  "is_collage": false,
+  "person_count": 1,
+  "single_outfit": true,
+  "full_body_visible": true,
+  "clothing_clear": true,
+  "quality_sufficient": true,
+  "keyword_match": true,
+  "quality_score": 85,
+  "reason": "一句中文理由"
+}}"""
+        text = await self._call_llm(
+            prompt,
+            timeout=45,
+            json_mode=True,
+            temperature=0.1,
+            image_path=contact_sheet_path,
+            require_image=True,
+        )
+        data = self._parse_llm_response(text or "") if text else None
+        if not isinstance(data, dict):
+            return {
+                "accepted": False,
+                "selected_index": 0,
+                "quality_score": 0,
+                "reason": "视觉模型没有返回有效的质检结果",
+            }
+
+        try:
+            selected_index = int(data.get("selected_index") or 0)
+        except (TypeError, ValueError):
+            selected_index = 0
+        try:
+            person_count = int(data.get("person_count"))
+        except (TypeError, ValueError):
+            person_count = 0
+        try:
+            quality_score = max(0, min(100, int(float(data.get("quality_score") or 0))))
+        except (TypeError, ValueError):
+            quality_score = 0
+
+        checks = {
+            "is_real_photo": self._xiaohongshu_validation_bool(data.get("is_real_photo")),
+            "is_collage": self._xiaohongshu_validation_bool(data.get("is_collage")),
+            "single_outfit": self._xiaohongshu_validation_bool(data.get("single_outfit")),
+            "full_body_visible": self._xiaohongshu_validation_bool(data.get("full_body_visible")),
+            "clothing_clear": self._xiaohongshu_validation_bool(data.get("clothing_clear")),
+            "quality_sufficient": self._xiaohongshu_validation_bool(data.get("quality_sufficient")),
+            "keyword_match": self._xiaohongshu_validation_bool(data.get("keyword_match")),
+        }
+        accepted = (
+            1 <= selected_index <= candidate_count
+            and checks["is_real_photo"] is True
+            and checks["is_collage"] is False
+            and person_count == 1
+            and checks["single_outfit"] is True
+            and checks["full_body_visible"] is True
+            and checks["clothing_clear"] is True
+            and checks["quality_sufficient"] is True
+            and checks["keyword_match"] is True
+            and quality_score >= 70
+        )
+        logger.info(
+            "小红书穿搭视觉质检结果: accepted=%s selected_index=%s score=%s "
+            "person_count=%s checks=%s reason=%s",
+            accepted,
+            selected_index,
+            quality_score,
+            person_count,
+            checks,
+            str(data.get("reason") or "")[:160],
+        )
+        return {
+            "accepted": accepted,
+            "selected_index": selected_index if accepted else 0,
+            "person_count": person_count,
+            "quality_score": quality_score,
+            "reason": str(data.get("reason") or ("符合全身穿搭参考标准" if accepted else "未通过全身穿搭参考标准"))[:160],
+            **checks,
+        }
+
+    @staticmethod
+    def _xiaohongshu_reference_prompt_block(search_query: str) -> str:
+        return f"""
+
+【小红书真人穿搭参考图｜最高优先级】
+本次消息附带的图片，是用“{search_query or '今日真人穿搭'}”搜索后选中的真人穿搭照片。
+必须先看图，再生成全天计划；图片中实际可见的服装组合、颜色、材质、版型、层次、鞋履、配饰和造型，是今日穿搭的唯一事实来源。
+- 禁止自行重新设计、替换或补造另一套服装；不要让历史偏好、心情色彩、随机风格或文字模板覆盖图片里的真实搭配。
+- outfit_style 选择最接近图片的已启用风格；outfit、reference_query、prompt、outfit_keywords，以及每条 schedule_details.outfit_en 都必须忠实描述同一套图中穿搭。
+- 发型与配饰只描述图片中确实可见的造型；角色固有发色和脸部身份仍由角色设定及脸模决定，不从参考图复制脸或身材。
+- 根据这套真实穿搭适合的场合和活动来安排日程，让活动、场景和服装自然匹配；日程可以丰富变化，但全天服装核心组合保持一致。
+- caption 仍然是自然的全天计划小念头，可以让这套真人穿搭影响当天想去的场合和活动，但不要写成商品介绍或穿搭测评。
+"""
+
+    async def generate_today(
+        self,
+        *,
+        outfit_reference_path: str = "",
+        xiaohongshu_search_query: str = "",
+    ) -> Optional[DailyEntry]:
         """生成今日日程"""
         today = self._configured_today()
         day_context = self._day_context(today)
@@ -2475,7 +2701,19 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             history,
             disliked_context=disliked_context,
         )
-        prompt_sequence = [prompt, compact_prompt, emergency_prompt]
+        visual_block = ""
+        outfit_reference_path = str(outfit_reference_path or "").strip()
+        xiaohongshu_search_query = self._normalize_xiaohongshu_search_query(
+            xiaohongshu_search_query
+        )
+        if outfit_reference_path:
+            visual_block = self._xiaohongshu_reference_prompt_block(
+                xiaohongshu_search_query
+            )
+        prompt_sequence = [
+            current_prompt + visual_block
+            for current_prompt in (prompt, compact_prompt, emergency_prompt)
+        ]
         disliked_rejection_feedback = ""
         self._last_llm_model = ""
 
@@ -2492,11 +2730,13 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
                 logger.warning("完整日程 prompt 未生成可用 JSON，切换压缩日程 prompt 重试")
             elif attempt == 2:
                 logger.warning("压缩日程 prompt 未生成可用 JSON，切换极简日程 prompt 重试")
+            image_kwargs = {"image_path": outfit_reference_path} if outfit_reference_path else {}
             text = await self._call_llm(
                 current_prompt,
                 timeout=180,
                 json_mode=True,
                 temperature=self._llm_config.get("schedule_temperature", 0.8),
+                **image_kwargs,
             )
             if not text:
                 logger.warning(f"LLM 返回为空 (attempt {attempt+1})")
@@ -2505,7 +2745,12 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             data = self._parse_llm_response(text)
             if not data:
                 logger.warning(f"解析失败 (attempt {attempt+1})，尝试 JSON 修复")
-                data = await self._repair_schedule_json(current_prompt, text, attempt + 1)
+                data = await self._repair_schedule_json(
+                    current_prompt,
+                    text,
+                    attempt + 1,
+                    image_path=outfit_reference_path,
+                )
                 if not data:
                     continue
 
@@ -2594,13 +2839,20 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
                 disliked_items,
             )
             if disliked_similarity_error:
-                disliked_rejection_feedback = disliked_similarity_error
-                logger.warning(
-                    "穿搭触发不喜欢相似度硬拦截 (attempt %s): %s",
-                    attempt + 1,
-                    disliked_similarity_error,
-                )
-                continue
+                if outfit_reference_path:
+                    logger.info(
+                        "小红书真人参考图优先，忽略文本不喜欢相似度建议 (attempt %s): %s",
+                        attempt + 1,
+                        disliked_similarity_error,
+                    )
+                else:
+                    disliked_rejection_feedback = disliked_similarity_error
+                    logger.warning(
+                        "穿搭触发不喜欢相似度硬拦截 (attempt %s): %s",
+                        attempt + 1,
+                        disliked_similarity_error,
+                    )
+                    continue
             calendar_conflicts = day_context.rest_day_conflicts(
                 schedule_display,
                 schedule_prompt,
@@ -2635,6 +2887,7 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
                 scene_keywords=scene_kw,
                 photo_style_en=photo_style_en,
                 schedule_llm_model=schedule_model,
+                xiaohongshu_search_query=xiaohongshu_search_query,
             )
             logger.info(
                 f"日程生成成功: model={schedule_model or '-'} | {entry.outfit_style} | "

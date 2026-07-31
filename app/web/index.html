@@ -406,7 +406,7 @@ textarea:focus-visible,
 }
 .sk-settings-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin: -4px 0 18px;
 }
@@ -434,6 +434,136 @@ textarea:focus-visible,
 .sk-panel.active {
   display: block;
 }
+.xhs-login-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #e6e1e4;
+  border-radius: 12px;
+  background: #fafafa;
+}
+.xhs-login-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.xhs-login-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: #777;
+  font-size: 13px;
+  font-weight: 700;
+}
+.xhs-login-state::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #a3a3a3;
+}
+.xhs-login-state.online::before { background: #16a34a; }
+.xhs-login-state.offline::before { background: #dc2626; }
+.xhs-login-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.xhs-login-actions .btn {
+  min-width: 0;
+  justify-content: center;
+}
+.xhs-qr-wrap {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding-top: 2px;
+}
+.xhs-qr-wrap[hidden] { display: none; }
+.xhs-qr-image {
+  width: min(320px, 100%);
+  aspect-ratio: 1;
+  padding: 10px;
+  border: 1px solid #dedede;
+  border-radius: 8px;
+  background: #fff;
+  image-rendering: pixelated;
+  object-fit: contain;
+}
+.xhs-qr-expiry {
+  color: #888;
+  font-size: 12px;
+}
+.xhs-schedule-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid #e6e1e4;
+  border-radius: 8px;
+  background: #fff;
+}
+.xhs-schedule-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.xhs-schedule-title {
+  min-width: 0;
+  color: #555;
+  font-size: 14px;
+  font-weight: 700;
+}
+.xhs-schedule-reference {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 10px;
+  min-height: 76px;
+  padding-top: 12px;
+  border-top: 1px solid #eee8eb;
+}
+.xhs-schedule-reference[hidden] { display: none; }
+.xhs-schedule-image {
+  width: 76px;
+  height: 76px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #f3f3f3;
+}
+.xhs-schedule-copy { min-width: 0; }
+.xhs-schedule-name {
+  overflow: hidden;
+  color: #444;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xhs-schedule-query {
+  display: -webkit-box;
+  margin-top: 5px;
+  overflow: hidden;
+  color: #888;
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.xhs-schedule-refresh {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid #ded8dc;
+  border-radius: 6px;
+  background: #fff;
+  color: #666;
+  cursor: pointer;
+}
+.xhs-schedule-refresh:disabled { cursor: wait; opacity: 0.55; }
 .sk-field {
   margin-bottom: 18px;
 }
@@ -1430,10 +1560,11 @@ textarea:focus-visible,
   }
   .sk-actions .btn { flex: 1; }
   .sk-segmented,
-  .sk-style-grid,
-  .sk-settings-tabs {
+  .sk-style-grid {
     grid-template-columns: 1fr;
   }
+  .sk-settings-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .xhs-login-actions { grid-template-columns: 1fr; }
   .sk-cleanup-controls {
     grid-template-columns: 1fr;
     justify-content: stretch;
@@ -2422,6 +2553,7 @@ textarea:focus-visible,
   letter-spacing: 0.2px;
 }
 .tc-thought:empty { display: none; }
+.tc-thought.caption-pending .tc-thought-text { color: #8b7c8e; }
 .tc-thought-label {
   display: inline-flex;
   align-items: center;
@@ -3050,6 +3182,157 @@ textarea:focus-visible,
   outline-offset: 2px;
 }
 .cg-ref-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.xhs-search-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e1dde0;
+  border-radius: 12px;
+  background: #fafafa;
+}
+.xhs-search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.xhs-search-row input {
+  min-width: 0;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid #dcd7da;
+  border-radius: 10px;
+  background: #fff;
+  color: #333;
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+}
+.xhs-search-row input:focus {
+  border-color: #e91e63;
+  box-shadow: 0 0 0 3px rgba(233,30,99,0.08);
+}
+.xhs-search-row .btn { min-width: 96px; justify-content: center; }
+.xhs-search-status {
+  min-height: 18px;
+  color: #777;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.xhs-search-results,
+.xhs-note-images {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 132px;
+  gap: 9px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  padding: 2px 1px 7px;
+  scrollbar-width: thin;
+}
+.xhs-search-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.xhs-search-pagination button {
+  min-width: 72px;
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid #ded9dc;
+  border-radius: 8px;
+  background: #fff;
+  color: #555;
+  cursor: pointer;
+}
+.xhs-search-pagination button:hover:not(:disabled) {
+  border-color: #e91e63;
+  color: #e91e63;
+}
+.xhs-search-pagination button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.xhs-search-pagination span {
+  min-width: 54px;
+  color: #777;
+  font-size: 12px;
+  text-align: center;
+}
+.xhs-result-card,
+.xhs-note-image {
+  width: 132px;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #ded9dc;
+  border-radius: 8px;
+  background: #fff;
+  color: #444;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.xhs-result-card:hover,
+.xhs-result-card.active,
+.xhs-note-image:hover { border-color: #e91e63; }
+.xhs-result-card img,
+.xhs-note-image img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  background: #eee;
+}
+.xhs-result-copy {
+  display: grid;
+  gap: 3px;
+  padding: 7px;
+}
+.xhs-result-title {
+  display: -webkit-box;
+  min-height: 34px;
+  overflow: hidden;
+  color: #3f3f46;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.xhs-result-author {
+  overflow: hidden;
+  color: #8b8b91;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xhs-note-image { position: relative; }
+.xhs-note-image span {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  left: 5px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  background: rgba(24, 24, 27, 0.78);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+.cg-ref-item.xiaohongshu::after {
+  content: "小红书";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(220, 38, 38, 0.88);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+}
 .cg-ref-item .cg-ref-none {
   width: 100%; height: 100%;
   display: flex; align-items: center; justify-content: center;
@@ -4915,6 +5198,12 @@ textarea:focus-visible,
   .cg-upload-hint { flex-direction: column; align-items: stretch !important; gap: 8px !important; }
   .cg-upload-label { width: 100%; }
   .cg-upload-btn { width: 100%; justify-content: center; min-height: 38px; }
+  .xhs-search-row { grid-template-columns: 1fr; }
+  .xhs-search-row .btn { width: 100%; min-height: 40px; }
+  .xhs-search-results,
+  .xhs-note-images { grid-auto-columns: 116px; }
+  .xhs-result-card,
+  .xhs-note-image { width: 116px; }
   .cg-actions { margin-top: 14px; padding-top: 12px; gap: 8px; }
   .cg-actions .btn { flex: 1; min-width: 0; min-height: 42px; padding: 8px 10px; }
   .tool-modal-head { align-items: flex-start; margin-bottom: 14px; }
@@ -6244,6 +6533,7 @@ textarea:focus-visible,
     <div class="sk-settings-tabs" role="tablist" aria-label="设置分类">
       <button type="button" class="sk-settings-tab active" data-settings-panel="persona" onclick="setSettingsPanel('persona')">人设</button>
       <button type="button" class="sk-settings-tab" data-settings-panel="model" onclick="setSettingsPanel('model')">模型</button>
+      <button type="button" class="sk-settings-tab" data-settings-panel="xiaohongshu" onclick="setSettingsPanel('xiaohongshu')">小红书</button>
       <button type="button" class="sk-settings-tab" data-settings-panel="maintain" onclick="setSettingsPanel('maintain')">清理/升级</button>
     </div>
     <div class="sk-panel active" id="skPanelPersona" data-settings-panel-content="persona">
@@ -6442,6 +6732,45 @@ textarea:focus-visible,
       <div class="sk-status" id="skLlmStreamStatus">加载中...</div>
     </div>
     </div>
+    <div class="sk-panel" id="skPanelXiaohongshu" data-settings-panel-content="xiaohongshu">
+      <div class="sk-field">
+        <div class="xhs-schedule-card">
+          <div class="xhs-schedule-head">
+            <span class="xhs-schedule-title"><i class="fa-regular fa-calendar" aria-hidden="true"></i> 日程使用小红书穿搭</span>
+            <label class="sk-switch" for="xhsScheduleMode" aria-label="日程使用小红书穿搭">
+              <input type="checkbox" id="xhsScheduleMode" onchange="setXiaohongshuScheduleMode(this.checked)">
+              <span class="sk-switch-knob"></span>
+            </label>
+          </div>
+          <div class="sk-status" id="xhsScheduleStatus">加载中...</div>
+          <div class="xhs-schedule-reference" id="xhsScheduleReference" hidden>
+            <img class="xhs-schedule-image" id="xhsScheduleImage" alt="今日小红书穿搭参考图">
+            <div class="xhs-schedule-copy">
+              <div class="xhs-schedule-name" id="xhsScheduleName"></div>
+              <div class="xhs-schedule-query" id="xhsScheduleQuery"></div>
+            </div>
+            <button type="button" class="xhs-schedule-refresh" id="xhsScheduleRefresh" onclick="refreshXiaohongshuScheduleReference()" title="重新选择今日穿搭" aria-label="重新选择今日穿搭"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
+          </div>
+        </div>
+      </div>
+      <div class="sk-field">
+        <label><i class="fa-solid fa-book-open" aria-hidden="true"></i> 小红书账号</label>
+        <div class="xhs-login-card">
+          <div class="xhs-login-head">
+            <span class="xhs-login-state" id="xhsLoginState">正在检测</span>
+          </div>
+          <div class="xhs-login-actions">
+            <button type="button" class="btn btn-primary" id="xhsQrButton" onclick="requestXiaohongshuQrcode()"><i class="fa-solid fa-qrcode" aria-hidden="true"></i> 扫码登录</button>
+            <button type="button" class="btn btn-secondary" id="xhsStatusButton" onclick="loadXiaohongshuStatus()"><i class="fa-solid fa-rotate" aria-hidden="true"></i> 检测状态</button>
+          </div>
+          <div class="xhs-qr-wrap" id="xhsQrWrap" hidden>
+            <img class="xhs-qr-image" id="xhsQrImage" alt="小红书登录二维码">
+            <span class="xhs-qr-expiry" id="xhsQrExpiry"></span>
+          </div>
+          <div class="sk-status" id="xhsLoginMessage"></div>
+        </div>
+      </div>
+    </div>
     <div class="sk-panel" id="skPanelMaintain" data-settings-panel-content="maintain">
     <div class="sk-field">
       <label for="skGithubProxy">GitHub API 代理（可选）</label>
@@ -6592,6 +6921,16 @@ textarea:focus-visible,
     </div>
     <div class="cg-field">
       <label>参考图（可选，可多选；第1张锁动作/场景/穿搭，第2张起换脸/发色）</label>
+      <div class="xhs-search-panel">
+        <div class="xhs-search-row">
+          <input type="search" id="xhsSearchKeyword" maxlength="80" autocomplete="off" placeholder="搜索真人夏季穿搭" onkeydown="if(event.key==='Enter'){event.preventDefault();searchXiaohongshuOutfits();}">
+          <button type="button" class="btn btn-secondary" id="xhsSearchButton" onclick="searchXiaohongshuOutfits()"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i> 搜索</button>
+        </div>
+        <div class="xhs-search-status" id="xhsSearchStatus"></div>
+        <div class="xhs-search-results" id="xhsSearchResults" hidden></div>
+        <div class="xhs-search-pagination" id="xhsSearchPagination" hidden></div>
+        <div class="xhs-note-images" id="xhsNoteImages" hidden></div>
+      </div>
       <div class="cg-ref-grid" id="cgRefGrid">
         <div class="cg-ref-item active" data-ref="">
           <div class="cg-ref-none">📸</div>
@@ -6802,13 +7141,18 @@ const QUICK_MUTATION_TIMEOUT_MS = 20 * 1000;
 
 async function fetchWithTimeout(input, init = {}, timeoutMs = IMAGE_OPERATION_TIMEOUT_MS, timeoutMessage = '请求超时，请稍后重试') {
   const duration = Math.max(1, Number(timeoutMs) || IMAGE_OPERATION_TIMEOUT_MS);
+  const timeoutError = () => {
+    const error = new Error(timeoutMessage);
+    error.name = 'FetchTimeoutError';
+    return error;
+  };
   if (typeof AbortController === 'undefined') {
     let timeoutId = 0;
     try {
       return await Promise.race([
         fetch(input, init),
         new Promise((_, reject) => {
-          timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), duration);
+          timeoutId = setTimeout(() => reject(timeoutError()), duration);
         })
       ]);
     } finally {
@@ -6826,7 +7170,7 @@ async function fetchWithTimeout(input, init = {}, timeoutMs = IMAGE_OPERATION_TI
     return await fetch(input, Object.assign({}, init, {signal: controller.signal}));
   } catch (error) {
     if (timedOut || (error && error.name === 'AbortError')) {
-      throw new Error(timeoutMessage);
+      throw timeoutError();
     }
     throw error;
   } finally {
@@ -6846,10 +7190,39 @@ let galleryLoadedTagFilter = null;
 let galleryLoadedFavoritesOnly = false;
 let galleryPageLoading = false;
 let galleryReloadPending = "";
+let customCaptionPollTimer = null;
+let customCaptionPollDeadline = 0;
 let galleryLoadMoreObserver = null;
 let galleryLoadMoreFallbackBound = false;
 let galleryLoadMoreRetryTimer = null;
 const galleryDetailRequests = new Map();
+
+function hasPendingVisualCaption() {
+  return allEntries.some(entry => String((entry && entry.caption_status) || "").toLowerCase() === "pending");
+}
+
+function stopCustomCaptionPolling() {
+  if (customCaptionPollTimer) clearTimeout(customCaptionPollTimer);
+  customCaptionPollTimer = null;
+  customCaptionPollDeadline = 0;
+}
+
+function scheduleCustomCaptionPolling(resetDeadline = false) {
+  if (!hasPendingVisualCaption()) {
+    stopCustomCaptionPolling();
+    return;
+  }
+  const now = Date.now();
+  if (resetDeadline || !customCaptionPollDeadline) {
+    customCaptionPollDeadline = now + 75000;
+  }
+  if (customCaptionPollTimer || now >= customCaptionPollDeadline) return;
+  customCaptionPollTimer = setTimeout(async () => {
+    customCaptionPollTimer = null;
+    await loadGallery({ skipTabSwitch: true });
+    scheduleCustomCaptionPolling(false);
+  }, 3000);
+}
 let currentTagFilter = "";
 let showFavoritesOnly = false;
 let showUnfavoritesOnly = false;
@@ -9602,8 +9975,11 @@ function renderCaptionLinks(caption) {
   return html;
 }
 
-function renderThoughtBlock(caption, className = "tc-thought") {
+function renderThoughtBlock(caption, className = "tc-thought", captionStatus = "") {
   const captionHtml = renderCaptionLinks(caption);
+  if (!captionHtml && String(captionStatus || "").toLowerCase() === "pending") {
+    return `<div class="${className} caption-pending" aria-live="polite"><span class="tc-thought-label" aria-hidden="true">💭</span><span class="tc-thought-text">正在根据图片生成小心思…</span></div>`;
+  }
   if (!captionHtml) return "";
   return `<div class="${className}"><span class="tc-thought-label" title="思考" aria-label="思考">💭</span><span class="tc-thought-text">${captionHtml}</span></div>`;
 }
@@ -9777,7 +10153,7 @@ function renderToday() {
       }
     }
 
-    const captionHtml = renderThoughtBlock(today.caption, "modal-caption tc-thought");
+    const captionHtml = renderThoughtBlock(today.caption, "modal-caption tc-thought", today.caption_status);
     const todayStyle = displayOutfitStyle(today);
     const metaHtml = `${today.model_name ? `<span class="meta-tag">🤖 ${escapeHtml(today.model_name)}</span>` : ""}${renderReferenceMetaTag(today)}${displayImageSizeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayImageSizeMeta(today))}</span>` : ""}${displayFileSizeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayFileSizeMeta(today))}</span>` : ""}${displayGenerationTimeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayGenerationTimeMeta(today))}</span>` : ""}${renderRerollButton(today)}`;
 
@@ -10040,7 +10416,7 @@ function renderGallery() {
                   ${metaHtml ? `<div class="tc-meta">${metaHtml}</div>` : ''}
                 </div>
                 <div class="tc-outfit">${e.outfit ? escapeHtml(e.outfit) : '--'}</div>
-                ${renderThoughtBlock(e.caption)}
+                ${renderThoughtBlock(e.caption, "tc-thought", e.caption_status)}
                 ${periodHtml}
                 <div class="tc-actions">
                   <button class="tc-btn ${e.favorite ? 'liked' : ''}" onclick="toggleFavorite(${imageFilenameArg}, event)" data-img="${safeImageFilename}" data-favorite-img="${safeImageFilename}" aria-label="${e.favorite ? '取消收藏' : '收藏'}"><i class="${e.favorite ? 'fa-solid' : 'fa-regular'} fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
@@ -11094,6 +11470,9 @@ function openModal(e, returnFocusTarget = null) {
   if (e.caption) {
     capEl.innerHTML = '<span class="tc-thought-label" title="思考" aria-label="思考">💭</span><span class="tc-thought-text">' + renderCaptionLinks(e.caption) + '</span>';
     capEl.style.display = "flex";
+  } else if (String(e.caption_status || "").toLowerCase() === "pending") {
+    capEl.innerHTML = '<span class="tc-thought-label" aria-hidden="true">💭</span><span class="tc-thought-text">正在根据图片生成小心思…</span>';
+    capEl.style.display = "flex";
   } else { capEl.style.display = "none"; }
 	  // Fav button state
 	  updateModalFavBtn(e.favorite === true);
@@ -11975,6 +12354,11 @@ function saveCustomGenState() {
   const promptEl = document.getElementById("cgPrompt");
   const customSize = getCustomGenSize();
   const customDimensions = getCustomDimensions();
+  const selectedRefs = getSelectedCustomRefImages()
+    .filter(value => !String(value || "").startsWith("/local-refs/xiaohongshu/"));
+  const activeRef = String(
+    (document.querySelector("#cgRefGrid .cg-ref-item.active") || {}).dataset?.ref || ""
+  );
   const state = {
     prompt: promptEl ? promptEl.value : "",
     sizeMode: customSize.mode,
@@ -11984,7 +12368,8 @@ function saveCustomGenState() {
     customHeight: customDimensions.height,
     shot: getCustomShotType(),
     model: getCustomImageModel(),
-    ref: (document.querySelector("#cgRefGrid .cg-ref-item.active") || {}).dataset?.ref || ""
+    ref: activeRef.startsWith("/local-refs/xiaohongshu/") ? (selectedRefs[0] || "") : activeRef,
+    refs: selectedRefs
   };
   window.galleryStorageSet("custom_gen_state", JSON.stringify(state));
 }
@@ -12057,12 +12442,24 @@ function bindCustomSizeControls() {
   if (swapButton) swapButton.addEventListener("click", swapCustomDimensions);
 }
 
-function restoreCustomRefSelection(grid, refValue) {
+function restoreCustomRefSelection(grid, refValue, orderedRefs = []) {
   if (!grid) return;
   const items = Array.from(grid.querySelectorAll(".cg-ref-item"));
+  const selectedItems = (Array.isArray(orderedRefs) ? orderedRefs : [])
+    .map(ref => items.find(item => item.dataset.ref === ref))
+    .filter(Boolean);
+  items.forEach(item => item.classList.remove("active", "selected"));
+  if (selectedItems.length) {
+    selectedItems.forEach((item, index) => {
+      item.classList.add("selected");
+      item.dataset.selectedAt = String(index + 1);
+    });
+    selectedItems[0].classList.add("active");
+    refreshCustomRefOrderBadges();
+    return;
+  }
   const target = items.find(item => item.dataset.ref === refValue) || items[0];
   if (!target) return;
-  items.forEach(item => item.classList.remove("active"));
   target.classList.add("active");
 }
 
@@ -12077,6 +12474,27 @@ function getSelectedCustomRefImages() {
   const active = grid.querySelector(".cg-ref-item.active");
   const one = active ? String(active.dataset.ref || "").trim() : "";
   return one ? [one] : [];
+}
+
+function ensureXiaohongshuIdentityReference(refs) {
+  const ordered = (Array.isArray(refs) ? refs : [])
+    .map(ref => String(ref || "").trim())
+    .filter(Boolean);
+  const xhsIndex = ordered.findIndex(ref => ref.startsWith("/local-refs/xiaohongshu/"));
+  if (xhsIndex < 0) return ordered;
+
+  const xhsRef = ordered[xhsIndex];
+  const identityRefs = ordered.filter((ref, index) => (
+    index !== xhsIndex && !ref.startsWith("/local-refs/xiaohongshu/")
+  ));
+  if (!identityRefs.length) {
+    const defaultFace = document.querySelector(
+      '#cgRefGrid .cg-ref-item.default-style[data-ref]:not([data-ref=""])'
+    );
+    const defaultFaceRef = defaultFace ? String(defaultFace.dataset.ref || "").trim() : "";
+    if (defaultFaceRef) identityRefs.push(defaultFaceRef);
+  }
+  return [xhsRef, ...identityRefs];
 }
 
 function refreshCustomRefOrderBadges() {
@@ -12107,6 +12525,7 @@ function currentCustomGenPayload(refImageOverride = "") {
   } else {
     refs = getSelectedCustomRefImages();
   }
+  refs = ensureXiaohongshuIdentityReference(refs);
   const body = {
     prompt,
     size_mode: customSize.mode,
@@ -12152,6 +12571,9 @@ async function openCustomGenFromWardrobe(btn) {
 }
 
 function closeCustomGen() {
+  void releaseTransientXiaohongshuRefs({
+    skipFilenames: Array.from(customGenXiaohongshuInFlight)
+  });
   saveCustomGenState();
   const overlay = document.getElementById("cgOverlay");
   overlay.classList.remove("open");
@@ -12175,6 +12597,12 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 // Reference image selector
 let uploadedRefs = [];
+let xiaohongshuRefs = []; // Only the Xiaohongshu images selected in this open dialog.
+let xiaohongshuSearchResults = [];
+let xiaohongshuSearchPage = 0;
+const XIAOHONGSHU_SEARCH_PAGE_SIZE = 10;
+let xiaohongshuActiveNote = null;
+let customGenXiaohongshuInFlight = new Set();
 let activeCustomWardrobeRef = null;
 let pendingDefaultStyleUpload = "";
 function mergeDefaultStyleRefs(refList) {
@@ -12286,6 +12714,17 @@ function renderRefImages(defaultRefs, uploadRefs, options = {}) {
     </div>`;
   }
 
+  xiaohongshuRefs.forEach((ref, index) => {
+    const label = escapeHtml(ref.label || "小红书穿搭");
+    const title = escapeAttr(ref.label || "小红书穿搭");
+    const url = escapeAttr(ref.url || "");
+    if (!url) return;
+    html += `<div class="cg-ref-item xiaohongshu" data-ref="${url}" title="${title}" role="button" tabindex="0">
+      <img src="${url}" alt="${label}" loading="lazy" decoding="async">
+      <button class="cg-ref-del" type="button" aria-label="移除${label}" title="移除这张临时小红书参考图" onclick="event.stopPropagation();deleteXiaohongshuRef(${index})">✕</button>
+    </div>`;
+  });
+
   uploadRefs.forEach((u, idx) => {
     const label = escapeHtml(u.label || "自定义上传");
     const url = escapeHtml(u.url || "");
@@ -12295,12 +12734,17 @@ function renderRefImages(defaultRefs, uploadRefs, options = {}) {
     </div>`;
   });
 
-  if (defaultRefs.length === 0 && uploadRefs.length === 0 && !(wardrobeRef && wardrobeRef.url)) {
+  if (defaultRefs.length === 0 && uploadRefs.length === 0 && xiaohongshuRefs.length === 0 && !(wardrobeRef && wardrobeRef.url)) {
     html += `<div style="padding:10px;color:#999;font-size:13px;">暂无参考图，点击"📤 上传参考图"添加</div>`;
   }
 
   grid.innerHTML = html;
-  restoreCustomRefSelection(grid, selectedRef || readCustomGenState().ref || "");
+  const storedState = readCustomGenState();
+  restoreCustomRefSelection(
+    grid,
+    selectedRef || storedState.ref || "",
+    options.selectedRefs || storedState.refs || []
+  );
   bindReferenceGridSelection(grid);
 }
 async function loadRefImages(options = {}) {
@@ -12318,6 +12762,203 @@ async function loadRefImages(options = {}) {
     console.error("load refs:", e);
     renderRefImages(mergeDefaultStyleRefs([]), uploadedRefs, options);
   }
+}
+
+function setXiaohongshuSearchStatus(message) {
+  const element = document.getElementById("xhsSearchStatus");
+  if (element) element.textContent = message || "";
+}
+
+function renderXiaohongshuSearchResults() {
+  const container = document.getElementById("xhsSearchResults");
+  const pagination = document.getElementById("xhsSearchPagination");
+  const imageContainer = document.getElementById("xhsNoteImages");
+  if (!container) return;
+  if (imageContainer) {
+    imageContainer.hidden = true;
+    imageContainer.innerHTML = "";
+  }
+  if (!xiaohongshuSearchResults.length) {
+    container.hidden = true;
+    container.innerHTML = "";
+    if (pagination) {
+      pagination.hidden = true;
+      pagination.innerHTML = "";
+    }
+    return;
+  }
+  const totalPages = Math.ceil(xiaohongshuSearchResults.length / XIAOHONGSHU_SEARCH_PAGE_SIZE);
+  xiaohongshuSearchPage = Math.max(0, Math.min(xiaohongshuSearchPage, totalPages - 1));
+  const start = xiaohongshuSearchPage * XIAOHONGSHU_SEARCH_PAGE_SIZE;
+  const pageItems = xiaohongshuSearchResults.slice(start, start + XIAOHONGSHU_SEARCH_PAGE_SIZE);
+  container.innerHTML = pageItems.map((item, pageIndex) => {
+    const index = start + pageIndex;
+    return `
+    <button type="button" class="xhs-result-card" data-xhs-result="${index}" onclick="loadXiaohongshuNote(${index})" title="${escapeAttr(item.title || "小红书穿搭")}">
+      <img src="${escapeAttr(item.cover_url || "")}" alt="${escapeAttr(item.title || "小红书穿搭")}" loading="lazy" decoding="async" referrerpolicy="no-referrer">
+      <span class="xhs-result-copy">
+        <span class="xhs-result-title">${escapeHtml(item.title || "未命名穿搭")}</span>
+        <span class="xhs-result-author">${escapeHtml(item.author || "小红书用户")}</span>
+      </span>
+    </button>`;
+  }).join("");
+  container.hidden = false;
+  if (pagination) {
+    pagination.innerHTML = `
+      <button type="button" onclick="changeXiaohongshuSearchPage(-1)" ${xiaohongshuSearchPage === 0 ? "disabled" : ""}>上一页</button>
+      <span>${xiaohongshuSearchPage + 1} / ${totalPages}</span>
+      <button type="button" onclick="changeXiaohongshuSearchPage(1)" ${xiaohongshuSearchPage >= totalPages - 1 ? "disabled" : ""}>下一页</button>`;
+    pagination.hidden = totalPages <= 1;
+  }
+}
+
+function xiaohongshuSearchSummary() {
+  if (!xiaohongshuSearchResults.length) return "没有找到图文笔记";
+  const totalPages = Math.ceil(xiaohongshuSearchResults.length / XIAOHONGSHU_SEARCH_PAGE_SIZE);
+  return `找到 ${xiaohongshuSearchResults.length} 条图文笔记 · 第 ${xiaohongshuSearchPage + 1}/${totalPages} 页`;
+}
+
+function changeXiaohongshuSearchPage(offset) {
+  const totalPages = Math.ceil(xiaohongshuSearchResults.length / XIAOHONGSHU_SEARCH_PAGE_SIZE);
+  const nextPage = Math.max(0, Math.min(xiaohongshuSearchPage + Number(offset || 0), totalPages - 1));
+  if (nextPage === xiaohongshuSearchPage) return;
+  xiaohongshuSearchPage = nextPage;
+  xiaohongshuActiveNote = null;
+  renderXiaohongshuSearchResults();
+  setXiaohongshuSearchStatus(xiaohongshuSearchSummary());
+}
+
+async function searchXiaohongshuOutfits() {
+  const input = document.getElementById("xhsSearchKeyword");
+  const button = document.getElementById("xhsSearchButton");
+  const keyword = input ? input.value.trim() : "";
+  if (!keyword) {
+    setXiaohongshuSearchStatus("请输入搜索关键词");
+    return;
+  }
+  if (button) button.disabled = true;
+  xiaohongshuActiveNote = null;
+  xiaohongshuSearchPage = 0;
+  setXiaohongshuSearchStatus("正在搜索小红书图文笔记");
+  try {
+    const response = await fetch(`${API}/api/xiaohongshu/search`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ keyword, max_results: 30 })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    xiaohongshuSearchResults = Array.isArray(data.items) ? data.items : [];
+    renderXiaohongshuSearchResults();
+    setXiaohongshuSearchStatus(xiaohongshuSearchSummary());
+  } catch (error) {
+    xiaohongshuSearchResults = [];
+    xiaohongshuSearchPage = 0;
+    renderXiaohongshuSearchResults();
+    setXiaohongshuSearchStatus(error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function loadXiaohongshuNote(index) {
+  const item = xiaohongshuSearchResults[index];
+  const container = document.getElementById("xhsNoteImages");
+  if (!item || !container) return;
+  document.querySelectorAll("[data-xhs-result]").forEach((card, cardIndex) => {
+    card.classList.toggle("active", Number(card.dataset.xhsResult) === index);
+  });
+  setXiaohongshuSearchStatus("正在读取笔记图片");
+  container.hidden = true;
+  try {
+    const response = await fetch(`${API}/api/xiaohongshu/detail`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ feed_id: item.id, xsec_token: item.xsec_token })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    xiaohongshuActiveNote = data;
+    const images = Array.isArray(data.images) ? data.images : [];
+    container.innerHTML = images.map((image, imageIndex) => `
+      <button type="button" class="xhs-note-image" onclick="importXiaohongshuOutfit(${imageIndex})" title="设为穿搭参考图">
+        <img src="${escapeAttr(image.url || "")}" alt="${escapeAttr(data.title || "小红书穿搭")} ${imageIndex + 1}" loading="lazy" decoding="async" referrerpolicy="no-referrer">
+        <span>使用这张图</span>
+      </button>`).join("");
+    container.hidden = images.length === 0;
+    setXiaohongshuSearchStatus(images.length ? `${data.title || item.title} · ${images.length} 张图片` : "这条笔记没有可用图片");
+  } catch (error) {
+    xiaohongshuActiveNote = null;
+    container.innerHTML = "";
+    container.hidden = true;
+    setXiaohongshuSearchStatus(error.message);
+  }
+}
+
+async function importXiaohongshuOutfit(imageIndex) {
+  const note = xiaohongshuActiveNote;
+  const image = note && Array.isArray(note.images) ? note.images[imageIndex] : null;
+  if (!note || !image) return;
+  const existingRefs = getSelectedCustomRefImages()
+    .filter(ref => !String(ref).startsWith("/local-refs/xiaohongshu/"));
+  await releaseTransientXiaohongshuRefs();
+  setXiaohongshuSearchStatus("正在导入参考图");
+  try {
+    const response = await fetch(`${API}/api/xiaohongshu/import`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        url: image.url,
+        title: note.title,
+        author: note.author
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    xiaohongshuRefs = [data];
+    const orderedRefs = ensureXiaohongshuIdentityReference([data.url, ...existingRefs]);
+    await loadRefImages({ selectedRef: data.url, selectedRefs: orderedRefs });
+    const prompt = document.getElementById("cgPrompt");
+    if (prompt && !prompt.value.trim()) prompt.value = `参考图中的${note.title || "真人穿搭造型"}`;
+    saveCustomGenState();
+    const identityStatus = orderedRefs.length > 1
+      ? "，默认脸模已作为第 2 张"
+      : "，生成时将自动使用默认脸模";
+    setXiaohongshuSearchStatus(`已临时设为第 1 张穿搭参考图${identityStatus}；生图后自动清理`);
+    showToast(orderedRefs.length > 1 ? "已加入穿搭图并自动带上脸模" : "已临时调用小红书穿搭参考图");
+  } catch (error) {
+    setXiaohongshuSearchStatus(error.message);
+  }
+}
+
+function clearStoredXiaohongshuRefSelection() {
+  const state = readCustomGenState();
+  state.refs = (Array.isArray(state.refs) ? state.refs : [])
+    .filter(value => !String(value || "").startsWith("/local-refs/xiaohongshu/"));
+  if (String(state.ref || "").startsWith("/local-refs/xiaohongshu/")) state.ref = "";
+  window.galleryStorageSet("custom_gen_state", JSON.stringify(state));
+}
+
+async function releaseTransientXiaohongshuRefs(options = {}) {
+  const refs = xiaohongshuRefs.slice();
+  const skipFilenames = new Set(Array.isArray(options.skipFilenames) ? options.skipFilenames : []);
+  xiaohongshuRefs = [];
+  clearStoredXiaohongshuRefSelection();
+  await Promise.all(refs.map(async ref => {
+    if (!ref || !ref.filename || skipFilenames.has(ref.filename)) return;
+    try {
+      const response = await fetch(
+        `${API}/api/xiaohongshu/references/${encodeURIComponent(ref.filename)}`,
+        { method: "DELETE" }
+      );
+      if (!response.ok && response.status !== 404) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.message || data.error || `HTTP ${response.status}`);
+      }
+    } catch (error) {
+      console.warn("release temporary Xiaohongshu reference:", error);
+    }
+  }));
 }
 function requestDefaultStyleUpload(style) {
   const slot = DEFAULT_STYLE_REF_FALLBACKS.find(ref => ref.style === style);
@@ -12390,11 +13031,42 @@ function deleteUploadedRef(idx) {
       loadRefImages();
     });
 }
+async function deleteXiaohongshuRef(index) {
+  const ref = xiaohongshuRefs[index];
+  if (!ref || !ref.filename || !confirm(`确定移除“${ref.label || "这张小红书图片"}”吗？`)) return;
+  try {
+    const response = await fetch(
+      `${API}/api/xiaohongshu/references/${encodeURIComponent(ref.filename)}`,
+      { method: "DELETE" }
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) {
+      throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    }
+    xiaohongshuRefs = xiaohongshuRefs.filter(item => item !== ref);
+    clearStoredXiaohongshuRefSelection();
+    await loadRefImages();
+    showToast("🗑 已移除临时小红书参考图");
+  } catch (error) {
+    showToast("❌ " + error.message);
+  }
+}
 async function submitCustomGen() {
   const payload = currentCustomGenPayload();
   if (payload.error === "prompt_required") { showToast("✍️ 先输入穿搭描述呀～"); return; }
+
+  const submittedRefs = [payload.body.ref_image, ...(payload.body.ref_images || [])]
+    .map(value => String(value || "").trim())
+    .filter(Boolean);
+  customGenXiaohongshuInFlight = new Set(
+    xiaohongshuRefs
+      .filter(ref => submittedRefs.includes(String(ref.url || "")))
+      .map(ref => ref.filename)
+      .filter(Boolean)
+  );
   
   const btn = document.getElementById("cgSubmitBtn");
+  let generationMayStillBeRunning = false;
   btn.disabled = true; btn.textContent = "⏳ 正在打扮...";
   showToast("🌸 按你的描述开始生成～");
   
@@ -12405,14 +13077,32 @@ async function submitCustomGen() {
       body: JSON.stringify(payload.body)
     }, IMAGE_OPERATION_TIMEOUT_MS, '定制生图请求超时，后台可能仍在处理，请稍后刷新画廊');
     const data = await res.json();
-    if (data.error) showToast("❌ " + data.error);
+    if (data.error) {
+      showToast("❌ " + data.error);
+      await releaseTransientXiaohongshuRefs({
+        skipFilenames: Array.from(customGenXiaohongshuInFlight)
+      });
+      await loadRefImages();
+    }
     else {
       showToast("✨ 定制造型生成完成啦！");
       closeCustomGen();
       await loadGallery();
+      if (String(data.caption_status || "").toLowerCase() === "pending") {
+        scheduleCustomCaptionPolling(true);
+      }
     }
-  } catch(e) { showToast("❌ " + e.message); }
-  finally { btn.disabled = false; btn.textContent = "✨ 开始生成"; }
+  } catch(e) {
+    generationMayStillBeRunning = e && e.name === 'FetchTimeoutError';
+    showToast("❌ " + e.message);
+  }
+  finally {
+    // The server may keep generating after the browser's timeout. Leave these
+    // references protected so closing the dialog cannot delete them mid-read.
+    if (!generationMayStillBeRunning) customGenXiaohongshuInFlight = new Set();
+    btn.disabled = false;
+    btn.textContent = "✨ 开始生成";
+  }
 }
 
 async function quickCustomImg2ImgFromModal(event, btn) {
@@ -12446,6 +13136,9 @@ async function quickCustomImg2ImgFromModal(event, btn) {
     showToast("✨ 魔法棒图生图完成");
     closeModal();
     await loadGallery();
+    if (String(data.caption_status || "").toLowerCase() === "pending") {
+      scheduleCustomCaptionPolling(true);
+    }
   } catch(e) {
     showToast("❌ " + e.message);
   } finally {
@@ -12514,6 +13207,7 @@ async function loadFavoriteGallery() {
     galleryLoadedFavoritesOnly = true;
     renderGallery();
     updateBadges();
+    scheduleCustomCaptionPolling(false);
   } catch(error) {
     if (showFavoritesOnly) {
       document.getElementById("galleryContent").innerHTML =
@@ -12612,6 +13306,7 @@ async function loadGallery(options = {}) {
       else switchTab(savedTab);
     }
     updateBadges();
+    scheduleCustomCaptionPolling(false);
   } catch(e) {
     if (!append) {
       document.getElementById("galleryContent").innerHTML =
@@ -12647,9 +13342,191 @@ bootGalleryApp();
 
 // ===== Settings Modal =====
 let activeSettingsPanel = "persona";
+let xhsLoginPollTimer = null;
+let xhsLoginPollDeadline = 0;
+let xhsScheduleModeBusy = false;
+
+function renderXiaohongshuScheduleMode(data) {
+  const toggle = document.getElementById("xhsScheduleMode");
+  const status = document.getElementById("xhsScheduleStatus");
+  const wrap = document.getElementById("xhsScheduleReference");
+  const image = document.getElementById("xhsScheduleImage");
+  const name = document.getElementById("xhsScheduleName");
+  const query = document.getElementById("xhsScheduleQuery");
+  const refresh = document.getElementById("xhsScheduleRefresh");
+  const reference = data && data.today_reference && typeof data.today_reference === "object"
+    ? data.today_reference
+    : {};
+  if (toggle) {
+    toggle.checked = data?.enabled === true;
+    toggle.disabled = xhsScheduleModeBusy;
+  }
+  if (refresh) refresh.disabled = xhsScheduleModeBusy;
+  if (status) {
+    if (xhsScheduleModeBusy) status.textContent = "正在选择今日穿搭...";
+    else if (data?.status === "ready") status.textContent = "今日参考已就绪";
+    else if (data?.enabled && data?.last_error) status.textContent = data.last_error;
+    else if (data?.enabled) status.textContent = "等待今日日程";
+    else status.textContent = "已关闭，使用原日程参考";
+  }
+  const hasReference = data?.enabled === true && Boolean(reference.url);
+  if (wrap) wrap.hidden = !hasReference;
+  if (hasReference) {
+    if (image) image.src = `${API}${reference.url}`;
+    if (name) name.textContent = reference.title || reference.label || "今日穿搭";
+    if (query) query.textContent = reference.query || "";
+  } else if (image) {
+    image.removeAttribute("src");
+  }
+}
+
+async function loadXiaohongshuScheduleMode() {
+  try {
+    const response = await fetch(`${API}/api/xiaohongshu/schedule-mode`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    renderXiaohongshuScheduleMode(data);
+    return data;
+  } catch (error) {
+    renderXiaohongshuScheduleMode({enabled: false, status: "error", last_error: error.message});
+    const status = document.getElementById("xhsScheduleStatus");
+    if (status) status.textContent = `读取失败：${error.message}`;
+    return null;
+  }
+}
+
+async function updateXiaohongshuScheduleMode(enabled, refresh = false) {
+  if (xhsScheduleModeBusy) return;
+  xhsScheduleModeBusy = true;
+  renderXiaohongshuScheduleMode({enabled, status: enabled ? "missing" : "disabled"});
+  try {
+    const response = await fetch(`${API}/api/xiaohongshu/schedule-mode`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({enabled, refresh})
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    xhsScheduleModeBusy = false;
+    renderXiaohongshuScheduleMode(data);
+    if (enabled && data.status === "ready") showToast("今日小红书穿搭已就绪");
+    else if (enabled && data.last_error) showToast(data.last_error, 7000);
+    else if (!enabled) showToast("日程已恢复原参考图模式");
+  } catch (error) {
+    xhsScheduleModeBusy = false;
+    await loadXiaohongshuScheduleMode();
+    showToast(`小红书日程设置失败：${error.message}`, 7000);
+  }
+}
+
+function setXiaohongshuScheduleMode(enabled) {
+  updateXiaohongshuScheduleMode(Boolean(enabled), false);
+}
+
+function refreshXiaohongshuScheduleReference() {
+  updateXiaohongshuScheduleMode(true, true);
+}
+
+function setXiaohongshuLoginState(state, text) {
+  const element = document.getElementById("xhsLoginState");
+  if (!element) return;
+  element.classList.remove("online", "offline");
+  if (state === "online" || state === "offline") element.classList.add(state);
+  element.textContent = text;
+}
+
+function stopXiaohongshuLoginPolling() {
+  if (xhsLoginPollTimer) window.clearInterval(xhsLoginPollTimer);
+  xhsLoginPollTimer = null;
+  xhsLoginPollDeadline = 0;
+}
+
+async function loadXiaohongshuStatus(silent = false) {
+  const button = document.getElementById("xhsStatusButton");
+  const message = document.getElementById("xhsLoginMessage");
+  if (button && !silent) button.disabled = true;
+  if (!silent) setXiaohongshuLoginState("", "正在检测");
+  try {
+    const response = await fetch(`${API}/api/xiaohongshu/status`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) {
+      setXiaohongshuLoginState("offline", "服务不可用");
+      if (message) message.textContent = data.message || data.error || `HTTP ${response.status}`;
+      return false;
+    }
+    if (data.is_logged_in) {
+      setXiaohongshuLoginState("online", data.username ? `已登录 · ${data.username}` : "已登录");
+      if (message) message.textContent = "可以在穿搭生成中搜索小红书图片";
+      const wrap = document.getElementById("xhsQrWrap");
+      if (wrap) wrap.hidden = true;
+      stopXiaohongshuLoginPolling();
+      return true;
+    }
+    if (data.service_running) {
+      setXiaohongshuLoginState("offline", "未登录");
+      if (message) message.textContent = "请使用小红书 App 扫码登录";
+    } else {
+      setXiaohongshuLoginState("offline", "服务未启动");
+      if (message) message.textContent = data.message || "请检查小红书 MCP 配置";
+    }
+    return false;
+  } catch (error) {
+    setXiaohongshuLoginState("offline", "检测失败");
+    if (message) message.textContent = error.message;
+    return false;
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function startXiaohongshuLoginPolling(timeoutSeconds) {
+  stopXiaohongshuLoginPolling();
+  xhsLoginPollDeadline = Date.now() + Math.max(30, Number(timeoutSeconds) || 300) * 1000;
+  xhsLoginPollTimer = window.setInterval(async () => {
+    if (Date.now() >= xhsLoginPollDeadline) {
+      stopXiaohongshuLoginPolling();
+      const message = document.getElementById("xhsLoginMessage");
+      if (message) message.textContent = "二维码已过期，请重新获取";
+      return;
+    }
+    await loadXiaohongshuStatus(true);
+  }, 3000);
+}
+
+async function requestXiaohongshuQrcode() {
+  const button = document.getElementById("xhsQrButton");
+  const message = document.getElementById("xhsLoginMessage");
+  const wrap = document.getElementById("xhsQrWrap");
+  const image = document.getElementById("xhsQrImage");
+  const expiry = document.getElementById("xhsQrExpiry");
+  if (button) button.disabled = true;
+  if (message) message.textContent = "正在生成二维码";
+  try {
+    const response = await fetch(`${API}/api/xiaohongshu/login/qrcode`, { method: "POST" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    if (data.is_logged_in) {
+      if (wrap) wrap.hidden = true;
+      await loadXiaohongshuStatus();
+      return;
+    }
+    if (!data.image) throw new Error("没有收到二维码");
+    if (image) image.src = data.image;
+    if (expiry) expiry.textContent = `请在 ${Number(data.timeout) || 300} 秒内扫码`;
+    if (wrap) wrap.hidden = false;
+    if (message) message.textContent = "扫码后会自动检测登录状态";
+    setXiaohongshuLoginState("offline", "等待扫码");
+    startXiaohongshuLoginPolling(data.timeout);
+  } catch (error) {
+    if (message) message.textContent = error.message;
+    showToast(`小红书登录失败：${error.message}`);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
 
 function setSettingsPanel(panel) {
-  const normalized = ["persona", "model", "maintain"].includes(panel) ? panel : "persona";
+  const normalized = ["persona", "model", "xiaohongshu", "maintain"].includes(panel) ? panel : "persona";
   activeSettingsPanel = normalized;
   document.querySelectorAll("[data-settings-panel]").forEach(btn => {
     const isActive = btn.dataset.settingsPanel === normalized;
@@ -12659,6 +13536,10 @@ function setSettingsPanel(panel) {
   document.querySelectorAll("[data-settings-panel-content]").forEach(section => {
     section.classList.toggle("active", section.dataset.settingsPanelContent === normalized);
   });
+  if (normalized === "xiaohongshu") {
+    loadXiaohongshuStatus();
+    loadXiaohongshuScheduleMode();
+  }
 }
 
 function openSettings() {
@@ -12701,6 +13582,7 @@ function closeSettings() {
   overlay.classList.remove("open");
   deactivateAccessibleDialog(overlay);
   document.body.style.overflow = "";
+  stopXiaohongshuLoginPolling();
 }
 
 function setPersonaSource(source) {

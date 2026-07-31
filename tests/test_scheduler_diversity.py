@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
@@ -32,6 +32,35 @@ class ScheduleDiversityTest(unittest.TestCase):
             self.assertIn("明确 25 岁以上成年女性", prompt)
             self.assertIn("聊天人设中的年龄", prompt)
             self.assertIn("服装必须完整、不透视", prompt)
+
+    def test_llm_sends_xiaohongshu_reference_as_multimodal_content(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = self.make_scheduler(tmpdir)
+            image_path = Path(tmpdir) / "outfit.webp"
+            image_path.write_bytes(b"webp-image")
+            response = Mock(status_code=200)
+            response.json.return_value = {
+                "choices": [{"message": {"content": "视觉日程"}}],
+            }
+            with (
+                patch("scheduler.llm_request_config", return_value={
+                    "chat_url": "http://127.0.0.1:9999/chat/completions",
+                    "api_key": "test-key",
+                    "models": ["vision-model"],
+                    "stream": False,
+                }),
+                patch("requests.post", return_value=response) as post,
+            ):
+                result = asyncio.run(scheduler._call_llm(
+                    "请根据真人穿搭生成日程",
+                    image_path=str(image_path),
+                ))
+
+        self.assertEqual("视觉日程", result)
+        content = post.call_args.kwargs["json"]["messages"][0]["content"]
+        self.assertEqual("text", content[0]["type"])
+        self.assertEqual("image_url", content[1]["type"])
+        self.assertTrue(content[1]["image_url"]["url"].startswith("data:image/webp;base64,"))
 
     def test_all_schedule_prompt_variants_require_solo_character_focus(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -97,6 +126,8 @@ class ScheduleDiversityTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             scheduler = self.make_scheduler(tmpdir)
+            outfit_reference = Path(tmpdir) / "xiaohongshu-outfit.webp"
+            outfit_reference.write_bytes(b"reference")
             call_llm = AsyncMock(return_value=json.dumps(candidate, ensure_ascii=False))
             with (
                 patch.object(scheduler, "_configured_today", return_value=date(2026, 7, 28)),
@@ -110,7 +141,11 @@ class ScheduleDiversityTest(unittest.TestCase):
                 patch.object(scheduler, "_valid_display_outfit", return_value=True),
                 patch.object(scheduler, "_normalize_schedule_details", return_value=([], "")),
                 patch.object(scheduler, "_schedule_forbidden_output_error", return_value=""),
-                patch.object(scheduler, "_disliked_outfit_similarity_error", return_value=""),
+                patch.object(
+                    scheduler,
+                    "_disliked_outfit_similarity_error",
+                    return_value="与不喜欢的旧穿搭相似",
+                ),
                 patch.object(
                     scheduler,
                     "_schedule_diversity_error",
@@ -122,13 +157,38 @@ class ScheduleDiversityTest(unittest.TestCase):
                     return_value="近 3 天已出现相同配饰",
                 ) as accessory_note,
             ):
-                entry = asyncio.run(scheduler.generate_today())
+                entry = asyncio.run(scheduler.generate_today(
+                    outfit_reference_path=str(outfit_reference),
+                    xiaohongshu_search_query="夏季清新通勤穿搭",
+                ))
 
         self.assertEqual("ok", entry.status)
         self.assertEqual("2026-07-28", entry.date)
+        self.assertEqual("夏季清新通勤穿搭", entry.xiaohongshu_search_query)
         self.assertEqual(1, call_llm.await_count)
+        llm_call = call_llm.await_args
+        self.assertEqual(str(outfit_reference), llm_call.kwargs["image_path"])
+        self.assertIn("小红书真人穿搭参考图", llm_call.args[0])
+        self.assertIn("今日穿搭的唯一事实来源", llm_call.args[0])
         diversity_note.assert_called_once()
         accessory_note.assert_called_once()
+
+    def test_xiaohongshu_keyword_is_selected_before_specific_garments(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = self.make_scheduler(tmpdir)
+            call_llm = AsyncMock(return_value='{"keyword":"夏季温柔居家穿搭"}')
+            with (
+                patch.object(scheduler, "_configured_today", return_value=date(2026, 7, 30)),
+                patch.object(scheduler, "_get_history", return_value="（无历史记录）"),
+                patch.object(scheduler, "_call_llm", new=call_llm),
+            ):
+                keyword = asyncio.run(scheduler.generate_xiaohongshu_search_query())
+
+        self.assertEqual("夏季温柔居家穿搭", keyword)
+        prompt = call_llm.await_args.args[0]
+        self.assertIn("还没有生成今日日程", prompt)
+        self.assertIn("不要设计具体衣服", prompt)
+        self.assertEqual(True, call_llm.await_args.kwargs["json_mode"])
 
     def test_allows_bed_idle_opening_and_multiple_cooking(self):
         """Bed-idle first item and multi cooking are no longer hard post-check limits."""

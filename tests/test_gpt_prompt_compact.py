@@ -10,7 +10,10 @@ for path in (APP_DIR, ZHUZHU_DIR):
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from settings import SCHEDULE_IMAGE_FRAMING_MARKER  # noqa: E402
+from settings import (  # noqa: E402
+    SCHEDULE_IMAGE_FRAMING_MARKER,
+    XIAOHONGSHU_OUTFIT_REFERENCE_MARKER,
+)
 from zhuzhu import generate_gptimage  # noqa: E402
 from zhuzhu.core import DAILY_IMAGE_SAFETY_GUARD  # noqa: E402
 from characters import NATURAL_FACE_SHAPE_GUARD  # noqa: E402
@@ -142,6 +145,23 @@ class PromptCompactTests(unittest.TestCase):
         self.assertNotIn("reference image", result.lower())
         self.assertNotIn("facial identity", result.lower())
 
+    def test_xiaohongshu_mode_marker_and_roles_survive_compaction(self):
+        protected = (
+            f"{XIAOHONGSHU_OUTFIT_REFERENCE_MARKER} "
+            "Image 1 supplies only the outfit. Image 2 supplies facial identity."
+        )
+        prompt = ("busy street portrait detail " * 60) + protected
+        with patch.object(
+            generate_gptimage, "_prompt_compact_enabled", return_value=True
+        ), patch.object(
+            generate_gptimage,
+            "_llm_compact_prompt",
+            return_value=("busy street portrait detail", "test-model"),
+        ):
+            result = generate_gptimage._compact_request_prompt(prompt, 500)
+
+        self.assertTrue(result.endswith(protected))
+
     def test_reference_and_edit_rules_are_appended_without_compaction(self):
         endpoint = [{"base_url": "https://images.test/v1", "api_key": "key"}]
         cases = (
@@ -209,6 +229,39 @@ class PromptCompactTests(unittest.TestCase):
         self.assertEqual(1, request_info["submitted_prompt"].count(marker))
         self.assertEqual("ordinary portrait scene", request_info["original_prompt"])
         self.assertFalse(request_info["compacted"])
+
+    def test_xiaohongshu_reference_block_is_submitted_and_rebuilt_once(self):
+        endpoint = [{"base_url": "https://images.test/v1", "api_key": "key"}]
+        prepared_prompt = f"compact body {XIAOHONGSHU_OUTFIT_REFERENCE_MARKER}"
+        refs = ["/tmp/outfit.png", "/tmp/face.png"]
+        request_info = {}
+
+        with patch.object(
+            generate_gptimage, "_direct_gpt_image_endpoints", return_value=endpoint
+        ), patch.object(
+            generate_gptimage,
+            "_compact_request_prompt",
+            return_value=prepared_prompt,
+        ), patch.object(
+            generate_gptimage,
+            "_generate_via_images_api",
+            return_value=(b"image", 1.25),
+        ):
+            result = generate_gptimage._generate_via_direct_gpt(
+                "long body",
+                ref_images=refs,
+                request_info=request_info,
+            )
+
+        submitted = request_info["submitted_prompt"]
+        self.assertEqual((b"image", 1.25), result)
+        self.assertIn("Xiaohongshu outfit-reference mode", submitted)
+        self.assertIn("Image 2 is the sole and authoritative facial identity", submitted)
+        self.assertNotIn("immutable base photo", submitted)
+        self.assertEqual(
+            prepared_prompt,
+            generate_gptimage._strip_pipeline_reference_suffix(submitted),
+        )
 
     def test_persisted_reference_rules_are_removed_for_text_only_retry(self):
         endpoint = [{"base_url": "https://images.test/v1", "api_key": "key"}]
