@@ -470,7 +470,17 @@ class PortraitGalleryApp:
                     force=False,
                 )
                 return dict(reused or existing), existing_query
-        keyword = str(await keyword_generator() or "").strip()
+        # Keep a failed selection's pending query stable across process restarts
+        # and retries. A timeout must never silently turn a specific style into
+        # a generic "穿搭" search.
+        pending_query = ""
+        schedule_store = getattr(web_server, "xiaohongshu_schedule_store", None)
+        if force and schedule_store is not None and callable(getattr(schedule_store, "load", None)):
+            try:
+                pending_query = str(schedule_store.load().get("pending_query") or "").strip()
+            except Exception:
+                pending_query = ""
+        keyword = pending_query or str(await keyword_generator() or "").strip()
         if not keyword:
             logger.warning("小红书日程搜索词为空，回退原日程生成")
             return {}, ""

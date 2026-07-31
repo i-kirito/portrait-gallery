@@ -163,6 +163,28 @@ class PhotoJobSizeCommandTest(unittest.IsolatedAsyncioTestCase):
             force=True,
         )
 
+    async def test_xiaohongshu_retry_reuses_pending_query(self):
+        app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+        reference = {"path": "/tmp/today-xhs.webp", "title": "真人温柔风穿搭"}
+        generator = AsyncMock(return_value="不应重新生成的关键词")
+        app.scheduler_gen = SimpleNamespace(generate_xiaohongshu_search_query=generator)
+        app.web_server = SimpleNamespace(
+            xiaohongshu_schedule_enabled=lambda: True,
+            xiaohongshu_schedule_store=SimpleNamespace(
+                load=lambda: {"pending_query": "法式温柔风穿搭"},
+            ),
+            ensure_xiaohongshu_schedule_reference=AsyncMock(return_value=reference),
+        )
+
+        selected, keyword = await app._prepare_xiaohongshu_schedule_reference(
+            "2026-07-30",
+            force=True,
+        )
+
+        self.assertEqual(reference, selected)
+        self.assertEqual("法式温柔风穿搭", keyword)
+        generator.assert_not_awaited()
+
     async def test_photo_job_passes_stable_schedule_size(self):
         app = PortraitGalleryApp.__new__(PortraitGalleryApp)
         app.config = {"image_gen": {"metadata_size": "1536x2048"}}

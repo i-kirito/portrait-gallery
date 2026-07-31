@@ -170,6 +170,14 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("夏季温柔居家穿搭", query)
 
+    def test_schedule_query_ignores_bare_generic_keyword(self):
+        query = GalleryServer._xiaohongshu_schedule_query({
+            "xiaohongshu_search_query": "穿搭",
+            "outfit_style": "温柔风",
+        })
+
+        self.assertEqual("温柔风穿搭", query)
+
     async def test_status_and_search_use_read_only_client(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
             server = self._make_server(Path(tmpdir))

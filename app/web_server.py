@@ -7117,9 +7117,14 @@ class GalleryServer:
         if explicit:
             explicit = re.sub(r"(?:真人穿搭|真人|全身|OOTD)", "", explicit, flags=re.IGNORECASE)
             explicit = re.sub(r"[\s,，]+", "", explicit).strip(" -:：")
-            if "穿搭" not in explicit:
+            # A bare generic word is not a meaningful style query. Ignore it
+            # and derive a style-specific query from the day's schedule instead.
+            if explicit.casefold() in {"", "穿搭", "ootd", "真人"}:
+                explicit = ""
+            elif "穿搭" not in explicit:
                 explicit = f"{explicit}穿搭"
-            return explicit[:24]
+            if explicit:
+                return explicit[:24]
 
         style = re.sub(r"\s+", " ", str(daily.get("outfit_style") or "")).strip()
         style = re.sub(r"^(?:风格|穿搭风格)[：:]\s*", "", style)[:16]
@@ -7375,6 +7380,12 @@ class GalleryServer:
             if not query:
                 self._save_xiaohongshu_schedule_error("日程没有可用的穿搭关键词，已回退原参考图")
                 return {}
+            query_saved_at = self._now().isoformat(timespec="seconds")
+            self.xiaohongshu_schedule_store.update(lambda state: {
+                **state,
+                "pending_query": query,
+                "updated_at": query_saved_at,
+            })
             selection_deadline = time.monotonic() + 240
             cleanup_paths: list[str] = []
             new_schedule_filename = ""
@@ -7726,6 +7737,7 @@ class GalleryServer:
                     state.update({
                         "enabled": True,
                         "references": references,
+                        "pending_query": "",
                         "last_error": "",
                         "last_error_at": "",
                         "updated_at": created_at,
