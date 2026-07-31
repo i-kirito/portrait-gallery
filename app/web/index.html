@@ -6381,6 +6381,7 @@ textarea:focus-visible,
         <div class="sk-gitee-status-main">
           <div class="sk-status" id="skGptBaseUrlStatus">加载中...</div>
           <div class="sk-status" id="skGptChatFallbackStatus">加载中...</div>
+          <div class="sk-status" id="skGptPromptCompactStatus">加载中...</div>
         </div>
       </div>
       <div class="sk-gitee-fallback-inline" id="skGptChatFallbackRow">
@@ -6390,6 +6391,16 @@ textarea:focus-visible,
         </div>
         <label class="sk-switch" for="skGptChatFallback" aria-label="允许 Images API 失败后回退到 Chat 端点">
           <input type="checkbox" id="skGptChatFallback" onchange="syncGptChatFallbackVisual(this.checked)">
+          <span class="sk-switch-knob"></span>
+        </label>
+      </div>
+      <div class="sk-gitee-fallback-inline" id="skGptPromptCompactRow">
+        <div class="sk-gitee-fallback-copy">
+          <span class="sk-gitee-fallback-title">提示词精简</span>
+          <span class="sk-gitee-fallback-hint">生图前用画廊 LLM 精简普通描述，保护规则保持原样</span>
+        </div>
+        <label class="sk-switch" for="skGptPromptCompact" aria-label="生图前精简 GPT Image 提示词">
+          <input type="checkbox" id="skGptPromptCompact" onchange="syncGptPromptCompactVisual(this.checked)">
           <span class="sk-switch-knob"></span>
         </label>
       </div>
@@ -12669,6 +12680,7 @@ function openSettings() {
   document.getElementById("skPersona").value = "";
   document.getElementById("skGiteeFallback").checked = false;
   document.getElementById("skGptChatFallback").checked = false;
+  document.getElementById("skGptPromptCompact").checked = false;
   document.getElementById("skLlmStream").checked = false;
   availableLlmModels = [];
   setLlmModelChain([]);
@@ -12676,6 +12688,7 @@ function openSettings() {
   syncGiteeFallbackVisual(false);
   syncLlmStreamVisual(false);
   syncGptChatFallbackVisual(false);
+  syncGptPromptCompactVisual(false);
   const cleanupResult = document.getElementById("skCleanupResult");
   if (cleanupResult) cleanupResult.textContent = "";
   updateCleanupCustomVisibility();
@@ -12800,6 +12813,16 @@ function syncGptChatFallbackVisual(enabled) {
   if (row) row.classList.toggle("enabled", enabled === true);
   if (status) {
     status.textContent = enabled ? "✓ Chat 回退开" : "○ Chat 回退关";
+    status.className = "sk-status " + (enabled ? "set" : "unset");
+  }
+}
+
+function syncGptPromptCompactVisual(enabled, targetChars = 500) {
+  const row = document.getElementById("skGptPromptCompactRow");
+  const status = document.getElementById("skGptPromptCompactStatus");
+  if (row) row.classList.toggle("enabled", enabled === true);
+  if (status) {
+    status.textContent = enabled ? `✓ 精简至约 ${targetChars} 字符` : "○ 使用完整提示词";
     status.className = "sk-status " + (enabled ? "set" : "unset");
   }
 }
@@ -13387,6 +13410,12 @@ async function loadSettingsStatus() {
     const gptChatFallbackEl = document.getElementById("skGptChatFallback");
     gptChatFallbackEl.checked = data.gpt_chat_fallback_enabled === true;
     syncGptChatFallbackVisual(gptChatFallbackEl.checked);
+    const gptPromptCompactEl = document.getElementById("skGptPromptCompact");
+    gptPromptCompactEl.checked = data.gpt_prompt_compact_enabled === true;
+    syncGptPromptCompactVisual(
+      gptPromptCompactEl.checked,
+      Number(data.gpt_prompt_compact_target_chars || 500)
+    );
     const llmStreamEl = document.getElementById("skLlmStream");
     llmStreamEl.checked = data.llm_stream_enabled === true;
     syncLlmStreamVisual(llmStreamEl.checked);
@@ -13871,6 +13900,7 @@ async function saveSettings() {
   const llmModels = fullLlmModelChain();
   const giteeFallbackEnabled = document.getElementById("skGiteeFallback").checked;
   const gptChatFallbackEnabled = document.getElementById("skGptChatFallback").checked;
+  const gptPromptCompactEnabled = document.getElementById("skGptPromptCompact").checked;
   const llmStreamEnabled = document.getElementById("skLlmStream").checked;
   const missing = [];
   requireSettingsValue("Gitee API URL", giteeUrl, missing);
@@ -13909,6 +13939,7 @@ async function saveSettings() {
     body.openclaw_cli = document.getElementById("skOpenclawCliPath")?.value.trim() || "";
     body.gitee_fallback_enabled = giteeFallbackEnabled;
     body.gpt_chat_fallback_enabled = gptChatFallbackEnabled;
+    body.gpt_prompt_compact_enabled = gptPromptCompactEnabled;
     // llm_model: always send; llm_models keeps the ordered fallback chain
     body.llm_model = llmModel;
     body.llm_models = llmModels;

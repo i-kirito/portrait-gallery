@@ -328,6 +328,45 @@ class WebServerImageFallbackSettingsTest(unittest.IsolatedAsyncioTestCase):
             plugin = json.loads((root / "data" / "plugin_config.json").read_text(encoding="utf-8"))
             self.assertTrue(plugin.get("gpt_chat_fallback_enabled"))
 
+    async def test_prompt_compaction_defaults_off_and_persists_in_plugin_config(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            test_server = TestServer(server.app)
+            await test_server.start_server(access_log=None)
+            client = TestClient(test_server)
+            try:
+                with patch.dict(
+                    os.environ,
+                    {
+                        "GALLERY_PASSWORD": "",
+                        "GPT_IMAGE_PROMPT_COMPACT_ENABLED": "",
+                    },
+                    clear=False,
+                ):
+                    os.environ.pop("GPT_IMAGE_PROMPT_COMPACT_ENABLED", None)
+                    initial_response = await client.get("/api/config/keys")
+                    initial = await initial_response.json()
+                    save_response = await client.post(
+                        "/api/config/keys",
+                        json={"gpt_prompt_compact_enabled": True},
+                    )
+                    saved = await save_response.json()
+                    current_response = await client.get("/api/config/keys")
+                    current = await current_response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(200, initial_response.status)
+            self.assertFalse(initial.get("gpt_prompt_compact_enabled"))
+            self.assertEqual(500, initial.get("gpt_prompt_compact_target_chars"))
+            self.assertEqual(200, save_response.status)
+            self.assertTrue(saved.get("success"))
+            self.assertEqual(200, current_response.status)
+            self.assertTrue(current.get("gpt_prompt_compact_enabled"))
+            plugin = json.loads((root / "data" / "plugin_config.json").read_text(encoding="utf-8"))
+            self.assertTrue(plugin.get("gpt_prompt_compact_enabled"))
+
 
 class WebServerReferenceUploadTest(unittest.IsolatedAsyncioTestCase):
     def _make_server(self, root: Path) -> GalleryServer:

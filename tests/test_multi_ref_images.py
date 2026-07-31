@@ -74,7 +74,14 @@ class DualRefFallbackTests(unittest.TestCase):
     def test_dual_ref_failure_falls_back_to_face_only(self):
         calls = []
 
-        def fake_direct(prompt, ref_image=None, size=None, precise_edit=False, ref_images=None):
+        def fake_direct(
+            prompt,
+            ref_image=None,
+            size=None,
+            precise_edit=False,
+            ref_images=None,
+            request_info=None,
+        ):
             calls.append(
                 {
                     "ref_image": ref_image,
@@ -87,6 +94,8 @@ class DualRefFallbackTests(unittest.TestCase):
                 generate_gptimage._LAST_IMAGE_FAILURE_KIND = "codex_edits_eof"
                 return None
             if ref_images and len(ref_images) == 1:
+                if isinstance(request_info, dict):
+                    request_info["submitted_prompt"] = prompt
                 return (b"face-only-image", 1.5)
             return None
 

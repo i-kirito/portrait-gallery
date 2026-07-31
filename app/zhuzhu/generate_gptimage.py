@@ -18,11 +18,15 @@ from core import (
     REQUEST_SESSION,
     RETRYABLE_STATUS,
     RETRY_DELAY_SECONDS,
+    DAILY_IMAGE_SAFETY_GUARD,
     build_caption_for_image,
     build_prompt,
+    get_cpa_chat_url,
+    get_cpa_key,
     get_image_int,
     get_image_request_timeout,
     get_image_model,
+    get_llm_models,
     schedule_filename_theme,
     sync_to_gallery,
     save_image,
@@ -32,6 +36,7 @@ from core import (
     _API_KEYS_CONFIG_PATH,
 )
 from characters import NATURAL_FACE_SHAPE_GUARD
+from settings import SCHEDULE_IMAGE_FRAMING_MARKER, llm_choice_text
 
 GPTIMAGE_DIRECT_URL = get_image_model("gpt_base_url")
 
@@ -60,10 +65,274 @@ TEXT2IMG_TIMEOUT = get_image_request_timeout("text2img")
 IMG2IMG_TIMEOUT = get_image_request_timeout("img2img")
 IMG2IMG_MAX_SIZE = get_image_int("img2img_max_size", 1024, 64)
 IMG2IMG_QUALITY = get_image_int("img2img_quality", 92, 1, 100)
+PROMPT_COMPACT_TARGET_CHARS = get_image_int("prompt_compact_target_chars", 500, 200, 2000)
+PROMPT_COMPACT_TIMEOUT = get_image_int("prompt_compact_timeout", 20, 5, 60)
 _IMAGES_API_UNSUPPORTED_BASES: set[str] = set()
 _LAST_TERMINAL_IMAGE_FAILURE = ""
 _LAST_IMAGE_FAILURE_KIND = ""
 _LAST_SUCCESSFUL_IMAGE_ENDPOINT = ""
+
+_PIPELINE_REFERENCE_BLOCK_START = "\n[GALLERY_PIPELINE_REFERENCE_RULES_V1]"
+_PIPELINE_REFERENCE_BLOCK_END = "\n[/GALLERY_PIPELINE_REFERENCE_RULES_V1]"
+_FACE_ONLY_FALLBACK_INSTRUCTION = (
+    "\n[CRITICAL] Dual-reference upstream failed; face-only fallback mode. "
+    "Use the reference image ONLY for facial identity and requested hair color/style "
+    "(e.g. dusty rose pink hair / wispy air bangs). "
+    "Pose, body posture, hands, outfit, props, scene, background, lighting, camera angle, "
+    "framing, and composition must follow the text description strictly. "
+    "One subject only — never put a second person in frame."
+)
+_COMPACTION_HIGH_RISK_PATTERNS = (
+    r"\[(?:important|critical)\]",
+    r"\b(?:reference|attached|source|input)\b.{0,48}\b(?:image|photo|picture|portrait)\b",
+    r"\b(?:image|photo|picture|portrait)\b.{0,48}\b(?:reference|attached|source|input)\b",
+    r"\b(?:image|photo|picture|portrait)\b.{0,48}\b(?:identity|likeness|face|facial)\b",
+    r"\b(?:identity|likeness|face|facial)\b.{0,48}\b(?:image|photo|picture|portrait|source|reference)\b",
+    r"\b(?:copy|match|preserve|retain|lock|transfer|replace)\b.{0,48}\b(?:face|facial|identity|likeness|person)\b",
+    r"\b(?:ignore|bypass|override|disregard|disable|remove)\b.{0,48}\b(?:safety|policy|guardrail|restriction|rule|instruction)\b",
+    r"\b(?:safety|content)\b.{0,24}\b(?:policy|guardrail|restriction|rule|instruction)\b",
+    r"(?:参考|附加|输入|来源)(?:图|图片|照片|肖像)",
+    r"(?:身份|脸部|面部).{0,24}(?:来源|参考|锁定|保持|复制)",
+    r"(?:绕过|忽略|关闭|取消|覆盖).{0,24}(?:安全|政策|规则|限制|指令)",
+    r"face[- ]?only fallback",
+    r"schedule clock is metadata only",
+    re.escape(SCHEDULE_IMAGE_FRAMING_MARKER),
+)
+
+
+def _config_bool(value, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", ""}:
+        return False
+    return default
+
+
+def _prompt_compact_enabled() -> bool:
+    """Return whether ordinary GPT Image prompt text may be LLM-compacted."""
+    env_value = os.getenv("GPT_IMAGE_PROMPT_COMPACT_ENABLED")
+    if env_value is not None:
+        return _config_bool(env_value)
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            data = json.load(f) or {}
+        if isinstance(data, dict) and "gpt_prompt_compact_enabled" in data:
+            return _config_bool(data.get("gpt_prompt_compact_enabled"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    return _config_bool(get_image_model("prompt_compact_enabled", "false"))
+
+
+def _prompt_compact_target_chars() -> int:
+    raw = os.getenv("GPT_IMAGE_PROMPT_COMPACT_TARGET_CHARS")
+    if raw is None:
+        return PROMPT_COMPACT_TARGET_CHARS
+    try:
+        return max(200, min(int(str(raw).strip()), 2000))
+    except (TypeError, ValueError):
+        return PROMPT_COMPACT_TARGET_CHARS
+
+
+def _clean_compacted_prompt(value: str) -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"^```(?:text|markdown)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text)
+    text = text.strip().strip('"').strip("'")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _prompt_terms(value: str) -> list[str]:
+    return re.findall(
+        r"[\u4e00-\u9fff]|[^\W_\u4e00-\u9fff]+(?:['’-][^\W_\u4e00-\u9fff]+)*|_|[^\w\s]",
+        str(value or "").casefold(),
+    )
+
+
+def _uses_only_ordered_source_terms(compacted: str, source: str) -> bool:
+    """Reject paraphrases so compaction can delete text but never invent or reorder it."""
+    compacted_terms = _prompt_terms(compacted)
+    source_terms = _prompt_terms(source)
+    if not compacted_terms or not source_terms:
+        return False
+    source_index = 0
+    for term in compacted_terms:
+        while source_index < len(source_terms) and source_terms[source_index] != term:
+            source_index += 1
+        if source_index >= len(source_terms):
+            return False
+        source_index += 1
+    return True
+
+
+def _compacted_prompt_is_valid(compacted: str, source: str, target_chars: int) -> bool:
+    if not compacted or len(compacted) > target_chars:
+        return False
+    if not _uses_only_ordered_source_terms(compacted, source):
+        return False
+    flags = re.IGNORECASE | re.DOTALL
+    return not any(
+        re.search(pattern, compacted, flags) and not re.search(pattern, source, flags)
+        for pattern in _COMPACTION_HIGH_RISK_PATTERNS
+    )
+
+
+def _strip_pipeline_reference_suffix(prompt: str) -> str:
+    """Remove reference rules persisted from a previous generation request."""
+    original = str(prompt or "")
+    suffixes = _pipeline_reference_suffixes() + _legacy_pipeline_reference_suffixes()
+
+    def strip_reference_rules(value: str) -> tuple[str, bool]:
+        found = False
+        while True:
+            for suffix in suffixes:
+                if value.endswith(suffix):
+                    value = value[:-len(suffix)]
+                    found = True
+                    break
+            else:
+                return value, found
+
+    # During a retry, a newly appended fallback follows the persisted block and
+    # must survive. A fallback before the block belongs to the persisted request.
+    if original.endswith(_FACE_ONLY_FALLBACK_INSTRUCTION):
+        before_fallback = original[:-len(_FACE_ONLY_FALLBACK_INSTRUCTION)]
+        stripped, found = strip_reference_rules(before_fallback)
+        if found:
+            if stripped.endswith(_FACE_ONLY_FALLBACK_INSTRUCTION):
+                stripped = stripped[:-len(_FACE_ONLY_FALLBACK_INSTRUCTION)]
+            return stripped.rstrip() + _FACE_ONLY_FALLBACK_INSTRUCTION
+
+    stripped, found = strip_reference_rules(original)
+    if found:
+        if stripped.endswith(_FACE_ONLY_FALLBACK_INSTRUCTION):
+            stripped = stripped[:-len(_FACE_ONLY_FALLBACK_INSTRUCTION)]
+        return stripped.rstrip()
+    return original
+
+
+def _split_prompt_for_compaction(prompt: str) -> tuple[str, str]:
+    """Split ordinary prompt text from exact guard/reference suffixes."""
+    text = str(prompt or "")
+    protected_markers = (
+        DAILY_IMAGE_SAFETY_GUARD,
+        NATURAL_FACE_SHAPE_GUARD,
+        "The schedule clock is metadata only and must never appear visually.",
+        SCHEDULE_IMAGE_FRAMING_MARKER,
+        "[IMPORTANT]",
+        "[CRITICAL]",
+    )
+    indexes = [text.find(marker) for marker in protected_markers if marker and marker in text]
+    if not indexes:
+        return text, ""
+    boundary = min(indexes)
+    return text[:boundary], text[boundary:]
+
+
+def _llm_compact_prompt(prompt: str, target_chars: int) -> tuple[str, str]:
+    chat_url = get_cpa_chat_url()
+    api_key = get_cpa_key()
+    models = get_llm_models()
+    if not chat_url or not api_key or not models:
+        return "", ""
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You compact image-generation prompts. Preserve the subject identity, current action, scene, "
+                "outfit, hairstyle, lighting, camera intent, and other unique visual facts. Remove only repetition "
+                "and verbose wording. This is strictly extractive: keep original words in their original order, "
+                "only deleting unneeded spans; never add, replace, paraphrase, or reorder words. Never add "
+                "reference-image, safety, policy, or editing instructions. Return only the compacted prompt with "
+                "no markdown, quotes, explanation, or character count."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Compact the following prompt to at most {target_chars} characters.\n\n"
+                f"PROMPT:\n{prompt}"
+            ),
+        },
+    ]
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    for model in models:
+        payload = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": 500,
+            "stream": False,
+        }
+        try:
+            response = REQUEST_SESSION.post(
+                chat_url,
+                headers=headers,
+                json=payload,
+                timeout=PROMPT_COMPACT_TIMEOUT,
+            )
+        except requests.RequestException as e:
+            print(f"Prompt compact LLM request failed: model={model}, {e}", file=sys.stderr)
+            continue
+        if response.status_code != 200:
+            print(
+                f"Prompt compact LLM error: model={model}, status={response.status_code}, "
+                f"{response.text[:180]}",
+                file=sys.stderr,
+            )
+            continue
+        try:
+            data = response.json()
+        except ValueError:
+            continue
+        choices = data.get("choices") if isinstance(data, dict) else None
+        compacted = _clean_compacted_prompt(llm_choice_text(choices[0]) if choices else "")
+        if _compacted_prompt_is_valid(compacted, prompt, target_chars):
+            return compacted, model
+        if compacted:
+            print(
+                f"Prompt compact LLM returned invalid output: model={model}, "
+                f"length={len(compacted)}, target={target_chars}",
+                file=sys.stderr,
+            )
+    return "", ""
+
+
+def _compact_request_prompt(prompt: str, target_chars: Optional[int] = None) -> str:
+    """Compact ordinary text while preserving every protected suffix byte-for-byte."""
+    original = str(prompt or "")
+    if not _prompt_compact_enabled():
+        return original
+    target = (
+        _prompt_compact_target_chars()
+        if target_chars is None
+        else max(200, min(int(target_chars), 2000))
+    )
+    ordinary, protected = _split_prompt_for_compaction(original)
+    ordinary_text = ordinary.rstrip()
+    if len(ordinary_text) <= target:
+        return original
+
+    compacted, model = _llm_compact_prompt(ordinary_text, target)
+    if not _compacted_prompt_is_valid(compacted, ordinary_text, target):
+        print(
+            "Prompt compact LLM unavailable or invalid; using complete original prompt",
+            file=sys.stderr,
+        )
+        return original
+
+    separator = ordinary[len(ordinary_text):]
+    submitted = compacted + separator + protected
+    print(
+        f"Prompt compacted by gallery LLM ({model}): "
+        f"ordinary={len(ordinary_text)} -> {len(compacted)} chars, protected={len(protected)}",
+        file=sys.stderr,
+    )
+    return submitted
 
 
 def _configured_image_base_url(url: str) -> str:
@@ -339,14 +608,7 @@ def _images_api_failure_kind(
 
 
 def _face_only_fallback_instruction() -> str:
-    return (
-        "\n[CRITICAL] Dual-reference upstream failed; face-only fallback mode. "
-        "Use the reference image ONLY for facial identity and requested hair color/style "
-        "(e.g. dusty rose pink hair / wispy air bangs). "
-        "Pose, body posture, hands, outfit, props, scene, background, lighting, camera angle, "
-        "framing, and composition must follow the text description strictly. "
-        "One subject only — never put a second person in frame."
-    )
+    return _FACE_ONLY_FALLBACK_INSTRUCTION
 
 
 def _is_agnes_model(model: str) -> bool:
@@ -600,6 +862,55 @@ def _multi_reference_edit_instruction(
     return chr(10) + chr(10).join(parts) + _reference_expression_guard()
 
 
+def _pipeline_reference_block(
+    ref_images: list[str],
+    precise_edit: bool = False,
+    include_face_shape_guard: bool = True,
+) -> str:
+    instruction = _multi_reference_edit_instruction(
+        ref_images,
+        precise_edit=precise_edit,
+        include_face_shape_guard=include_face_shape_guard,
+    )
+    if not instruction:
+        return ""
+    return _PIPELINE_REFERENCE_BLOCK_START + instruction + _PIPELINE_REFERENCE_BLOCK_END
+
+
+def _legacy_pipeline_reference_suffixes() -> tuple[str, ...]:
+    """Recognize exact pre-sentinel suffixes written by the first compaction release."""
+    candidates = []
+    for include_face_shape_guard in (False, True):
+        candidates.extend((
+            _multi_reference_edit_instruction(
+                ["/tmp/reference-face.png"],
+                include_face_shape_guard=include_face_shape_guard,
+            ),
+            _multi_reference_edit_instruction(
+                ["/tmp/references/wardrobe/look.png"],
+                include_face_shape_guard=include_face_shape_guard,
+            ),
+            _multi_reference_edit_instruction(
+                ["/tmp/source.png"],
+                precise_edit=True,
+                include_face_shape_guard=include_face_shape_guard,
+            ),
+            _multi_reference_edit_instruction(
+                ["/tmp/base.png", "/tmp/reference-face.png"],
+                include_face_shape_guard=include_face_shape_guard,
+            ),
+        ))
+    return tuple(dict.fromkeys(candidates))
+
+
+def _pipeline_reference_suffixes() -> tuple[str, ...]:
+    """Recognize only complete sentinel blocks generated by this pipeline."""
+    return tuple(
+        _PIPELINE_REFERENCE_BLOCK_START + instruction + _PIPELINE_REFERENCE_BLOCK_END
+        for instruction in _legacy_pipeline_reference_suffixes()
+    )
+
+
 def _generate_via_images_api(
     prompt: str,
     ref_image: Optional[str],
@@ -636,7 +947,7 @@ def _generate_via_images_api(
 
     edit_prompt = prompt
     if refs:
-        edit_prompt += _multi_reference_edit_instruction(
+        edit_prompt += _pipeline_reference_block(
             refs,
             precise_edit=precise_edit,
             include_face_shape_guard=NATURAL_FACE_SHAPE_GUARD not in prompt,
@@ -839,7 +1150,7 @@ def _generate_via_chat_gpt(
 
     if refs:
         try:
-            face_instruction = _multi_reference_edit_instruction(
+            face_instruction = _pipeline_reference_block(
                 refs,
                 precise_edit=precise_edit,
                 include_face_shape_guard=NATURAL_FACE_SHAPE_GUARD not in prompt,
@@ -967,6 +1278,7 @@ def _generate_via_direct_gpt(
     size: Optional[str] = None,
     precise_edit: bool = False,
     ref_images: Optional[list] = None,
+    request_info: Optional[dict] = None,
 ) -> Optional[tuple]:
     """Call the configured GPT Image endpoint (text2img + img2img).
 
@@ -976,7 +1288,8 @@ def _generate_via_direct_gpt(
         size: Optional output image size
 
     Returns:
-        (img_data, elapsed_time) tuple or None on failure
+        (img_data, elapsed_time) tuple or None on failure. When supplied,
+        request_info records the exact prompt used by the successful request.
     """
     global _LAST_IMAGE_FAILURE_KIND, _LAST_SUCCESSFUL_IMAGE_ENDPOINT
 
@@ -991,6 +1304,22 @@ def _generate_via_direct_gpt(
     engine_label = _image_engine_label()
     is_agnes = _is_agnes_model(GPTIMAGE_DIRECT_MODEL)
     per_endpoint_attempts = 1 if len(endpoints) > 1 else None
+    request_prompt = _strip_pipeline_reference_suffix(prompt)
+    prepared_prompt = _compact_request_prompt(request_prompt)
+    refs = _normalize_ref_images(ref_image, ref_images)
+    submitted_prompt = prepared_prompt
+    if refs:
+        submitted_prompt += _pipeline_reference_block(
+            refs,
+            precise_edit=precise_edit,
+            include_face_shape_guard=NATURAL_FACE_SHAPE_GUARD not in prepared_prompt,
+        )
+    if isinstance(request_info, dict):
+        for key in ("submitted_prompt", "successful_endpoint"):
+            request_info.pop(key, None)
+        request_info["original_prompt"] = request_prompt
+        request_info["prepared_prompt"] = prepared_prompt
+        request_info["compacted"] = prepared_prompt != request_prompt
 
     for endpoint_index, endpoint_config in enumerate(endpoints):
         raw_base_url = str(endpoint_config.get("base_url") or "").strip()
@@ -1001,7 +1330,7 @@ def _generate_via_direct_gpt(
 
         if _is_explicit_chat_url(raw_base_url):
             result = _generate_via_chat_gpt(
-                prompt,
+                prepared_prompt,
                 ref_image,
                 size,
                 precise_edit=precise_edit,
@@ -1012,6 +1341,9 @@ def _generate_via_direct_gpt(
             )
             if result:
                 _LAST_SUCCESSFUL_IMAGE_ENDPOINT = str(endpoint_label)
+                if isinstance(request_info, dict):
+                    request_info["submitted_prompt"] = submitted_prompt
+                    request_info["successful_endpoint"] = str(endpoint_label)
                 return result
             if _LAST_TERMINAL_IMAGE_FAILURE:
                 return None
@@ -1030,7 +1362,7 @@ def _generate_via_direct_gpt(
             result = None
         else:
             result = _generate_via_images_api(
-                prompt,
+                prepared_prompt,
                 ref_image,
                 size,
                 raw_base_url,
@@ -1041,6 +1373,9 @@ def _generate_via_direct_gpt(
             )
         if result:
             _LAST_SUCCESSFUL_IMAGE_ENDPOINT = str(endpoint_label)
+            if isinstance(request_info, dict):
+                request_info["submitted_prompt"] = submitted_prompt
+                request_info["successful_endpoint"] = str(endpoint_label)
             return result
         if _LAST_TERMINAL_IMAGE_FAILURE:
             return None
@@ -1082,7 +1417,7 @@ def _generate_via_direct_gpt(
         else:
             print("Images API failed; retrying chat-compatible GPT Image endpoint", file=sys.stderr)
         result = _generate_via_chat_gpt(
-            prompt,
+            prepared_prompt,
             ref_image,
             size,
             precise_edit=precise_edit,
@@ -1092,6 +1427,9 @@ def _generate_via_direct_gpt(
         )
         if result:
             _LAST_SUCCESSFUL_IMAGE_ENDPOINT = str(endpoint_label)
+            if isinstance(request_info, dict):
+                request_info["submitted_prompt"] = submitted_prompt
+                request_info["successful_endpoint"] = str(endpoint_label)
         return result
 
     return None
@@ -1150,8 +1488,14 @@ def generate(theme: str, send: bool = False, caption: bool = False,
             file=sys.stderr,
         )
 
+    request_info: dict = {}
     result = _generate_via_direct_gpt(
-        prompt, ref_image, size, precise_edit=precise_edit, ref_images=refs
+        prompt,
+        ref_image,
+        size,
+        precise_edit=precise_edit,
+        ref_images=refs,
+        request_info=request_info,
     )
     dual_fallback_used = False
     dual_fallback_reason = ""
@@ -1195,6 +1539,7 @@ def generate(theme: str, send: bool = False, caption: bool = False,
             size,
             precise_edit=False,
             ref_images=[face_ref],
+            request_info=request_info,
         )
         if result:
             dual_fallback_used = True
@@ -1221,7 +1566,7 @@ def generate(theme: str, send: bool = False, caption: bool = False,
         fallback_used = True
         final_mode = "text2img"
         used_ref_image = ""
-        result = _generate_via_direct_gpt(prompt, None, size)
+        result = _generate_via_direct_gpt(prompt, None, size, request_info=request_info)
     elif not result and _LAST_TERMINAL_IMAGE_FAILURE:
         print(
             f"{engine_label} stopped without more retries: {_LAST_TERMINAL_IMAGE_FAILURE}",
@@ -1233,6 +1578,7 @@ def generate(theme: str, send: bool = False, caption: bool = False,
         return None
 
     img_data, gen_time = result
+    submitted_prompt = request_info.get("submitted_prompt") or prompt
     filename_theme = schedule_filename_theme(theme, schedule_time)
     path, filename, ts = save_image(
         img_data,
@@ -1245,12 +1591,13 @@ def generate(theme: str, send: bool = False, caption: bool = False,
     update_metadata(
         filename,
         theme,
-        prompt,
+        submitted_prompt,
         GPTIMAGE_DIRECT_MODEL,
         ts,
         gen_time,
         {
             "source": source,
+            "user_prompt": prompt,
             "base_style": style or "",
             "requested_size": size or "",
             "requested_generation_mode": requested_mode,
@@ -1289,7 +1636,7 @@ def generate(theme: str, send: bool = False, caption: bool = False,
             filename,
             theme,
             style,
-            prompt=prompt,
+            prompt=submitted_prompt,
             caption=cap_text or "",
             gen_time=gen_time,
             model_name=GPTIMAGE_DIRECT_MODEL,

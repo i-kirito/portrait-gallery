@@ -86,6 +86,7 @@ from settings import (
     auto_push_agent,
     builtin_reference_map,
     build_child_env,
+    config_int,
     configured_timezone,
     configured_llm_models,
     configured_python,
@@ -4795,6 +4796,7 @@ class GalleryServer:
         gitee_key = ""
         gitee_fallback_enabled = False
         gpt_chat_fallback_enabled = False
+        gpt_prompt_compact_enabled = False
         if os.path.exists(plugin_config_path):
             try:
                 with open(plugin_config_path, 'r') as f:
@@ -4805,6 +4807,11 @@ class GalleryServer:
                     gitee_fallback_enabled = bool(plugin_config.get("gitee_fallback_enabled", False))
                     gpt_chat_fallback_enabled = bool(
                         plugin_config.get("gpt_chat_fallback_enabled", False)
+                    )
+                    gpt_prompt_compact_enabled = self._body_bool(
+                        plugin_config,
+                        "gpt_prompt_compact_enabled",
+                        False,
                     )
             except Exception as e:
                 logger.error(f"Load plugin config error: {e}")
@@ -4817,6 +4824,36 @@ class GalleryServer:
 
         image_config = self.config.get("image_gen", {})
         llm_config = self.config.get("llm", {})
+        if "gpt_prompt_compact_enabled" not in plugin_config:
+            gpt_prompt_compact_enabled = self._body_bool(
+                image_config,
+                "prompt_compact_enabled",
+                False,
+            )
+        env_prompt_compact = os.environ.get("GPT_IMAGE_PROMPT_COMPACT_ENABLED")
+        if env_prompt_compact is not None:
+            gpt_prompt_compact_enabled = self._body_bool(
+                {"enabled": env_prompt_compact},
+                "enabled",
+                gpt_prompt_compact_enabled,
+            )
+        gpt_prompt_compact_target_chars = config_int(
+            self.config,
+            "image_gen.prompt_compact_target_chars",
+            500,
+            200,
+            2000,
+        )
+        try:
+            gpt_prompt_compact_target_chars = max(
+                200,
+                min(
+                    int(os.environ.get("GPT_IMAGE_PROMPT_COMPACT_TARGET_CHARS", "")),
+                    2000,
+                ),
+            )
+        except (TypeError, ValueError):
+            pass
         raw_default_gpt_base_url = str(image_config.get("gpt_base_url", "") or "").strip()
         default_gpt_base_url = self._configured_image_base_url(raw_default_gpt_base_url)
         local_gpt_base_url = str(keys_config.get("gpt_base_url", "") or "").strip()
@@ -4907,6 +4944,8 @@ class GalleryServer:
             "llm_stream_enabled": bool(full_llm_config.get("stream", False)),
             "gitee_fallback_enabled": gitee_fallback_enabled,
             "gpt_chat_fallback_enabled": gpt_chat_fallback_enabled,
+            "gpt_prompt_compact_enabled": gpt_prompt_compact_enabled,
+            "gpt_prompt_compact_target_chars": gpt_prompt_compact_target_chars,
             "push_channel": push_channel,
             "push_channel_local": normalize_push_channel(local_push_channel_raw) if local_push_channel_raw else "",
             "push_agent": push_agent,
@@ -5921,6 +5960,7 @@ class GalleryServer:
                         "gitee_key" in body
                         or "gitee_fallback_enabled" in body
                         or "gpt_chat_fallback_enabled" in body
+                        or "gpt_prompt_compact_enabled" in body
                     )
                     if plugin_changed:
                         plugin_config = {}
@@ -5937,6 +5977,10 @@ class GalleryServer:
                         if "gpt_chat_fallback_enabled" in body:
                             plugin_config["gpt_chat_fallback_enabled"] = self._body_bool(
                                 body, "gpt_chat_fallback_enabled"
+                            )
+                        if "gpt_prompt_compact_enabled" in body:
+                            plugin_config["gpt_prompt_compact_enabled"] = self._body_bool(
+                                body, "gpt_prompt_compact_enabled"
                             )
 
                         if body.get("gitee_key"):
@@ -11706,11 +11750,17 @@ JSON 格式：
             sys.path.insert(0, zhuzhu_dir)
 
         model_name = ""
+        request_info: dict = {}
         if engine == "gptimage":
             from generate_gptimage import _generate_via_direct_gpt
             from generate_gptimage import GPTIMAGE_DIRECT_MODEL
             model_name = GPTIMAGE_DIRECT_MODEL
-            result = _generate_via_direct_gpt(prompt, ref_image=ref_image or None, size=size)
+            result = _generate_via_direct_gpt(
+                prompt,
+                ref_image=ref_image or None,
+                size=size,
+                request_info=request_info,
+            )
         elif engine == "gitee":
             from generate_gitee import generate_image_bytes
             from generate_gitee import MODEL_NAME
@@ -11723,6 +11773,7 @@ JSON 格式：
             return None
 
         img_data, elapsed = result
+        submitted_prompt = request_info.get("submitted_prompt") or prompt
         created_at = int(time.time())
         generation_mode = "img2img" if ref_image else "text2img"
         base_style = ""
@@ -11756,8 +11807,8 @@ JSON 格式：
 
         meta_entry = {
             "category": category,
-            "prompt": prompt,
-            "custom_prompt": prompt,
+            "prompt": submitted_prompt,
+            "custom_prompt": submitted_prompt,
             "user_prompt": prompt,
             "model": model_name,
             "model_name": self._display_model_name(model_name),
@@ -11812,7 +11863,7 @@ JSON 格式：
             "caption": caption,
             "display_outfit": display_outfit,
             "outfit_description": display_outfit,
-            "custom_prompt": prompt,
+            "custom_prompt": submitted_prompt,
             "user_prompt": prompt,
             "prompt_mode": "pure",
             "pure_prompt": True,
