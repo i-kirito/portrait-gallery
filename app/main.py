@@ -60,7 +60,7 @@ from outfit_plan_edit import (
 from web_server import GalleryServer
 from store import ImageMetadataStore, ScheduleStore
 from text_repair import repair_mojibake_text
-from zhuzhu.core import build_caption_fallback
+from zhuzhu.core import build_caption_fallback, build_caption_for_image
 from characters import (
     LOCAL_CHARACTER_SOURCE,
     build_character_image_prompt,
@@ -1054,20 +1054,7 @@ class PortraitGalleryApp:
 
         caption = str(api_caption or "").strip() if entry_source == "hermes_api" else ""
         if entry_source != "hermes_api" and not caption:
-            persona = load_runtime_persona(self.config, self.data_dir)
-            character_name = persona.get("name") or "角色"
-            prompt_hint = re.sub(r"\s+", " ", user_prompt or "").strip(" ，,。.!！?")
-            if len(prompt_hint) > 24:
-                prompt_hint = prompt_hint[:24].rstrip(" ，,。.!！?") + "..."
-            caption_templates = [
-                f"顺着「{prompt_hint or '这个念头'}」站进场景里时，{character_name}心里忽然安静了一点。",
-                f"镜头的距离刚好留出一点呼吸，{character_name}也跟着慢慢放松下来。",
-                f"这一刻像从描述里慢慢走出来，{character_name}只想把脚步放轻一点。",
-                f"没有太多刻意安排，{character_name}只是顺着当下的感觉停了一小会儿。",
-            ]
-            caption = caption_templates[
-                sum(ord(ch) for ch in f"{filename}|{user_prompt}|{shot_label}") % len(caption_templates)
-            ]
+            caption = await self._generate_custom_image_caption(filename)
 
         display_prompt = str(api_description or "").strip()
         if not display_prompt:
@@ -1211,6 +1198,32 @@ class PortraitGalleryApp:
                 break
         return ", ".join(parts)[:600] if parts else "natural adult body proportions"
 
+    async def _generate_custom_image_caption(self, filename: str) -> str:
+        """Let the vision LLM caption the result without exposing the generation prompt."""
+        image_path = os.path.join(
+            str(getattr(self.image_gen, "output_dir", "") or ""),
+            os.path.basename(str(filename or "")),
+        )
+        try:
+            if not image_path or not os.path.isfile(image_path):
+                raise FileNotFoundError(image_path)
+            loop = asyncio.get_running_loop()
+            caption = await loop.run_in_executor(
+                None,
+                lambda: build_caption_for_image(
+                    "custom",
+                    image_path,
+                    request_timeout=20,
+                    llm_attempts=1,
+                ),
+            )
+            caption = repair_mojibake_text(caption).strip()
+            if caption:
+                return caption
+        except Exception as exc:
+            logger.warning("自定义生图视觉配文生成失败，使用人设兜底文案: %s", exc)
+        return build_caption_fallback("custom")
+
     def _apply_custom_reference_role_guard(
         self,
         prompt: str,
@@ -1232,7 +1245,12 @@ class PortraitGalleryApp:
             "lighting, camera angle, framing, and composition. "
             "Image 1 is NOT a source for facial identity, body shape, height, shoulder width, torso, "
             "bust, waist, hips, leg shape, or anatomical proportions. "
-            "Image 2 is the sole and authoritative facial identity source. Preserve its exact, "
+            "Image 2 is the sole and authoritative facial identity source. Treat everything "
+            "outside Image 2's facial region as transparent and nonexistent. Never copy its "
+            "background, walls, furniture, venue, props, lighting, color palette, perspective, "
+            "framing, or composition. The target background must follow the user's requested "
+            "scene first, then Image 1 when no scene is requested, and must never come from "
+            "Image 2. Preserve its exact, "
             "recognizable eyes, eyebrows, nose, lips, face shape, and facial proportions. "
             "Do not average or blend the face with Image 1, and do not enlarge the eyes, sharpen "
             "the chin, beautify the face, or turn it into a generic influencer face. Image 2 and "

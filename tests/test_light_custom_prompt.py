@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,6 +76,8 @@ class LightCustomPromptTests(unittest.TestCase):
         self.assertIn("Image 2", prompt)
         self.assertIn("sole and authoritative facial identity source", prompt)
         self.assertIn("generic influencer face", prompt)
+        self.assertIn("outside Image 2's facial region as transparent", prompt)
+        self.assertIn("must never come from Image 2", prompt)
 
     def test_xiaohongshu_prompt_can_omit_generic_identity_cues(self) -> None:
         with patch(
@@ -98,6 +102,36 @@ class LightCustomPromptTests(unittest.TestCase):
         )
 
         self.assertEqual("portrait scene.", prompt)
+
+
+class CustomImageCaptionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_custom_caption_uses_generated_image_without_prompt_text(self) -> None:
+        app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image_path = Path(tmpdir) / "generated.png"
+            image_path.write_bytes(b"image")
+            app.image_gen = SimpleNamespace(output_dir=tmpdir)
+            with patch(
+                "main.build_caption_for_image",
+                return_value="雪枫坐在窗边，准备把手里的书再看两页。",
+            ) as build_caption:
+                caption = await app._generate_custom_image_caption("generated.png")
+
+        self.assertEqual("雪枫坐在窗边，准备把手里的书再看两页。", caption)
+        build_caption.assert_called_once_with(
+            "custom",
+            str(image_path),
+            request_timeout=20,
+            llm_attempts=1,
+        )
+
+    async def test_custom_caption_falls_back_without_echoing_generation_prompt(self) -> None:
+        app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+        app.image_gen = SimpleNamespace(output_dir="/missing")
+        with patch("main.build_caption_fallback", return_value="雪枫先坐稳，慢慢看看四周。"):
+            caption = await app._generate_custom_image_caption("missing.png")
+
+        self.assertEqual("雪枫先坐稳，慢慢看看四周。", caption)
 
 
 if __name__ == "__main__":

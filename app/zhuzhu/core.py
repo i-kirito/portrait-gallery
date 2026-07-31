@@ -1789,7 +1789,8 @@ def enhance_prompt(user_input: str, theme: Optional[str] = None) -> str:
 
 
 def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "image/jpeg",
-                  schedule_time: str = "", schedule_date: str = "") -> str:
+                  schedule_time: str = "", schedule_date: str = "",
+                  request_timeout: int = 0, llm_attempts: int = 2) -> str:
     theme_hint = {
         "morning": "早上刚起床的慵懒美照",
         "noon": "中午阳光下的外出美照",
@@ -1881,7 +1882,12 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
             print("[caption] llm config missing; using fallback caption", file=sys.stderr)
             return _personalized_caption_fallback(theme, persona, schedule_time, schedule_date)
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        timeout = config_int(_GALLERY_CONFIG, "llm.caption_timeout", 30, 1)
+        timeout = (
+            max(1, int(request_timeout))
+            if request_timeout
+            else config_int(_GALLERY_CONFIG, "llm.caption_timeout", 30, 1)
+        )
+        llm_attempts = max(1, int(llm_attempts or 1))
         caption_max_tokens = max(900, min(config_int(_GALLERY_CONFIG, "llm.caption_max_tokens", 900, 1), 1200))
         for model in models:
             switch_model = False
@@ -1907,6 +1913,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
                             json=request_payload,
                             timeout=timeout,
                         ),
+                        attempts=llm_attempts,
                     )
                     if resp is None:
                         switch_model = True
@@ -1949,16 +1956,37 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
     return _personalized_caption_fallback(theme, persona, schedule_time, schedule_date)
 
 
-def build_caption_for_image(theme: str, image_path: str, schedule_time: str = "", schedule_date: str = "") -> str:
+def build_caption_for_image(
+    theme: str,
+    image_path: str,
+    schedule_time: str = "",
+    schedule_date: str = "",
+    request_timeout: int = 0,
+    llm_attempts: int = 2,
+) -> str:
     try:
         with open(image_path, "rb") as f:
             img_b64 = base64.b64encode(f.read()).decode("utf-8")
         ext = os.path.splitext(image_path)[1].lower()
         img_mime = "image/png" if ext == ".png" else "image/jpeg"
-        return build_caption(theme, img_b64=img_b64, img_mime=img_mime, schedule_time=schedule_time, schedule_date=schedule_date)
+        return build_caption(
+            theme,
+            img_b64=img_b64,
+            img_mime=img_mime,
+            schedule_time=schedule_time,
+            schedule_date=schedule_date,
+            request_timeout=request_timeout,
+            llm_attempts=llm_attempts,
+        )
     except Exception as e:
         print(f"[caption] image read failed: {e}", file=sys.stderr)
-        return build_caption(theme, schedule_time=schedule_time, schedule_date=schedule_date)
+        return build_caption(
+            theme,
+            schedule_time=schedule_time,
+            schedule_date=schedule_date,
+            request_timeout=request_timeout,
+            llm_attempts=llm_attempts,
+        )
 
 
 def send_photo(path: str, caption: Optional[str] = None):

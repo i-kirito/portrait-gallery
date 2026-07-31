@@ -596,8 +596,8 @@ def _multi_reference_edit_instruction(
             "[CRITICAL] Xiaohongshu outfit-reference mode with strict ordered roles:",
             "Image 1 = outfit/look, hairstyle styling, pose, action, props, scene, lighting, camera, framing, and composition source only. Copy the visible garment design and styling accurately.",
             "Never copy Image 1 facial identity, physique, body silhouette, height, shoulder width, torso, bust, waist, hips, leg shape, or anatomical proportions.",
-            "Image 2 is the sole and authoritative facial identity source. Preserve its exact recognizable eyes, eyebrows, nose, lips, face shape, and facial proportions. Never average or blend its face with Image 1.",
-            "Do not enlarge the eyes, sharpen the chin, beautify the face, or replace it with a generic influencer face. Image 2 and later identity references never supply body, clothing, pose, scene, or camera treatment.",
+            "Image 2 is the sole and authoritative facial identity source. Treat every pixel outside its facial region as transparent and nonexistent. Never copy its background, walls, furniture, venue, props, lighting, color palette, perspective, framing, or composition. The target background follows the user's requested scene first, then Image 1 when no scene is requested, and never Image 2.",
+            "Preserve Image 2's exact recognizable eyes, eyebrows, nose, lips, face shape, and facial proportions. Never average or blend its face with Image 1. Do not enlarge the eyes, sharpen the chin, beautify the face, or replace it with a generic influencer face. Image 2 and later identity references never supply body, clothing, pose, scene, or camera treatment.",
             f"{face_shape_guard}The target physique and body proportions must follow the Gallery configured body profile in the main prompt only; never infer them from any reference image.".strip(),
             "Re-tailor Image 1 clothing naturally to the configured target body while preserving the outfit design. Keep one adult subject only and never blend the reference bodies.",
         ]
