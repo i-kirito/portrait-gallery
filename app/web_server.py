@@ -32,7 +32,7 @@ from pathlib import Path
 import time
 import re
 from typing import Optional
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 import uuid
 
 import aiohttp
@@ -343,6 +343,10 @@ class GalleryServer:
         self.xiaohongshu_schedule_store = LockedJsonDictStore(
             os.path.join(self.data_dir, "xiaohongshu_schedule.json"),
             os.path.join(self.data_dir, ".xiaohongshu_schedule.lock"),
+        )
+        self.xiaohongshu_creator_store = LockedJsonDictStore(
+            os.path.join(self.data_dir, "xiaohongshu_creators.json"),
+            os.path.join(self.data_dir, ".xiaohongshu_creators.lock"),
         )
         self.xiaohongshu_client = XiaohongshuClient(
             workdir=os.path.join(self.data_dir, "xiaohongshu-mcp"),
@@ -671,6 +675,14 @@ class GalleryServer:
         self.app.router.add_post("/api/xiaohongshu/schedule-mode", self.handle_xiaohongshu_schedule_mode)
         self.app.router.add_post("/api/xiaohongshu/search", self.handle_xiaohongshu_search)
         self.app.router.add_post("/api/xiaohongshu/detail", self.handle_xiaohongshu_detail)
+        self.app.router.add_post("/api/xiaohongshu/creators/search", self.handle_xiaohongshu_creator_search)
+        self.app.router.add_post("/api/xiaohongshu/creators/profile", self.handle_xiaohongshu_creator_profile)
+        self.app.router.add_get("/api/xiaohongshu/creators", self.handle_xiaohongshu_creators)
+        self.app.router.add_post("/api/xiaohongshu/creators", self.handle_xiaohongshu_creators)
+        self.app.router.add_delete(
+            "/api/xiaohongshu/creators/{user_id}",
+            self.handle_delete_xiaohongshu_creator,
+        )
         self.app.router.add_post("/api/xiaohongshu/import", self.handle_xiaohongshu_import)
         self.app.router.add_get("/api/xiaohongshu/references", self.handle_xiaohongshu_references)
         self.app.router.add_delete(
@@ -7108,6 +7120,140 @@ class GalleryServer:
         except XiaohongshuError as exc:
             return self._xiaohongshu_error_response(exc)
 
+    @staticmethod
+    def _normalize_xiaohongshu_creator_id(value: object) -> str:
+        user_id = str(value or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{4,128}", user_id):
+            raise XiaohongshuError("invalid_creator", "小红书博主 ID 无效。", status=400)
+        return user_id
+
+    @staticmethod
+    def _public_xiaohongshu_creator(record: dict) -> dict:
+        record = record if isinstance(record, dict) else {}
+        return {
+            key: record.get(key)
+            for key in (
+                "user_id", "nickname", "avatar_url", "description", "red_id",
+                "added_at", "updated_at", "last_opened_at", "note_count",
+            )
+            if record.get(key) not in (None, "")
+        }
+
+    def _xiaohongshu_creator_items(self) -> list[dict]:
+        records = self.xiaohongshu_creator_store.load()
+        items = []
+        for user_id, record in records.items():
+            if not isinstance(record, dict):
+                continue
+            item = self._public_xiaohongshu_creator({**record, "user_id": user_id})
+            item["favorited"] = True
+            items.append(item)
+        items.sort(
+            key=lambda item: (
+                str(item.get("last_opened_at") or item.get("updated_at") or item.get("added_at") or ""),
+                str(item.get("nickname") or "").casefold(),
+            ),
+            reverse=True,
+        )
+        return items
+
+    @staticmethod
+    def _parse_xiaohongshu_creator_url(value: object) -> tuple[str, str]:
+        text = str(value or "").strip()
+        parsed = urlparse(text)
+        hostname = str(parsed.hostname or "").lower().rstrip(".")
+        if parsed.scheme not in {"http", "https"} or not (
+            hostname == "xiaohongshu.com" or hostname.endswith(".xiaohongshu.com")
+        ):
+            return "", ""
+        matched = re.search(r"/user/profile/([A-Za-z0-9_-]{4,128})", parsed.path)
+        if not matched:
+            return "", ""
+        token = str((parse_qs(parsed.query).get("xsec_token") or [""])[0]).strip()
+        return matched.group(1), token
+
+    async def _load_xiaohongshu_creator_profile(
+        self,
+        user_id: object,
+        xsec_token: object = "",
+        nickname: object = "",
+    ) -> dict:
+        user_id = self._normalize_xiaohongshu_creator_id(user_id)
+        records = self.xiaohongshu_creator_store.load()
+        stored = records.get(user_id) if isinstance(records.get(user_id), dict) else {}
+        token = str(xsec_token or stored.get("xsec_token") or "").strip()
+        creator_name = str(nickname or stored.get("nickname") or "").strip()[:80]
+        profile = None
+        original_error = None
+        if token:
+            try:
+                profile = await self.xiaohongshu_client.profile(user_id, token)
+            except XiaohongshuError as exc:
+                original_error = exc
+
+        if profile is None and creator_name:
+            candidates = await self.xiaohongshu_client.search_creators(
+                creator_name,
+                max_results=30,
+            )
+            normalized_name = "".join(creator_name.casefold().split())
+            matched = next(
+                (item for item in candidates if str(item.get("user_id") or "") == user_id),
+                None,
+            )
+            if matched is None:
+                matched = next(
+                    (
+                        item for item in candidates
+                        if "".join(str(item.get("nickname") or "").casefold().split()) == normalized_name
+                    ),
+                    None,
+                )
+            refreshed_token = str((matched or {}).get("xsec_token") or "").strip()
+            if refreshed_token:
+                token = refreshed_token
+                profile = await self.xiaohongshu_client.profile(user_id, token)
+
+        if profile is None:
+            if original_error is not None:
+                raise original_error
+            raise XiaohongshuError(
+                "creator_token_missing",
+                "无法访问该博主主页，请搜索博主昵称或粘贴带访问参数的完整主页链接。",
+                status=400,
+            )
+
+        creator = profile.get("creator") if isinstance(profile.get("creator"), dict) else {}
+        notes = profile.get("notes") if isinstance(profile.get("notes"), list) else []
+        creator.update({
+            "user_id": user_id,
+            "nickname": str(creator.get("nickname") or creator_name or stored.get("nickname") or "小红书博主")[:80],
+            "xsec_token": token,
+            "favorited": bool(stored),
+        })
+        profile["creator"] = creator
+        profile["notes"] = notes
+
+        if stored:
+            opened_at = self._now().isoformat(timespec="seconds")
+            def _update_creator(data: dict) -> dict:
+                current = data.get(user_id) if isinstance(data.get(user_id), dict) else {}
+                current.update({
+                    "user_id": user_id,
+                    "nickname": creator["nickname"],
+                    "avatar_url": str(creator.get("avatar_url") or current.get("avatar_url") or "")[:2048],
+                    "description": str(creator.get("description") or current.get("description") or "")[:300],
+                    "red_id": str(creator.get("red_id") or current.get("red_id") or "")[:80],
+                    "xsec_token": token,
+                    "note_count": len(notes),
+                    "last_opened_at": opened_at,
+                    "updated_at": opened_at,
+                })
+                data[user_id] = current
+                return data
+            self.xiaohongshu_creator_store.update(_update_creator)
+        return profile
+
     def xiaohongshu_schedule_enabled(self) -> bool:
         return self.xiaohongshu_schedule_store.load().get("enabled") is True
 
@@ -7284,7 +7430,8 @@ class GalleryServer:
             for key in (
                 "id", "filename", "url", "label", "title", "author", "query",
                 "source", "scope", "schedule_date", "created_at", "image_index",
-                "validation_score", "validation_reason",
+                "validation_score", "validation_reason", "selection_source",
+                "creator_id", "creator_name",
             )
             if reference.get(key) not in (None, "")
         }
@@ -7308,6 +7455,8 @@ class GalleryServer:
         )
         return {
             "enabled": enabled,
+            "prefer_creators": state.get("prefer_creators") is True,
+            "favorite_creator_count": len(self._xiaohongshu_creator_items()),
             "schedule_date": schedule_date,
             "status": status,
             "today_reference": public_reference,
@@ -7412,6 +7561,76 @@ class GalleryServer:
                 )
                 if not status.get("is_logged_in"):
                     raise XiaohongshuError("login_required", "小红书未登录，已回退原参考图", status=401)
+
+                favorite_items = []
+                schedule_settings = self.xiaohongshu_schedule_store.load()
+                if schedule_settings.get("prefer_creators") is True:
+                    favorite_records = [
+                        {**record, "user_id": user_id}
+                        for user_id, record in self.xiaohongshu_creator_store.load().items()
+                        if isinstance(record, dict)
+                    ]
+                    if favorite_records:
+                        favorite_records.sort(key=lambda item: str(item.get("user_id") or ""))
+                        offset = int(
+                            hashlib.sha1(schedule_date.encode("utf-8")).hexdigest()[:8],
+                            16,
+                        ) % len(favorite_records)
+                        selected_creator = favorite_records[offset]
+                        creator_id = str(selected_creator.get("user_id") or "")
+                        creator_name = str(selected_creator.get("nickname") or "")
+                        stage = f"creator_profile:{creator_id}"
+                        try:
+                            timeout = _remaining_timeout(80)
+                            if timeout <= 0:
+                                raise asyncio.TimeoutError
+                            profile = await asyncio.wait_for(
+                                self._load_xiaohongshu_creator_profile(
+                                    creator_id,
+                                    selected_creator.get("xsec_token", ""),
+                                    creator_name,
+                                ),
+                                timeout=timeout,
+                            )
+                            profile_creator = (
+                                profile.get("creator")
+                                if isinstance(profile.get("creator"), dict)
+                                else {}
+                            )
+                            creator_name = str(
+                                profile_creator.get("nickname") or creator_name
+                            ).strip()
+                            profile_notes = [
+                                note
+                                for note in (profile.get("notes") or [])
+                                if isinstance(note, dict)
+                            ]
+                            profile_notes.sort(
+                                key=lambda item: self._xiaohongshu_schedule_candidate_score(item, query),
+                                reverse=True,
+                            )
+                            favorite_items = [
+                                {
+                                    **item,
+                                    "creator_priority": True,
+                                    "creator_id": creator_id,
+                                    "creator_name": creator_name,
+                                    "selection_source": "favorite_creator",
+                                }
+                                for item in profile_notes[:2]
+                            ]
+                            logger.info(
+                                "小红书日程已读取常用博主: creator=%s notes=%s",
+                                creator_name or creator_id,
+                                len(favorite_items),
+                            )
+                        except (XiaohongshuError, asyncio.TimeoutError) as exc:
+                            logger.warning(
+                                "读取常用博主主页失败，继续全站搜索: creator=%s message=%s",
+                                creator_name or creator_id,
+                                exc.message if isinstance(exc, XiaohongshuError) else "超时",
+                            )
+
                 stage = "search"
                 started = time.monotonic()
                 logger.info(
@@ -7422,21 +7641,34 @@ class GalleryServer:
                 timeout = _remaining_timeout(150)
                 if timeout <= 0:
                     raise asyncio.TimeoutError
-                items = await asyncio.wait_for(
-                    self.xiaohongshu_client.search(query, max_results=10),
-                    timeout=timeout,
-                )
+                search_error = None
+                try:
+                    search_items = await asyncio.wait_for(
+                        self.xiaohongshu_client.search(query, max_results=10),
+                        timeout=timeout,
+                    )
+                except (XiaohongshuError, asyncio.TimeoutError) as exc:
+                    search_items = []
+                    search_error = exc
                 logger.info(
                     "小红书日程穿搭搜索完成: date=%s results=%s elapsed=%.1fs",
                     schedule_date,
-                    len(items),
+                    len(search_items),
                     time.monotonic() - started,
                 )
-                items.sort(
+                search_items.sort(
                     key=lambda item: self._xiaohongshu_schedule_candidate_score(item, query),
                     reverse=True,
                 )
+                seen_feed_ids = {str(item.get("id") or "") for item in favorite_items}
+                items = favorite_items + [
+                    {**item, "selection_source": "keyword_search"}
+                    for item in search_items
+                    if str(item.get("id") or "") not in seen_feed_ids
+                ]
                 if not items:
+                    if search_error is not None:
+                        raise search_error
                     raise XiaohongshuError("no_results", "没有找到合适的小红书穿搭，已回退原参考图")
 
                 candidates = []
@@ -7444,7 +7676,7 @@ class GalleryServer:
                 # The cover is only an entry point. A single outfit note often contains
                 # several useful full-body photos after its collage cover, so inspect
                 # multiple inner images from each strong note and validate them in batches.
-                for item in items[:4]:
+                for item in items[:6 if favorite_items else 4]:
                     if _remaining_timeout(1) <= 0:
                         break
                     feed_id = str(item.get("id") or "").strip()
@@ -7719,6 +7951,9 @@ class GalleryServer:
                     "schedule_date": schedule_date,
                     "query": query,
                     "feed_id": str(chosen.get("id") or ""),
+                    "selection_source": str(chosen.get("selection_source") or "keyword_search"),
+                    "creator_id": str(chosen.get("creator_id") or chosen.get("user_id") or ""),
+                    "creator_name": str(chosen.get("creator_name") or author or "")[:80],
                     "image_index": int(chosen_image.get("index") or 0),
                     "validation_score": validation_score,
                     "validation_reason": str((validation or {}).get("reason") or "")[:160],
@@ -7812,6 +8047,13 @@ class GalleryServer:
         now_text = self._now().isoformat(timespec="seconds")
         def _update(state: dict) -> dict:
             state["enabled"] = enabled
+            if "prefer_creators" in body:
+                prefer_raw = body.get("prefer_creators")
+                state["prefer_creators"] = (
+                    prefer_raw
+                    if isinstance(prefer_raw, bool)
+                    else str(prefer_raw or "").strip().lower() in {"1", "true", "yes", "on"}
+                )
             state["updated_at"] = now_text
             if not enabled:
                 state["last_error"] = ""
@@ -7854,6 +8096,96 @@ class GalleryServer:
             return web.json_response(detail)
         except XiaohongshuError as exc:
             return self._xiaohongshu_error_response(exc)
+
+    async def handle_xiaohongshu_creator_search(self, request: web.Request):
+        """Search creator candidates or resolve one complete profile URL."""
+        try:
+            body = await self._xiaohongshu_json_body(request)
+            keyword = str(body.get("keyword") or "").strip()
+            direct_user_id, direct_token = self._parse_xiaohongshu_creator_url(keyword)
+            favorites = self.xiaohongshu_creator_store.load()
+            if direct_user_id:
+                profile = await self._load_xiaohongshu_creator_profile(
+                    direct_user_id,
+                    direct_token,
+                )
+                creator = dict(profile.get("creator") or {})
+                creator["matched_note_count"] = len(profile.get("notes") or [])
+                creator["favorited"] = direct_user_id in favorites
+                return web.json_response({"items": [creator], "count": 1})
+            creators = await self.xiaohongshu_client.search_creators(
+                keyword,
+                max_results=body.get("max_results", 30),
+            )
+            for creator in creators:
+                creator["favorited"] = str(creator.get("user_id") or "") in favorites
+            return web.json_response({"items": creators, "count": len(creators)})
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+
+    async def handle_xiaohongshu_creator_profile(self, request: web.Request):
+        """Open one creator page, refreshing its cached access token if needed."""
+        try:
+            body = await self._xiaohongshu_json_body(request)
+            profile = await self._load_xiaohongshu_creator_profile(
+                body.get("user_id", ""),
+                body.get("xsec_token", ""),
+                body.get("nickname", ""),
+            )
+            return web.json_response(profile)
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+
+    async def handle_xiaohongshu_creators(self, request: web.Request):
+        """List or save favorite creators without exposing cached tokens."""
+        if request.method == "GET":
+            items = self._xiaohongshu_creator_items()
+            return web.json_response({"items": items, "count": len(items)})
+        try:
+            body = await self._xiaohongshu_json_body(request)
+            user_id = self._normalize_xiaohongshu_creator_id(body.get("user_id"))
+            nickname = str(body.get("nickname") or "").strip()[:80]
+            if not nickname:
+                raise XiaohongshuError("creator_name_required", "缺少小红书博主昵称。", status=400)
+            now_text = self._now().isoformat(timespec="seconds")
+            def _save_creator(records: dict) -> dict:
+                current = records.get(user_id) if isinstance(records.get(user_id), dict) else {}
+                current.update({
+                    "user_id": user_id,
+                    "nickname": nickname,
+                    "avatar_url": str(body.get("avatar_url") or current.get("avatar_url") or "")[:2048],
+                    "description": str(body.get("description") or current.get("description") or "")[:300],
+                    "red_id": str(body.get("red_id") or current.get("red_id") or "")[:80],
+                    "xsec_token": str(body.get("xsec_token") or current.get("xsec_token") or "")[:4096],
+                    "note_count": max(0, int(body.get("note_count") or current.get("note_count") or 0)),
+                    "added_at": str(current.get("added_at") or now_text),
+                    "updated_at": now_text,
+                })
+                records[user_id] = current
+                return records
+            saved = self.xiaohongshu_creator_store.update(_save_creator).get(user_id, {})
+            result = self._public_xiaohongshu_creator(saved)
+            result["favorited"] = True
+            return web.json_response(result)
+        except (TypeError, ValueError):
+            return self._xiaohongshu_error_response(
+                XiaohongshuError("invalid_creator", "博主收藏信息无效。", status=400)
+            )
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+
+    async def handle_delete_xiaohongshu_creator(self, request: web.Request):
+        """Remove one favorite creator without affecting downloaded references."""
+        try:
+            user_id = self._normalize_xiaohongshu_creator_id(request.match_info.get("user_id"))
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+        removed = {"value": False}
+        def _remove_creator(records: dict) -> dict:
+            removed["value"] = records.pop(user_id, None) is not None
+            return records
+        self.xiaohongshu_creator_store.update(_remove_creator)
+        return web.json_response({"success": True, "removed": removed["value"], "user_id": user_id})
 
     def _xiaohongshu_reference_items(self) -> list[dict]:
         records = self.xiaohongshu_reference_store.load()

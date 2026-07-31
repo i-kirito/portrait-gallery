@@ -45,7 +45,11 @@ class XiaohongshuClientTest(unittest.IsolatedAsyncioTestCase):
                     "noteCard": {
                         "type": "normal",
                         "displayTitle": "通勤穿搭",
-                        "user": {"nickname": "作者"},
+                        "user": {
+                            "userId": "creator-1",
+                            "nickname": "作者",
+                            "avatar": "https://sns-avatar-qc.xhscdn.com/avatar.webp",
+                        },
                         "cover": {"urlDefault": "https://sns-webpic-qc.xhscdn.com/a.webp"},
                     },
                 },
@@ -73,6 +77,8 @@ class XiaohongshuClientTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, len(items))
         self.assertEqual("image-note", items[0]["id"])
         self.assertEqual("通勤穿搭", items[0]["title"])
+        self.assertEqual("creator-1", items[0]["user_id"])
+        self.assertEqual("https://sns-avatar-qc.xhscdn.com/avatar.webp", items[0]["avatar_url"])
         client._request.assert_awaited_once_with(
             "POST",
             "/api/v1/feeds/search",
@@ -81,6 +87,73 @@ class XiaohongshuClientTest(unittest.IsolatedAsyncioTestCase):
                 "max_results": 30,
             },
             timeout_seconds=70,
+        )
+
+    async def test_search_creators_groups_notes_by_author(self):
+        client = XiaohongshuClient()
+        client.search = AsyncMock(return_value=[
+            {
+                "id": "note-1", "user_id": "creator-1", "author": "小雪穿搭",
+                "avatar_url": "https://sns-avatar-qc.xhscdn.com/a.webp",
+                "xsec_token": "token-1", "title": "法式穿搭", "cover_url": "cover-1",
+            },
+            {
+                "id": "note-2", "user_id": "creator-1", "author": "小雪穿搭",
+                "avatar_url": "", "xsec_token": "token-2", "title": "通勤穿搭",
+                "cover_url": "cover-2",
+            },
+            {
+                "id": "note-3", "user_id": "creator-2", "author": "小雪日记",
+                "avatar_url": "avatar-2", "xsec_token": "token-3", "title": "日常",
+                "cover_url": "cover-3",
+            },
+        ])
+
+        creators = await client.search_creators("小雪穿搭")
+
+        self.assertEqual(2, len(creators))
+        self.assertEqual("creator-1", creators[0]["user_id"])
+        self.assertEqual(2, creators[0]["matched_note_count"])
+        self.assertEqual("token-2", creators[0]["xsec_token"])
+
+    async def test_profile_normalizes_creator_and_image_notes(self):
+        client = XiaohongshuClient()
+        client._request = AsyncMock(return_value={
+            "data": {
+                "userBasicInfo": {
+                    "nickname": "小雪穿搭",
+                    "desc": "分享日常穿搭",
+                    "imageb": "https://sns-avatar-qc.xhscdn.com/a.webp",
+                    "redId": "xiaoxue",
+                },
+                "interactions": [{"type": "fans", "count": "12.3万"}],
+                "feeds": [{
+                    "id": "note-1",
+                    "xsecToken": "note-token",
+                    "noteCard": {
+                        "type": "normal",
+                        "displayTitle": "法式温柔风",
+                        "user": {"userId": "creator-1", "nickname": "小雪穿搭"},
+                        "cover": {
+                            "urlDefault": "https://sns-webpic-qc.xhscdn.com/a.webp",
+                            "width": 900,
+                            "height": 1200,
+                        },
+                    },
+                }],
+            }
+        })
+
+        profile = await client.profile("creator-1", "profile-token")
+
+        self.assertEqual("小雪穿搭", profile["creator"]["nickname"])
+        self.assertEqual("12.3万", profile["creator"]["stats"]["fans"])
+        self.assertEqual("note-1", profile["notes"][0]["id"])
+        client._request.assert_awaited_once_with(
+            "POST",
+            "/api/v1/user/profile",
+            json_body={"user_id": "creator-1", "xsec_token": "profile-token"},
+            timeout_seconds=80,
         )
 
     async def test_search_rejects_result_limit_outside_supported_range(self):
@@ -211,6 +284,108 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             server.xiaohongshu_client.search.assert_awaited_once_with(
                 "夏季穿搭",
                 max_results=30,
+            )
+
+    async def test_creator_search_profile_favorite_and_delete(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            server = self._make_server(Path(tmpdir))
+            server.xiaohongshu_client.search_creators = AsyncMock(return_value=[{
+                "user_id": "creator-1",
+                "nickname": "小雪穿搭",
+                "avatar_url": "https://sns-avatar-qc.xhscdn.com/a.webp",
+                "xsec_token": "token-1",
+                "matched_note_count": 2,
+            }])
+            server.xiaohongshu_client.profile = AsyncMock(return_value={
+                "creator": {
+                    "user_id": "creator-1",
+                    "nickname": "小雪穿搭",
+                    "avatar_url": "https://sns-avatar-qc.xhscdn.com/a.webp",
+                    "description": "分享通勤穿搭",
+                    "xsec_token": "token-1",
+                },
+                "notes": [{
+                    "id": "note-1",
+                    "xsec_token": "note-token",
+                    "title": "法式温柔风",
+                    "user_id": "creator-1",
+                    "author": "小雪穿搭",
+                    "cover_url": "https://sns-webpic-qc.xhscdn.com/look.webp",
+                }],
+            })
+            client = await self._start_client(server)
+            try:
+                search_response = await client.post(
+                    "/api/xiaohongshu/creators/search",
+                    json={"keyword": "小雪穿搭"},
+                )
+                search_payload = await search_response.json()
+                profile_response = await client.post(
+                    "/api/xiaohongshu/creators/profile",
+                    json={
+                        "user_id": "creator-1",
+                        "nickname": "小雪穿搭",
+                        "xsec_token": "token-1",
+                    },
+                )
+                profile_payload = await profile_response.json()
+                favorite_response = await client.post(
+                    "/api/xiaohongshu/creators",
+                    json={
+                        **profile_payload["creator"],
+                        "note_count": len(profile_payload["notes"]),
+                    },
+                )
+                favorite_payload = await favorite_response.json()
+                list_response = await client.get("/api/xiaohongshu/creators")
+                list_payload = await list_response.json()
+                delete_response = await client.delete(
+                    "/api/xiaohongshu/creators/creator-1"
+                )
+                delete_payload = await delete_response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(200, search_response.status, search_payload)
+            self.assertFalse(search_payload["items"][0]["favorited"])
+            self.assertEqual(200, profile_response.status, profile_payload)
+            self.assertEqual("note-1", profile_payload["notes"][0]["id"])
+            self.assertTrue(favorite_payload["favorited"])
+            self.assertEqual(1, list_payload["count"])
+            self.assertNotIn("xsec_token", list_payload["items"][0])
+            self.assertTrue(delete_payload["removed"])
+            self.assertEqual({}, server.xiaohongshu_creator_store.load())
+
+    async def test_favorite_creator_refreshes_stale_profile_token(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            server = self._make_server(Path(tmpdir))
+            server.xiaohongshu_creator_store.save({
+                "creator-1": {
+                    "nickname": "小雪穿搭",
+                    "xsec_token": "stale-token",
+                    "added_at": "2026-07-30T10:00:00",
+                }
+            })
+            server.xiaohongshu_client.profile = AsyncMock(side_effect=[
+                XiaohongshuError("upstream_error", "令牌失效"),
+                {
+                    "creator": {"user_id": "creator-1", "nickname": "小雪穿搭"},
+                    "notes": [],
+                },
+            ])
+            server.xiaohongshu_client.search_creators = AsyncMock(return_value=[{
+                "user_id": "creator-1",
+                "nickname": "小雪穿搭",
+                "xsec_token": "fresh-token",
+            }])
+
+            profile = await server._load_xiaohongshu_creator_profile("creator-1")
+
+            self.assertTrue(profile["creator"]["favorited"])
+            self.assertEqual("fresh-token", server.xiaohongshu_creator_store.load()["creator-1"]["xsec_token"])
+            self.assertEqual(
+                [("creator-1", "stale-token"), ("creator-1", "fresh-token")],
+                [call.args for call in server.xiaohongshu_client.profile.await_args_list],
             )
 
     async def test_import_persists_verified_local_reference(self):
@@ -373,6 +548,90 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(server._delete_xiaohongshu_reference_file(schedule_filename))
             self.assertTrue(schedule_path.exists())
             self.assertFalse((root / "data" / "references" / "xiaohongshu" / "xhs_daily.png").exists())
+
+    async def test_schedule_prefers_favorite_creator_profile_notes(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            server._now = lambda: datetime(2026, 7, 30, 10, 0)
+            server.xiaohongshu_schedule_store.save({
+                "enabled": True,
+                "prefer_creators": True,
+            })
+            server.xiaohongshu_creator_store.save({
+                "creator-1": {
+                    "nickname": "小雪穿搭",
+                    "xsec_token": "profile-token",
+                    "added_at": "2026-07-30T09:00:00",
+                }
+            })
+            server.xiaohongshu_client.status = AsyncMock(return_value={
+                "service_running": True,
+                "is_logged_in": True,
+            })
+            server.xiaohongshu_client.profile = AsyncMock(return_value={
+                "creator": {"user_id": "creator-1", "nickname": "小雪穿搭"},
+                "notes": [{
+                    "id": "favorite-note",
+                    "xsec_token": "note-token",
+                    "title": "法式温柔风全身穿搭",
+                    "user_id": "creator-1",
+                    "author": "小雪穿搭",
+                    "cover_url": "https://sns-webpic-qc.xhscdn.com/cover.webp",
+                    "width": 900,
+                    "height": 1200,
+                }],
+            })
+            server.xiaohongshu_client.search = AsyncMock(return_value=[])
+            server.xiaohongshu_client.detail = AsyncMock(return_value={
+                "id": "favorite-note",
+                "title": "法式温柔风全身穿搭",
+                "author": "小雪穿搭",
+                "images": [
+                    {"index": 0, "url": "https://sns-webpic-qc.xhscdn.com/cover.webp", "width": 900, "height": 1200},
+                    {"index": 1, "url": "https://sns-webpic-qc.xhscdn.com/full.webp", "width": 900, "height": 1200},
+                ],
+            })
+
+            async def fake_import(_url, output_dir):
+                path = Path(output_dir) / "creator_full.png"
+                Image.new("RGB", (900, 1200), "white").save(path)
+                return {"filename": path.name, "path": str(path), "size_bytes": path.stat().st_size}
+
+            server.xiaohongshu_client.import_image = AsyncMock(side_effect=fake_import)
+            server.on_validate_xiaohongshu_outfit = AsyncMock(return_value={
+                "accepted": True,
+                "selected_index": 1,
+                "quality_score": 94,
+                "reason": "单人全身穿搭照",
+                "person_count": 1,
+                "is_real_photo": True,
+                "is_collage": False,
+                "single_outfit": True,
+                "full_body_visible": True,
+                "clothing_clear": True,
+                "quality_sufficient": True,
+                "keyword_match": True,
+            })
+
+            result = await server.ensure_xiaohongshu_schedule_reference(
+                "2026-07-30",
+                {"xiaohongshu_search_query": "法式温柔风"},
+                force=True,
+            )
+
+            self.assertEqual("favorite_creator", result["selection_source"])
+            self.assertEqual("creator-1", result["creator_id"])
+            self.assertEqual("小雪穿搭", result["creator_name"])
+            server.xiaohongshu_client.profile.assert_awaited_once_with(
+                "creator-1", "profile-token"
+            )
+            server.xiaohongshu_client.search.assert_awaited_once_with(
+                "法式温柔风穿搭", max_results=10
+            )
+            server.xiaohongshu_client.detail.assert_awaited_once_with(
+                "favorite-note", "note-token"
+            )
 
     async def test_schedule_mode_login_failure_keeps_enabled_for_runtime_fallback(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
