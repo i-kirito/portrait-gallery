@@ -5364,6 +5364,7 @@ class GalleryServer:
                 "selected_reference",
                 "model_name",
                 "caption",
+                "caption_status",
                 "display_outfit",
                 "outfit_description",
                 "delivery_status",
@@ -5371,7 +5372,11 @@ class GalleryServer:
                 "delivery_sent_at",
                 "delivery_error",
             ):
-                if field in meta_entry and (field not in normalized or normalized.get(field) in ("", None)):
+                if field in meta_entry and (
+                    field == "caption_status"
+                    or field not in normalized
+                    or normalized.get(field) in ("", None)
+                ):
                     normalized[field] = meta_entry.get(field)
             meta_prompt = meta_entry.get("prompt", "")
             current_prompt = normalized.get("prompt", "") or ""
@@ -5773,6 +5778,7 @@ class GalleryServer:
             "image_filename": filename,
             "prompt": prompt,
             "caption": str(meta.get("caption") or "").strip(),
+            "caption_status": str(meta.get("caption_status") or "").strip(),
             "favorite": False,
             "status": "ok",
             "source": source,

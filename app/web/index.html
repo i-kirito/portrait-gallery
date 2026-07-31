@@ -2553,6 +2553,7 @@ textarea:focus-visible,
   letter-spacing: 0.2px;
 }
 .tc-thought:empty { display: none; }
+.tc-thought.caption-pending .tc-thought-text { color: #8b7c8e; }
 .tc-thought-label {
   display: inline-flex;
   align-items: center;
@@ -7173,10 +7174,39 @@ let galleryLoadedTagFilter = null;
 let galleryLoadedFavoritesOnly = false;
 let galleryPageLoading = false;
 let galleryReloadPending = "";
+let customCaptionPollTimer = null;
+let customCaptionPollDeadline = 0;
 let galleryLoadMoreObserver = null;
 let galleryLoadMoreFallbackBound = false;
 let galleryLoadMoreRetryTimer = null;
 const galleryDetailRequests = new Map();
+
+function hasPendingVisualCaption() {
+  return allEntries.some(entry => String((entry && entry.caption_status) || "").toLowerCase() === "pending");
+}
+
+function stopCustomCaptionPolling() {
+  if (customCaptionPollTimer) clearTimeout(customCaptionPollTimer);
+  customCaptionPollTimer = null;
+  customCaptionPollDeadline = 0;
+}
+
+function scheduleCustomCaptionPolling(resetDeadline = false) {
+  if (!hasPendingVisualCaption()) {
+    stopCustomCaptionPolling();
+    return;
+  }
+  const now = Date.now();
+  if (resetDeadline || !customCaptionPollDeadline) {
+    customCaptionPollDeadline = now + 75000;
+  }
+  if (customCaptionPollTimer || now >= customCaptionPollDeadline) return;
+  customCaptionPollTimer = setTimeout(async () => {
+    customCaptionPollTimer = null;
+    await loadGallery({ skipTabSwitch: true });
+    scheduleCustomCaptionPolling(false);
+  }, 3000);
+}
 let currentTagFilter = "";
 let showFavoritesOnly = false;
 let showUnfavoritesOnly = false;
@@ -9929,8 +9959,11 @@ function renderCaptionLinks(caption) {
   return html;
 }
 
-function renderThoughtBlock(caption, className = "tc-thought") {
+function renderThoughtBlock(caption, className = "tc-thought", captionStatus = "") {
   const captionHtml = renderCaptionLinks(caption);
+  if (!captionHtml && String(captionStatus || "").toLowerCase() === "pending") {
+    return `<div class="${className} caption-pending" aria-live="polite"><span class="tc-thought-label" aria-hidden="true">💭</span><span class="tc-thought-text">正在根据图片生成小心思…</span></div>`;
+  }
   if (!captionHtml) return "";
   return `<div class="${className}"><span class="tc-thought-label" title="思考" aria-label="思考">💭</span><span class="tc-thought-text">${captionHtml}</span></div>`;
 }
@@ -10104,7 +10137,7 @@ function renderToday() {
       }
     }
 
-    const captionHtml = renderThoughtBlock(today.caption, "modal-caption tc-thought");
+    const captionHtml = renderThoughtBlock(today.caption, "modal-caption tc-thought", today.caption_status);
     const todayStyle = displayOutfitStyle(today);
     const metaHtml = `${today.model_name ? `<span class="meta-tag">🤖 ${escapeHtml(today.model_name)}</span>` : ""}${renderReferenceMetaTag(today)}${displayImageSizeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayImageSizeMeta(today))}</span>` : ""}${displayFileSizeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayFileSizeMeta(today))}</span>` : ""}${displayGenerationTimeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayGenerationTimeMeta(today))}</span>` : ""}${renderRerollButton(today)}`;
 
@@ -10367,7 +10400,7 @@ function renderGallery() {
                   ${metaHtml ? `<div class="tc-meta">${metaHtml}</div>` : ''}
                 </div>
                 <div class="tc-outfit">${e.outfit ? escapeHtml(e.outfit) : '--'}</div>
-                ${renderThoughtBlock(e.caption)}
+                ${renderThoughtBlock(e.caption, "tc-thought", e.caption_status)}
                 ${periodHtml}
                 <div class="tc-actions">
                   <button class="tc-btn ${e.favorite ? 'liked' : ''}" onclick="toggleFavorite(${imageFilenameArg}, event)" data-img="${safeImageFilename}" data-favorite-img="${safeImageFilename}" aria-label="${e.favorite ? '取消收藏' : '收藏'}"><i class="${e.favorite ? 'fa-solid' : 'fa-regular'} fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
@@ -11420,6 +11453,9 @@ function openModal(e, returnFocusTarget = null) {
   const capEl = document.getElementById("modalCaption");
   if (e.caption) {
     capEl.innerHTML = '<span class="tc-thought-label" title="思考" aria-label="思考">💭</span><span class="tc-thought-text">' + renderCaptionLinks(e.caption) + '</span>';
+    capEl.style.display = "flex";
+  } else if (String(e.caption_status || "").toLowerCase() === "pending") {
+    capEl.innerHTML = '<span class="tc-thought-label" aria-hidden="true">💭</span><span class="tc-thought-text">正在根据图片生成小心思…</span>';
     capEl.style.display = "flex";
   } else { capEl.style.display = "none"; }
 	  // Fav button state
@@ -13035,6 +13071,9 @@ async function submitCustomGen() {
       showToast("✨ 定制造型生成完成啦！");
       closeCustomGen();
       await loadGallery();
+      if (String(data.caption_status || "").toLowerCase() === "pending") {
+        scheduleCustomCaptionPolling(true);
+      }
     }
   } catch(e) { showToast("❌ " + e.message); }
   finally {
@@ -13075,6 +13114,9 @@ async function quickCustomImg2ImgFromModal(event, btn) {
     showToast("✨ 魔法棒图生图完成");
     closeModal();
     await loadGallery();
+    if (String(data.caption_status || "").toLowerCase() === "pending") {
+      scheduleCustomCaptionPolling(true);
+    }
   } catch(e) {
     showToast("❌ " + e.message);
   } finally {
@@ -13143,6 +13185,7 @@ async function loadFavoriteGallery() {
     galleryLoadedFavoritesOnly = true;
     renderGallery();
     updateBadges();
+    scheduleCustomCaptionPolling(false);
   } catch(error) {
     if (showFavoritesOnly) {
       document.getElementById("galleryContent").innerHTML =
@@ -13241,6 +13284,7 @@ async function loadGallery(options = {}) {
       else switchTab(savedTab);
     }
     updateBadges();
+    scheduleCustomCaptionPolling(false);
   } catch(e) {
     if (!append) {
       document.getElementById("galleryContent").innerHTML =

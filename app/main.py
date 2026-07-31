@@ -101,6 +101,7 @@ CAPTION_DELAY_SECONDS = 3
 WECHAT_CAPTION_DELAY_SECONDS = 45
 WECHAT_SEND_TIMEOUT_SECONDS = 90
 PHOTO_JOB_INFLIGHT_STALE_GRACE_SECONDS = 120
+CUSTOM_VISUAL_CAPTION_TIMEOUT_SECONDS = 60
 WECHAT_RETRY_DELAYS_SECONDS = (60, 180)
 WECHAT_COOLDOWN_BUFFER_SECONDS = 15
 PHOTO_JOB_MISFIRE_GRACE_SECONDS = 10 * 60
@@ -380,6 +381,8 @@ class PortraitGalleryApp:
         self._hermes_send_cooldown_until = 0.0
         self._last_delivery_error = ""
         self._schedule_refresh_task: Optional[asyncio.Task] = None
+        self._custom_caption_tasks: set[asyncio.Task] = set()
+        self.web_server.app.on_cleanup.append(self._cleanup_custom_caption_tasks)
         self._recover_orphaned_generated_photos()
 
     def _now(self) -> datetime:
@@ -1053,8 +1056,7 @@ class PortraitGalleryApp:
             return DailyEntry(date=today_str, outfit="生成失败", status="failed")
 
         caption = str(api_caption or "").strip() if entry_source == "hermes_api" else ""
-        if entry_source != "hermes_api" and not caption:
-            caption = await self._generate_custom_image_caption(filename)
+        caption_status = "ready" if caption else ("pending" if entry_source != "hermes_api" else "")
 
         display_prompt = str(api_description or "").strip()
         if not display_prompt:
@@ -1067,6 +1069,7 @@ class PortraitGalleryApp:
             schedule="",
             prompt=generation_prompt,
             caption=caption,
+            caption_status=caption_status,
             image_filename=filename,
             image_path=f"/images/{filename}",
             status="ok",
@@ -1079,7 +1082,12 @@ class PortraitGalleryApp:
             custom_ref_mode=custom_ref_mode,
         )
         save_schedule_entry(self.data_dir, entry)
-        self._update_image_metadata_caption(filename, caption, display_prompt)
+        self._update_image_metadata_caption(
+            filename,
+            caption,
+            display_prompt,
+            caption_status=caption_status,
+        )
         if ref_path or selected_reference:
             self._save_generation_reference_metadata(
                 filename,
@@ -1087,6 +1095,8 @@ class PortraitGalleryApp:
                 selected_reference,
                 reference_mode=str(selected_reference.get("selection_mode") or "custom_reference"),
             )
+        if caption_status == "pending":
+            self._start_custom_image_caption(filename)
         logger.info(f"自定义生图成功: {filename}")
         return entry
 
@@ -1213,16 +1223,79 @@ class PortraitGalleryApp:
                 lambda: build_caption_for_image(
                     "custom",
                     image_path,
-                    request_timeout=20,
+                    request_timeout=CUSTOM_VISUAL_CAPTION_TIMEOUT_SECONDS,
                     llm_attempts=1,
+                    require_image=True,
+                    allow_fallback=False,
                 ),
             )
             caption = repair_mojibake_text(caption).strip()
             if caption:
                 return caption
         except Exception as exc:
-            logger.warning("自定义生图视觉配文生成失败，使用人设兜底文案: %s", exc)
-        return build_caption_fallback("custom")
+            logger.warning("自定义生图视觉配文生成失败: %s", exc)
+        return ""
+
+    def _start_custom_image_caption(self, filename: str) -> asyncio.Task:
+        task = asyncio.create_task(self._complete_custom_image_caption(filename))
+        tasks = getattr(self, "_custom_caption_tasks", None)
+        if tasks is None:
+            tasks = set()
+            self._custom_caption_tasks = tasks
+        tasks.add(task)
+
+        def _done(completed: asyncio.Task) -> None:
+            tasks.discard(completed)
+            if completed.cancelled():
+                return
+            try:
+                completed.result()
+            except Exception as exc:
+                logger.error("自定义生图后台视觉配文异常: %s", exc)
+
+        task.add_done_callback(_done)
+        return task
+
+    async def _complete_custom_image_caption(self, filename: str) -> None:
+        caption = await self._generate_custom_image_caption(filename)
+        status = "ready" if caption else "failed"
+        self._persist_custom_caption_state(filename, caption, status)
+        if caption:
+            logger.info("自定义生图视觉配文已写回: %s", filename)
+        else:
+            logger.warning("自定义生图视觉配文失败，不使用通用兜底: %s", filename)
+
+    def _persist_custom_caption_state(self, filename: str, caption: str, status: str) -> None:
+        filename = os.path.basename(str(filename or "").strip())
+        if not filename:
+            return
+        repaired_caption = repair_mojibake_text(caption).strip()
+
+        def _update_schedule(all_data):
+            entry = all_data.get(filename)
+            if not isinstance(entry, dict):
+                return all_data
+            entry["caption"] = repaired_caption
+            entry["caption_status"] = status
+            return all_data
+
+        try:
+            ScheduleStore(self.data_dir).update(_update_schedule)
+        except Exception as exc:
+            logger.error("更新自定义生图配文状态失败: %s, %s", filename, exc)
+        self._update_image_metadata_caption(
+            filename,
+            repaired_caption,
+            caption_status=status,
+        )
+
+    async def _cleanup_custom_caption_tasks(self, _app) -> None:
+        tasks = [task for task in getattr(self, "_custom_caption_tasks", set()) if not task.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        getattr(self, "_custom_caption_tasks", set()).clear()
 
     def _apply_custom_reference_role_guard(
         self,
@@ -1779,7 +1852,13 @@ class PortraitGalleryApp:
         except Exception as e:
             logger.error("移除旧图片元数据失败: %s, %s", filename, e)
 
-    def _update_image_metadata_caption(self, filename: str, caption: str, display_outfit: str = ""):
+    def _update_image_metadata_caption(
+        self,
+        filename: str,
+        caption: str,
+        display_outfit: str = "",
+        caption_status: str = "",
+    ):
         if not filename:
             return
         try:
@@ -1791,6 +1870,8 @@ class PortraitGalleryApp:
                 if not isinstance(entry, dict):
                     return metadata
                 entry["caption"] = repaired_caption
+                if caption_status:
+                    entry["caption_status"] = caption_status
                 if clean_display_outfit:
                     entry["display_outfit"] = clean_display_outfit
                     entry["outfit_description"] = clean_display_outfit

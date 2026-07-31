@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / "app"
@@ -121,17 +121,46 @@ class CustomImageCaptionTests(unittest.IsolatedAsyncioTestCase):
         build_caption.assert_called_once_with(
             "custom",
             str(image_path),
-            request_timeout=20,
+            request_timeout=60,
             llm_attempts=1,
+            require_image=True,
+            allow_fallback=False,
         )
 
-    async def test_custom_caption_falls_back_without_echoing_generation_prompt(self) -> None:
+    async def test_custom_caption_failure_never_uses_generic_fallback(self) -> None:
         app = PortraitGalleryApp.__new__(PortraitGalleryApp)
         app.image_gen = SimpleNamespace(output_dir="/missing")
-        with patch("main.build_caption_fallback", return_value="雪枫先坐稳，慢慢看看四周。"):
+        with patch("main.build_caption_fallback") as fallback:
             caption = await app._generate_custom_image_caption("missing.png")
 
-        self.assertEqual("雪枫先坐稳，慢慢看看四周。", caption)
+        self.assertEqual("", caption)
+        fallback.assert_not_called()
+
+    async def test_background_caption_persists_ready_only_after_visual_success(self) -> None:
+        app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+        app._generate_custom_image_caption = AsyncMock(return_value="红色针织衫在草地阳光下很醒目。")
+        app._persist_custom_caption_state = Mock()
+
+        await app._complete_custom_image_caption("generated.png")
+
+        app._persist_custom_caption_state.assert_called_once_with(
+            "generated.png",
+            "红色针织衫在草地阳光下很醒目。",
+            "ready",
+        )
+
+    async def test_background_caption_marks_failed_without_fake_copy(self) -> None:
+        app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+        app._generate_custom_image_caption = AsyncMock(return_value="")
+        app._persist_custom_caption_state = Mock()
+
+        await app._complete_custom_image_caption("generated.png")
+
+        app._persist_custom_caption_state.assert_called_once_with(
+            "generated.png",
+            "",
+            "failed",
+        )
 
 
 if __name__ == "__main__":

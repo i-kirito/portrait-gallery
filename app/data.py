@@ -19,6 +19,7 @@ class DailyEntry:
     image_filename: str = ""
     prompt: str = ""
     caption: str = ""
+    caption_status: str = ""  # pending / ready / failed for async visual captions
     status: str = "ok"  # ok / failed / generating
     source: str = ""  # cron / web / custom / hermes_api
     shot_type: str = ""  # selfie / half_body / full_body for custom generation
@@ -61,6 +62,7 @@ class DailyEntry:
             image_filename=data.get("image_filename", ""),
             prompt=data.get("prompt", ""),
             caption=data.get("caption", ""),
+            caption_status=str(data.get("caption_status") or "").strip(),
             status=data.get("status", "ok"),
             source=data.get("source", ""),
             shot_type=data.get("shot_type", ""),

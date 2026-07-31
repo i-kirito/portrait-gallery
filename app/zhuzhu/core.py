@@ -1790,7 +1790,8 @@ def enhance_prompt(user_input: str, theme: Optional[str] = None) -> str:
 
 def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "image/jpeg",
                   schedule_time: str = "", schedule_date: str = "",
-                  request_timeout: int = 0, llm_attempts: int = 2) -> str:
+                  request_timeout: int = 0, llm_attempts: int = 2,
+                  require_image: bool = False, allow_fallback: bool = True) -> str:
     theme_hint = {
         "morning": "早上刚起床的慵懒美照",
         "noon": "中午阳光下的外出美照",
@@ -1872,15 +1873,16 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
                 {"type": "text", "text": f"这是{character}刚拍的照片。{text_user_content}"},
             ],
         ))
-    request_variants.append(("text", text_user_content))
+    if not require_image:
+        request_variants.append(("text", text_user_content))
 
     try:
         api_key = get_cpa_key()
         models = get_llm_models()
         chat_url = get_cpa_chat_url()
         if not api_key or not models or not chat_url:
-            print("[caption] llm config missing; using fallback caption", file=sys.stderr)
-            return _personalized_caption_fallback(theme, persona, schedule_time, schedule_date)
+            print("[caption] llm config missing", file=sys.stderr)
+            return _personalized_caption_fallback(theme, persona, schedule_time, schedule_date) if allow_fallback else ""
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
         timeout = (
             max(1, int(request_timeout))
@@ -1953,7 +1955,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
     except Exception as e:
         print(f"[caption] llm failed: {e}", file=sys.stderr)
 
-    return _personalized_caption_fallback(theme, persona, schedule_time, schedule_date)
+    return _personalized_caption_fallback(theme, persona, schedule_time, schedule_date) if allow_fallback else ""
 
 
 def build_caption_for_image(
@@ -1963,6 +1965,8 @@ def build_caption_for_image(
     schedule_date: str = "",
     request_timeout: int = 0,
     llm_attempts: int = 2,
+    require_image: bool = False,
+    allow_fallback: bool = True,
 ) -> str:
     try:
         with open(image_path, "rb") as f:
@@ -1977,15 +1981,21 @@ def build_caption_for_image(
             schedule_date=schedule_date,
             request_timeout=request_timeout,
             llm_attempts=llm_attempts,
+            require_image=require_image,
+            allow_fallback=allow_fallback,
         )
     except Exception as e:
         print(f"[caption] image read failed: {e}", file=sys.stderr)
+        if require_image:
+            return ""
         return build_caption(
             theme,
             schedule_time=schedule_time,
             schedule_date=schedule_date,
             request_timeout=request_timeout,
             llm_attempts=llm_attempts,
+            require_image=False,
+            allow_fallback=allow_fallback,
         )
 
 
