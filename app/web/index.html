@@ -7130,13 +7130,18 @@ const QUICK_MUTATION_TIMEOUT_MS = 20 * 1000;
 
 async function fetchWithTimeout(input, init = {}, timeoutMs = IMAGE_OPERATION_TIMEOUT_MS, timeoutMessage = '请求超时，请稍后重试') {
   const duration = Math.max(1, Number(timeoutMs) || IMAGE_OPERATION_TIMEOUT_MS);
+  const timeoutError = () => {
+    const error = new Error(timeoutMessage);
+    error.name = 'FetchTimeoutError';
+    return error;
+  };
   if (typeof AbortController === 'undefined') {
     let timeoutId = 0;
     try {
       return await Promise.race([
         fetch(input, init),
         new Promise((_, reject) => {
-          timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), duration);
+          timeoutId = setTimeout(() => reject(timeoutError()), duration);
         })
       ]);
     } finally {
@@ -7154,7 +7159,7 @@ async function fetchWithTimeout(input, init = {}, timeoutMs = IMAGE_OPERATION_TI
     return await fetch(input, Object.assign({}, init, {signal: controller.signal}));
   } catch (error) {
     if (timedOut || (error && error.name === 'AbortError')) {
-      throw new Error(timeoutMessage);
+      throw timeoutError();
     }
     throw error;
   } finally {
@@ -13050,6 +13055,7 @@ async function submitCustomGen() {
   );
   
   const btn = document.getElementById("cgSubmitBtn");
+  let generationMayStillBeRunning = false;
   btn.disabled = true; btn.textContent = "⏳ 正在打扮...";
   showToast("🌸 按你的描述开始生成～");
   
@@ -13075,9 +13081,14 @@ async function submitCustomGen() {
         scheduleCustomCaptionPolling(true);
       }
     }
-  } catch(e) { showToast("❌ " + e.message); }
+  } catch(e) {
+    generationMayStillBeRunning = e && e.name === 'FetchTimeoutError';
+    showToast("❌ " + e.message);
+  }
   finally {
-    customGenXiaohongshuInFlight = new Set();
+    // The server may keep generating after the browser's timeout. Leave these
+    // references protected so closing the dialog cannot delete them mid-read.
+    if (!generationMayStillBeRunning) customGenXiaohongshuInFlight = new Set();
     btn.disabled = false;
     btn.textContent = "✨ 开始生成";
   }
