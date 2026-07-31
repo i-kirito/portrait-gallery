@@ -32,6 +32,7 @@ from core import (
     _API_KEYS_CONFIG_PATH,
 )
 from characters import NATURAL_FACE_SHAPE_GUARD
+from settings import XIAOHONGSHU_OUTFIT_REFERENCE_MARKER
 
 GPTIMAGE_DIRECT_URL = get_image_model("gpt_base_url")
 
@@ -571,6 +572,7 @@ def _multi_reference_edit_instruction(
     ref_images: list[str],
     precise_edit: bool = False,
     include_face_shape_guard: bool = True,
+    outfit_reference_mode: bool = False,
 ) -> str:
     """Build dual/multi-ref instructions.
 
@@ -589,6 +591,18 @@ def _multi_reference_edit_instruction(
         )
 
     face_shape_guard = f"{NATURAL_FACE_SHAPE_GUARD} " if include_face_shape_guard else ""
+    if outfit_reference_mode and not precise_edit:
+        parts = [
+            "[CRITICAL] Xiaohongshu outfit-reference mode with strict ordered roles:",
+            "Image 1 = outfit/look, hairstyle styling, pose, action, props, scene, lighting, camera, framing, and composition source only. Copy the visible garment design and styling accurately.",
+            "Never copy Image 1 facial identity, physique, body silhouette, height, shoulder width, torso, bust, waist, hips, leg shape, or anatomical proportions.",
+            "Image 2 is the sole and authoritative facial identity source. Treat every pixel outside its facial region as transparent and nonexistent. Never copy its background, walls, furniture, venue, props, lighting, color palette, perspective, framing, or composition. The target background follows the user's requested scene first, then Image 1 when no scene is requested, and never Image 2.",
+            "Preserve Image 2's exact recognizable eyes, eyebrows, nose, lips, face shape, and facial proportions. Never average or blend its face with Image 1. Do not enlarge the eyes, sharpen the chin, beautify the face, or replace it with a generic influencer face. Image 2 and later identity references never supply body, clothing, pose, scene, or camera treatment.",
+            f"{face_shape_guard}The target physique and body proportions must follow the Gallery configured body profile in the main prompt only; never infer them from any reference image.".strip(),
+            "Re-tailor Image 1 clothing naturally to the configured target body while preserving the outfit design. Keep one adult subject only and never blend the reference bodies.",
+        ]
+        return chr(10) + chr(10).join(parts) + _reference_expression_guard()
+
     parts = [
         "[CRITICAL] Multi-reference edit mode with ordered images:",
         "Image 1 = immutable base photo. Strictly lock pose, body posture, hand gestures, outfit/clothing layers, accessories already worn, props, scene, background, lighting, camera angle, framing, crop, and composition from Image 1. Do not invent a new pose.",
@@ -640,6 +654,7 @@ def _generate_via_images_api(
             refs,
             precise_edit=precise_edit,
             include_face_shape_guard=NATURAL_FACE_SHAPE_GUARD not in prompt,
+            outfit_reference_mode=XIAOHONGSHU_OUTFIT_REFERENCE_MARKER in prompt,
         )
 
     for attempt in range(attempt_limit):
@@ -843,6 +858,7 @@ def _generate_via_chat_gpt(
                 refs,
                 precise_edit=precise_edit,
                 include_face_shape_guard=NATURAL_FACE_SHAPE_GUARD not in prompt,
+                outfit_reference_mode=XIAOHONGSHU_OUTFIT_REFERENCE_MARKER in prompt,
             )
             content = []
             for path in refs:

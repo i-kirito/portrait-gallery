@@ -27,7 +27,7 @@ import shutil
 import sys
 import subprocess
 import tempfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import time
 import re
@@ -37,7 +37,7 @@ import uuid
 
 import aiohttp
 from aiohttp import web
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
 from characters import (
     LOCAL_CHARACTER_SOURCE,
@@ -80,9 +80,12 @@ from reference_profiles import (
 )
 from store import ImageMetadataStore, LockedJsonDictStore, ScheduleStore
 from text_repair import repair_mojibake_text
+from xiaohongshu_client import XiaohongshuClient, XiaohongshuError
 from settings import (
     DEFAULT_GITEE_IMAGE_URL,
     DEFAULT_OUTFIT_STYLES,
+    DEFAULT_STYLE_REFERENCE_FILES,
+    XIAOHONGSHU_DEFAULT_FACE_REFERENCE_FILE,
     auto_push_agent,
     builtin_reference_map,
     build_child_env,
@@ -331,7 +334,20 @@ class GalleryServer:
         self.reference_dir = resolve_reference_dir(config, data_dir, config_path)
         self.uploaded_reference_dir = os.path.join(self.reference_dir, "uploads")
         self.wardrobe_reference_dir = os.path.join(self.reference_dir, "wardrobe")
+        self.xiaohongshu_reference_dir = os.path.join(self.reference_dir, "xiaohongshu")
         self.legacy_uploaded_reference_dir = os.path.join(self.app_reference_dir, "uploads")
+        self.xiaohongshu_reference_store = LockedJsonDictStore(
+            os.path.join(self.data_dir, "xiaohongshu_references.json"),
+            os.path.join(self.data_dir, ".xiaohongshu_references.lock"),
+        )
+        self.xiaohongshu_schedule_store = LockedJsonDictStore(
+            os.path.join(self.data_dir, "xiaohongshu_schedule.json"),
+            os.path.join(self.data_dir, ".xiaohongshu_schedule.lock"),
+        )
+        self.xiaohongshu_client = XiaohongshuClient(
+            workdir=os.path.join(self.data_dir, "xiaohongshu-mcp"),
+        )
+        self._xiaohongshu_schedule_lock = asyncio.Lock()
         self.picxazz_sync = PicxazzSyncClient(config, data_dir)
         self._image_info_cache = {}
         self._registered_image_cache = {"signature": None, "filenames": set()}
@@ -351,6 +367,7 @@ class GalleryServer:
         os.makedirs(self.reference_dir, exist_ok=True)
         os.makedirs(self.uploaded_reference_dir, exist_ok=True)
         os.makedirs(self.wardrobe_reference_dir, exist_ok=True)
+        os.makedirs(self.xiaohongshu_reference_dir, exist_ok=True)
         self._recover_interrupted_wardrobe_image_statuses()
         ensure_reference_profiles(
             self.data_dir,
@@ -375,11 +392,13 @@ class GalleryServer:
         self.on_photo_quota_snapshot = None
         self.on_update_photo_plan = None
         self.on_update_outfit_plan = None
+        self.on_validate_xiaohongshu_outfit = None
         self.on_image_dir_changed = None
 
         self.app = web.Application(middlewares=[self.gallery_auth_middleware])
         self._setup_routes()
         self.app.on_cleanup.append(self._cleanup_group_chat_background_tasks)
+        self.app.on_cleanup.append(self._cleanup_xiaohongshu_client)
 
     def _now(self) -> datetime:
         return datetime.now(configured_timezone(getattr(self, "config", {})))
@@ -646,6 +665,18 @@ class GalleryServer:
         self.app.router.add_get("/api/uploaded-refs", self.handle_uploaded_refs)
         self.app.router.add_post("/api/upload-ref", self.handle_upload_ref)
         self.app.router.add_delete("/api/uploaded-refs/{filename}", self.handle_delete_uploaded_ref)
+        self.app.router.add_get("/api/xiaohongshu/status", self.handle_xiaohongshu_status)
+        self.app.router.add_post("/api/xiaohongshu/login/qrcode", self.handle_xiaohongshu_login_qrcode)
+        self.app.router.add_get("/api/xiaohongshu/schedule-mode", self.handle_xiaohongshu_schedule_mode)
+        self.app.router.add_post("/api/xiaohongshu/schedule-mode", self.handle_xiaohongshu_schedule_mode)
+        self.app.router.add_post("/api/xiaohongshu/search", self.handle_xiaohongshu_search)
+        self.app.router.add_post("/api/xiaohongshu/detail", self.handle_xiaohongshu_detail)
+        self.app.router.add_post("/api/xiaohongshu/import", self.handle_xiaohongshu_import)
+        self.app.router.add_get("/api/xiaohongshu/references", self.handle_xiaohongshu_references)
+        self.app.router.add_delete(
+            "/api/xiaohongshu/references/{filename}",
+            self.handle_delete_xiaohongshu_reference,
+        )
         self.app.router.add_post("/api/generate", self.handle_generate)
         self.app.router.add_post("/api/refresh-schedule", self.handle_refresh_schedule)
         self.app.router.add_post("/api/generate-now", self.handle_generate_now)
@@ -1657,10 +1688,18 @@ class GalleryServer:
                     ):
                         hidden_access_count += 1
                         continue
-                    message_text = f"接口异常：{access['method']} {access['path']} -> {access['status']}"
+                    if (
+                        access["status"] == 409
+                        and access["method"] == "POST"
+                        and access["path"] == "/api/generate-now"
+                    ):
+                        message_text = "现在在干嘛未执行：今日生图计划已达上限"
+                        display_level = "INFO"
+                    else:
+                        message_text = f"接口异常：{access['method']} {access['path']} -> {access['status']}"
                     if access["status"] >= 500:
                         display_level = "ERROR"
-                    elif access["status"] >= 400:
+                    elif access["status"] >= 400 and display_level != "INFO":
                         display_level = "WARN"
                 else:
                     message_text = message.strip()
@@ -1927,6 +1966,25 @@ class GalleryServer:
             "label": "衣柜",
             "style": "wardrobe",
             "source": "wardrobe",
+        }
+
+    def _xiaohongshu_reference_for_value(self, value: str) -> dict:
+        ref_name = self._reference_basename(value)
+        if not ref_name:
+            return {}
+        record = self.xiaohongshu_reference_store.load().get(ref_name)
+        if not isinstance(record, dict):
+            return {}
+        path = self._safe_reference_path(self.xiaohongshu_reference_dir, ref_name)
+        if not path:
+            return {}
+        return {
+            "id": str(record.get("id") or f"xiaohongshu_{hashlib.sha1(ref_name.encode('utf-8')).hexdigest()[:12]}"),
+            "filename": ref_name,
+            "url": f"/local-refs/xiaohongshu/{quote(ref_name)}",
+            "label": str(record.get("label") or "小红书穿搭"),
+            "source": "xiaohongshu",
+            "path": path,
         }
 
     def _ensure_entry_reference_label(self, entry: dict) -> dict:
@@ -5306,6 +5364,7 @@ class GalleryServer:
                 "selected_reference",
                 "model_name",
                 "caption",
+                "caption_status",
                 "display_outfit",
                 "outfit_description",
                 "delivery_status",
@@ -5313,7 +5372,11 @@ class GalleryServer:
                 "delivery_sent_at",
                 "delivery_error",
             ):
-                if field in meta_entry and (field not in normalized or normalized.get(field) in ("", None)):
+                if field in meta_entry and (
+                    field == "caption_status"
+                    or field not in normalized
+                    or normalized.get(field) in ("", None)
+                ):
                     normalized[field] = meta_entry.get(field)
             meta_prompt = meta_entry.get("prompt", "")
             current_prompt = normalized.get("prompt", "") or ""
@@ -5715,6 +5778,7 @@ class GalleryServer:
             "image_filename": filename,
             "prompt": prompt,
             "caption": str(meta.get("caption") or "").strip(),
+            "caption_status": str(meta.get("caption_status") or "").strip(),
             "favorite": False,
             "status": "ok",
             "source": source,
@@ -6840,6 +6904,37 @@ class GalleryServer:
             return random.choice(existing_refs)
         return {}
 
+    def _is_xiaohongshu_reference(self, raw_value: str, resolved_path: str = "") -> bool:
+        """Return whether a raw/resolved reference belongs to the XHS import area."""
+        normalized = unquote(str(raw_value or "").split("?", 1)[0]).replace("\\", "/").lower()
+        if "/xiaohongshu/" in normalized or self._xiaohongshu_reference_for_value(raw_value):
+            return True
+        if not resolved_path:
+            return False
+        try:
+            Path(resolved_path).resolve().relative_to(Path(self.xiaohongshu_reference_dir).resolve())
+            return True
+        except (OSError, ValueError):
+            return False
+
+    def _preferred_xiaohongshu_identity_reference(self, current_path: str = "") -> str:
+        """Prefer the face-only crop for built-in/default XHS identity references."""
+        current_path = str(current_path or "").strip()
+        default_filenames = set(DEFAULT_STYLE_REFERENCE_FILES.values())
+        should_use_face_crop = not current_path or os.path.basename(current_path) in default_filenames
+        if not should_use_face_crop:
+            return current_path
+
+        for base_dir in (self.reference_dir, self.app_reference_dir):
+            candidate = self._safe_reference_path(base_dir, XIAOHONGSHU_DEFAULT_FACE_REFERENCE_FILE)
+            if candidate and os.path.isfile(candidate) and self._is_reference_image_file(candidate):
+                return candidate
+
+        if current_path:
+            return current_path
+        fallback = self._select_default_custom_reference_sync()
+        return str(fallback.get("path") or "").strip()
+
     def _iter_uploaded_refs(self) -> list[dict]:
         refs = []
         seen = set()
@@ -6984,6 +7079,918 @@ class GalleryServer:
         except Exception as e:
             logger.error(f"List uploaded refs error: {e}")
             return web.json_response([])
+
+    @staticmethod
+    def _xiaohongshu_error_response(exc: XiaohongshuError) -> web.Response:
+        return web.json_response(
+            {"error": exc.code, "message": exc.message},
+            status=exc.status,
+        )
+
+    async def _xiaohongshu_json_body(self, request: web.Request) -> dict:
+        try:
+            body = await request.json()
+        except Exception as exc:
+            raise XiaohongshuError("invalid_json", "请求内容不是有效 JSON。", status=400) from exc
+        if not isinstance(body, dict):
+            raise XiaohongshuError("invalid_json", "请求内容不是有效 JSON。", status=400)
+        return body
+
+    async def handle_xiaohongshu_status(self, request: web.Request):
+        """Return local MCP process and account login state."""
+        start_service = str(request.query.get("start") or "1").strip().lower() not in {"0", "false", "no"}
+        return web.json_response(await self.xiaohongshu_client.status(start_service=start_service))
+
+    async def handle_xiaohongshu_login_qrcode(self, request: web.Request):
+        """Return a QR image from the read-only local MCP bridge."""
+        try:
+            return web.json_response(await self.xiaohongshu_client.login_qrcode())
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+
+    def xiaohongshu_schedule_enabled(self) -> bool:
+        return self.xiaohongshu_schedule_store.load().get("enabled") is True
+
+    @staticmethod
+    def _xiaohongshu_schedule_query(daily: dict) -> str:
+        """Use the preselected keyword; never derive concrete garments from LLM output."""
+        daily = daily if isinstance(daily, dict) else {}
+        explicit = re.sub(
+            r"\s+",
+            " ",
+            str(daily.get("xiaohongshu_search_query") or ""),
+        ).strip(" -:：")
+        if explicit:
+            explicit = re.sub(r"(?:真人穿搭|真人|全身|OOTD)", "", explicit, flags=re.IGNORECASE)
+            explicit = re.sub(r"[\s,，]+", "", explicit).strip(" -:：")
+            # A bare generic word is not a meaningful style query. Ignore it
+            # and derive a style-specific query from the day's schedule instead.
+            if explicit.casefold() in {"", "穿搭", "ootd", "真人"}:
+                explicit = ""
+            elif "穿搭" not in explicit:
+                explicit = f"{explicit}穿搭"
+            if explicit:
+                return explicit[:24]
+
+        style = re.sub(r"\s+", " ", str(daily.get("outfit_style") or "")).strip()
+        style = re.sub(r"^(?:风格|穿搭风格)[：:]\s*", "", style)[:16]
+        source_text = "\n".join(
+            str(daily.get(field) or "")
+            for field in ("reference_query", "outfit", "schedule")
+        )
+        contexts = ("居家", "通勤", "约会", "休闲", "度假", "运动", "复古", "甜美", "清新", "街头", "学院", "法式", "韩系")
+        context = next((item for item in contexts if item in source_text or item in style), "")
+        base = "".join(part for part in (style, context) if part).strip()
+        if not base:
+            base = "当季自然日常穿搭"
+        if "穿搭" not in base:
+            base = f"{base}穿搭"
+        return base[:24]
+
+    @staticmethod
+    def _xiaohongshu_schedule_candidate_score(item: dict, query: str) -> tuple:
+        title = str((item or {}).get("title") or "").lower()
+        keywords = [
+            token.lower()
+            for token in re.split(r"[\s,，。；;|/]+", str(query or ""))
+            if len(token.strip()) >= 2
+        ]
+        relevance = sum(3 for token in keywords if token in title)
+        relevance += sum(2 for token in ("穿搭", "ootd", "通勤", "约会", "全身") if token in title)
+        relevance -= sum(4 for token in ("美甲", "妆容", "探店", "食谱", "家居") if token in title)
+        width = int((item or {}).get("width") or 0)
+        height = int((item or {}).get("height") or 0)
+        portrait = 2 if height > width > 0 else 0
+        liked = str((item or {}).get("liked_count") or "").strip().lower()
+        liked_score = 0
+        try:
+            liked_score = int(float(liked.rstrip("万w")) * (10000 if liked.endswith(("万", "w")) else 1))
+        except ValueError:
+            pass
+        return relevance, portrait, liked_score
+
+    @staticmethod
+    def _xiaohongshu_detail_image_score(item: dict) -> tuple:
+        width = max(0, int((item or {}).get("width") or 0))
+        height = max(0, int((item or {}).get("height") or 0))
+        ratio = (height / width) if width else 0
+        portrait_fit = 2 if 1.15 <= ratio <= 2.2 else (1 if height > width > 0 else 0)
+        return portrait_fit, width * height, -int((item or {}).get("index") or 0)
+
+    @staticmethod
+    def _xiaohongshu_image_identity(value: str) -> str:
+        """Normalize CDN variants enough to exclude a search-selected cover from detail images."""
+        try:
+            basename = unquote(urlparse(str(value or "")).path).rstrip("/").rsplit("/", 1)[-1]
+        except Exception:
+            return ""
+        basename = basename.split("!", 1)[0]
+        basename = re.sub(r"\.(?:jpe?g|png|webp|avif)$", "", basename, flags=re.IGNORECASE)
+        return basename.strip().lower()
+
+    @staticmethod
+    def _create_xiaohongshu_validation_sheet(candidate_paths: list[str], output_dir: str) -> str:
+        """Create one numbered contact sheet so vision selection needs a single LLM call."""
+        if not candidate_paths:
+            return ""
+        cell_width, cell_height = 512, 768
+        columns = 2
+        rows = (len(candidate_paths) + columns - 1) // columns
+        canvas = Image.new("RGB", (columns * cell_width, rows * cell_height), (238, 238, 238))
+        draw = ImageDraw.Draw(canvas)
+        try:
+            font = ImageFont.truetype("DejaVuSans-Bold.ttf", 36)
+        except OSError:
+            font = ImageFont.load_default()
+        for offset, path in enumerate(candidate_paths):
+            column = offset % columns
+            row = offset // columns
+            left = column * cell_width
+            top = row * cell_height
+            with Image.open(path) as source:
+                tile = ImageOps.contain(
+                    ImageOps.exif_transpose(source).convert("RGB"),
+                    (cell_width - 24, cell_height - 24),
+                    method=Image.Resampling.LANCZOS,
+                )
+            x = left + (cell_width - tile.width) // 2
+            y = top + (cell_height - tile.height) // 2
+            canvas.paste(tile, (x, y))
+            draw.rectangle((left + 10, top + 10, left + 72, top + 64), fill=(211, 34, 42))
+            draw.text((left + 29, top + 16), str(offset + 1), fill="white", font=font)
+        os.makedirs(output_dir, exist_ok=True)
+        target = os.path.join(output_dir, f".xhs_validation_{uuid.uuid4().hex}.jpg")
+        canvas.save(target, format="JPEG", quality=88, optimize=True)
+        return target
+
+    def _discard_xiaohongshu_candidate_path(self, path: str) -> None:
+        filename = os.path.basename(str(path or ""))
+        safe_path = self._safe_reference_path(self.xiaohongshu_reference_dir, filename)
+        if not safe_path or self.xiaohongshu_reference_store.load().get(filename):
+            return
+        try:
+            os.remove(safe_path)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("清理小红书候选临时图失败: %s", exc)
+
+    def _xiaohongshu_schedule_daily_entry(self, schedule_date: str) -> dict:
+        try:
+            data = ScheduleStore(self.data_dir).load()
+        except Exception as exc:
+            logger.warning("读取小红书日程选图上下文失败: %s", exc)
+            return {}
+        direct = data.get(schedule_date)
+        if isinstance(direct, dict):
+            return direct
+        for entry in data.values():
+            if (
+                isinstance(entry, dict)
+                and entry.get("date") == schedule_date
+                and not entry.get("image_filename")
+            ):
+                return entry
+        return {}
+
+    def _xiaohongshu_schedule_reference(self, schedule_date: str) -> dict:
+        state = self.xiaohongshu_schedule_store.load()
+        references = state.get("references") if isinstance(state.get("references"), dict) else {}
+        record = references.get(schedule_date)
+        if not isinstance(record, dict):
+            return {}
+        filename = str(record.get("filename") or "").strip()
+        path = self._safe_reference_path(self.xiaohongshu_reference_dir, filename)
+        indexed = self.xiaohongshu_reference_store.load().get(filename)
+        if not path or not isinstance(indexed, dict) or indexed.get("scope") != "daily_schedule":
+            return {}
+        result = dict(record)
+        result.update({
+            "path": path,
+            "url": f"/local-refs/xiaohongshu/{quote(filename)}",
+            "source": "xiaohongshu",
+            "scope": "daily_schedule",
+            "selection_mode": "xiaohongshu_schedule",
+            "selection_reason": f"xiaohongshu_schedule:{schedule_date}",
+        })
+        return result
+
+    def xiaohongshu_schedule_state(self, schedule_date: str = "") -> dict:
+        schedule_date = schedule_date or self._today().isoformat()
+        state = self.xiaohongshu_schedule_store.load()
+        reference = self._xiaohongshu_schedule_reference(schedule_date)
+        public_reference = {
+            key: reference.get(key)
+            for key in (
+                "id", "filename", "url", "label", "title", "author", "query",
+                "source", "scope", "schedule_date", "created_at", "image_index",
+                "validation_score", "validation_reason",
+            )
+            if reference.get(key) not in (None, "")
+        }
+        enabled = state.get("enabled") is True
+        last_error = str(state.get("last_error") or "")
+        last_error_at = str(state.get("last_error_at") or "")
+        reference_created_at = str(reference.get("created_at") or "")
+        state_updated_at = str(state.get("updated_at") or "")
+        if (
+            reference
+            and last_error
+            and not last_error_at
+            and reference_created_at
+            and state_updated_at <= reference_created_at
+        ):
+            last_error = ""
+        status = (
+            "disabled"
+            if not enabled
+            else ("stale" if reference and last_error else ("ready" if reference else ("error" if last_error else "missing")))
+        )
+        return {
+            "enabled": enabled,
+            "schedule_date": schedule_date,
+            "status": status,
+            "today_reference": public_reference,
+            "last_error": last_error,
+            "updated_at": state_updated_at,
+        }
+
+    def _save_xiaohongshu_schedule_error(self, message: str) -> None:
+        def _update(state: dict) -> dict:
+            state["last_error"] = str(message or "小红书今日穿搭选择失败")[:300]
+            now_text = self._now().isoformat(timespec="seconds")
+            state["last_error_at"] = now_text
+            state["updated_at"] = now_text
+            return state
+        self.xiaohongshu_schedule_store.update(_update)
+
+    def _cleanup_old_xiaohongshu_schedule_references(self, schedule_date: str) -> None:
+        try:
+            cutoff = date.fromisoformat(schedule_date) - timedelta(days=1)
+        except ValueError:
+            return
+        state = self.xiaohongshu_schedule_store.load()
+        references = state.get("references") if isinstance(state.get("references"), dict) else {}
+        stale = []
+        for key, record in references.items():
+            try:
+                is_stale = date.fromisoformat(str(key)) < cutoff
+            except ValueError:
+                is_stale = True
+            if is_stale and isinstance(record, dict):
+                stale.append((str(key), str(record.get("filename") or "")))
+        if not stale:
+            return
+        stale_dates = {item[0] for item in stale}
+
+        def _remove_state(current: dict) -> dict:
+            current_refs = current.get("references") if isinstance(current.get("references"), dict) else {}
+            current["references"] = {key: value for key, value in current_refs.items() if key not in stale_dates}
+            return current
+
+        self.xiaohongshu_schedule_store.update(_remove_state)
+        for _key, filename in stale:
+            record = self.xiaohongshu_reference_store.load().get(filename)
+            if filename and isinstance(record, dict) and record.get("scope") == "daily_schedule":
+                try:
+                    self._delete_xiaohongshu_reference_file(filename, allow_daily_schedule=True)
+                except OSError as exc:
+                    logger.warning("清理过期小红书日程参考图失败: %s", exc)
+
+    async def ensure_xiaohongshu_schedule_reference(
+        self,
+        schedule_date: str,
+        daily: dict,
+        *,
+        force: bool = False,
+    ) -> dict:
+        """Return today's XHS outfit reference, falling back silently on every failure."""
+        if not self.xiaohongshu_schedule_enabled():
+            return {}
+        try:
+            date.fromisoformat(schedule_date)
+        except ValueError:
+            self._save_xiaohongshu_schedule_error("日程日期无效，已回退原参考图")
+            return {}
+
+        async with self._xiaohongshu_schedule_lock:
+            existing = self._xiaohongshu_schedule_reference(schedule_date)
+            if existing and not force:
+                def _clear_reuse_error(state: dict) -> dict:
+                    state["last_error"] = ""
+                    state["last_error_at"] = ""
+                    return state
+                self.xiaohongshu_schedule_store.update(_clear_reuse_error)
+                return existing
+            query = self._xiaohongshu_schedule_query(daily)
+            if not query:
+                self._save_xiaohongshu_schedule_error("日程没有可用的穿搭关键词，已回退原参考图")
+                return {}
+            query_saved_at = self._now().isoformat(timespec="seconds")
+            self.xiaohongshu_schedule_store.update(lambda state: {
+                **state,
+                "pending_query": query,
+                "updated_at": query_saved_at,
+            })
+            selection_deadline = time.monotonic() + 240
+            cleanup_paths: list[str] = []
+            new_schedule_filename = ""
+            schedule_state_saved = False
+            old_filename = str(existing.get("filename") or "")
+
+            def _remaining_timeout(cap: float) -> float:
+                return min(cap, selection_deadline - time.monotonic())
+
+            stage = "login_status"
+            try:
+                timeout = _remaining_timeout(20)
+                if timeout <= 0:
+                    raise asyncio.TimeoutError
+                status = await asyncio.wait_for(
+                    self.xiaohongshu_client.status(start_service=True),
+                    timeout=timeout,
+                )
+                if not status.get("is_logged_in"):
+                    raise XiaohongshuError("login_required", "小红书未登录，已回退原参考图", status=401)
+                stage = "search"
+                started = time.monotonic()
+                logger.info(
+                    "小红书日程穿搭搜索开始: date=%s max_results=10 query=%s",
+                    schedule_date,
+                    query,
+                )
+                timeout = _remaining_timeout(150)
+                if timeout <= 0:
+                    raise asyncio.TimeoutError
+                items = await asyncio.wait_for(
+                    self.xiaohongshu_client.search(query, max_results=10),
+                    timeout=timeout,
+                )
+                logger.info(
+                    "小红书日程穿搭搜索完成: date=%s results=%s elapsed=%.1fs",
+                    schedule_date,
+                    len(items),
+                    time.monotonic() - started,
+                )
+                items.sort(
+                    key=lambda item: self._xiaohongshu_schedule_candidate_score(item, query),
+                    reverse=True,
+                )
+                if not items:
+                    raise XiaohongshuError("no_results", "没有找到合适的小红书穿搭，已回退原参考图")
+
+                candidates = []
+                seen_urls = set()
+                # The cover is only an entry point. A single outfit note often contains
+                # several useful full-body photos after its collage cover, so inspect
+                # multiple inner images from each strong note and validate them in batches.
+                for item in items[:4]:
+                    if _remaining_timeout(1) <= 0:
+                        break
+                    feed_id = str(item.get("id") or "").strip()
+                    xsec_token = str(item.get("xsec_token") or "").strip()
+                    cover_identity = self._xiaohongshu_image_identity(item.get("cover_url") or "")
+                    if not feed_id or not xsec_token:
+                        continue
+                    stage = f"detail:{feed_id}"
+                    started = time.monotonic()
+                    try:
+                        timeout = _remaining_timeout(30)
+                        if timeout <= 0:
+                            raise asyncio.TimeoutError
+                        detail = await asyncio.wait_for(
+                            self.xiaohongshu_client.detail(feed_id, xsec_token),
+                            timeout=timeout,
+                        )
+                    except (XiaohongshuError, asyncio.TimeoutError) as exc:
+                        code = exc.code if isinstance(exc, XiaohongshuError) else "detail_timeout"
+                        message = exc.message if isinstance(exc, XiaohongshuError) else "读取笔记详情超时"
+                        logger.warning(
+                            "读取小红书日程候选笔记失败: feed_id=%s code=%s message=%s",
+                            feed_id,
+                            code,
+                            message,
+                        )
+                        continue
+                    logger.info(
+                        "小红书日程候选笔记读取完成: feed_id=%s images=%s elapsed=%.1fs",
+                        feed_id,
+                        len(detail.get("images") or []),
+                        time.monotonic() - started,
+                    )
+                    detail_images = [
+                        image
+                        for image in (detail.get("images") or [])
+                        if isinstance(image, dict)
+                        and int(image.get("index") or 0) > 0
+                        and str(image.get("url") or "").strip()
+                    ]
+                    detail_images.sort(key=self._xiaohongshu_detail_image_score, reverse=True)
+                    for candidate_image in detail_images:
+                        image_url = str(candidate_image.get("url") or "").strip()
+                        image_identity = self._xiaohongshu_image_identity(image_url)
+                        if (
+                            not image_url
+                            or image_url in seen_urls
+                            or (cover_identity and image_identity == cover_identity)
+                        ):
+                            continue
+                        seen_urls.add(image_url)
+                        known_width = int(candidate_image.get("width") or 0)
+                        known_height = int(candidate_image.get("height") or 0)
+                        # Only discard obviously tiny assets here.  Orientation and
+                        # whether this is really a full-body outfit are visual
+                        # questions; leave those to the vision validator instead of
+                        # rejecting a legitimate landscape full-body photo early.
+                        if known_width and known_height and min(known_width, known_height) < 400:
+                            continue
+                        stage = f"download:{feed_id}:{candidate_image.get('index', '')}"
+                        started = time.monotonic()
+                        imported_path = ""
+                        try:
+                            timeout = _remaining_timeout(20)
+                            if timeout <= 0:
+                                raise asyncio.TimeoutError
+                            downloaded = await asyncio.wait_for(
+                                self.xiaohongshu_client.import_image(
+                                    image_url,
+                                    self.xiaohongshu_reference_dir,
+                                ),
+                                timeout=timeout,
+                            )
+                            imported_path = str(downloaded.get("path") or "")
+                            if imported_path:
+                                cleanup_paths.append(imported_path)
+                            self._verify_reference_image(imported_path)
+                            with Image.open(imported_path) as source:
+                                actual_width, actual_height = source.size
+                            if min(actual_width, actual_height) < 400:
+                                self._discard_xiaohongshu_candidate_path(imported_path)
+                                continue
+                        except (
+                            XiaohongshuError,
+                            asyncio.TimeoutError,
+                            Image.DecompressionBombError,
+                            UnidentifiedImageError,
+                            OSError,
+                            ValueError,
+                        ) as exc:
+                            if not isinstance(exc, XiaohongshuError):
+                                self._discard_xiaohongshu_candidate_path(imported_path)
+                            message = exc.message if isinstance(exc, XiaohongshuError) else (str(exc) or "候选图处理超时")
+                            code = exc.code if isinstance(exc, XiaohongshuError) else "invalid_image"
+                            logger.warning(
+                                "下载小红书日程候选图失败: feed_id=%s image_index=%s code=%s message=%s",
+                                feed_id,
+                                candidate_image.get("index", ""),
+                                code,
+                                message,
+                            )
+                            continue
+                        logger.info(
+                            "小红书日程候选正文图已准备: feed_id=%s image_index=%s elapsed=%.1fs",
+                            feed_id,
+                            candidate_image.get("index", ""),
+                            time.monotonic() - started,
+                        )
+                        candidates.append({
+                            "item": {
+                                **item,
+                                "title": str(detail.get("title") or item.get("title") or "").strip(),
+                                "author": str(detail.get("author") or item.get("author") or "").strip(),
+                            },
+                            "image": candidate_image,
+                            "downloaded": downloaded,
+                            "path": imported_path,
+                        })
+                if not candidates:
+                    raise XiaohongshuError(
+                        "no_inner_images",
+                        "候选笔记没有可用的非封面正文图片，已回退原参考图",
+                    )
+
+                validator = self.on_validate_xiaohongshu_outfit
+                if not callable(validator):
+                    for candidate in candidates:
+                        self._discard_xiaohongshu_candidate_path(candidate.get("path", ""))
+                    raise XiaohongshuError(
+                        "vision_unavailable",
+                        "穿搭图片视觉质检不可用，已回退原参考图",
+                    )
+                stage = "vision_validation"
+                validation = {}
+                validation_score = 0
+                selected_index = 0
+                rejection_reasons = []
+                for batch_start in range(0, len(candidates), 4):
+                    batch = candidates[batch_start:batch_start + 4]
+                    validation_sheet = ""
+                    try:
+                        validation_sheet = self._create_xiaohongshu_validation_sheet(
+                            [candidate["path"] for candidate in batch],
+                            self.xiaohongshu_reference_dir,
+                        )
+                        timeout = _remaining_timeout(60)
+                        if timeout <= 0:
+                            raise asyncio.TimeoutError
+                        batch_validation = await asyncio.wait_for(
+                            validator(validation_sheet, query, len(batch)),
+                            timeout=timeout,
+                        )
+                    except asyncio.TimeoutError:
+                        raise
+                    except Exception as exc:
+                        logger.warning("小红书穿搭视觉质检失败: %s", exc)
+                        batch_validation = {
+                            "accepted": False,
+                            "selected_index": 0,
+                            "reason": "视觉质检不可用",
+                        }
+                    finally:
+                        if validation_sheet:
+                            try:
+                                os.remove(validation_sheet)
+                            except FileNotFoundError:
+                                pass
+
+                    try:
+                        local_index = int((batch_validation or {}).get("selected_index") or 0)
+                    except (TypeError, ValueError):
+                        local_index = 0
+                    try:
+                        validation_person_count = int((batch_validation or {}).get("person_count") or 0)
+                        batch_score = int((batch_validation or {}).get("quality_score") or 0)
+                    except (TypeError, ValueError):
+                        validation_person_count = 0
+                        batch_score = 0
+                    accepted = (
+                        (batch_validation or {}).get("accepted") is True
+                        and (batch_validation or {}).get("is_real_photo") is True
+                        and (batch_validation or {}).get("is_collage") is False
+                        and validation_person_count == 1
+                        and (batch_validation or {}).get("single_outfit") is True
+                        and (batch_validation or {}).get("full_body_visible") is True
+                        and (batch_validation or {}).get("clothing_clear") is True
+                        and (batch_validation or {}).get("quality_sufficient") is True
+                        and (batch_validation or {}).get("keyword_match") is True
+                        and batch_score >= 70
+                        and 1 <= local_index <= len(batch)
+                    )
+                    if accepted:
+                        validation = batch_validation
+                        validation_score = batch_score
+                        selected_index = batch_start + local_index
+                        break
+                    reason = str((batch_validation or {}).get("reason") or "该批没有合格图片")[:160]
+                    rejection_reasons.append(reason)
+                    logger.warning(
+                        "小红书穿搭视觉质检第 %s 批未选中图片: %s",
+                        batch_start // 4 + 1,
+                        reason,
+                    )
+
+                if not selected_index:
+                    reason = "；".join(rejection_reasons)[:240] or "没有合格的单人全身穿搭照"
+                    for candidate in candidates:
+                        self._discard_xiaohongshu_candidate_path(candidate.get("path", ""))
+                    logger.warning("小红书穿搭视觉质检未选中图片: %s", reason)
+                    raise XiaohongshuError(
+                        "no_qualified_full_body_image",
+                        f"没有找到合格的单人全身穿搭照：{reason}",
+                    )
+
+                selected_candidate = candidates[selected_index - 1]
+                for offset, candidate in enumerate(candidates, start=1):
+                    if offset != selected_index:
+                        self._discard_xiaohongshu_candidate_path(candidate.get("path", ""))
+                chosen = selected_candidate["item"]
+                chosen_image = selected_candidate["image"]
+                downloaded = selected_candidate["downloaded"]
+                logger.info(
+                    "小红书穿搭视觉质检通过: feed_id=%s image_index=%s score=%s reason=%s",
+                    chosen.get("id", ""),
+                    chosen_image.get("index", ""),
+                    (validation or {}).get("quality_score", ""),
+                    (validation or {}).get("reason", ""),
+                )
+
+                stage = "verify"
+                imported_path = str(downloaded["path"])
+                imported_filename = os.path.basename(imported_path)
+                extension = Path(imported_path).suffix.lower()
+                schedule_digest = hashlib.sha256(
+                    f"{schedule_date}:{chosen_image.get('url', '')}".encode("utf-8")
+                ).hexdigest()[:24]
+                filename = f"xhs_schedule_{schedule_date.replace('-', '')}_{schedule_digest}{extension}"
+                path = os.path.join(self.xiaohongshu_reference_dir, filename)
+                new_schedule_filename = filename
+                cleanup_paths.append(path)
+                if os.path.abspath(imported_path) != os.path.abspath(path):
+                    shutil.copy2(imported_path, path)
+                    imported_record = self.xiaohongshu_reference_store.load().get(imported_filename)
+                    if not isinstance(imported_record, dict):
+                        try:
+                            os.remove(imported_path)
+                        except OSError:
+                            pass
+                try:
+                    self._verify_reference_image(path)
+                    with Image.open(path) as image:
+                        width, height = image.size
+                except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError) as exc:
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+                    self._discard_xiaohongshu_candidate_path(imported_path)
+                    raise XiaohongshuError("invalid_image", "小红书今日参考图无效，已回退原参考图") from exc
+
+                title = str(chosen.get("title") or "今日穿搭").strip()[:80]
+                author = str(chosen.get("author") or "").strip()[:60]
+                created_at = self._now().isoformat(timespec="seconds")
+                record = {
+                    "id": f"xiaohongshu_schedule_{hashlib.sha1((schedule_date + filename).encode('utf-8')).hexdigest()[:12]}",
+                    "filename": filename,
+                    "label": f"今日穿搭 · {title}",
+                    "title": title,
+                    "author": author,
+                    "source": "xiaohongshu",
+                    "scope": "daily_schedule",
+                    "schedule_date": schedule_date,
+                    "query": query,
+                    "feed_id": str(chosen.get("id") or ""),
+                    "image_index": int(chosen_image.get("index") or 0),
+                    "validation_score": validation_score,
+                    "validation_reason": str((validation or {}).get("reason") or "")[:160],
+                    "visual_validation": {
+                        key: (validation or {}).get(key)
+                        for key in (
+                            "person_count", "is_real_photo", "is_collage", "single_outfit",
+                            "full_body_visible", "clothing_clear", "quality_sufficient", "keyword_match",
+                        )
+                        if (validation or {}).get(key) is not None
+                    },
+                    "width": width,
+                    "height": height,
+                    "size_bytes": os.path.getsize(path),
+                    "created_at": created_at,
+                }
+                self.xiaohongshu_reference_store.update(lambda records: {**records, filename: record})
+
+                def _save_state(state: dict) -> dict:
+                    references = state.get("references") if isinstance(state.get("references"), dict) else {}
+                    references[schedule_date] = record
+                    state.update({
+                        "enabled": True,
+                        "references": references,
+                        "pending_query": "",
+                        "last_error": "",
+                        "last_error_at": "",
+                        "updated_at": created_at,
+                    })
+                    return state
+                self.xiaohongshu_schedule_store.update(_save_state)
+                schedule_state_saved = True
+                if old_filename and old_filename != filename:
+                    self._delete_xiaohongshu_reference_file(old_filename, allow_daily_schedule=True)
+                self._cleanup_old_xiaohongshu_schedule_references(schedule_date)
+                result = dict(record)
+                result.update({
+                    "path": path,
+                    "url": f"/local-refs/xiaohongshu/{quote(filename)}",
+                    "selection_mode": "xiaohongshu_schedule",
+                    "selection_reason": f"xiaohongshu_schedule:{schedule_date}",
+                })
+                logger.info("小红书今日穿搭已选择: date=%s title=%s query=%s", schedule_date, title, query)
+                return result
+            except asyncio.TimeoutError:
+                message = "小红书选图超过 240 秒，已停止并回退原参考图"
+                logger.warning("小红书日程穿搭选择超时: stage=%s", stage)
+                self._save_xiaohongshu_schedule_error(message)
+            except XiaohongshuError as exc:
+                logger.warning(
+                    "小红书日程穿搭选择失败，回退原流程: stage=%s code=%s message=%s",
+                    stage,
+                    exc.code,
+                    exc.message,
+                )
+                self._save_xiaohongshu_schedule_error(exc.message)
+            except Exception as exc:
+                logger.warning("小红书日程穿搭选择异常，回退原流程: %s", exc, exc_info=True)
+                self._save_xiaohongshu_schedule_error("选择今日穿搭失败，已回退原参考图")
+            finally:
+                if (
+                    new_schedule_filename
+                    and not schedule_state_saved
+                    and new_schedule_filename != old_filename
+                ):
+                    record = self.xiaohongshu_reference_store.load().get(new_schedule_filename)
+                    if isinstance(record, dict) and record.get("scope") == "daily_schedule":
+                        try:
+                            self._delete_xiaohongshu_reference_file(
+                                new_schedule_filename,
+                                allow_daily_schedule=True,
+                            )
+                        except OSError as exc:
+                            logger.warning("清理未完成的小红书日程参考图失败: %s", exc)
+                for cleanup_path in cleanup_paths:
+                    self._discard_xiaohongshu_candidate_path(cleanup_path)
+            return {}
+
+    async def handle_xiaohongshu_schedule_mode(self, request: web.Request):
+        """Read/update daily XHS outfit mode and optionally choose today's reference."""
+        schedule_date = self._today().isoformat()
+        if request.method == "GET":
+            return web.json_response(self.xiaohongshu_schedule_state(schedule_date))
+        try:
+            body = await self._xiaohongshu_json_body(request)
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+        enabled_raw = body.get("enabled")
+        enabled = enabled_raw if isinstance(enabled_raw, bool) else str(enabled_raw or "").strip().lower() in {"1", "true", "yes", "on"}
+        previous_enabled = self.xiaohongshu_schedule_enabled()
+        now_text = self._now().isoformat(timespec="seconds")
+        def _update(state: dict) -> dict:
+            state["enabled"] = enabled
+            state["updated_at"] = now_text
+            if not enabled:
+                state["last_error"] = ""
+                state["last_error_at"] = ""
+            return state
+        self.xiaohongshu_schedule_store.update(_update)
+        if enabled:
+            daily = self._xiaohongshu_schedule_daily_entry(schedule_date)
+            manual_query = str(body.get("keyword") or "").strip()
+            if manual_query:
+                daily = dict(daily or {})
+                daily["xiaohongshu_search_query"] = manual_query[:80]
+            await self.ensure_xiaohongshu_schedule_reference(
+                schedule_date,
+                daily,
+                force=bool(body.get("refresh")) or not previous_enabled,
+            )
+        return web.json_response(self.xiaohongshu_schedule_state(schedule_date))
+
+    async def handle_xiaohongshu_search(self, request: web.Request):
+        """Search image notes without exposing any write-capable MCP route."""
+        try:
+            body = await self._xiaohongshu_json_body(request)
+            items = await self.xiaohongshu_client.search(
+                body.get("keyword", ""),
+                max_results=body.get("max_results", 30),
+            )
+            return web.json_response({"items": items, "count": len(items)})
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+
+    async def handle_xiaohongshu_detail(self, request: web.Request):
+        """Load the image list for one image note."""
+        try:
+            body = await self._xiaohongshu_json_body(request)
+            detail = await self.xiaohongshu_client.detail(
+                body.get("feed_id", ""),
+                body.get("xsec_token", ""),
+            )
+            return web.json_response(detail)
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+
+    def _xiaohongshu_reference_items(self) -> list[dict]:
+        records = self.xiaohongshu_reference_store.load()
+        items = []
+        for filename, record in records.items():
+            if not isinstance(record, dict):
+                continue
+            if record.get("scope") == "daily_schedule":
+                continue
+            path = self._safe_reference_path(self.xiaohongshu_reference_dir, filename)
+            if not path:
+                continue
+            item = dict(record)
+            item.update({
+                "filename": filename,
+                "url": f"/local-refs/xiaohongshu/{quote(filename)}",
+                "source": "xiaohongshu",
+            })
+            item.pop("path", None)
+            items.append(item)
+        items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+        return items[:24]
+
+    async def handle_xiaohongshu_references(self, request: web.Request):
+        """List already imported local Xiaohongshu reference images."""
+        return web.json_response(self._xiaohongshu_reference_items())
+
+    def _xiaohongshu_reference_filenames_for_paths(self, paths: list[str]) -> list[str]:
+        """Return registered Xiaohongshu filenames contained in the local cache."""
+        records = self.xiaohongshu_reference_store.load()
+        result = []
+        try:
+            reference_root = Path(self.xiaohongshu_reference_dir).resolve()
+        except OSError:
+            return result
+        for raw_path in paths:
+            try:
+                path = Path(str(raw_path or "")).resolve()
+                path.relative_to(reference_root)
+            except (OSError, ValueError):
+                continue
+            filename = path.name
+            if (
+                filename not in result
+                and isinstance(records.get(filename), dict)
+                and records[filename].get("scope") != "daily_schedule"
+                and self._is_reference_image_file(filename)
+            ):
+                result.append(filename)
+        return result
+
+    def _delete_xiaohongshu_reference_file(self, filename: str, *, allow_daily_schedule: bool = False) -> bool:
+        """Delete one registered Xiaohongshu cache file and its index record."""
+        record = self.xiaohongshu_reference_store.load().get(filename)
+        if not isinstance(record, dict):
+            return False
+        if record.get("scope") == "daily_schedule" and not allow_daily_schedule:
+            return False
+        path = self._safe_reference_path(self.xiaohongshu_reference_dir, filename)
+        if path:
+            os.remove(path)
+
+        def _remove(records: dict) -> dict:
+            records.pop(filename, None)
+            return records
+
+        self.xiaohongshu_reference_store.update(_remove)
+        return True
+
+    async def handle_delete_xiaohongshu_reference(self, request: web.Request):
+        """Delete one explicitly selected local Xiaohongshu reference."""
+        filename = str(request.match_info.get("filename") or "").strip()
+        if (
+            not filename
+            or not re.fullmatch(r"[a-zA-Z0-9_.-]+", filename)
+            or not self._is_reference_image_file(filename)
+        ):
+            return web.json_response({"error": "invalid_filename"}, status=400)
+
+        try:
+            if not self._delete_xiaohongshu_reference_file(filename):
+                return web.json_response({"error": "not_found"}, status=404)
+            return web.json_response({"success": True, "filename": filename})
+        except OSError as exc:
+            logger.error("Delete Xiaohongshu reference error: %s", exc)
+            return web.json_response(
+                {"error": "delete_failed", "message": "删除小红书参考图失败。"},
+                status=500,
+            )
+
+    async def handle_xiaohongshu_import(self, request: web.Request):
+        """Download and validate one Xiaohongshu image into local references."""
+        try:
+            body = await self._xiaohongshu_json_body(request)
+            downloaded = await self.xiaohongshu_client.import_image(
+                body.get("url", ""),
+                self.xiaohongshu_reference_dir,
+            )
+            path = downloaded["path"]
+            try:
+                self._verify_reference_image(path)
+                with Image.open(path) as image:
+                    width, height = image.size
+            except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError) as exc:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+                raise XiaohongshuError("invalid_image", "下载内容不是有效图片。", status=400) from exc
+
+            filename = downloaded["filename"]
+            title = str(body.get("title") or "小红书穿搭").strip()[:80] or "小红书穿搭"
+            author = str(body.get("author") or "").strip()[:60]
+            label = f"小红书 · {title}"
+            record = {
+                "id": f"xiaohongshu_{hashlib.sha1(filename.encode('utf-8')).hexdigest()[:12]}",
+                "filename": filename,
+                "label": label,
+                "title": title,
+                "author": author,
+                "source": "xiaohongshu",
+                "width": width,
+                "height": height,
+                "size_bytes": downloaded["size_bytes"],
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+            }
+
+            def _save(records: dict) -> dict:
+                records[filename] = record
+                return records
+
+            self.xiaohongshu_reference_store.update(_save)
+            response = dict(record)
+            response["url"] = f"/local-refs/xiaohongshu/{quote(filename)}"
+            return web.json_response(response)
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
 
     async def handle_upload_ref(self, request: web.Request):
         """上传普通参考图，或按 style 替换固定默认底模。"""
@@ -8334,6 +9341,9 @@ class GalleryServer:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._group_chat_background_tasks.clear()
         self._group_chat_reply_progress.clear()
+
+    async def _cleanup_xiaohongshu_client(self, _app) -> None:
+        await self.xiaohongshu_client.close()
 
     @staticmethod
     def _group_chat_normalized_placeholder_text(value: str) -> str:
@@ -10457,7 +11467,10 @@ JSON 格式：
                     {
                         "error": "limit_reached",
                         "status": "limit_reached",
-                        "message": f"今日生图计划已达上限 {planned_total}/{max_daily}",
+                        "message": (
+                            f"今日生图计划已达上限 {planned_total}/{max_daily}"
+                            f"（已完成 {completed}、失败 {failed}、进行中 {inflight}、待执行 {scheduled}）"
+                        ),
                         "max_daily": max_daily,
                         "completed_today": completed,
                         "failed_today": failed,
@@ -10676,6 +11689,7 @@ JSON 格式：
         """自定义 prompt 生图"""
         if not self.on_generate_custom:
             return web.json_response({"error": "no_generator"}, status=500)
+        temporary_xiaohongshu_filenames: list[str] = []
         try:
             body = await request.json()
             user_prompt = body.get("prompt", "").strip()
@@ -10714,23 +11728,57 @@ JSON 格式：
                     continue
                 seen_raw.add(token)
                 unique_raw.append(token)
-            resolved_refs = []
+            resolved_pairs = []
             for token in unique_raw:
                 resolved = self._resolve_reference_image(token, allow_any_path=True)
                 if not resolved:
                     return web.json_response({"error": "invalid_ref_image", "ref": token}, status=400)
-                if resolved not in resolved_refs:
-                    resolved_refs.append(resolved)
+                if not any(path == resolved for _, path in resolved_pairs):
+                    resolved_pairs.append((token, resolved))
+            temporary_xiaohongshu_filenames = self._xiaohongshu_reference_filenames_for_paths(
+                [path for _, path in resolved_pairs]
+            )
+
+            xiaohongshu_pairs = [
+                pair for pair in resolved_pairs
+                if self._is_xiaohongshu_reference(pair[0], pair[1])
+            ]
+            selected_raw_reference = str(raw_ref_image or "").strip()
+            if xiaohongshu_pairs:
+                # XHS mode always uses one outfit image first, then identity refs.
+                # If the caller forgot a face reference, append the default face-only crop.
+                xhs_token, xhs_path = xiaohongshu_pairs[0]
+                identity_paths = [
+                    path for token, path in resolved_pairs
+                    if not self._is_xiaohongshu_reference(token, path)
+                ]
+                preferred_identity = self._preferred_xiaohongshu_identity_reference(
+                    identity_paths[0] if identity_paths else ""
+                )
+                if identity_paths:
+                    identity_paths[0] = preferred_identity or identity_paths[0]
+                elif preferred_identity:
+                    identity_paths.append(preferred_identity)
+
+                resolved_refs = [xhs_path]
+                for identity_path in identity_paths:
+                    if identity_path and identity_path not in resolved_refs:
+                        resolved_refs.append(identity_path)
+                selected_raw_reference = xhs_token
+            else:
+                resolved_refs = [path for _, path in resolved_pairs]
             ref_image = resolved_refs[0] if resolved_refs else ""
             if raw_ref_image and not ref_image and not unique_raw:
                 return web.json_response({"error": "invalid_ref_image"}, status=400)
             selected_reference = {}
             if ref_image:
                 selected_reference = (
-                    self._reference_profile_for_value(raw_ref_image)
+                    self._reference_profile_for_value(selected_raw_reference)
                     or self._reference_profile_for_value(ref_image)
-                    or self._wardrobe_reference_for_value(raw_ref_image)
+                    or self._wardrobe_reference_for_value(selected_raw_reference)
                     or self._wardrobe_reference_for_value(ref_image)
+                    or self._xiaohongshu_reference_for_value(selected_raw_reference)
+                    or self._xiaohongshu_reference_for_value(ref_image)
                 )
                 if selected_reference and not selected_reference.get("path"):
                     selected_reference["path"] = ref_image
@@ -10794,6 +11842,16 @@ JSON 格式：
         except Exception as e:
             logger.error(f"Custom generate error: {e}")
             return web.json_response({"error": str(e)}, status=500)
+        finally:
+            for filename in temporary_xiaohongshu_filenames:
+                try:
+                    self._delete_xiaohongshu_reference_file(filename)
+                except OSError as exc:
+                    logger.warning(
+                        "Cleanup temporary Xiaohongshu reference failed: %s (%s)",
+                        filename,
+                        exc,
+                    )
 
     def _delete_cleanup_candidate(self, filename: str, errors: list) -> Optional[int]:
         """Delete one cleanup candidate's file, entry, metadata, and versions.

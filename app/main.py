@@ -60,7 +60,7 @@ from outfit_plan_edit import (
 from web_server import GalleryServer
 from store import ImageMetadataStore, ScheduleStore
 from text_repair import repair_mojibake_text
-from zhuzhu.core import build_caption_fallback
+from zhuzhu.core import build_caption_fallback, build_caption_for_image
 from characters import (
     LOCAL_CHARACTER_SOURCE,
     build_character_image_prompt,
@@ -72,6 +72,7 @@ from characters import (
 from settings import (
     DEFAULT_PHOTO_REALISM_FLOOR,
     DEFAULT_QUALITY_PREFIX,
+    XIAOHONGSHU_OUTFIT_REFERENCE_MARKER,
     api_keys_path,
     apply_network_env,
     auto_push_agent,
@@ -100,6 +101,7 @@ CAPTION_DELAY_SECONDS = 3
 WECHAT_CAPTION_DELAY_SECONDS = 45
 WECHAT_SEND_TIMEOUT_SECONDS = 90
 PHOTO_JOB_INFLIGHT_STALE_GRACE_SECONDS = 120
+CUSTOM_VISUAL_CAPTION_TIMEOUT_SECONDS = 60
 WECHAT_RETRY_DELAYS_SECONDS = (60, 180)
 WECHAT_COOLDOWN_BUFFER_SECONDS = 15
 PHOTO_JOB_MISFIRE_GRACE_SECONDS = 10 * 60
@@ -357,6 +359,9 @@ class PortraitGalleryApp:
         self.web_server.on_photo_quota_snapshot = self._photo_quota_snapshot
         self.web_server.on_update_photo_plan = self.update_photo_plan
         self.web_server.on_update_outfit_plan = self.update_outfit_plan
+        self.web_server.on_validate_xiaohongshu_outfit = (
+            self.scheduler_gen.select_xiaohongshu_outfit_image
+        )
         self.web_server.on_reroll_image = self.reroll_image
         self.web_server.on_edit_image = self.edit_image
 
@@ -376,6 +381,8 @@ class PortraitGalleryApp:
         self._hermes_send_cooldown_until = 0.0
         self._last_delivery_error = ""
         self._schedule_refresh_task: Optional[asyncio.Task] = None
+        self._custom_caption_tasks: set[asyncio.Task] = set()
+        self.web_server.app.on_cleanup.append(self._cleanup_custom_caption_tasks)
         self._recover_orphaned_generated_photos()
 
     def _now(self) -> datetime:
@@ -410,6 +417,94 @@ class PortraitGalleryApp:
                 include_wardrobe=include_wardrobe,
             ),
         )
+
+    async def _xiaohongshu_schedule_generation_reference(
+        self,
+        schedule_date: str,
+        daily: dict,
+        *,
+        force: bool = False,
+        prepared_reference: Optional[dict] = None,
+    ) -> tuple[dict, list[str]]:
+        """Return ordered outfit/identity refs when daily XHS mode is ready."""
+        web_server = getattr(self, "web_server", None)
+        ensure = getattr(web_server, "ensure_xiaohongshu_schedule_reference", None)
+        identity_selector = getattr(web_server, "_preferred_xiaohongshu_identity_reference", None)
+        if not asyncio.iscoroutinefunction(ensure) or not callable(identity_selector):
+            return {}, []
+        reference = dict(prepared_reference or {})
+        if not reference:
+            reference = await ensure(schedule_date, daily, force=force)
+        outfit_path = str((reference or {}).get("path") or "").strip()
+        identity_path = str(identity_selector("") or "").strip()
+        if not outfit_path or not identity_path or not os.path.isfile(identity_path):
+            if outfit_path and not identity_path:
+                logger.warning("小红书日程模式缺少脸部特写，回退原参考图")
+            return {}, []
+        return reference, [outfit_path, identity_path]
+
+    async def _prepare_xiaohongshu_schedule_reference(
+        self,
+        schedule_date: str,
+        *,
+        force: bool = True,
+    ) -> tuple[dict, str]:
+        """Choose a broad keyword and download the real outfit before schedule generation."""
+        web_server = getattr(self, "web_server", None)
+        enabled = getattr(web_server, "xiaohongshu_schedule_enabled", None)
+        ensure = getattr(web_server, "ensure_xiaohongshu_schedule_reference", None)
+        existing_selector = getattr(web_server, "_xiaohongshu_schedule_reference", None)
+        keyword_generator = getattr(self.scheduler_gen, "generate_xiaohongshu_search_query", None)
+        if not callable(enabled) or not enabled():
+            return {}, ""
+        if not asyncio.iscoroutinefunction(ensure) or not asyncio.iscoroutinefunction(keyword_generator):
+            logger.warning("小红书日程前置选图接口不可用，回退原日程生成")
+            return {}, ""
+        if not force and callable(existing_selector):
+            existing = dict(existing_selector(schedule_date) or {})
+            if existing.get("path"):
+                existing_query = str(existing.get("query") or "").strip()
+                reused = await ensure(
+                    schedule_date,
+                    {
+                        "date": schedule_date,
+                        "xiaohongshu_search_query": existing_query,
+                    },
+                    force=False,
+                )
+                return dict(reused or existing), existing_query
+        # Keep a failed selection's pending query stable across process restarts
+        # and retries. A timeout must never silently turn a specific style into
+        # a generic "穿搭" search.
+        pending_query = ""
+        schedule_store = getattr(web_server, "xiaohongshu_schedule_store", None)
+        if force and schedule_store is not None and callable(getattr(schedule_store, "load", None)):
+            try:
+                pending_query = str(schedule_store.load().get("pending_query") or "").strip()
+            except Exception:
+                pending_query = ""
+        keyword = pending_query or str(await keyword_generator() or "").strip()
+        if not keyword:
+            logger.warning("小红书日程搜索词为空，回退原日程生成")
+            return {}, ""
+        reference = await ensure(
+            schedule_date,
+            {
+                "date": schedule_date,
+                "xiaohongshu_search_query": keyword,
+            },
+            force=force,
+        )
+        if not reference:
+            logger.warning("小红书真人穿搭未选中，回退原日程生成: query=%s", keyword)
+            return {}, keyword
+        logger.info(
+            "小红书真人穿搭已先于日程准备: date=%s query=%s title=%s",
+            schedule_date,
+            keyword,
+            reference.get("title") or reference.get("label") or "",
+        )
+        return reference, keyword
 
     @staticmethod
     def _selected_reference_metadata(selected_reference: dict) -> dict:
@@ -768,8 +863,18 @@ class PortraitGalleryApp:
 
     async def generate_and_save(self) -> DailyEntry:
         """生成日程 → 生图 → 保存"""
-        # 1. 生成日程
-        entry = await self.scheduler_gen.generate_today()
+        # 1. 小红书模式先选真人穿搭，再让视觉 LLM 围绕该穿搭生成日程。
+        schedule_date = self._today().isoformat()
+        prepared_xiaohongshu_reference, xiaohongshu_search_query = (
+            await self._prepare_xiaohongshu_schedule_reference(schedule_date, force=True)
+        )
+        schedule_kwargs = {}
+        if prepared_xiaohongshu_reference.get("path"):
+            schedule_kwargs = {
+                "outfit_reference_path": prepared_xiaohongshu_reference["path"],
+                "xiaohongshu_search_query": xiaohongshu_search_query,
+            }
+        entry = await self.scheduler_gen.generate_today(**schedule_kwargs)
         if not entry or entry.status != "ok" or entry.source == "fallback":
             logger.error("日程生成失败")
             if entry and entry.source != "fallback":
@@ -781,6 +886,14 @@ class PortraitGalleryApp:
         # 先保存 date-key 日程；后续图片条目会去掉全天计划字段，避免卡片重复承载大块日程。
         save_schedule_entry(self.data_dir, entry)
 
+        xiaohongshu_reference, xiaohongshu_refs = {}, []
+        if prepared_xiaohongshu_reference:
+            xiaohongshu_reference, xiaohongshu_refs = await self._xiaohongshu_schedule_generation_reference(
+                entry.date,
+                entry.to_dict(),
+                prepared_reference=prepared_xiaohongshu_reference,
+            )
+
         if self._is_photo_quiet_now():
             logger.info("当前为 03:00-06:00 生图静默时段，只保存日程并恢复后续动态任务")
             await self._schedule_dynamic_photos(entry.schedule, entry.date)
@@ -789,22 +902,26 @@ class PortraitGalleryApp:
         # 2. 生成图片
         selected_reference = {}
         if entry.prompt and entry.status == "ok":
-            selected_reference = await self._select_reference_for_generation({
-                "source": "daily_initial",
-                "outfit_style": entry.outfit_style,
-                "outfit": entry.outfit,
-                "reference_query": entry.reference_query,
-                "prompt": entry.prompt,
-                "schedule": entry.schedule,
-                "schedule_details": entry.schedule_details,
-            })
+            selected_reference = xiaohongshu_reference
+            if not selected_reference:
+                selected_reference = await self._select_reference_for_generation({
+                    "source": "daily_initial",
+                    "outfit_style": entry.outfit_style,
+                    "outfit": entry.outfit,
+                    "reference_query": entry.reference_query,
+                    "prompt": entry.prompt,
+                    "schedule": entry.schedule,
+                    "schedule_details": entry.schedule_details,
+                })
             filename = await self.image_gen.generate_for_outfit(
                 entry.prompt,
                 entry.outfit_style,
                 entry.base_style,
                 ref_image=selected_reference.get("path", ""),
+                ref_images=xiaohongshu_refs or None,
                 no_auto_style=not bool(selected_reference.get("path")),
                 size=schedule_image_size(self.config),
+                xiaohongshu_outfit_reference=bool(xiaohongshu_refs),
             )
             if filename:
                 entry.image_filename = filename
@@ -892,6 +1009,25 @@ class PortraitGalleryApp:
             ordered_refs.append(path)
         if ordered_refs and not ref_path:
             ref_path = ordered_refs[0]
+        source = str(selected_reference.get("source") or "").strip().lower()
+        first_ref = str(ordered_refs[0] if ordered_refs else "").replace("\\", "/").lower()
+        xiaohongshu_identity_mode = (
+            len(ordered_refs) > 1
+            and (source == "xiaohongshu" or "/xiaohongshu/" in first_ref)
+        )
+        if xiaohongshu_identity_mode and not pure:
+            # The face image is authoritative here, so do not inject generic
+            # appearance cues such as "expressive eyes" that reshape it.
+            generation_prompt = self._build_light_custom_prompt(
+                user_prompt,
+                shot_prompt,
+                include_identity=False,
+            )
+        generation_prompt = self._apply_custom_reference_role_guard(
+            generation_prompt,
+            ordered_refs,
+            selected_reference,
+        )
 
         kwargs = {}
         if ref_path:
@@ -920,21 +1056,7 @@ class PortraitGalleryApp:
             return DailyEntry(date=today_str, outfit="生成失败", status="failed")
 
         caption = str(api_caption or "").strip() if entry_source == "hermes_api" else ""
-        if entry_source != "hermes_api" and not caption:
-            persona = load_runtime_persona(self.config, self.data_dir)
-            character_name = persona.get("name") or "角色"
-            prompt_hint = re.sub(r"\s+", " ", user_prompt or "").strip(" ，,。.!！?")
-            if len(prompt_hint) > 24:
-                prompt_hint = prompt_hint[:24].rstrip(" ，,。.!！?") + "..."
-            caption_templates = [
-                f"顺着「{prompt_hint or '这个念头'}」站进场景里时，{character_name}心里忽然安静了一点。",
-                f"镜头的距离刚好留出一点呼吸，{character_name}也跟着慢慢放松下来。",
-                f"这一刻像从描述里慢慢走出来，{character_name}只想把脚步放轻一点。",
-                f"没有太多刻意安排，{character_name}只是顺着当下的感觉停了一小会儿。",
-            ]
-            caption = caption_templates[
-                sum(ord(ch) for ch in f"{filename}|{user_prompt}|{shot_label}") % len(caption_templates)
-            ]
+        caption_status = "ready" if caption else ("pending" if entry_source != "hermes_api" else "")
 
         display_prompt = str(api_description or "").strip()
         if not display_prompt:
@@ -947,6 +1069,7 @@ class PortraitGalleryApp:
             schedule="",
             prompt=generation_prompt,
             caption=caption,
+            caption_status=caption_status,
             image_filename=filename,
             image_path=f"/images/{filename}",
             status="ok",
@@ -959,7 +1082,12 @@ class PortraitGalleryApp:
             custom_ref_mode=custom_ref_mode,
         )
         save_schedule_entry(self.data_dir, entry)
-        self._update_image_metadata_caption(filename, caption, display_prompt)
+        self._update_image_metadata_caption(
+            filename,
+            caption,
+            display_prompt,
+            caption_status=caption_status,
+        )
         if ref_path or selected_reference:
             self._save_generation_reference_metadata(
                 filename,
@@ -967,6 +1095,8 @@ class PortraitGalleryApp:
                 selected_reference,
                 reference_mode=str(selected_reference.get("selection_mode") or "custom_reference"),
             )
+        if caption_status == "pending":
+            self._start_custom_image_caption(filename)
         logger.info(f"自定义生图成功: {filename}")
         return entry
 
@@ -1041,7 +1171,176 @@ class PortraitGalleryApp:
             return appearance[:120].rstrip(" ,.;")
         return ", ".join(parts)
 
-    def _build_light_custom_prompt(self, user_prompt: str, shot_prompt: str = "") -> str:
+    def _configured_custom_body_profile(self) -> str:
+        """Extract the configured body traits without overriding a face reference."""
+        persona = load_runtime_persona(self.config, self.data_dir)
+        appearance = re.sub(r"\s+", " ", str(persona.get("appearance") or "")).strip()
+        if not appearance:
+            character = self.config.get("character") if isinstance(self.config.get("character"), dict) else {}
+            appearance = re.sub(r"\s+", " ", str((character or {}).get("appearance") or "")).strip()
+        if not appearance:
+            return "natural adult body proportions"
+
+        english_tokens = (
+            "body", "figure", "physique", "build", "proportion", "height",
+            "tall", "petite", "short", "slender", "slim", "lean", "athletic",
+            "curvy", "shoulder", "waist", "hip", "torso", "leg", "chest",
+            "bust",
+        )
+        chinese_tokens = (
+            "身材", "体型", "体态", "比例", "身高", "高挑", "娇小", "纤细",
+            "苗条", "匀称", "健美", "肩", "腰", "臀", "腿", "躯干", "胸",
+        )
+        parts: list[str] = []
+        for chunk in re.split(r"[,.;，。；]", appearance):
+            clause = chunk.strip(" .，,;；")
+            if not clause:
+                continue
+            low = clause.lower()
+            has_measurement = bool(re.search(r"\b\d{3}\s*cm\b", low))
+            if (
+                has_measurement
+                or any(token in low for token in english_tokens)
+                or any(token in clause for token in chinese_tokens)
+            ):
+                parts.append(clause)
+            if len(parts) >= 8:
+                break
+        return ", ".join(parts)[:600] if parts else "natural adult body proportions"
+
+    async def _generate_custom_image_caption(self, filename: str) -> str:
+        """Let the vision LLM caption the result without exposing the generation prompt."""
+        image_path = os.path.join(
+            str(getattr(self.image_gen, "output_dir", "") or ""),
+            os.path.basename(str(filename or "")),
+        )
+        try:
+            if not image_path or not os.path.isfile(image_path):
+                raise FileNotFoundError(image_path)
+            loop = asyncio.get_running_loop()
+            caption = await loop.run_in_executor(
+                None,
+                lambda: build_caption_for_image(
+                    "custom",
+                    image_path,
+                    request_timeout=CUSTOM_VISUAL_CAPTION_TIMEOUT_SECONDS,
+                    llm_attempts=1,
+                    require_image=True,
+                    allow_fallback=False,
+                ),
+            )
+            caption = repair_mojibake_text(caption).strip()
+            if caption:
+                return caption
+        except Exception as exc:
+            logger.warning("自定义生图视觉配文生成失败: %s", exc)
+        return ""
+
+    def _start_custom_image_caption(self, filename: str) -> asyncio.Task:
+        task = asyncio.create_task(self._complete_custom_image_caption(filename))
+        tasks = getattr(self, "_custom_caption_tasks", None)
+        if tasks is None:
+            tasks = set()
+            self._custom_caption_tasks = tasks
+        tasks.add(task)
+
+        def _done(completed: asyncio.Task) -> None:
+            tasks.discard(completed)
+            if completed.cancelled():
+                return
+            try:
+                completed.result()
+            except Exception as exc:
+                logger.error("自定义生图后台视觉配文异常: %s", exc)
+
+        task.add_done_callback(_done)
+        return task
+
+    async def _complete_custom_image_caption(self, filename: str) -> None:
+        caption = await self._generate_custom_image_caption(filename)
+        status = "ready" if caption else "failed"
+        self._persist_custom_caption_state(filename, caption, status)
+        if caption:
+            logger.info("自定义生图视觉配文已写回: %s", filename)
+        else:
+            logger.warning("自定义生图视觉配文失败，不使用通用兜底: %s", filename)
+
+    def _persist_custom_caption_state(self, filename: str, caption: str, status: str) -> None:
+        filename = os.path.basename(str(filename or "").strip())
+        if not filename:
+            return
+        repaired_caption = repair_mojibake_text(caption).strip()
+
+        def _update_schedule(all_data):
+            entry = all_data.get(filename)
+            if not isinstance(entry, dict):
+                return all_data
+            entry["caption"] = repaired_caption
+            entry["caption_status"] = status
+            return all_data
+
+        try:
+            ScheduleStore(self.data_dir).update(_update_schedule)
+        except Exception as exc:
+            logger.error("更新自定义生图配文状态失败: %s, %s", filename, exc)
+        self._update_image_metadata_caption(
+            filename,
+            repaired_caption,
+            caption_status=status,
+        )
+
+    async def _cleanup_custom_caption_tasks(self, _app) -> None:
+        tasks = [task for task in getattr(self, "_custom_caption_tasks", set()) if not task.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        getattr(self, "_custom_caption_tasks", set()).clear()
+
+    def _apply_custom_reference_role_guard(
+        self,
+        prompt: str,
+        refs: list[str],
+        selected_reference: dict,
+    ) -> str:
+        """Assign Xiaohongshu, face, and configured-body references explicitly."""
+        source = str((selected_reference or {}).get("source") or "").strip().lower()
+        first_ref = str(refs[0] if refs else "").replace("\\", "/").lower()
+        is_xiaohongshu = source == "xiaohongshu" or "/xiaohongshu/" in first_ref
+        if len(refs) < 2 or not is_xiaohongshu:
+            return prompt
+
+        body_profile = self._configured_custom_body_profile()
+        guard = (
+            f"{XIAOHONGSHU_OUTFIT_REFERENCE_MARKER} Strict reference-role assignment. "
+            "Image 1 is used ONLY for outfit design, garment details, colors, fabric and layering, "
+            "accessories, hairstyle styling, pose and body posture, hand gestures, props, scene, "
+            "lighting, camera angle, framing, and composition. "
+            "Image 1 is NOT a source for facial identity, body shape, height, shoulder width, torso, "
+            "bust, waist, hips, leg shape, or anatomical proportions. "
+            "Image 2 is the sole and authoritative facial identity source. Treat everything "
+            "outside Image 2's facial region as transparent and nonexistent. Never copy its "
+            "background, walls, furniture, venue, props, lighting, color palette, perspective, "
+            "framing, or composition. The target background must follow the user's requested "
+            "scene first, then Image 1 when no scene is requested, and must never come from "
+            "Image 2. Preserve its exact, "
+            "recognizable eyes, eyebrows, nose, lips, face shape, and facial proportions. "
+            "Do not average or blend the face with Image 1, and do not enlarge the eyes, sharpen "
+            "the chin, beautify the face, or turn it into a generic influencer face. Image 2 and "
+            "later identity references are used ONLY for facial identity; do not copy their "
+            "clothing, body shape, pose, scene, or camera treatment. "
+            f"The Gallery configured body profile is the ONLY source for the target physique: {body_profile}. "
+            "Re-tailor the outfit from Image 1 naturally onto that configured body. Never inherit or "
+            "blend either reference person's body silhouette."
+        )
+        return f"{prompt.rstrip()} {guard}".strip()
+
+    def _build_light_custom_prompt(
+        self,
+        user_prompt: str,
+        shot_prompt: str = "",
+        include_identity: bool = True,
+    ) -> str:
         """Build a short final custom prompt.
 
         Prefer scene first + compact identity + thin realism floor. Avoid the
@@ -1050,7 +1349,7 @@ class PortraitGalleryApp:
         """
         scene = re.sub(r"\s+", " ", str(user_prompt or "")).strip()
         camera = re.sub(r"\s+", " ", str(shot_prompt or "")).strip()
-        identity = self._compact_custom_appearance()
+        identity = self._compact_custom_appearance() if include_identity else ""
         floor = re.sub(r"\s+", " ", str(DEFAULT_PHOTO_REALISM_FLOOR or "")).strip()
 
         parts: list[str] = []
@@ -1553,7 +1852,13 @@ class PortraitGalleryApp:
         except Exception as e:
             logger.error("移除旧图片元数据失败: %s, %s", filename, e)
 
-    def _update_image_metadata_caption(self, filename: str, caption: str, display_outfit: str = ""):
+    def _update_image_metadata_caption(
+        self,
+        filename: str,
+        caption: str,
+        display_outfit: str = "",
+        caption_status: str = "",
+    ):
         if not filename:
             return
         try:
@@ -1565,6 +1870,8 @@ class PortraitGalleryApp:
                 if not isinstance(entry, dict):
                     return metadata
                 entry["caption"] = repaired_caption
+                if caption_status:
+                    entry["caption_status"] = caption_status
                 if clean_display_outfit:
                     entry["display_outfit"] = clean_display_outfit
                     entry["outfit_description"] = clean_display_outfit
@@ -2606,8 +2913,18 @@ class PortraitGalleryApp:
 
     async def _refresh_schedule_impl(self):
         """Regenerate today's schedule and rebuild dynamic photo jobs."""
-        # 生成新日程
-        entry = await self.scheduler_gen.generate_today()
+        # 小红书模式先选真人穿搭，再让视觉 LLM 依据图片重写日程。
+        schedule_date = self._today().isoformat()
+        prepared_xiaohongshu_reference, xiaohongshu_search_query = (
+            await self._prepare_xiaohongshu_schedule_reference(schedule_date, force=False)
+        )
+        schedule_kwargs = {}
+        if prepared_xiaohongshu_reference.get("path"):
+            schedule_kwargs = {
+                "outfit_reference_path": prepared_xiaohongshu_reference["path"],
+                "xiaohongshu_search_query": xiaohongshu_search_query,
+            }
+        entry = await self.scheduler_gen.generate_today(**schedule_kwargs)
         
         # LLM 不通时 scheduler 会返回 fallback；刷新按钮不应因此覆盖已有可用日程。
         if not entry or entry.source == "fallback" or entry.status != "ok":
@@ -4349,25 +4666,34 @@ class PortraitGalleryApp:
         else:
             # Same backward-compatibility rule as the slot helper above.
             daily_entry = self._today_schedule_entry()
-        selected_reference = await self._select_reference_for_generation({
-            "source": "cron",
-            "theme": theme,
-            "schedule_time": schedule_time,
-            "activity": activity,
-            "outfit_style": daily_entry.get("outfit_style", ""),
-            "outfit": daily_entry.get("outfit", ""),
-            "reference_query": daily_entry.get("reference_query", ""),
-            "prompt": daily_entry.get("prompt", ""),
-            "schedule": daily_entry.get("schedule", ""),
-            "schedule_prompt": daily_entry.get("schedule_prompt", ""),
-            "schedule_details": daily_entry.get("schedule_details", []),
-        })
+        selected_reference, xiaohongshu_refs = await self._xiaohongshu_schedule_generation_reference(
+            resolved_schedule_date,
+            daily_entry,
+        )
+        if not selected_reference:
+            selected_reference = await self._select_reference_for_generation({
+                "source": "cron",
+                "theme": theme,
+                "schedule_time": schedule_time,
+                "activity": activity,
+                "outfit_style": daily_entry.get("outfit_style", ""),
+                "outfit": daily_entry.get("outfit", ""),
+                "reference_query": daily_entry.get("reference_query", ""),
+                "prompt": daily_entry.get("prompt", ""),
+                "schedule": daily_entry.get("schedule", ""),
+                "schedule_prompt": daily_entry.get("schedule_prompt", ""),
+                "schedule_details": daily_entry.get("schedule_details", []),
+            })
         if selected_reference.get("path"):
             cmd.extend(["--ref-image", selected_reference["path"]])
+            if xiaohongshu_refs:
+                cmd.extend(["--ref-images", ",".join(xiaohongshu_refs)])
+                cmd.append("--xiaohongshu-outfit-reference")
             logger.info(
-                "定时生图选择参考图: %s mode=%s",
+                "定时生图选择参考图: %s mode=%s refs=%s",
                 selected_reference.get("label") or selected_reference.get("filename"),
                 selected_reference.get("selection_mode", ""),
+                len(xiaohongshu_refs) if xiaohongshu_refs else 1,
             )
         else:
             cmd.append("--no-auto-style")
