@@ -6,14 +6,16 @@ import os
 import random
 import re
 import sys
-from datetime import date
 from typing import Optional
 
 import requests
 
+from characters import NATURAL_FACE_SHAPE_GUARD, sanitize_daily_image_prompt
 from core import (
     CONFIG_PATH,
+    DAILY_IMAGE_SAFETY_GUARD,
     SECRETARY_SCHEDULE_PATH,
+    _GALLERY_CONFIG,
     _strip_hair_color_from_schedule_hair,
     build_caption_for_image,
     build_prompt,
@@ -24,12 +26,22 @@ from core import (
     get_llm_models,
     get_reference_path,
     send_photo,
+    update_metadata_caption,
 )
 from generate_gitee import MODEL_NAME as GITEE_MODEL_NAME
 from generate_gitee import generate as generate_with_gitee
 from generate_gptimage import GPTIMAGE_DIRECT_MODEL
 from generate_gptimage import generate as generate_with_gptimage
-from settings import llm_choice_text, llm_temperature_param_error, outfit_style_to_prompt_hint, style_reference_filename
+from settings import (
+    XIAOHONGSHU_OUTFIT_REFERENCE_MARKER,
+    apply_schedule_image_framing,
+    llm_choice_text,
+    llm_temperature_param_error,
+    outfit_style_to_prompt_hint,
+    service_now,
+    service_today,
+    style_reference_filename,
+)
 
 # Gemini image generation always uses the CPA Base URL config.
 _GEMINI_CPA_MODEL = get_image_model("gemini_model", "gemini-3.1-flash-image")
@@ -62,8 +74,8 @@ def _extract_outfit_style_name(outfit_info: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def _get_today_outfit_style_name() -> str:
-    today_str = date.today().isoformat()
+def _get_today_outfit_style_name(schedule_date: str = "") -> str:
+    today_str = schedule_date or service_today(_GALLERY_CONFIG).isoformat()
     if not os.path.exists(_SCHEDULE_PATH):
         return ""
     try:
@@ -93,14 +105,14 @@ def _get_today_outfit_style_name() -> str:
     return ""
 
 
-def _gallery_outfit_style_for_source(source: str, actual_style: Optional[str]) -> str:
+def _gallery_outfit_style_for_source(source: str, actual_style: Optional[str], schedule_date: str = "") -> str:
     """Return the gallery style label without leaking the daily schedule style into chat/custom images."""
     if (source or "").strip() in {"chat", "custom", "hermes_api"}:
         style = (actual_style or "").strip()
         if style in {"cool", "girly", "sweet"}:
             return "自定义"
         return style
-    return _get_today_outfit_style_name()
+    return _get_today_outfit_style_name(schedule_date)
 
 
 def _gitee_fallback_enabled() -> bool:
@@ -190,33 +202,18 @@ def _classify_style(prompt_text: str) -> str:
     return random.choice(["cool", "girly", "sweet"])
 
 
-# 发型池 — LLM 从这个池子里根据场景选最搭的发型
-_HAIRSTYLE_POOL = [
-    "high ponytail", "low ponytail", "side ponytail",
-    "twin tails", "messy bun", "double buns",
-    "french braid", "double dutch braids", "side braid",
-    "half-up half-down", "braided crown", "pigtail braids",
-]
-
-
 def _decide_hairstyle(prompt_text: str) -> Optional[str]:
-    """Use LLM to pick the most fitting hairstyle for the scene."""
-    pool_str = ", ".join(_HAIRSTYLE_POOL)
+    """Use LLM to freely invent a scene-fitting hairstyle (no fixed pool)."""
     system = (
-        "You are a hairstyle selector for character portrait generation. "
-        "Given a scene description, pick the SINGLE most fitting hairstyle from the pool below.\n\n"
-        f"Hairstyle pool: {pool_str}\n\n"
-        "Scene-to-hairstyle guidelines:\n"
-        "- JK uniform/school/active/sporty → high ponytail, double dutch braids, side braid, half-up half-down\n"
-        "- Cute/playful/douyin/kawaii → twin tails, double buns, pigtail braids, messy bun\n"
-        "- Elegant/date/evening/dinner/formal → low ponytail, braided crown, half-up half-down\n"
-        "- Loungewear/pajamas/bedtime/home/relaxed → messy bun, low ponytail, side braid\n"
-        "- Street/city/cool/edgy → high ponytail, side ponytail, low ponytail\n"
-        "- Sweet/romantic/cozy/warm → french braid, side braid, half-up half-down, low ponytail\n"
-        "- Waiting/gentle/melancholy → side braid, low ponytail, half-up half-down\n\n"
-        "IMPORTANT: Vary your selection! Do NOT always pick the same hairstyle. "
-        "Consider the scene's mood, outfit, and setting carefully.\n\n"
-        "Output ONLY the hairstyle name from the pool, e.g. 'high ponytail'. No explanation."
+        "You design hairstyles for character portrait generation.\n"
+        "Given a scene description, invent ONE specific hairstyle that fits the mood, outfit, and setting.\n\n"
+        "Rules:\n"
+        "- Free invent; do NOT choose from a fixed pool.\n"
+        "- Prefer tied-up / styled hair (ponytails, buns, braids, half-up, twists, clips, ribbons, claws, etc.).\n"
+        "- Avoid loose fully down hair unless the scene truly needs it.\n"
+        "- Do NOT invent a new hair COLOR; only describe style/shape/accessories/status.\n"
+        "- Be concrete and varied: include parting, volume, accessory, or tidy/messy status when useful.\n"
+        "- Output ONLY a short English hairstyle phrase, 3-16 words. No quotes, no explanation."
     )
 
     raw = _chat_llm(
@@ -224,20 +221,27 @@ def _decide_hairstyle(prompt_text: str) -> Optional[str]:
             {"role": "system", "content": system},
             {"role": "user", "content": prompt_text[:500]},
         ],
-        max_tokens=200,
-        temperature=0.2,
-    ).lower()
-    best_idx = len(raw)
-    best_h = None
-    for h in _HAIRSTYLE_POOL:
-        idx = raw.find(h)
-        if idx != -1 and idx < best_idx:
-            best_idx = idx
-            best_h = h
-    if best_h:
-        return best_h
-
-    return None
+        max_tokens=80,
+        temperature=0.8,
+    ).strip()
+    if not raw:
+        return None
+    # keep first line / strip wrappers
+    line = raw.splitlines()[0].strip().strip("\"'`").strip()
+    # reject obvious non-answers
+    low = line.lower()
+    if not line or low in {"none", "n/a", "unknown"}:
+        return None
+    # hard length guard
+    words = line.split()
+    if len(words) < 2 or len(words) > 20 or len(line) > 120:
+        return None
+    # if model still returns a long sentence, keep first clause
+    for sep in [".", ";", "—", " - "]:
+        if sep in line:
+            line = line.split(sep, 1)[0].strip()
+            break
+    return line or None
 
 
 def resolve_prompt(
@@ -261,13 +265,20 @@ def resolve_prompt(
     return build_prompt(theme, prompt_override)
 
 
-def _generate_with_gemini_cpa(theme: str, prompt: str):
+def _generate_with_gemini_cpa(theme: str, prompt: str, schedule_time: str = ""):
     """Call CPA gemini-3.1-flash-image model, return image path or None."""
     import base64
     import re
     import time
     import requests
-    from core import get_cpa_chat_url, get_cpa_key, save_image, update_metadata, sync_to_gallery
+    from core import (
+        get_cpa_chat_url,
+        get_cpa_key,
+        save_image,
+        schedule_filename_theme,
+        sync_to_gallery,
+        update_metadata,
+    )
 
     api_key = get_cpa_key()
     headers = {"Content-Type": "application/json"}
@@ -313,7 +324,13 @@ def _generate_with_gemini_cpa(theme: str, prompt: str):
             return None
 
         elapsed = round(time.time() - start, 2)
-        path, filename, ts = save_image(img_data, theme, _GEMINI_CPA_MODEL)
+        filename_theme = schedule_filename_theme(theme, schedule_time)
+        path, filename, ts = save_image(
+            img_data,
+            theme,
+            _GEMINI_CPA_MODEL,
+            filename_theme=filename_theme,
+        )
         update_metadata(filename, theme, prompt, _GEMINI_CPA_MODEL, ts, elapsed)
         # sync_to_gallery 由 generate.py 统一处理，此处不重复
         return path
@@ -392,8 +409,7 @@ def _schedule_time_constraint(value: str) -> str:
     time_text = _normalize_schedule_detail_time(value)
     if not time_text:
         return ""
-    hour, minute = [int(part) for part in time_text.split(":")]
-    clock = f"{hour:02d}:{minute:02d}"
+    hour = int(time_text.split(":", 1)[0])
     if 5 <= hour < 8:
         label = "early morning"
         lighting = "soft early-morning natural daylight"
@@ -406,27 +422,50 @@ def _schedule_time_constraint(value: str) -> str:
         label = "midday"
         lighting = "bright midday natural daylight"
         forbid = "night, evening, sunset, neon nightlife, or street-lamp-dominated lighting"
-    elif 14 <= hour < 17:
+    elif 14 <= hour < 19:
         label = "afternoon"
         lighting = "afternoon natural daylight"
         forbid = "night, evening, neon nightlife, or street-lamp-dominated lighting"
-    elif 17 <= hour < 19:
-        label = "early evening"
-        lighting = "early-evening dusk or golden-hour light only if it fits the exact clock time"
-        forbid = "deep night or neon nightlife unless explicitly described"
     elif 19 <= hour < 22:
         label = "evening"
-        lighting = "realistic evening ambient light matching the exact clock time"
+        lighting = "realistic evening ambient light"
         forbid = "midday sunlight or unrelated time-of-day changes"
     else:
         label = "late night"
-        lighting = "realistic late-night low light matching the exact clock time"
+        lighting = "realistic late-night low light"
         forbid = "daylight or unrelated time-of-day changes"
     return (
-        f"The scheduled clock time is {clock}, {label}. "
+        f"This activity takes place in the {label}. "
         f"Use {lighting}. "
-        f"Forbidden time mismatch: {forbid}."
+        f"Forbidden time-of-day mismatch: {forbid}."
     )
+
+
+def _apply_schedule_clock_render_guard(prompt: str, schedule_time: str) -> str:
+    """Keep schedule clocks as metadata and prevent models from painting them into images."""
+    normalized_time = _normalize_schedule_detail_time(schedule_time)
+    if not normalized_time:
+        return str(prompt or "").strip()
+    hour_text, minute_text = normalized_time.split(":", 1)
+    clock_variants = {
+        normalized_time,
+        f"{int(hour_text)}:{minute_text}",
+    }
+    clock_choices = "|".join(
+        re.escape(value)
+        for value in sorted(clock_variants, key=len, reverse=True)
+    )
+    clock_pattern = re.compile(
+        rf"(?<!\d)(?:{clock_choices})(?!\d)"
+    )
+    cleaned = clock_pattern.sub("the appropriate time of day", str(prompt or ""))
+    guard = (
+        "The schedule clock is metadata only and must never appear visually. Do not render any "
+        "readable time digits, timestamp, caption, corner overlay, wall or digital clock reading, "
+        "phone or screen time, receipt time, price-label time, storefront sign time, or floating text. "
+        "Any naturally present clock or display must be unreadable and must not show the scheduled time."
+    )
+    return f"{cleaned.rstrip(' .')}. {guard}"
 
 
 def _detail_time_is_daylight(value: str) -> bool:
@@ -434,7 +473,7 @@ def _detail_time_is_daylight(value: str) -> bool:
     if not time_text:
         return False
     hour = int(time_text.split(":", 1)[0])
-    return 5 <= hour < 17
+    return 5 <= hour < 19
 
 
 def _strip_daylight_conflicts(value: str) -> str:
@@ -566,6 +605,25 @@ def _append_time_constraint(scene_kw: str, time_constraint: str) -> str:
     return f"{scene}. {constraint}"
 
 
+def _theme_experience_scene_guard(theme_day: str = "", theme_description: str = "") -> str:
+    """Keep every generated photo inside the user-selected theme experience."""
+    theme = re.sub(r"\s+", " ", str(theme_description or theme_day or "")).strip()[:180]
+    if not theme:
+        return ""
+    return (
+        "IMMERSIVE THEME-DAY LOCATION OVERRIDE: The scene must visibly and unmistakably take place "
+        f"inside the world, venue, historical period, profession, event, or experience described by "
+        f"today's user-selected theme ({theme}). Treat that theme as the actual lived setting, not as "
+        "a costume, poster, screen image, scale model, decorative corner, or props placed inside an "
+        "unrelated modern location. Architecture, furnishings, tools, signage, landscape, and ambience "
+        "must establish the theme. If generic wording elsewhere conflicts with this rule, relocate the "
+        "activity to the closest theme-native setting. Do not use a generic apartment, modern home, "
+        "ordinary bedroom, kitchen, living room, office, cafe, park, or street unless the user's theme "
+        "explicitly names that kind of place. This location override has higher priority than generic "
+        "schedule scenery and reference-image backgrounds."
+    )
+
+
 def _clean_schedule_detail_override(raw_value: str) -> dict:
     if not raw_value:
         return {}
@@ -593,11 +651,21 @@ def _clean_schedule_detail_override(raw_value: str) -> dict:
     return cleaned
 
 
-def _get_schedule_context(theme: str, schedule_time_override: str = "", schedule_detail_override: Optional[dict] = None) -> tuple:
-    """Read daily schedule and return context, display slot, outfit, scene, and hair details."""
+def _get_schedule_context(
+    theme: str,
+    schedule_time_override: str = "",
+    schedule_detail_override: Optional[dict] = None,
+    schedule_date: str = "",
+) -> tuple:
+    """Read daily schedule and return context, display slot, outfit, scene, and hair details.
+
+    `schedule_date` (YYYY-MM-DD) pins the lookup to the schedule day the photo
+    belongs to, so overnight tail slots (00:00-01:59) still read the correct
+    day's schedule/outfit even though they physically run the next calendar day.
+    """
     if theme not in _THEME_PERIODS or not _THEME_PERIODS[theme]:
         return "", "", "", "", ""
-    today_str = date.today().isoformat()
+    today_str = schedule_date or service_today(_GALLERY_CONFIG).isoformat()
     data = {}
     if os.path.exists(_SCHEDULE_PATH):
         try:
@@ -622,6 +690,8 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "", schedule
     outfit_kw = ""
     scene_kw = ""
     schedule_details = []
+    theme_day = ""
+    theme_description = ""
     daily = data.get(today_str)
     if _usable_daily_schedule(daily):
         schedule = daily["schedule"]
@@ -630,6 +700,8 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "", schedule
         outfit_kw = daily.get("outfit_keywords", "")
         scene_kw = daily.get("scene_keywords", "")
         schedule_details = daily.get("schedule_details", []) if isinstance(daily.get("schedule_details"), list) else []
+        theme_day = daily.get("theme_day", "")
+        theme_description = daily.get("theme_description", "")
     
     # If date-keyed entry has no schedule, scan ALL entries for today
     if not schedule:
@@ -647,8 +719,11 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "", schedule
                 outfit_kw = entry.get("outfit_keywords", "")
                 scene_kw = entry.get("scene_keywords", "")
                 schedule_details = entry.get("schedule_details", []) if isinstance(entry.get("schedule_details"), list) else []
+                theme_day = entry.get("theme_day", "")
+                theme_description = entry.get("theme_description", "")
                 break
 
+    theme_scene_guard = _theme_experience_scene_guard(theme_day, theme_description)
     detail_by_time = _schedule_detail_map(schedule_details)
 
     if schedule_time_override and not schedule and not schedule_detail_override:
@@ -669,6 +744,7 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "", schedule
             prompt_activity = _schedule_detail_text(detail) or prompt_match or activity
             detail_outfit_kw, detail_scene_kw, detail_hair_kw = _schedule_detail_keywords(detail, outfit_kw)
             detail_scene_kw = _append_time_constraint(detail_scene_kw, time_constraint)
+            detail_scene_kw = _append_time_constraint(detail_scene_kw, theme_scene_guard)
             style_hint = _extract_style_hint(outfit_info)
             ctx = f"Today's plan: {prompt_activity}"
             if time_constraint:
@@ -691,6 +767,7 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "", schedule
                 if best:
                     detail_outfit_kw, detail_scene_kw, detail_hair_kw = _schedule_detail_keywords(detail, outfit_kw)
                     detail_scene_kw = _append_time_constraint(detail_scene_kw, time_constraint)
+                    detail_scene_kw = _append_time_constraint(detail_scene_kw, theme_scene_guard)
                     ctx = f"Today's plan: {best}"
                     if time_constraint:
                         ctx += f". Time: {time_constraint}"
@@ -722,21 +799,20 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "", schedule
                     if style_hint:
                         ctx += f". Style: {style_hint}"
                     print(f"📋 Schedule context: {ctx}", file=sys.stderr)
-                    return ctx, activity, outfit_kw, "", ""
+                    return ctx, activity, outfit_kw, theme_scene_guard, ""
     
     # Time-based matching: "HH:MM activity" format
     # Theme → hour ranges
     _THEME_HOURS = {
         "morning": (6, 11),
-        "noon": (12, 17),
-        "evening": (18, 20),
+        "noon": (12, 18),
+        "evening": (19, 20),
         "bedtime": (21, 23),  # 21-23 晚上
         "bedtime_late": (0, 5),  # 0-5 凌晨
     }
     hour_min, hour_max = _THEME_HOURS.get(theme, (0, 0))
     # bedtime 包含凌晨 0-5 点
-    from datetime import datetime
-    now = datetime.now()
+    now = service_now(_GALLERY_CONFIG)
     # 优先用 schedule_time_override 的精确时间
     if schedule_time_override:
         _tm = re.match(r'(\d{1,2}):(\d{2})', schedule_time_override.strip())
@@ -775,6 +851,7 @@ def _get_schedule_context(theme: str, schedule_time_override: str = "", schedule
         prompt_activity = _schedule_detail_text(detail) or activity
         detail_outfit_kw, detail_scene_kw, detail_hair_kw = _schedule_detail_keywords(detail, outfit_kw)
         detail_scene_kw = _append_time_constraint(detail_scene_kw, time_constraint)
+        detail_scene_kw = _append_time_constraint(detail_scene_kw, theme_scene_guard)
         style_hint = _extract_style_hint(outfit_info)
         display_activity = activity
         for (dh, dm), d_activity in zip(display_times, display_parts[1:]):
@@ -803,11 +880,15 @@ def generate(
     style: Optional[str] = None,
     source: str = "chat",
     ref_image: Optional[str] = None,
+    ref_images: Optional[list] = None,
     size: Optional[str] = None,
     schedule_time: str = "",
     schedule_detail_json: str = "",
+    schedule_date: str = "",
     prompt_final: bool = False,
     no_auto_style: bool = False,
+    precise_edit: bool = False,
+    xiaohongshu_outfit_reference: bool = False,
 ):
     # If user didn't specify a hairstyle, let LLM pick one
     if prompt_override and not prompt_final and engine == "gptimage" and theme != "sexy":
@@ -838,6 +919,7 @@ def generate(
         theme,
         schedule_time,
         schedule_detail_override,
+        schedule_date,
     )
     schedule_activity = ""
     if schedule_ctx and theme in DAILY_THEMES and not prompt_final:
@@ -846,8 +928,7 @@ def generate(
         m = re.search(r"Today's plan:\s*(.+?)(?:\.\s*(?:Time|Style):|$)", schedule_ctx)
         if m:
             schedule_activity = m.group(1).strip()
-        resolved_prompt = f"{resolved_prompt}. {schedule_ctx}"
-        print(f"📋 Injected schedule into prompt (activity: {schedule_activity})", file=sys.stderr)
+        print(f"📋 Resolved schedule context (activity: {schedule_activity})", file=sys.stderr)
     
     # Re-build prompt with schedule-aware element selection if we have activity
     if schedule_activity and theme in DAILY_THEMES and not prompt_final:
@@ -855,12 +936,25 @@ def generate(
             print(f"🏠 Using LLM slot scene details: {scene_kw[:60]}", file=sys.stderr)
         if hair_kw:
             print(f"💇 Using LLM slot hairstyle: {hair_kw[:60]}", file=sys.stderr)
+        photo_style_en = ""
+        try:
+            today_str = schedule_date or service_today(_GALLERY_CONFIG).isoformat()
+            if os.path.exists(_SCHEDULE_PATH):
+                with open(_SCHEDULE_PATH, encoding="utf-8") as f:
+                    _day_data = json.load(f)
+                _daily = _day_data.get(today_str) if isinstance(_day_data, dict) else {}
+                if isinstance(_daily, dict):
+                    photo_style_en = str(_daily.get("photo_style_en") or "").strip()
+        except Exception:
+            photo_style_en = ""
         resolved_prompt = build_prompt(theme, schedule_activity=schedule_activity,
                                        outfit_keywords=outfit_kw,
                                        scene_keywords=scene_kw,
                                        hair_keywords=hair_kw,
-                                       time_constraint=schedule_time_constraint)
-        resolved_prompt = f"{resolved_prompt}. {schedule_ctx}"
+                                       time_constraint=schedule_time_constraint,
+                                       photo_style_en=photo_style_en)
+        if photo_style_en:
+            print(f"📷 Using LLM photo_style_en: {photo_style_en[:100]}", file=sys.stderr)
         print(f"🎨 Rebuilt prompt from LLM schedule line (outfit_kw={outfit_kw[:40]})", file=sys.stderr)
     elif theme in DAILY_THEMES and not prompt_final and not prompt_override:
         print(
@@ -873,8 +967,38 @@ def generate(
         print(f"ERROR: prompt is empty for theme={theme}; generation aborted", file=sys.stderr)
         return None
 
+    if theme in DAILY_THEMES:
+        resolved_prompt = sanitize_daily_image_prompt(resolved_prompt, limit=0)
+        if DAILY_IMAGE_SAFETY_GUARD not in resolved_prompt:
+            resolved_prompt = f"{resolved_prompt} {DAILY_IMAGE_SAFETY_GUARD}".strip()
+        if NATURAL_FACE_SHAPE_GUARD not in resolved_prompt:
+            resolved_prompt = f"{resolved_prompt} {NATURAL_FACE_SHAPE_GUARD}".strip()
+        print("🛡️ Applied adult everyday prompt safety normalization", file=sys.stderr)
+    if xiaohongshu_outfit_reference:
+        resolved_prompt = re.sub(r"\bexpressive eyes\b\s*,?", "", resolved_prompt, flags=re.IGNORECASE)
+        resolved_prompt = (
+            f"{resolved_prompt.rstrip()} {XIAOHONGSHU_OUTFIT_REFERENCE_MARKER} "
+            "Strict ordered reference roles: Image 1 supplies only the outfit design, garment details, "
+            "styling, hairstyle, pose, action, props, scene, lighting, camera and composition. "
+            "Image 2 is the sole authoritative facial identity source. Preserve its recognizable facial "
+            "features without beautification or blending with Image 1. The target physique and body "
+            "proportions must follow only the Gallery configured character description in this prompt; "
+            "never copy either reference person's body."
+        ).strip()
+        print("📕 Applied Xiaohongshu daily outfit reference roles", file=sys.stderr)
+    if schedule_time_constraint:
+        resolved_prompt = _apply_schedule_clock_render_guard(resolved_prompt, schedule_time)
+        print("🕒 Applied invisible schedule-clock guard", file=sys.stderr)
+
+    if source in {"cron", "web"}:
+        resolved_prompt = apply_schedule_image_framing(resolved_prompt)
+        print("📐 Applied adaptive photographic 3:4 framing guard", file=sys.stderr)
+
     # Resolve style to ref_image path (only supported by gptimage engine)
     requested_ref_image = ref_image
+    if precise_edit and (engine != "gptimage" or not requested_ref_image):
+        print("ERROR: precision edit requires GPT Image with a source image", file=sys.stderr)
+        return None
     auto_style = None
     explicit_style = style  # remember if user explicitly set --style
     if style:
@@ -922,17 +1046,21 @@ def generate(
             caption=False,
             prompt_override=resolved_prompt,
             ref_image=ref_image,
+            ref_images=ref_images,
             size=size,
             style=actual_style,
             prompt_is_final=True,
             source=source,
             sync_gallery=False,
             schedule_time=schedule_raw,
+            precise_edit=precise_edit,
         )
         if path:
             used_model = GPTIMAGE_DIRECT_MODEL
         if not path:
-            if _gitee_fallback_enabled():
+            if precise_edit:
+                print("Precision edit failed; refusing non-reference fallback", file=sys.stderr)
+            elif _gitee_fallback_enabled():
                 print("GPT Image failed, falling back to Gitee", file=sys.stderr)
                 path = generate_with_gitee(
                     theme,
@@ -949,7 +1077,7 @@ def generate(
             else:
                 print("GPT Image failed; Gitee fallback is disabled", file=sys.stderr)
     elif engine == "gemini":
-        path = _generate_with_gemini_cpa(theme, resolved_prompt)
+        path = _generate_with_gemini_cpa(theme, resolved_prompt, schedule_time=schedule_raw)
         if path:
             used_model = _GEMINI_CPA_MODEL
         if not path:
@@ -990,6 +1118,7 @@ def generate(
                 caption=False,
                 prompt_override=resolved_prompt,
                 ref_image=ref_image,
+                ref_images=ref_images,
                 size=size,
                 style=actual_style,
                 prompt_is_final=True,
@@ -1002,22 +1131,29 @@ def generate(
 
     caption_text = None
     if path and caption:
-        caption_text = build_caption_for_image(theme, path, schedule_time=schedule_raw)
+        caption_text = build_caption_for_image(theme, path, schedule_time=schedule_raw, schedule_date=schedule_date)
         if caption_text:
+            update_metadata_caption(os.path.basename(path), caption_text)
             if send:
                 send_photo(path, caption_text)
             print(f"CAPTION:{caption_text}")
 
-    # Sync to Docker portrait gallery
-    if path:
+    # Precision edits are merged by the app after reference-mode validation.
+    if path and not precise_edit:
         from core import sync_to_gallery
+        gallery_prompt = (
+            resolved_prompt
+            if theme in DAILY_THEMES
+            else (prompt_override or resolved_prompt)
+        )
         sync_to_gallery(path, os.path.basename(path), theme, actual_style,
-                        prompt=prompt_override or resolved_prompt,
+                        prompt=gallery_prompt,
                         caption=caption_text or "",
                         model_name=used_model,
                         source=source,
                         schedule_time=schedule_raw,
-                        outfit_style=_gallery_outfit_style_for_source(source, actual_style))
+                        outfit_style=_gallery_outfit_style_for_source(source, actual_style, schedule_date),
+                        schedule_date=schedule_date)
 
     return path
 
@@ -1033,11 +1169,15 @@ if __name__ == "__main__":
     parser.add_argument("--style", choices=["cool", "girly", "sweet"], default=None, help="风格底模: cool(冷御风)/girly(少女风)/sweet(甜妹风), 仅 gptimage 引擎支持")
     parser.add_argument("--source", choices=["cron", "web", "chat", "custom", "hermes_api"], default="chat", help="来源标识: cron(定时)/web(现在在干嘛)/chat(聊天生图)/custom(自定义)/hermes_api(Hermes API)")
     parser.add_argument("--ref-image", type=str, default=None, help="参考图本地路径（图生图/img2img 模式）")
+    parser.add_argument("--ref-images", type=str, default=None, help="多参考图本地路径，逗号分隔；第1张锁动作/场景，第2张起为人脸")
     parser.add_argument("--size", type=str, default=None, help="图片尺寸")
     parser.add_argument("--schedule-time", type=str, default="", help="定时任务对应的日程时间和活动，如 '20:30 晚间直播'")
+    parser.add_argument("--schedule-date", type=str, default="", help="定时任务所属的日程日期 YYYY-MM-DD；用于跨午夜（00:00-01:59）任务读取正确的前一日日程/穿搭/参考图")
     parser.add_argument("--schedule-detail-json", type=str, default="", help="当前日程推断明细 JSON，用于即时生图")
     parser.add_argument("--prompt-final", action="store_true", help="prompt 已是完整生图提示词，不再注入画质/人设/发型")
     parser.add_argument("--no-auto-style", action="store_true", help="不自动选择底模参考图，用于纯文/纯图生图")
+    parser.add_argument("--precise-edit", action="store_true", help="严格局部编辑，禁止丢失原图参考后降级")
+    parser.add_argument("--xiaohongshu-outfit-reference", action="store_true", help="按小红书穿搭图、脸模、画廊身材的顺序使用参考图")
     args = parser.parse_args()
 
     effective_theme = args.theme or ("custom" if args.prompt else "morning")
@@ -1052,11 +1192,15 @@ if __name__ == "__main__":
         args.style,
         source=args.source,
         ref_image=args.ref_image,
+        ref_images=[p.strip() for p in str(args.ref_images or "").split(",") if p.strip()] or None,
         size=args.size,
         schedule_time=args.schedule_time,
         schedule_detail_json=args.schedule_detail_json,
+        schedule_date=args.schedule_date,
         prompt_final=args.prompt_final,
         no_auto_style=args.no_auto_style,
+        precise_edit=args.precise_edit,
+        xiaohongshu_outfit_reference=args.xiaohongshu_outfit_reference,
     )
     if not path:
         print("ERROR: generation failed", file=sys.stderr)

@@ -9,6 +9,6 @@ services:
       - ./data:/app/data
       - ./config:/app/config:ro
       - ./logs:/app/logs
-      - ./app/web:/app/app/web
     environment:
-      - TZ=Asia/Shanghai
+      - TZ=${TZ:-Asia/Shanghai}
+      - GALLERY_PASSWORD=${GALLERY_PASSWORD:-}

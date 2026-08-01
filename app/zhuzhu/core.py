@@ -11,25 +11,30 @@ import shutil
 import sys
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
 import requests
-from PIL import Image, ImageOps
+from PIL import Image
 
 _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _APP_DIR not in sys.path:
     sys.path.insert(0, _APP_DIR)
 
-from store import ScheduleStore
+from store import ImageMetadataStore, LockedJsonDictStore, ScheduleStore
 from text_repair import repair_mojibake_text
+from characters import NATURAL_FACE_SHAPE_GUARD, sanitize_daily_image_prompt, sanitize_image_prompt
 from settings import (
+    DEFAULT_GITEE_IMAGE_URL,
+    DEFAULT_PHOTO_REALISM_FLOOR,
     DEFAULT_QUALITY_PREFIX,
     GENERIC_APPEARANCE,
     base_style_label,
     config_float,
     config_int,
+    configured_timezone,
     get_nested,
     image_request_timeout,
     llm_choice_text,
@@ -46,12 +51,19 @@ from settings import (
     resolve_data_dir,
     resolve_project_root,
     resolve_reference_dir,
+    service_now,
+    service_today,
     theme_style_default,
 )
 
-requests.packages.urllib3.disable_warnings()
-
 REQUEST_SESSION = requests.Session()
+
+DAILY_IMAGE_SAFETY_GUARD = (
+    "The subject is unmistakably an adult woman in her late twenties. "
+    "This is a non-sexual everyday lifestyle photograph. Her clothing is fully opaque, "
+    "secure, activity-appropriate daywear with a modest neckline and comfortable coverage. "
+    "Her pose, expression, and camera treatment are natural and focused on the scheduled task."
+)
 
 
 def _retry_without_temperature_if_needed(resp, payload: dict, post_func):
@@ -290,6 +302,18 @@ def get_cpa_chat_url() -> str:
 
 
 def get_image_model(key: str, default: str = "") -> str:
+    if key == "gitee_url" and not default:
+        default = DEFAULT_GITEE_IMAGE_URL
+    env_name = {
+        "gitee_url": "GITEE_API_URL",
+        "gitee_model": "GITEE_IMAGE_MODEL",
+        "gpt_base_url": "GPT_IMAGE_BASE_URL",
+        "gpt_model": "GPT_IMAGE_MODEL",
+    }.get(key, "")
+    if env_name:
+        env_value = str(os.getenv(env_name, "") or "").strip()
+        if env_value:
+            return env_value
     if os.path.exists(_API_KEYS_CONFIG_PATH):
         try:
             with open(_API_KEYS_CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -318,6 +342,80 @@ SEXY_APPEARANCE = str(get_nested(_GALLERY_CONFIG, "character.sexy_appearance", "
 
 QUALITY_PREFIX = str(get_nested(_GALLERY_CONFIG, "image_gen.quality_prefix", "") or DEFAULT_QUALITY_PREFIX).strip()
 SEXY_QUALITY_PREFIX = str(get_nested(_GALLERY_CONFIG, "image_gen.sexy_quality_prefix", "") or QUALITY_PREFIX).strip()
+PHOTO_REALISM_FLOOR = str(
+    get_nested(_GALLERY_CONFIG, "image_gen.photo_realism_floor", "") or DEFAULT_PHOTO_REALISM_FLOOR
+).strip()
+
+
+def _normalize_photo_style_en(value: str) -> str:
+    """Keep LLM photography language clean and free of character/outfit prose."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip(" .")
+    if not text:
+        return ""
+    blocked = (
+        "pink hair",
+        "dusty rose",
+        "hourglass",
+        "breasts",
+        "wearing",
+        "outfit",
+        "hairstyle",
+        "ponytail",
+        "chinese girl",
+        "18-year-old",
+    )
+    low = text.lower()
+    if any(token in low for token in blocked):
+        kept = []
+        for part in re.split(r"(?<=[.!?])\s+", text):
+            pl = part.lower()
+            if any(tok in pl for tok in blocked):
+                continue
+            if any(
+                key in pl
+                for key in (
+                    "photo",
+                    "light",
+                    "camera",
+                    "framing",
+                    "snapshot",
+                    "handheld",
+                    "skin",
+                    "color",
+                    "lens",
+                    "ambient",
+                    "candid",
+                    "composition",
+                )
+            ):
+                kept.append(part.strip())
+        text = " ".join(kept).strip()
+    replacements = (
+        (r"\bcinematic lighting\b", "natural ambient lighting"),
+        (r"\bcinematic color grade\b", "true-to-life color"),
+        (r"\bmasterpiece quality\b", ""),
+        (r"\bmasterpiece\b", ""),
+        (r"\bultra-realistic\b", "true-to-life"),
+        (r"\bphotorealistic\b", "true-to-life"),
+        (r"\bhdr glow\b", "natural exposure"),
+    )
+    for bad, good in replacements:
+        text = re.sub(bad, good, text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text).strip(" ,.")
+    return text[:500]
+
+
+def _resolve_quality_prefix(theme: str, photo_style_en: str = "") -> str:
+    """Prefer LLM day-level photo language; keep a thin realism floor."""
+    is_sexy = theme == "sexy"
+    if is_sexy:
+        return SEXY_QUALITY_PREFIX
+    style = _normalize_photo_style_en(photo_style_en)
+    if style:
+        floor = PHOTO_REALISM_FLOOR or DEFAULT_PHOTO_REALISM_FLOOR
+        return f"{style} {floor}".strip()
+    return QUALITY_PREFIX
+
 
 THEMES = {
     "morning": {
@@ -517,6 +615,26 @@ def _caption_activity(schedule_time: str = "") -> str:
     return text
 
 
+def _next_schedule_activity(schedule_time: str = "", schedule_date: str = "") -> str:
+    current = _normalize_schedule_slot_time(schedule_time)
+    if not current:
+        return ""
+    date_text = schedule_date or service_today(_GALLERY_CONFIG).isoformat()
+    context = _load_daily_schedule_context(date_text, schedule_time)
+    candidates = []
+    for line in str(context.get("schedule") or "").splitlines():
+        match = re.match(r"^\s*(\d{1,2}):(\d{2})\s+(.+)$", line)
+        if not match:
+            continue
+        clock = f"{int(match.group(1)):02d}:{int(match.group(2)):02d}"
+        if clock > current:
+            candidates.append((clock, match.group(3).strip()))
+    if not candidates:
+        return ""
+    clock, activity = min(candidates, key=lambda item: item[0])
+    return f"{clock} {activity}".strip()
+
+
 def _trim_caption_piece(text: str, limit: int = 28) -> str:
     cleaned = re.sub(r"\s+", " ", str(text or "")).strip(" ，,、；;。.!！?")
     if len(cleaned) <= limit:
@@ -588,76 +706,82 @@ def _caption_repeats_schedule(caption: str, schedule_time: str = "") -> bool:
     return long_piece_hits >= 2 or any(f"{piece}前后" in text or f"{piece}的时候" in text for piece in pieces)
 
 
-def _personalized_caption_fallback(theme: str, persona: dict, schedule_time: str = "") -> str:
+def _personalized_caption_fallback(theme: str, persona: dict, schedule_time: str = "", schedule_date: str = "") -> str:
     character = persona.get("name") or "角色"
     user_name = persona.get("user_name") or "你"
     activity = _caption_activity(schedule_time)
     if activity:
+        next_activity = _next_schedule_activity(schedule_time, schedule_date)
         activity_key = re.sub(r"\s+", "", activity)
         specific_templates = []
         if any(word in activity_key for word in ("歌会", "唱歌", "情歌", "练歌", "歌曲", "吉他曲", "曲目")):
             specific_templates.extend([
-                f"{character}先把歌单顺一遍，等会儿开播就不慌了。",
-                f"这首要是唱顺了，{character}今晚就算完成一件小事。",
-                f"{character}想先试试麦，别等开播了才发现声音不对。",
+                f"{character}先把这一段唱顺，眼前这首不留含糊。",
+                "节拍和换气再对一遍，这会儿只管把歌练稳。",
+                f"{character}把耳返听清楚，先专心处理这一首。",
             ])
         if any(word in activity_key for word in ("直播", "开播", "设备", "妆容", "灯光", "麦克风", "麦")):
             specific_templates.extend([
-                f"{character}先把灯光和麦检查好，等会儿开播就不慌了。",
-                "口红和眼妆再确认一下，开播前别漏掉小细节。",
-                f"{character}想先试一下设备，别等直播开始才手忙脚乱。",
+                f"{character}把灯光和麦逐项确认，先把手上的准备做稳。",
+                "口红、眼妆和镜头位置再看一遍，眼前的小细节别漏。",
+                f"{character}先专心试设备，把当前这一步检查清楚。",
             ])
         if any(word in activity_key for word in ("厨房", "牛排", "奶茶", "做饭", "晚餐", "甜点", "午餐", "早餐", "牛奶", "松饼")):
             specific_templates.extend([
-                f"{character}想先把台面收干净，等会儿吃饭也省心。",
-                "菜还没完全做好，已经开始琢磨第一口要先尝哪里。",
-                f"{character}一边看火候，一边想着等下别忘了把厨房擦一下。",
+                f"{character}先盯紧火候，把手上这一份认真做好。",
+                "味道再确认一下，这会儿先不让锅里的节奏乱掉。",
+                f"{character}把眼前的步骤做完，别在关键火候上分心。",
             ])
         if any(word in activity_key for word in ("电脑", "游戏", "速通", "Live2D", "平板", "建模", "耳机")):
             specific_templates.extend([
-                f"{character}想先把卡住的地方处理掉，后面就能轻松一点。",
-                "这个细节再改一遍，应该就差不多能收工了。",
-                f"{character}盯着屏幕想了想，决定先从最麻烦的那一项开始。",
+                f"{character}先把卡住的地方拆开处理，注意力放在这一屏。",
+                "这个细节再核对一遍，当前这一步不能含糊。",
+                f"{character}盯着屏幕理清思路，先解决眼前最麻烦的部分。",
             ])
         if any(word in activity_key for word in ("动漫", "新番", "追番", "电视", "沙发", "抱枕")):
             specific_templates.extend([
-                f"{character}打算先把这一集看完，再去处理剩下的小事。",
-                "抱枕拿顺手了，接下来就安安心心看一会儿。",
-                f"{character}想趁现在没人催，先把进度追到最新。",
+                f"{character}把抱枕放顺手，安静看完眼前这一段。",
+                "这一集正看到关键处，先把注意力留在剧情里。",
+                f"{character}暂时不分心，认真把当前进度看下去。",
             ])
         if any(word in activity_key for word in ("床", "睡", "护肤", "洗澡", "被窝", "枕头", "晚安")):
             specific_templates.extend([
-                f"{character}想赶紧把护肤做完，早点躺下才是真的舒服。",
-                "今晚不想再拖了，收拾完就直接休息。",
-                f"{character}把明天要用的东西放好，睡前就不用再爬起来找。",
+                f"{character}把眼前的洗漱和护理慢慢做好，让身体放松下来。",
+                "这会儿不赶时间，先把当前的休息节奏安顿好。",
+                f"{character}把枕头和被子整理舒服，专心让自己静下来。",
             ])
         if any(word in activity_key for word in ("街", "散步", "路灯", "公园", "出门", "逛")):
             specific_templates.extend([
-                f"{character}想边走边看看店铺，遇到顺眼的地方就停一下。",
-                "先别急着回去，顺路多逛一小段也不错。",
-                f"{character}准备找个不挤的位置，慢慢把照片拍完。",
+                f"{character}放慢脚步看看周围，把这段路走得自在一点。",
+                "人多的地方先绕开，按自己的节奏继续走。",
+                f"{character}边走边留意脚下，先享受眼前这段路。",
             ])
         if any(word in activity_key for word in ("阳台", "摇椅", "小憩", "打盹", "薄毯", "沙发", "抱枕", "发呆")):
             specific_templates.extend([
-                f"{character}想再坐五分钟，等精神缓过来再起身。",
-                "毯子盖好了，先眯一会儿，别把下午弄得太赶。",
-                f"{character}准备小睡一下，醒来再继续收拾后面的事。",
+                f"{character}把毯子盖好，先安心享受眼前这段休息。",
+                "呼吸慢下来，这会儿只需要让自己放松一点。",
+                f"{character}靠稳一点，专心把这一小段空闲留给自己。",
             ])
         if any(word in activity_key for word in ("整理房间", "房间", "浇水", "多肉", "植物")):
             specific_templates.extend([
-                f"{character}想把这盆浇完，再顺手看看房间哪里还乱。",
-                "先把植物照顾好，等会儿整理房间也更有劲。",
-                f"{character}一边浇水一边想着，下午最好把桌面也清出来。",
+                f"{character}先把眼前这盆照顾好，水量和叶片都看仔细。",
+                "手边这一块慢慢整理，先让眼前清爽起来。",
+                f"{character}专心收好正在处理的东西，不让桌面越理越乱。",
             ])
 
         generic_templates = [
-            f"{character}想先把眼前这件事做完，后面就不用一直惦记了。",
-            f"今天先按这个节奏来，别把小事都拖到晚上。",
-            f"{character}打算把手边的事排清楚，等会儿就能轻松一点。",
-            f"现在先不想太多，照着计划一件件来就好。",
-            f"{character}想给自己留点空档，别把一天塞得太满。",
+            f"{character}先把眼前这件事认真做好，不急着想别的。",
+            "现在只管手上这一项，按自己的节奏慢慢来。",
+            f"{character}把注意力放回当前动作，先不让思绪跑远。",
+            "眼前这一步做稳就好，不需要把自己催得太紧。",
         ]
         templates = specific_templates or generic_templates
+        if next_activity:
+            next_text = re.sub(r"^\d{1,2}:\d{2}\s*", "", next_activity).strip()
+            if next_text:
+                templates = list(templates) + [
+                    f"{character}先把眼前这件事做好，按日程再去{_trim_caption_piece(next_text, 20)}。"
+                ]
         return _shorten_caption(_caption_pick(templates, theme, schedule_time, character, user_name), 72)
     templates = {
         "morning": f"{character}想先把早餐和出门前的小事处理好，别一早就手忙脚乱。",
@@ -667,6 +791,16 @@ def _personalized_caption_fallback(theme: str, persona: dict, schedule_time: str
         "sexy": f"{character}想把状态调整好，等会儿拍的时候别太僵。",
     }
     return templates.get(theme, f"{character}想先把手边这件事做完，后面就不用一直惦记。")
+
+
+def build_caption_fallback(
+    theme: str,
+    schedule_time: str = "",
+    persona: Optional[dict] = None,
+) -> str:
+    """Build a local caption without depending on the LLM endpoint."""
+    resolved_persona = persona if isinstance(persona, dict) else _runtime_persona()
+    return _personalized_caption_fallback(theme, resolved_persona, schedule_time)
 
 
 def _caption_voice_hint(persona: dict) -> str:
@@ -693,12 +827,28 @@ def _caption_voice_hint(persona: dict) -> str:
     return voice[:180]
 
 
+def _caption_is_mostly_chinese(caption: str) -> bool:
+    """Caption output for this gallery must be Chinese everyday speech."""
+    text = re.sub(r"\s+", "", str(caption or ""))
+    if not text:
+        return False
+    cjk = len(re.findall(r"[一-鿿]", text))
+    latin = len(re.findall(r"[A-Za-z]", text))
+    if cjk < 4:
+        return False
+    # Reject pure English / instruction restatements.
+    if latin >= 12 and cjk * 2 < latin:
+        return False
+    return True
+
+
 def _caption_rejection_reason(caption: str, schedule_time: str = "") -> str:
     caption = repair_mojibake_text(caption)
     if not caption:
         return "empty"
     checks = (
         ("too_short", not _caption_is_usable(caption)),
+        ("not_chinese", not _caption_is_mostly_chinese(caption)),
         ("persona_leak", _caption_has_persona_leak(caption)),
         ("instruction_leak", _caption_has_instruction_leak(caption)),
         ("reader_address", _caption_addresses_reader(caption, schedule_time)),
@@ -724,9 +874,9 @@ def _caption_is_usable(caption: str) -> bool:
 def _best_caption(caption: str = "", fallback: str = "") -> str:
     caption = repair_mojibake_text(caption).strip()
     fallback = repair_mojibake_text(fallback).strip()
-    if _caption_is_usable(caption):
+    if caption and not _caption_rejection_reason(caption):
         return caption
-    if _caption_is_usable(fallback):
+    if fallback and not _caption_rejection_reason(fallback):
         return fallback
     return caption or fallback
 
@@ -754,10 +904,11 @@ def _caption_has_persona_leak(caption: str) -> bool:
 
 
 def _caption_has_instruction_leak(caption: str) -> bool:
-    text = re.sub(r"\s+", "", str(caption or ""))
-    if not text:
+    raw = str(caption or "")
+    compact = re.sub(r"\s+", "", raw)
+    if not compact:
         return False
-    markers = (
+    chinese_markers = (
         "我们被要求",
         "被要求以",
         "口吻写一句",
@@ -778,7 +929,37 @@ def _caption_has_instruction_leak(caption: str) -> bool:
         "读者称呼",
         "这是一条",
     )
-    return any(marker in text for marker in markers)
+    english_markers = (
+        # English meta-instruction leaks from the caption model
+        "theuserwantsme",
+        "iwantyoutowrite",
+        "writeashort",
+        "littlethought",
+        "inthetoneof",
+        "foraphoto",
+        "asrequested",
+        "hereisacaption",
+        "captionin",
+        "intheroleof",
+    )
+    lower = re.sub(r"\s+", "", raw.lower())
+    if any(marker in compact for marker in chinese_markers):
+        return True
+    if any(marker in lower for marker in english_markers):
+        return True
+    # Raw English task restatement patterns
+    lower_raw = raw.lower()
+    english_patterns = (
+        r"\bthe user wants\b",
+        r"\bi need to write\b",
+        r"\bwrite a short\b",
+        r"\blittle thought\b",
+        r"\bin the tone of\b",
+        r"\bfor a photo\b",
+        r"\bas an ai\b",
+        r"\bhere(?:'s| is) (?:a |the )?caption\b",
+    )
+    return any(re.search(pattern, lower_raw) for pattern in english_patterns)
 
 
 def _caption_addresses_reader(caption: str, schedule_time: str = "") -> bool:
@@ -924,9 +1105,18 @@ def _strip_hair_color_from_schedule_hair(hair: str) -> str:
 
 def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activity: str = "",
                  outfit_keywords: str = "", scene_keywords: str = "", hair_keywords: str = "",
-                 time_constraint: str = "", allow_random_pool: bool = False) -> str:
+                 time_constraint: str = "", allow_random_pool: bool = False,
+                 photo_style_en: str = "") -> str:
     is_sexy = theme == "sexy"
-    quality = SEXY_QUALITY_PREFIX if is_sexy else QUALITY_PREFIX
+    has_theme_location_override = "IMMERSIVE THEME-DAY LOCATION OVERRIDE" in str(scene_keywords or "")
+    if has_theme_location_override and photo_style_en:
+        photo_style_en = re.sub(
+            r"\b(?:home|apartment|residential)\b",
+            "theme-environment",
+            str(photo_style_en),
+            flags=re.IGNORECASE,
+        )
+    quality = _resolve_quality_prefix(theme, photo_style_en)
 
     # 读取 runtime persona 的 appearance（Web UI / Hermes / OpenClaw / config），覆盖内置常量。
     custom_appearance = _read_custom_appearance()
@@ -937,7 +1127,11 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
         appearance = SEXY_APPEARANCE if is_sexy else APPEARANCE
 
     if extra_prompt:
-        return f"{quality} {appearance} {extra_prompt}".strip()
+        prompt = f"{quality} {appearance} {extra_prompt}".strip()
+        if not is_sexy:
+            prompt = sanitize_image_prompt(prompt, limit=0)
+            prompt = f"{prompt} {NATURAL_FACE_SHAPE_GUARD}".strip()
+        return prompt
 
     if not schedule_activity and not allow_random_pool:
         print(
@@ -1015,10 +1209,21 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
 
     activity_focus = ""
     if schedule_activity:
+        setting_instruction = (
+            "Use this schedule text as the source of truth for the action, props, mood, time of day, "
+            "outfit, and hairstyle. The setting must follow only the immersive theme-day location "
+            "override in Background; adapt and ignore any generic modern location embedded in the "
+            "schedule text. "
+            if has_theme_location_override else
+            "Use this schedule text as the source of truth for the action, props, setting, mood, time "
+            "of day, outfit, and hairstyle. "
+        )
         activity_focus = (
             f"Current scheduled scene from today's LLM plan: {schedule_activity}. "
-            "Use this schedule text as the source of truth for the action, props, setting, mood, time of day, outfit, and hairstyle. "
+            f"{setting_instruction}"
             "Do not replace it with a generic routine or another activity. "
+            "If the plan mentions another person, judge for yourself how to keep the story while showing only this woman as the clear subject in the photo; "
+            "prefer atmosphere and props over putting a second person in frame. "
         )
         if time_constraint:
             activity_focus += (
@@ -1027,7 +1232,7 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
                 "Do not change the scene into night, evening, sunset, neon nightlife, or warm street-lamp lighting unless the scheduled time explicitly says so. "
             )
 
-    return (
+    prompt = (
         f"{quality} {appearance}. "
         f"{activity_focus}"
         + (f"Her hair color must follow the character appearance exactly: {hair_color}. " if hair_color else "")
@@ -1037,6 +1242,13 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
         f"Background: {environment}. "
         f"{lighting}"
     )
+    if schedule_activity and not is_sexy:
+        prompt = sanitize_daily_image_prompt(prompt, limit=0)
+        prompt = f"{prompt} {DAILY_IMAGE_SAFETY_GUARD} {NATURAL_FACE_SHAPE_GUARD}".strip()
+    elif not is_sexy:
+        prompt = sanitize_image_prompt(prompt, limit=0)
+        prompt = f"{prompt} {NATURAL_FACE_SHAPE_GUARD}".strip()
+    return prompt
 
 
 def detect_extension(img_data: bytes) -> str:
@@ -1052,51 +1264,37 @@ def detect_extension(img_data: bytes) -> str:
         return "jpg"
 
 
-def _parse_target_size(target_size: Optional[str]) -> Optional[tuple[int, int]]:
-    if not target_size:
-        return None
-    match = re.fullmatch(r"\s*(\d{2,5})x(\d{2,5})\s*", str(target_size).lower())
-    if not match:
-        return None
-    width, height = int(match.group(1)), int(match.group(2))
-    if not (64 <= width <= 8192 and 64 <= height <= 8192):
-        return None
-    return width, height
+def _safe_filename_label(value: str, fallback: str = "image") -> str:
+    label = re.sub(r"[^A-Za-z0-9_-]+", "_", str(value or "").strip()).strip("_")
+    return label or fallback
 
 
-def _fit_image_bytes(img_data: bytes, target_size: Optional[str]) -> bytes:
-    parsed = _parse_target_size(target_size)
-    if not parsed:
-        return img_data
-    try:
-        with Image.open(io.BytesIO(img_data)) as src:
-            img = ImageOps.exif_transpose(src)
-            original_size = img.size
-            if original_size == parsed and detect_extension(img_data) == "png":
-                return img_data
-            if img.mode not in ("RGB", "RGBA"):
-                img = img.convert("RGBA" if ("transparency" in img.info or "A" in img.getbands()) else "RGB")
-            fitted = img if original_size == parsed else ImageOps.fit(img, parsed, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
-            out = io.BytesIO()
-            fitted.save(out, format="PNG", optimize=True)
-            if original_size == parsed:
-                print(f"📐 Normalized image format to PNG at {parsed[0]}x{parsed[1]}", file=sys.stderr)
-            else:
-                print(f"📐 Adjusted image size from {original_size[0]}x{original_size[1]} to {parsed[0]}x{parsed[1]} as PNG", file=sys.stderr)
-            return out.getvalue()
-    except Exception as e:
-        print(f"Image size adjustment failed for {target_size}: {e}", file=sys.stderr)
-        return img_data
+def schedule_filename_theme(theme: str, schedule_time: str = "") -> str:
+    match = re.match(r"\s*(\d{1,2}):(\d{2})", str(schedule_time or ""))
+    if match:
+        hour = int(match.group(1))
+        minute = int(match.group(2))
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return f"schedule_{hour:02d}{minute:02d}"
+    return _safe_filename_label(theme)
 
 
 def save_image(img_data: bytes, theme: str, model_name: str, style: Optional[str] = None,
-               target_size: Optional[str] = None):
+               target_size: Optional[str] = None, filename_theme: Optional[str] = None):
+    """Persist the upstream image bytes without resizing or re-encoding them.
+
+    ``target_size`` is retained for caller compatibility and describes the size
+    requested from the upstream image API. The returned image is the source of
+    truth for the file's actual dimensions.
+    """
     os.makedirs(WORKSPACE_MEDIA, exist_ok=True)
-    img_data = _fit_image_bytes(img_data, target_size)
     ts = int(time.time())
     ext = detect_extension(img_data)
-    style_part = f"_{style}" if style else ""
-    filename = f"zhuzhu_{theme}{style_part}_{time.time_ns()}_{uuid.uuid4().hex[:8]}_{ts}.{ext}"
+    label = _safe_filename_label(filename_theme or theme)
+    style_label = _safe_filename_label(style, "") if style else ""
+    style_part = f"_{style_label}" if style_label else ""
+    short_id = uuid.uuid4().hex[:6]
+    filename = f"{label}{style_part}_{short_id}_{ts}.{ext}"
     path = os.path.join(WORKSPACE_MEDIA, filename)
 
     with open(path, "wb") as f:
@@ -1133,7 +1331,7 @@ def _extract_time_from_filename(filename: str) -> str:
     m = re.search(r'_(\d{10})\.\w+$', filename)
     if m:
         ts = int(m.group(1))
-        return time.strftime("%H:%M", time.localtime(ts))
+        return datetime.fromtimestamp(ts, configured_timezone(_GALLERY_CONFIG)).strftime("%H:%M")
     return ""
 
 
@@ -1164,6 +1362,7 @@ def _load_daily_schedule_context(date_text: str, schedule_time: str = "") -> dic
         "outfit": str(daily.get("outfit") or "").strip(),
         "outfit_keywords": str(daily.get("outfit_keywords") or "").strip(),
         "scene_keywords": str(daily.get("scene_keywords") or "").strip(),
+        "photo_style_en": str(daily.get("photo_style_en") or "").strip(),
     }
     slot_time = _normalize_schedule_slot_time(schedule_time)
     if slot_time and result["schedule_details"]:
@@ -1345,8 +1544,15 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
                     outfit_style: str = "", generation_mode: str = "",
                     requested_generation_mode: str = "", ref_image: str = "",
                     requested_ref_image: str = "",
-                    fallback_used: bool = False):
-    """Sync generated image to Docker portrait gallery (18889)."""
+                    fallback_used: bool = False, schedule_date: str = ""):
+    """Sync generated image to Docker portrait gallery (18889).
+
+    `schedule_date` (YYYY-MM-DD) pins the gallery entry to the schedule day the
+    photo belongs to. This matters for overnight tail slots (00:00-01:59) that
+    physically run on the next calendar day but still belong to the previous
+    schedule day's plan/outfit/reference context. Falls back to the current
+    service date when not provided (legacy callers).
+    """
     # 1. Copy image (skip if already in gallery dir)
     os.makedirs(SECRETARY_GALLERY_DIR, exist_ok=True)
     dst = os.path.join(SECRETARY_GALLERY_DIR, filename)
@@ -1354,7 +1560,7 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
         shutil.copy2(path, dst)
 
     # 2. Build entry for schedule_data.json
-    today = time.strftime("%Y-%m-%d")
+    today = schedule_date if re.match(r"^\d{4}-\d{2}-\d{2}$", str(schedule_date or "")) else service_today(_GALLERY_CONFIG).isoformat()
     style_name = (outfit_style or "").strip()
     base_style = style or ""  # cool/girly/sweet or empty
     source_uses_base_style = source in {"chat", "custom", "hermes_api"}
@@ -1427,7 +1633,13 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
         "schedule_time": schedule_time,
         "outfit_keywords": str(daily_context.get("outfit_keywords") or "").strip(),
         "scene_keywords": str(daily_context.get("scene_keywords") or "").strip(),
+        "photo_style_en": str(daily_context.get("photo_style_en") or "").strip(),
     }
+    if source == "cron" and os.getenv("ZHUZHU_DELIVERY_PENDING", "").strip() == "1":
+        entry.update({
+            "delivery_status": "pending",
+            "delivery_updated_at": service_now(_GALLERY_CONFIG).isoformat(),
+        })
     if schedule_time_slot:
         entry["time"] = schedule_time_slot
     if generation_mode:
@@ -1443,65 +1655,47 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
     if generation_mode or requested_generation_mode or ref_image or requested_ref_image or fallback_used:
         entry["fallback_used"] = bool(fallback_used)
 
-    # 3. Load schedule_data.json
+    # 3. Merge into schedule_data.json under one exclusive lock.
     store = ScheduleStore(os.path.dirname(SECRETARY_SCHEDULE_PATH))
-    data = store.load()
 
-    # Ensure date-keyed entry exists for today (holds the daily schedule, shared by all images)
-    if today not in data:
-        data[today] = {"date": today, "schedule": ""}
+    def _merge_gallery_entry(data):
+        if today not in data:
+            data[today] = {"date": today, "schedule": ""}
 
-    # 4. Write to schedule_data.json (with deduplication)
-    
-    # Deduplication: remove any existing entry with the same image_filename
-    # to prevent the gallery from showing the same photo twice
-    keys_to_remove = []
-    for existing_key, existing_entry in data.items():
-        if existing_key == filename:
-            continue
-        if existing_entry.get("image_filename") == filename:
-            keys_to_remove.append(existing_key)
-    for k in keys_to_remove:
-        print(f"🔄 Removing duplicate entry (key={k}, image={filename})", file=sys.stderr)
-        del data[k]
-    
-    # If entry already exists under this filename, merge rather than overwrite
-    if filename in data:
-        existing = data[filename]
-        # Preserve fields that may have been set elsewhere (favorite, etc.)
-        for field in ("favorite", "source", "time", "model_name", "base_style"):
-            if field == "favorite" and field in existing:
-                entry[field] = existing[field]
-            elif field in existing and (field not in entry or not entry.get(field)):
-                entry[field] = existing[field]
-    
-    data[filename] = entry
+        keys_to_remove = []
+        for existing_key, existing_entry in data.items():
+            if existing_key == filename or not isinstance(existing_entry, dict):
+                continue
+            if existing_entry.get("image_filename") == filename:
+                keys_to_remove.append(existing_key)
+        for key in keys_to_remove:
+            print(f"🔄 Removing duplicate entry (key={key}, image={filename})", file=sys.stderr)
+            del data[key]
+
+        existing = data.get(filename)
+        if isinstance(existing, dict):
+            for field in ("favorite", "source", "time", "model_name", "base_style"):
+                if field == "favorite" and field in existing:
+                    entry[field] = existing[field]
+                elif field in existing and (field not in entry or not entry.get(field)):
+                    entry[field] = existing[field]
+
+        data[filename] = entry
+        return data
+
     try:
-        store.save(data)
+        store.update(_merge_gallery_entry)
         print(f"🖼️ Synced to gallery: {filename}", file=sys.stderr)
     except Exception as e:
         print(f"[gallery_sync] Failed: {e}", file=sys.stderr)
+        raise RuntimeError(f"gallery_sync_failed: {e}") from e
 
 
-def _load_metadata(path: str) -> dict:
-    if not os.path.exists(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-def _write_metadata(path: str, metadata: dict):
-    tmp_path = f"{path}.tmp"
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2, ensure_ascii=False)
-        os.replace(tmp_path, path)
-    except Exception as e:
-        print(f"[metadata] Failed to write to {path}: {e}", file=sys.stderr)
+def _metadata_store(path: str):
+    data_dir = os.path.dirname(os.path.abspath(path))
+    if os.path.basename(path) == "image_metadata.json":
+        return ImageMetadataStore(data_dir)
+    return LockedJsonDictStore(path)
 
 
 def update_metadata(filename: str, theme: str, prompt: str, model_name: str, ts: int,
@@ -1524,9 +1718,34 @@ def update_metadata(filename: str, theme: str, prompt: str, model_name: str, ts:
     ]
     
     for p in paths:
-        metadata = _load_metadata(p)
-        metadata[filename] = new_entry
-        _write_metadata(p, metadata)
+        try:
+            def _merge(metadata):
+                existing = dict(metadata.get(filename) or {})
+                existing.update(new_entry)
+                metadata[filename] = existing
+                return metadata
+
+            _metadata_store(p).update(_merge)
+        except Exception as e:
+            print(f"[metadata] Failed to update {p}: {e}", file=sys.stderr)
+
+
+def update_metadata_caption(filename: str, caption: str) -> None:
+    """Persist a caption before gallery synchronization or delivery can fail."""
+    filename = os.path.basename(str(filename or "").strip())
+    caption = repair_mojibake_text(caption).strip()
+    if not filename or not caption:
+        return
+    try:
+        def _merge(metadata):
+            entry = dict(metadata.get(filename) or {})
+            entry["caption"] = caption
+            metadata[filename] = entry
+            return metadata
+
+        _metadata_store(META_PATH).update(_merge)
+    except Exception as e:
+        print(f"[metadata] Failed to persist caption for {filename}: {e}", file=sys.stderr)
 
 
 def enhance_prompt(user_input: str, theme: Optional[str] = None) -> str:
@@ -1587,7 +1806,9 @@ def enhance_prompt(user_input: str, theme: Optional[str] = None) -> str:
 
 
 def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "image/jpeg",
-                  schedule_time: str = "") -> str:
+                  schedule_time: str = "", schedule_date: str = "",
+                  request_timeout: int = 0, llm_attempts: int = 2,
+                  require_image: bool = False, allow_fallback: bool = True) -> str:
     theme_hint = {
         "morning": "早上刚起床的慵懒美照",
         "noon": "中午阳光下的外出美照",
@@ -1596,6 +1817,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         "sexy": "带点坏坏氛围的性感美照",
     }
     activity = _caption_activity(schedule_time)
+    next_activity = _next_schedule_activity(schedule_time, schedule_date) if activity else ""
     slot = re.match(r"^(\d{1,2}:\d{2})", str(schedule_time or "").strip())
     scene = (
         f"{slot.group(1)} 的拍照计划：{activity}" if activity and slot
@@ -1606,7 +1828,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
     character = persona.get("name") or "角色"
     user_name = persona.get("user_name") or "用户"
     caption_voice = (
-        "自然、口语、具体，像自己在心里安排下一步，不撒娇、不营业、不对任何人说话"
+        "自然、口语、具体，像自己在心里确认当前动作；只有存在真实下一项时才安排下一步，不撒娇、不营业、不对任何人说话"
         if activity
         else _caption_voice_hint(persona)
     )
@@ -1615,13 +1837,19 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         if activity
         else f"读者称呼“{user_name}”，可以自然亲近但不要写成固定营业话术。"
     )
+    next_schedule_rule = (
+        f"唯一允许提到的后续安排是：{next_activity}。不得改写成其他会议、餐饮或任务。"
+        if next_activity
+        else "没有提供后续日程时，只写当前动作和当下念头，禁止自行编造下一项安排。"
+    )
     system_msg = (
         f"你正在以“{character}”的口吻，为刚拍的照片写一句自然的小心思。{address_rule}"
         f"下面的口吻只作为说话习惯参考，不要为了风格写得文艺或矫饰：{caption_voice}。"
-        "小心思要像她当时脑子里冒出来的普通念头：接下来要干嘛、手上这件事怎么安排、有什么小担心或小期待。"
+        "小心思要像她当时脑子里冒出来的普通念头：手上这件事怎么安排、有什么小担心或小期待。"
         "可以自然带一点语气词，但整体要口语、具体、轻松，不要故意可爱、不要像朋友圈文案。"
         "但不要直接复述、罗列或解释 SOUL、人设、身份、关系定义或性格设定原文，只用它来决定说话的口吻。"
         "如果提供了具体日程，必须严格贴合该时间、地点和活动，不要写与日程冲突的起床、被窝、睡前等内容。"
+        f"{next_schedule_rule}"
         "内容优先聚焦当前动作和接下来的计划，不要只写景物、光线、心情或穿搭点评。"
         "不要复述当前日程原句，不要写“刚刚X时拍下这一刻，想把穿搭和心情分享给Y”这类模板句。"
         "禁止使用“留了一张”“放进画廊”“收进画廊”“现场感”“不能不存”等记录/收藏话术。"
@@ -1629,6 +1857,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         "输出 1-2 句中文，总长不超过 70 个汉字。"
         "不要写长段落，不要提技术术语、英文提示词、模型名称。"
         "直接输出配文内容，不要加引号或标题。"
+        "只输出最终中文小心思正文；禁止复述任务说明、禁止英文解释、禁止写 The user wants / write a short / in the tone of 这类元指令。"
         "绝对不要在末尾加「网页版」「查看详情」「点击查看」等任何引导性后缀。"
     )
 
@@ -1647,9 +1876,10 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
             print(f"[caption] image compress failed: {e}", file=sys.stderr)
             img_b64 = None
 
+    next_context = f"下一项真实日程：{next_activity}。" if next_activity else "没有提供下一项日程，不得虚构。"
     text_user_content = (
-        f"当前日程：{scene}。请写一条短小心思，像当时心里真实想的一句话，"
-        "具体到正在做的事或下一步安排，不要文艺比喻。"
+        f"当前日程：{scene}。{next_context}请写一条短小心思，像当时心里真实想的一句话，"
+        "具体到正在做的事；只有给出真实下一项时才可以提到下一步，不要文艺比喻。只给最终中文正文，不要复述本条指令。"
     )
     request_variants: list[tuple[str, object]] = []
     if img_b64 and not activity:
@@ -1660,17 +1890,23 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
                 {"type": "text", "text": f"这是{character}刚拍的照片。{text_user_content}"},
             ],
         ))
-    request_variants.append(("text", text_user_content))
+    if not require_image:
+        request_variants.append(("text", text_user_content))
 
     try:
         api_key = get_cpa_key()
         models = get_llm_models()
         chat_url = get_cpa_chat_url()
         if not api_key or not models or not chat_url:
-            print("[caption] llm config missing; using fallback caption", file=sys.stderr)
-            return _personalized_caption_fallback(theme, persona, schedule_time)
+            print("[caption] llm config missing", file=sys.stderr)
+            return _personalized_caption_fallback(theme, persona, schedule_time, schedule_date) if allow_fallback else ""
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        timeout = config_int(_GALLERY_CONFIG, "llm.caption_timeout", 30, 1)
+        timeout = (
+            max(1, int(request_timeout))
+            if request_timeout
+            else config_int(_GALLERY_CONFIG, "llm.caption_timeout", 30, 1)
+        )
+        llm_attempts = max(1, int(llm_attempts or 1))
         caption_max_tokens = max(900, min(config_int(_GALLERY_CONFIG, "llm.caption_max_tokens", 900, 1), 1200))
         for model in models:
             switch_model = False
@@ -1696,6 +1932,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
                             json=request_payload,
                             timeout=timeout,
                         ),
+                        attempts=llm_attempts,
                     )
                     if resp is None:
                         switch_model = True
@@ -1735,19 +1972,48 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
     except Exception as e:
         print(f"[caption] llm failed: {e}", file=sys.stderr)
 
-    return _personalized_caption_fallback(theme, persona, schedule_time)
+    return _personalized_caption_fallback(theme, persona, schedule_time, schedule_date) if allow_fallback else ""
 
 
-def build_caption_for_image(theme: str, image_path: str, schedule_time: str = "") -> str:
+def build_caption_for_image(
+    theme: str,
+    image_path: str,
+    schedule_time: str = "",
+    schedule_date: str = "",
+    request_timeout: int = 0,
+    llm_attempts: int = 2,
+    require_image: bool = False,
+    allow_fallback: bool = True,
+) -> str:
     try:
         with open(image_path, "rb") as f:
             img_b64 = base64.b64encode(f.read()).decode("utf-8")
         ext = os.path.splitext(image_path)[1].lower()
         img_mime = "image/png" if ext == ".png" else "image/jpeg"
-        return build_caption(theme, img_b64=img_b64, img_mime=img_mime, schedule_time=schedule_time)
+        return build_caption(
+            theme,
+            img_b64=img_b64,
+            img_mime=img_mime,
+            schedule_time=schedule_time,
+            schedule_date=schedule_date,
+            request_timeout=request_timeout,
+            llm_attempts=llm_attempts,
+            require_image=require_image,
+            allow_fallback=allow_fallback,
+        )
     except Exception as e:
         print(f"[caption] image read failed: {e}", file=sys.stderr)
-        return build_caption(theme, schedule_time=schedule_time)
+        if require_image:
+            return ""
+        return build_caption(
+            theme,
+            schedule_time=schedule_time,
+            schedule_date=schedule_date,
+            request_timeout=request_timeout,
+            llm_attempts=llm_attempts,
+            require_image=False,
+            allow_fallback=allow_fallback,
+        )
 
 
 def send_photo(path: str, caption: Optional[str] = None):

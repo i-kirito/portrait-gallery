@@ -3,6 +3,7 @@ __pycache__
 *.pyo
 .git
 .gitignore
+.env
 .venv/
 env/
 venv/
@@ -15,6 +16,7 @@ config/local.yaml
 *.bak
 *.bak2
 *.bak_*
+*.bak-*
 *.backup-*
 *.bak.*
 **/.DS_Store

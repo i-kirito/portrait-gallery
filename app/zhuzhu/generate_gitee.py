@@ -13,6 +13,7 @@ from core import (
     RETRY_DELAY_SECONDS,
     build_caption_for_image,
     build_prompt,
+    schedule_filename_theme,
     sync_to_gallery,
     get_gitee_key,
     get_image_model,
@@ -45,7 +46,7 @@ def generate_image_bytes(prompt: str):
     start = time.time()
     for attempt in range(MAX_RETRIES):
         try:
-            resp = REQUEST_SESSION.post(ENGINE_URL, headers=headers, json=payload, timeout=90, verify=False)
+            resp = REQUEST_SESSION.post(ENGINE_URL, headers=headers, json=payload, timeout=90)
             if resp.status_code in RETRYABLE_STATUS:
                 time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
                 continue
@@ -81,7 +82,13 @@ def generate(theme: str, send: bool = False, caption: bool = False,
         return None
 
     img_data, gen_time = result
-    path, filename, ts = save_image(img_data, theme, MODEL_NAME)
+    filename_theme = schedule_filename_theme(theme, schedule_time)
+    path, filename, ts = save_image(
+        img_data,
+        theme,
+        MODEL_NAME,
+        filename_theme=filename_theme,
+    )
     update_metadata(filename, theme, prompt, MODEL_NAME, ts, gen_time, {"source": source})
 
     caption_text = None

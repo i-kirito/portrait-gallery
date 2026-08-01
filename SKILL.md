@@ -122,7 +122,7 @@ docker compose up -d
 Published image run:
 
 ```bash
-PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.2 docker compose up -d
+PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.10 docker compose up -d
 ```
 
 ### 3. Configure Keys
@@ -140,7 +140,7 @@ export CPA_API_KEY="your-cpa-api-key"
 export CPA_BASE_URL="http://your-cpa-proxy:port/v1"
 export GPT_IMAGE_API_KEY="your-api-key"  # AxonHub: ah-xxxxx, Direct: sk-xxxxx
 export GPT_IMAGE_BASE_URL="http://your-endpoint/v1"  # AxonHub or OpenAI-compatible
-export GALLERY_API_KEY="optional-web-api-key"
+export GALLERY_PASSWORD="optional-web-password"
 ```
 
 **Recommended Setup**: Route through [AxonHub](https://github.com/looplj/AxonHub) for multi-channel fallback and unified management:
@@ -189,7 +189,8 @@ curl http://localhost:18889/api/schedule-detail
 curl http://localhost:18889/api/photo-jobs
 ```
 
-If `GALLERY_API_KEY` is set, pass it as `X-API-Key` or `?key=...`.
+If the service is exposed beyond localhost, set `GALLERY_PASSWORD` or complete
+the first-run Web password setup before checking protected APIs.
 
 ## Common Agent Tasks
 
@@ -290,5 +291,6 @@ curl -X POST http://localhost:18889/api/group-chat/rooms/<room_id>/reply \
 
 - Treat API keys and `data/api_keys_config.json` as secrets.
 - Confirm before deleting images, changing keys, or running self-update actions.
-- Avoid exposing the service publicly unless `GALLERY_API_KEY` is set.
+- Avoid exposing the service publicly unless `GALLERY_PASSWORD` is set or the
+  first-run Web password setup has been completed.
 - Do not run multiple long image-generation processes unless the user asks.

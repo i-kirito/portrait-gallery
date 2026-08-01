@@ -1,5 +1,6 @@
 """Web 画廊服务器 - aiohttp"""
 import asyncio
+import base64
 try:
     import fcntl
 except ImportError:
@@ -14,25 +15,29 @@ except ImportError:
 
     fcntl = _FcntlFallback()
 import hashlib
+import hmac
 import ipaddress
 import json
 import logging
 import os
+import random
+import secrets
 import shlex
 import shutil
 import sys
 import subprocess
-from datetime import date, datetime
+import tempfile
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import time
 import re
 from typing import Optional
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 import uuid
 
 import aiohttp
 from aiohttp import web
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
 from characters import (
     LOCAL_CHARACTER_SOURCE,
@@ -42,9 +47,30 @@ from characters import (
 )
 from group_chat import GroupChatStore
 from keyword_cloud import build_keyword_cloud_payload
+from image_editing import (
+    MAX_IMAGE_EDIT_INSTRUCTION_LENGTH,
+    MAX_IMAGE_EDIT_SCHEDULE_DESCRIPTION_LENGTH,
+    normalize_image_edit_instruction,
+    normalize_image_edit_schedule_description,
+    normalize_image_edit_target,
+)
+from image_versions import (
+    archive_image_version,
+    delete_image_versions,
+    find_image_version,
+    image_version_path,
+    normalize_image_versions,
+    replace_image_from_version,
+)
+from outfit_plan_edit import (
+    MAX_OUTFIT_PLAN_EDIT_LENGTH,
+    normalize_outfit_plan_field,
+    normalize_outfit_plan_value,
+)
 from picxazz_sync import PicxazzSyncClient
 from reference_profiles import (
     analyze_reference_image,
+    ensure_reference_profiles,
     load_reference_profiles,
     reference_response as reference_profile_response,
     remove_reference_profile,
@@ -52,14 +78,18 @@ from reference_profiles import (
     select_reference_profile,
     upsert_reference_profile,
 )
-from store import ScheduleStore
+from store import ImageMetadataStore, LockedJsonDictStore, ScheduleStore
 from text_repair import repair_mojibake_text
+from xiaohongshu_client import XiaohongshuClient, XiaohongshuError
 from settings import (
+    DEFAULT_GITEE_IMAGE_URL,
     DEFAULT_OUTFIT_STYLES,
+    DEFAULT_STYLE_REFERENCE_FILES,
+    XIAOHONGSHU_DEFAULT_FACE_REFERENCE_FILE,
     auto_push_agent,
     builtin_reference_map,
     build_child_env,
-    config_int,
+    configured_timezone,
     configured_llm_models,
     configured_python,
     image_process_timeout,
@@ -78,6 +108,7 @@ from settings import (
     normalize_custom_shot_type,
     normalize_persona_source,
     normalize_push_channel,
+    normalize_runtime_config,
     default_image_dir,
     normalize_image_dir,
     resolve_builtin_reference_dir,
@@ -85,17 +116,26 @@ from settings import (
     resolve_project_root,
     resolve_reference_dir,
     resolve_script_dir,
+    runtime_config_path,
+    schedule_image_size,
 )
 
 logger = logging.getLogger(__name__)
 
 # 日期 key 正则：匹配 YYYY-MM-DD 格式
 DATE_KEY_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+GALLERY_BASE_MODEL_STYLES = {"cool", "girly", "sweet"}
 LOG_ENTRY_RE = re.compile(
     r'^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:,\d+)? '
     r'\[(?P<level>[A-Z]+)\] (?P<logger>[^:]+): (?P<message>.*)$'
 )
 LOG_ACCESS_RE = re.compile(r'"(?P<method>[A-Z]+)\s+(?P<path>[^"]+?)\s+HTTP/[^"]+"\s+(?P<status>\d{3})')
+ICON_PROBE_BASENAME_RE = re.compile(
+    r'^(?:favicon(?:-\d+x\d+)?\.(?:ico|png|svg)|'
+    r'apple-touch-icon(?:-\d+x\d+)?\.png|'
+    r'icon-maskable(?:-\d+(?:x\d+)?)?\.png)$',
+    re.IGNORECASE,
+)
 LOG_LEVEL_LABELS = {
     "DEBUG": "调试",
     "INFO": "信息",
@@ -103,6 +143,20 @@ LOG_LEVEL_LABELS = {
     "ERROR": "错误",
     "CRITICAL": "严重错误",
 }
+LOG_SOURCE_LABELS = {
+    "portrait_gallery": "画廊服务",
+    "web_server": "网页服务",
+    "apscheduler.scheduler": "任务调度",
+    "apscheduler.executors.default": "任务执行",
+    "aiohttp.access": "接口访问",
+}
+LOG_SYSTEM_NOISE_PREFIXES = (
+    "持久化日志已启用",
+    "Scheduler started",
+    "动态任务调度器已启动",
+    "画廊服务启动",
+    "画廊启动",
+)
 LOG_USEFUL_KEYWORDS = (
     "生图",
     "日程",
@@ -159,9 +213,10 @@ LOG_ERROR_DETAIL_KEYWORDS = (
     "超时",
 )
 SEND_CAPTION_DELAY_SECONDS = 3
+SEND_WECHAT_CAPTION_DELAY_SECONDS = 45
 SEND_TIMEOUT_SECONDS = 90
 SEND_RETRY_DELAYS_SECONDS = (60, 180)
-SEND_COOLDOWN_BUFFER_SECONDS = 5
+SEND_COOLDOWN_BUFFER_SECONDS = 15
 SEND_RETRYABLE_MARKERS = (
     "rate limited",
     "too many requests",
@@ -174,6 +229,10 @@ SEND_RETRYABLE_MARKERS = (
     "server disconnected",
     "temporarily unavailable",
 )
+SEND_CONTEXT_ERROR_MARKERS = (
+    "requires a fresh wechat conversation context",
+    "send the bot a wechat message first",
+)
 DEFAULT_PHOTO_JOB_LIMIT = 6
 MIN_PHOTO_JOB_LIMIT = 3
 MAX_PHOTO_JOB_LIMIT = 6
@@ -185,6 +244,20 @@ GROUP_CHAT_REPLY_PLACEHOLDERS = {
     "这个角色要发送到群聊的一条中文消息",
     "这个角色要发送到群聊的一条中文消息。",
 }
+GROUP_CHAT_INTERNAL_REASONING_HARD_PATTERNS = (
+    r"^\s*(?:首先|先来|先分析|分析一下)[，,:：]?\s*(?:用户|这条|当前|问题)",
+    r"(?:现在|接下来)[，,:：]?\s*(?:构思|分析|推理|规划)(?:回复|回答|输出)?",
+    r"^\s*(?:<think>|analysis\s*:|reasoning\s*:|we need to\s+(?:analy[sz]e|reason))",
+)
+GROUP_CHAT_INTERNAL_REASONING_SOFT_PATTERNS = (
+    r"(?:系统|上文|指令|提示词)(?:中|里)?(?:说|要求|规定|明确)",
+    r"(?:我需要|需要我).{0,50}(?:回复|输出|生成|调用|JSON|image_request)",
+    r"(?:只输出|输出为|输出).{0,12}(?:JSON|json)",
+    r"\bimage_request\b.{0,50}(?:字段|对象|默认为|必须|不能|包含)",
+    r"\bmessage\b.{0,30}(?:字段|内容|应该|必须)",
+    r"\b(?:i need to|let'?s)\s+(?:analy[sz]e|craft|respond|output)\b",
+    r"\bthe user (?:asks|input|said|wants)\b",
+)
 TODAY_PHOTO_SOURCES = {"cron", "web"}
 FAILED_SCHEDULE_TEXT = "生成失败"
 REFERENCE_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
@@ -200,6 +273,10 @@ REFERENCE_MIME_EXTENSIONS = {
     "image/webp": ".webp",
     "image/gif": ".gif",
 }
+MAX_REFERENCE_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_REFERENCE_MULTIPART_OVERHEAD_BYTES = 64 * 1024
+MAX_REFERENCE_STYLE_BYTES = 128
+MAX_REFERENCE_IMAGE_PIXELS = 40_000_000
 BUILTIN_REFERENCE_MAP = builtin_reference_map()
 UPDATE_PROTECTED_EXACT = (
     ".env",
@@ -213,16 +290,19 @@ UPDATE_PROTECTED_PREFIXES = (
     "logs/",
     "app/references/uploads/",
 )
-LOCALHOST_NAMES = {"localhost", "127.0.0.1", "::1", "[::1]"}
-READ_ONLY_POST_API_PATHS = {
-    "/api/check-update",
-    "/api/hermes/check-update",
+GALLERY_PASSWORD_ENV = "GALLERY_PASSWORD"
+GALLERY_AUTH_HASH_ALGORITHM = "pbkdf2_sha256"
+GALLERY_AUTH_HASH_ITERATIONS = 240_000
+GALLERY_AUTH_COOKIE = "gallery_session"
+GALLERY_AUTH_SESSION_SECONDS = 7 * 24 * 60 * 60
+GALLERY_AUTH_PUBLIC_PATHS = {
+    "/api/auth/status",
+    "/api/auth/setup",
+    "/api/auth/login",
+    "/api/auth/logout",
+    "/api/health",
 }
-PRIVATE_API_PATH_PREFIXES = (
-    "/api/characters",
-    "/api/group-chat",
-    "/api/keyword-cloud",
-)
+CUSTOM_DEFAULT_REFERENCE_STYLES = ("cool", "girly", "sweet")
 MANUAL_UPDATE_COMMAND = (
     "cd /path/to/portrait-gallery && "
     "git fetch origin main && "
@@ -247,27 +327,55 @@ class GalleryServer:
         self.gallery_config = config.get("gallery", {})
         self.host = self.gallery_config.get("host", "0.0.0.0")
         self.port = self.gallery_config.get("port", 18888)
-        self.token = self.gallery_config.get("token", "")
+        self.auth_store_path = os.path.join(self.data_dir, "gallery_auth.json")
         self.default_image_dir = default_image_dir(data_dir)
         self.image_dir = self._resolve_image_dir()
         self.app_reference_dir = resolve_builtin_reference_dir(config, config_path)
         self.reference_dir = resolve_reference_dir(config, data_dir, config_path)
         self.uploaded_reference_dir = os.path.join(self.reference_dir, "uploads")
         self.wardrobe_reference_dir = os.path.join(self.reference_dir, "wardrobe")
+        self.xiaohongshu_reference_dir = os.path.join(self.reference_dir, "xiaohongshu")
         self.legacy_uploaded_reference_dir = os.path.join(self.app_reference_dir, "uploads")
+        self.xiaohongshu_reference_store = LockedJsonDictStore(
+            os.path.join(self.data_dir, "xiaohongshu_references.json"),
+            os.path.join(self.data_dir, ".xiaohongshu_references.lock"),
+        )
+        self.xiaohongshu_schedule_store = LockedJsonDictStore(
+            os.path.join(self.data_dir, "xiaohongshu_schedule.json"),
+            os.path.join(self.data_dir, ".xiaohongshu_schedule.lock"),
+        )
+        self.xiaohongshu_creator_store = LockedJsonDictStore(
+            os.path.join(self.data_dir, "xiaohongshu_creators.json"),
+            os.path.join(self.data_dir, ".xiaohongshu_creators.lock"),
+        )
+        self.xiaohongshu_client = XiaohongshuClient(
+            workdir=os.path.join(self.data_dir, "xiaohongshu-mcp"),
+        )
+        self._xiaohongshu_schedule_lock = asyncio.Lock()
         self.picxazz_sync = PicxazzSyncClient(config, data_dir)
         self._image_info_cache = {}
+        self._registered_image_cache = {"signature": None, "filenames": set()}
         self.group_chat_store = GroupChatStore(data_dir)
+        self._group_chat_reply_progress: dict[str, dict] = {}
+        self._group_chat_background_tasks: set[asyncio.Task] = set()
         self._wardrobe_image_locks: dict[str, asyncio.Lock] = {}
+        self._image_mutation_locks: dict[str, asyncio.Lock] = {}
+        self._image_mutation_lock_users: dict[str, int] = {}
         self._manual_send_lock = asyncio.Lock()
         self._manual_send_cooldown_until = 0.0
+        self._manual_send_last_error = ""
+        self._schedule_refresh_task: Optional[asyncio.Task] = None
+        self._theme_day_task: Optional[asyncio.Task] = None
+        self._theme_day_job: Optional[dict] = None
         self._restart_scheduled = False
         os.makedirs(self.default_image_dir, exist_ok=True)
         os.makedirs(self.image_dir, exist_ok=True)
         os.makedirs(self.reference_dir, exist_ok=True)
         os.makedirs(self.uploaded_reference_dir, exist_ok=True)
         os.makedirs(self.wardrobe_reference_dir, exist_ok=True)
-        load_reference_profiles(
+        os.makedirs(self.xiaohongshu_reference_dir, exist_ok=True)
+        self._recover_interrupted_wardrobe_image_statuses()
+        ensure_reference_profiles(
             self.data_dir,
             self.reference_dir,
             self.app_reference_dir,
@@ -282,87 +390,259 @@ class GalleryServer:
         self.on_generate_character_reference = None
         self.on_generate_group = None
         self.on_reroll_image = None
+        self.on_edit_image = None
         self.on_list_photo_jobs = None
         self.on_refresh_schedule = None
+        self.on_theme_day = None
         self.on_rebuild_photo_jobs = None
         self.on_retry_photo_job = None
+        self.on_photo_quota_snapshot = None
         self.on_update_photo_plan = None
+        self.on_update_outfit_plan = None
+        self.on_validate_xiaohongshu_outfit = None
         self.on_image_dir_changed = None
 
-        self.app = web.Application(middlewares=[self.api_key_middleware])
+        self.app = web.Application(middlewares=[self.gallery_auth_middleware])
         self._setup_routes()
+        self.app.on_cleanup.append(self._cleanup_group_chat_background_tasks)
+        self.app.on_cleanup.append(self._cleanup_xiaohongshu_client)
+
+    def _now(self) -> datetime:
+        return datetime.now(configured_timezone(getattr(self, "config", {})))
+
+    def _today(self):
+        return self._now().date()
 
     @staticmethod
-    def _request_host_name(request: web.Request) -> str:
-        host = str(request.host or "").split(",", 1)[0].strip().lower()
-        if host.startswith("["):
-            return host[1:].split("]", 1)[0]
-        if host.count(":") == 1:
-            return host.rsplit(":", 1)[0]
-        return host.strip("[]")
-
-    @staticmethod
-    def _is_local_request(request: web.Request) -> bool:
+    def _request_client_ip(request: web.Request) -> str:
         remote = request.remote or ""
         if not remote and request.transport:
             peer = request.transport.get_extra_info("peername")
             if isinstance(peer, tuple) and peer:
                 remote = str(peer[0])
-        remote = str(remote or "").strip().strip("[]")
-        host = GalleryServer._request_host_name(request)
-        host_is_local = host in LOCALHOST_NAMES
-        if remote in LOCALHOST_NAMES:
+        return str(remote or "").strip().strip("[]")
+
+    def _is_local_request(self, request: web.Request) -> bool:
+        remote = self._request_client_ip(request)
+        try:
+            remote_ip = ipaddress.ip_address(str(remote or "").strip().strip("[]"))
+        except ValueError:
+            return False
+        if not remote_ip.is_loopback:
+            return False
+
+        host = str(getattr(request, "host", "") or "").strip()
+        if host.startswith("[") and "]" in host:
+            host = host[1:host.index("]")]
+        elif host.count(":") == 1:
+            host = host.rsplit(":", 1)[0]
+        host = host.strip().lower().rstrip(".")
+        if host == "localhost":
             return True
         try:
-            remote_ip = ipaddress.ip_address(remote)
-            if remote_ip.is_loopback:
-                return True
-            # Docker Desktop / bridge networking can make a host browser opened at
-            # localhost appear to aiohttp as the private bridge gateway. Keep
-            # that local-only flow usable without treating arbitrary hostnames
-            # as trusted.
-            return bool(host_is_local and remote_ip.is_private)
+            return ipaddress.ip_address(host).is_loopback
         except ValueError:
-            return host_is_local
+            return False
+
+    def _load_auth_store(self) -> dict:
+        return LockedJsonDictStore(self.auth_store_path).load()
+
+    def _save_auth_store(self, data: dict) -> None:
+        payload = dict(data or {})
+        payload.pop("authorized_ips", None)
+        payload["version"] = 2
+        LockedJsonDictStore(self.auth_store_path).save(payload)
 
     @staticmethod
-    def _requires_local_or_key(request: web.Request) -> bool:
-        if not request.path.startswith("/api/"):
+    def _hash_gallery_password(password: str, salt_hex: str = "") -> str:
+        salt = bytes.fromhex(salt_hex) if salt_hex else secrets.token_bytes(16)
+        digest = hashlib.pbkdf2_hmac(
+            "sha256",
+            str(password or "").encode("utf-8"),
+            salt,
+            GALLERY_AUTH_HASH_ITERATIONS,
+        )
+        return (
+            f"{GALLERY_AUTH_HASH_ALGORITHM}$"
+            f"{GALLERY_AUTH_HASH_ITERATIONS}$"
+            f"{salt.hex()}$"
+            f"{digest.hex()}"
+        )
+
+    @staticmethod
+    def _verify_gallery_password_hash(password: str, stored_hash: str) -> bool:
+        parts = str(stored_hash or "").split("$")
+        if len(parts) != 4 or parts[0] != GALLERY_AUTH_HASH_ALGORITHM:
             return False
-        if any(request.path.startswith(prefix) for prefix in PRIVATE_API_PATH_PREFIXES):
+        try:
+            iterations = int(parts[1])
+            salt = bytes.fromhex(parts[2])
+            expected = bytes.fromhex(parts[3])
+        except (TypeError, ValueError):
+            return False
+        actual = hashlib.pbkdf2_hmac(
+            "sha256",
+            str(password or "").encode("utf-8"),
+            salt,
+            iterations,
+        )
+        return hmac.compare_digest(actual, expected)
+
+    def _configured_gallery_password_source(self) -> str:
+        if os.environ.get(GALLERY_PASSWORD_ENV, ""):
+            return "env"
+        if self._load_auth_store().get("password_hash"):
+            return "stored"
+        return ""
+
+    def _gallery_password_configured(self) -> bool:
+        return bool(self._configured_gallery_password_source())
+
+    def _verify_gallery_password(self, password: str) -> bool:
+        password = str(password or "")
+        env_password = os.environ.get(GALLERY_PASSWORD_ENV, "")
+        if env_password:
+            return hmac.compare_digest(password, env_password)
+        stored_hash = self._load_auth_store().get("password_hash", "")
+        return self._verify_gallery_password_hash(password, stored_hash)
+
+    def _gallery_password_revision(self) -> str:
+        env_password = os.environ.get(GALLERY_PASSWORD_ENV, "")
+        if env_password:
+            material = f"env:{env_password}"
+        else:
+            material = f"stored:{self._load_auth_store().get('password_hash', '')}"
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()[:20]
+
+    def _gallery_session_secret(self) -> str:
+        store = LockedJsonDictStore(self.auth_store_path)
+        current = str(store.load().get("session_secret") or "").strip()
+        if re.fullmatch(r"[0-9a-fA-F]{64}", current):
+            return current
+        result = {"secret": ""}
+
+        def _ensure(data: dict) -> dict:
+            secret = str(data.get("session_secret") or "").strip()
+            if not re.fullmatch(r"[0-9a-fA-F]{64}", secret):
+                secret = secrets.token_hex(32)
+                data["session_secret"] = secret
+            data.pop("authorized_ips", None)
+            data["version"] = 2
+            result["secret"] = secret
+            return data
+
+        store.update(_ensure)
+        return result["secret"]
+
+    def _issue_gallery_session(self) -> str:
+        expires_at = int(time.time()) + GALLERY_AUTH_SESSION_SECONDS
+        revision = self._gallery_password_revision()
+        nonce = secrets.token_hex(16)
+        payload = f"{expires_at}.{revision}.{nonce}"
+        signature = hmac.new(
+            bytes.fromhex(self._gallery_session_secret()),
+            payload.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return f"{payload}.{signature}"
+
+    def _gallery_session_authorized(self, request: web.Request) -> bool:
+        cookies = getattr(request, "cookies", {}) or {}
+        token = str(cookies.get(GALLERY_AUTH_COOKIE) or "").strip()
+        if not token:
+            headers = getattr(request, "headers", {}) or {}
+            token = str(headers.get("X-Gallery-Session") or "").strip()
+            authorization = str(headers.get("Authorization") or "").strip()
+            if not token and authorization.lower().startswith("bearer "):
+                token = authorization[7:].strip()
+        parts = token.split(".")
+        if len(parts) != 4:
+            return False
+        expires_text, revision, nonce, signature = parts
+        try:
+            if int(expires_text) <= int(time.time()):
+                return False
+        except ValueError:
+            return False
+        if revision != self._gallery_password_revision() or not nonce:
+            return False
+        payload = f"{expires_text}.{revision}.{nonce}"
+        expected = hmac.new(
+            bytes.fromhex(self._gallery_session_secret()),
+            payload.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return hmac.compare_digest(signature, expected)
+
+    @staticmethod
+    def _set_gallery_session_cookie(response: web.StreamResponse, request: web.Request, token: str) -> None:
+        response.set_cookie(
+            GALLERY_AUTH_COOKIE,
+            token,
+            max_age=GALLERY_AUTH_SESSION_SECONDS,
+            httponly=True,
+            secure=bool(getattr(request, "secure", False)),
+            samesite="Strict",
+            path="/",
+        )
+
+    @staticmethod
+    def _clear_gallery_session_cookie(response: web.StreamResponse) -> None:
+        response.del_cookie(GALLERY_AUTH_COOKIE, path="/")
+
+    def _request_has_gallery_access(self, request: web.Request) -> bool:
+        if self._is_local_request(request):
             return True
-        if request.method.upper() in {"GET", "HEAD", "OPTIONS"}:
+        if not self._gallery_password_configured():
             return False
-        if request.path in READ_ONLY_POST_API_PATHS:
-            return False
-        return True
+        return self._gallery_session_authorized(request)
 
     @staticmethod
-    def _local_or_key_required_payload() -> dict:
+    def _same_origin_write(request: web.Request) -> bool:
+        if str(getattr(request, "method", "GET") or "GET").upper() in {"GET", "HEAD", "OPTIONS"}:
+            return True
+        headers = getattr(request, "headers", {}) or {}
+        origin = str(headers.get("Origin") or "").strip()
+        if not origin:
+            return True
+        parsed = urlparse(origin)
+        return bool(parsed.netloc and parsed.netloc.lower() == str(getattr(request, "host", "") or "").lower())
+
+    def _auth_required_payload(self, request: web.Request) -> tuple[dict, int]:
+        configured = self._gallery_password_configured()
+        is_local = self._is_local_request(request)
+        client_ip = self._request_client_ip(request)
+        if not configured:
+            return {
+                "error": "password_setup_required",
+                "message": "首次部署需要先在本机浏览器设置访问密码。",
+                "auth_configured": False,
+                "setup_allowed": is_local,
+                "client_ip": client_ip,
+            }, 401
         return {
-            "error": "local_or_api_key_required",
-            "message": (
-                "远程写操作需要配置 GALLERY_API_KEY 并通过 X-API-Key 调用；"
-                "如果是从 1.2.3 一键升级被拦截，请在部署机器执行手动安全升级命令。"
-            ),
-            "manual_update_command": MANUAL_UPDATE_COMMAND,
-            "docker_manual_update_command": DOCKER_MANUAL_UPDATE_COMMAND,
-        }
+            "error": "password_required",
+            "message": "请输入画廊访问密码。",
+            "auth_configured": True,
+            "client_ip": client_ip,
+        }, 401
 
-    @staticmethod
     @web.middleware
-    async def api_key_middleware(request: web.Request, handler):
-        """Protect API routes with X-API-Key; local writes may run without a key."""
+    async def gallery_auth_middleware(self, request: web.Request, handler):
+        """Require the gallery password for non-local gallery data access."""
         path = request.path
-        if path.startswith("/api/"):
-            api_key = os.environ.get("GALLERY_API_KEY", "")
-            provided = request.headers.get("X-API-Key", "") or request.query.get("key", "")
-            if api_key:
-                if provided != api_key:
-                    return web.json_response({"error": "unauthorized"}, status=401)
-            elif GalleryServer._requires_local_or_key(request) and not GalleryServer._is_local_request(request):
+        protected_path = (
+            (path.startswith("/api/") and path not in GALLERY_AUTH_PUBLIC_PATHS)
+            or path.startswith("/images/")
+            or path.startswith("/local-refs/")
+        )
+        if protected_path:
+            if not self._request_has_gallery_access(request):
+                payload, status = self._auth_required_payload(request)
+                return web.json_response(payload, status=status)
+            if not self._same_origin_write(request):
                 return web.json_response(
-                    GalleryServer._local_or_key_required_payload(),
+                    {"error": "origin_not_allowed", "message": "请求来源与画廊地址不一致。"},
                     status=403,
                 )
         return await handler(request)
@@ -381,6 +661,10 @@ class GalleryServer:
         self.app.router.add_get("/", self.handle_index)
 
         # API
+        self.app.router.add_get("/api/auth/status", self.handle_auth_status)
+        self.app.router.add_post("/api/auth/setup", self.handle_auth_setup)
+        self.app.router.add_post("/api/auth/login", self.handle_auth_login)
+        self.app.router.add_post("/api/auth/logout", self.handle_auth_logout)
         self.app.router.add_get("/api/today", self.handle_today)
         self.app.router.add_get("/api/gallery", self.handle_gallery)
         self.app.router.add_get("/api/entries/{date}", self.handle_entry)
@@ -388,8 +672,32 @@ class GalleryServer:
         self.app.router.add_get("/api/uploaded-refs", self.handle_uploaded_refs)
         self.app.router.add_post("/api/upload-ref", self.handle_upload_ref)
         self.app.router.add_delete("/api/uploaded-refs/{filename}", self.handle_delete_uploaded_ref)
+        self.app.router.add_get("/api/xiaohongshu/status", self.handle_xiaohongshu_status)
+        self.app.router.add_post("/api/xiaohongshu/login/qrcode", self.handle_xiaohongshu_login_qrcode)
+        self.app.router.add_get("/api/xiaohongshu/schedule-mode", self.handle_xiaohongshu_schedule_mode)
+        self.app.router.add_post("/api/xiaohongshu/schedule-mode", self.handle_xiaohongshu_schedule_mode)
+        self.app.router.add_post("/api/xiaohongshu/search", self.handle_xiaohongshu_search)
+        self.app.router.add_post("/api/xiaohongshu/detail", self.handle_xiaohongshu_detail)
+        self.app.router.add_post("/api/xiaohongshu/creators/search", self.handle_xiaohongshu_creator_search)
+        self.app.router.add_post("/api/xiaohongshu/creators/profile", self.handle_xiaohongshu_creator_profile)
+        self.app.router.add_get("/api/xiaohongshu/creators", self.handle_xiaohongshu_creators)
+        self.app.router.add_post("/api/xiaohongshu/creators", self.handle_xiaohongshu_creators)
+        self.app.router.add_delete(
+            "/api/xiaohongshu/creators/{user_id}",
+            self.handle_delete_xiaohongshu_creator,
+        )
+        self.app.router.add_post("/api/xiaohongshu/import", self.handle_xiaohongshu_import)
+        self.app.router.add_get("/api/xiaohongshu/references", self.handle_xiaohongshu_references)
+        self.app.router.add_delete(
+            "/api/xiaohongshu/references/{filename}",
+            self.handle_delete_xiaohongshu_reference,
+        )
         self.app.router.add_post("/api/generate", self.handle_generate)
         self.app.router.add_post("/api/refresh-schedule", self.handle_refresh_schedule)
+        self.app.router.add_post("/api/theme-day", self.handle_theme_day)
+        self.app.router.add_get("/api/theme-day/state", self.handle_theme_day_state)
+        self.app.router.add_post("/api/theme-day/state", self.handle_theme_day_state)
+        self.app.router.add_get("/api/theme-day/status", self.handle_theme_day_status)
         self.app.router.add_post("/api/generate-now", self.handle_generate_now)
         self.app.router.add_post("/api/generate-custom", self.handle_generate_custom)
         self.app.router.add_get("/api/characters", self.handle_characters)
@@ -412,7 +720,18 @@ class GalleryServer:
         self.app.router.add_post("/api/group-chat/rooms/{room_id}/reply", self.handle_group_chat_reply)
         self.app.router.add_post("/api/group-chat/rooms/{room_id}/bind-agent", self.handle_group_chat_bind_agent)
         self.app.router.add_post("/api/images/cleanup", self.handle_cleanup_images)
+        self.app.router.add_get("/api/images/{img_id}/versions", self.handle_image_versions)
+        self.app.router.add_get(
+            "/api/images/{img_id}/versions/{version_id}",
+            self.handle_image_version_file,
+        )
+        self.app.router.add_post(
+            "/api/images/{img_id}/versions/{version_id}/activate",
+            self.handle_activate_image_version,
+        )
+        self.app.router.add_get("/api/images/{img_id}", self.handle_image_detail)
         self.app.router.add_post("/api/images/{img_id}/reroll", self.handle_reroll_image)
+        self.app.router.add_post("/api/images/{img_id}/edit", self.handle_edit_image)
         self.app.router.add_post("/api/images/{img_id}/favorite", self.handle_toggle_favorite)
         self.app.router.add_post("/api/images/{img_id}/send", self.handle_send_image)
         self.app.router.add_post("/api/integrations/picxazz/sync-favorites", self.handle_sync_picxazz_favorites)
@@ -445,6 +764,8 @@ class GalleryServer:
         self.app.router.add_post("/api/photo-jobs/retry", self.handle_retry_photo_job)
         self.app.router.add_patch("/api/photo-jobs/plan", self.handle_update_photo_plan)
         self.app.router.add_post("/api/photo-jobs/plan", self.handle_update_photo_plan)
+        self.app.router.add_patch("/api/schedule-detail/outfit", self.handle_update_outfit_plan)
+        self.app.router.add_post("/api/schedule-detail/outfit", self.handle_update_outfit_plan)
         self.app.router.add_get("/api/photo-job-limit", self.handle_photo_job_limit)
         self.app.router.add_post("/api/photo-job-limit", self.handle_photo_job_limit)
         self.app.router.add_get("/api/favorite-outfits", self.handle_favorite_outfits)
@@ -452,18 +773,20 @@ class GalleryServer:
         self.app.router.add_patch("/api/favorite-outfits/{outfit_id}", self.handle_edit_favorite_outfit)
         self.app.router.add_post("/api/favorite-outfits/{outfit_id}/edit", self.handle_edit_favorite_outfit)
         self.app.router.add_post("/api/favorite-outfits/{outfit_id}/wardrobe-image", self.handle_favorite_outfit_wardrobe_image)
+        self.app.router.add_get("/api/favorite-outfits/{outfit_id}/wardrobe-image/versions", self.handle_favorite_outfit_wardrobe_versions)
+        self.app.router.add_get(
+            "/api/favorite-outfits/{outfit_id}/wardrobe-image/versions/{version_id}",
+            self.handle_favorite_outfit_wardrobe_version_file,
+        )
+        self.app.router.add_post(
+            "/api/favorite-outfits/{outfit_id}/wardrobe-image/versions/{version_id}/activate",
+            self.handle_activate_favorite_outfit_wardrobe_version,
+        )
         self.app.router.add_get("/api/disliked-outfits", self.handle_disliked_outfits)
         self.app.router.add_post("/api/disliked-outfits", self.handle_disliked_outfits)
 
         # 图片服务
         self.app.router.add_get("/images/{filename:.*}", self.handle_image_file)
-
-    async def _check_auth(self, request: web.Request) -> bool:
-        """简单 token 认证"""
-        if not self.token:
-            return True  # 无 token 时不认证
-        token = request.headers.get("Authorization", "").replace("Bearer ", "")
-        return token == self.token
 
     async def handle_index(self, request: web.Request):
         """返回画廊页面"""
@@ -474,6 +797,120 @@ class GalleryServer:
 
     async def handle_health(self, request: web.Request):
         return web.json_response({"status": "ok"})
+
+    async def _read_json_body(self, request: web.Request) -> dict:
+        try:
+            data = await request.json()
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _auth_status_payload(self, request: web.Request) -> dict:
+        password_source = self._configured_gallery_password_source()
+        is_local = self._is_local_request(request)
+        configured = bool(password_source)
+        authorized_session = self._gallery_session_authorized(request) if configured and not is_local else False
+        return {
+            "status": "ok",
+            "auth_configured": configured,
+            "password_source": password_source,
+            "needs_setup": not configured,
+            "setup_allowed": bool(is_local and not configured),
+            "local": bool(is_local),
+            "authorized": bool(is_local or authorized_session),
+            "client_ip": self._request_client_ip(request),
+        }
+
+    async def handle_auth_status(self, request: web.Request):
+        return web.json_response(self._auth_status_payload(request))
+
+    async def handle_auth_setup(self, request: web.Request):
+        if self._gallery_password_configured():
+            return web.json_response(
+                {
+                    "error": "password_already_configured",
+                    "message": "访问密码已经设置。",
+                    **self._auth_status_payload(request),
+                },
+                status=409,
+            )
+        if not self._is_local_request(request):
+            return web.json_response(
+                {
+                    "error": "setup_local_only",
+                    "message": "首次设置访问密码只能在部署机器本机完成。",
+                    **self._auth_status_payload(request),
+                },
+                status=403,
+            )
+
+        body = await self._read_json_body(request)
+        password = str(body.get("password") or "").strip()
+        if len(password) < 6:
+            return web.json_response(
+                {"error": "password_too_short", "message": "访问密码至少需要 6 个字符。"},
+                status=400,
+            )
+
+        data = self._load_auth_store()
+        data["password_hash"] = self._hash_gallery_password(password)
+        data["password_set_at"] = int(time.time())
+        data["password_source"] = "stored"
+        data["session_secret"] = secrets.token_hex(32)
+        self._save_auth_store(data)
+        logger.warning("画廊访问密码已通过本机 Web 首次设置。")
+        payload = self._auth_status_payload(request)
+        payload["authorized"] = True
+        token = self._issue_gallery_session()
+        response = web.json_response({
+            "status": "ok",
+            "session_token": token,
+            "token_type": "GallerySession",
+            "expires_in": GALLERY_AUTH_SESSION_SECONDS,
+            **payload,
+        })
+        self._set_gallery_session_cookie(response, request, token)
+        return response
+
+    async def handle_auth_login(self, request: web.Request):
+        if not self._gallery_password_configured():
+            return web.json_response(
+                {
+                    "error": "password_setup_required",
+                    "message": "首次部署需要先在本机浏览器设置访问密码。",
+                    **self._auth_status_payload(request),
+                },
+                status=401,
+            )
+
+        body = await self._read_json_body(request)
+        password = str(body.get("password") or "")
+        if not self._verify_gallery_password(password):
+            return web.json_response(
+                {"error": "invalid_password", "message": "访问密码不正确。"},
+                status=401,
+            )
+
+        logger.info("画廊访问密码登录成功: ip=%s", self._request_client_ip(request))
+        payload = self._auth_status_payload(request)
+        payload["authorized"] = True
+        token = self._issue_gallery_session()
+        response = web.json_response({
+            "status": "ok",
+            "session_token": token,
+            "token_type": "GallerySession",
+            "expires_in": GALLERY_AUTH_SESSION_SECONDS,
+            **payload,
+        })
+        self._set_gallery_session_cookie(response, request, token)
+        return response
+
+    async def handle_auth_logout(self, request: web.Request):
+        payload = self._auth_status_payload(request)
+        payload["authorized"] = self._is_local_request(request)
+        response = web.json_response({"status": "ok", **payload})
+        self._clear_gallery_session_cookie(response)
+        return response
 
     def _schedule_python_restart(self, reason: str = "manual", delay: float = 0.8) -> tuple[bool, str]:
         if self._restart_scheduled:
@@ -607,6 +1044,42 @@ class GalleryServer:
         return (ts or "")[5:]
 
     @staticmethod
+    def _log_category(logger_name: str, message: str) -> tuple[str, str]:
+        if any((message or "").strip().startswith(prefix) for prefix in LOG_SYSTEM_NOISE_PREFIXES):
+            return "system", "系统"
+        text = f"{logger_name} {message}".lower()
+        if logger_name == "aiohttp.access" or "接口" in message:
+            return "api", "接口"
+        if logger_name.startswith("apscheduler"):
+            return "schedule", "日程"
+        if any(word in text for word in ("推送", "发送", "wechat", "weixin", "telegram", "hermes", "openclaw")):
+            return "delivery", "推送"
+        if any(word in text for word in ("日程", "schedule", "动态任务", "动态生图任务", "补拍", "定时任务")):
+            return "schedule", "日程"
+        if any(word in text for word in ("生图", "图片", "generate", "image-to-image", "text-to-image", "底模")):
+            return "image", "生图"
+        if any(word in text for word in ("模型", "model", "llm", "gpt", "gemini", "gitee")):
+            return "model", "模型"
+        if any(word in text for word in ("参考", "衣柜", "wardrobe", "reference", "picxazz")):
+            return "asset", "素材"
+        return "system", "系统"
+
+    @staticmethod
+    def _log_source_label(logger_name: str) -> str:
+        if logger_name in LOG_SOURCE_LABELS:
+            return LOG_SOURCE_LABELS[logger_name]
+        if logger_name.startswith("apscheduler"):
+            return "任务调度"
+        if "zhuzhu" in logger_name:
+            return "生图引擎"
+        return logger_name.rsplit(".", 1)[-1].replace("_", " ") or "系统"
+
+    @staticmethod
+    def _is_log_noise(message: str) -> bool:
+        text = (message or "").strip()
+        return any(text.startswith(prefix) for prefix in LOG_SYSTEM_NOISE_PREFIXES)
+
+    @staticmethod
     def _is_error_detail_line(line: str) -> bool:
         low = (line or "").lower()
         return any(k in low for k in LOG_ERROR_DETAIL_KEYWORDS)
@@ -614,6 +1087,12 @@ class GalleryServer:
     @staticmethod
     def _diagnose_error_text(text: str) -> str:
         low = (text or "").lower()
+        if "fresh wechat conversation context" in low or "send the bot a wechat message first" in low:
+            return "微信会话上下文已失效；请先在微信里给 Hermes 发任意一条消息，收到回复后再发送图片。"
+        if "ret=-2" in low and "unknown error" in low:
+            return "微信会话上下文已失效，并非已发送次数过多；请先在微信里给 Hermes 发任意一条消息刷新上下文。"
+        if "ret=-2" in low and "rate limit" in low:
+            return "iLink 返回了 -2；这不代表已有消息发送成功，也可能是微信会话上下文过期。请先给 Hermes 发一条微信消息刷新上下文。"
         if "status=no response" in low or "detail=no response" in low:
             return "该次文本模型请求当时没有拿到响应，不等于模型不可用；如果后续已有成功记录，可以忽略这条旧错误。"
         if "request_failed" in low or "请求超时" in low:
@@ -659,16 +1138,27 @@ class GalleryServer:
             m = re.search(rf'\b{re.escape(key)}=([^,\s]+)', message or "")
         return m.group(1).strip() if m else ""
 
+    @staticmethod
+    def _display_log_image_name(value: str) -> str:
+        filename = os.path.basename(str(value or "").strip())
+        schedule_match = re.search(r'(?:^|_)schedule_(\d{2})(\d{2})(?:_|\.|$)', filename)
+        if schedule_match:
+            return f"{schedule_match.group(1)}:{schedule_match.group(2)} 计划图"
+        if len(filename) <= 36:
+            return filename
+        stem, ext = os.path.splitext(filename)
+        return f"{stem[:24]}…{ext}"
+
     @classmethod
     def _translate_access_log(cls, message: str) -> Optional[str]:
         m = LOG_ACCESS_RE.search(message or "")
         if not m:
             return None
         status = int(m.group("status"))
-        if status < 500:
-            return None
         method = m.group("method")
         path = m.group("path").split("?", 1)[0]
+        if status < 500 or cls._is_ignorable_access_path(path):
+            return None
         return f"接口请求失败：{method} {path} 返回 {status}。"
 
     @staticmethod
@@ -683,6 +1173,12 @@ class GalleryServer:
         }
 
     @staticmethod
+    def _is_ignorable_access_path(path: str) -> bool:
+        clean_path = str(path or "").split("?", 1)[0].rstrip("/")
+        basename = clean_path.rsplit("/", 1)[-1]
+        return bool(ICON_PROBE_BASENAME_RE.fullmatch(basename))
+
+    @staticmethod
     def _is_normal_access_status(status: int) -> bool:
         return 200 <= status < 400
 
@@ -690,10 +1186,90 @@ class GalleryServer:
     def _translate_log_message(cls, message: str, level: str = "INFO", logger_name: str = "") -> str:
         text = (message or "").strip()
 
-        m = re.search(r'开始定时生图:\s*theme=([^,\s]+),\s*schedule_time=([^\s,]+)\s*(.*)', text)
+        if text == "Scheduler started":
+            return "任务调度器已启动。"
+        if text.startswith("持久化日志已启用"):
+            return "日志系统已启动，历史日志会自动轮转清理。"
+        if text == "动态任务调度器已启动":
+            return "动态任务调度器已启动。"
+        if text.startswith("Added job ") and "job store" in text:
+            return "任务已加入调度队列。"
+        if text.startswith("Removed job "):
+            return "调度队列中的旧任务已移除。"
+        if text.startswith("Running job "):
+            return "调度任务开始执行。"
+        if text.startswith("Job ") and "executed successfully" in text:
+            return "调度任务执行完成。"
+
+        m = re.search(r'手动发送图片:\s*channel=([^\s]+).*?image=([^\s]+)', text)
         if m:
-            activity = (m.group(3) or "").strip()
-            return f"开始定时生图：{m.group(2)}，动作：{activity or '未记录'}。"
+            channel_label = "微信" if m.group(1) == "wechat" else "TG" if m.group(1) == "telegram" else m.group(1)
+            return f"开始手动发送图片到{channel_label}：{cls._display_log_image_name(m.group(2))}。"
+
+        m = re.search(r'重抽沿用原参考图:\s*([^\s]+)\s+ref=(.+)$', text)
+        if m:
+            return f"重抽沿用原参考图：{cls._display_log_image_name(m.group(1))}，参考：{m.group(2).strip()}。"
+
+        m = re.search(r'发送(微信|TG)图片:\s*attempt=(\d+)/(\d+)', text)
+        if m:
+            return f"正在发送{m.group(1)}图片：第 {m.group(2)}/{m.group(3)} 次。"
+
+        m = re.search(r'(微信|TG)图片发送超时:\s*attempt=(\d+)/(\d+)', text)
+        if m:
+            return f"{m.group(1)}图片发送超时：第 {m.group(2)}/{m.group(3)} 次。"
+
+        m = re.search(r'准备推送图片:\s*channel=([^,\s]+),\s*agent=([^,\s]+)', text)
+        if m:
+            channel_label = "微信" if m.group(1) == "wechat" else "TG" if m.group(1) == "telegram" else m.group(1)
+            return f"准备通过 {m.group(2)} 推送图片到{channel_label}。"
+
+        m = re.search(r'(微信|TG)图片发送重试等待\s*([0-9.]+)s\s*\((\d+)/(\d+)\)', text)
+        if m:
+            return f"{m.group(1)}图片发送将在 {m.group(2)} 秒后重试：下一次为第 {m.group(3)}/{m.group(4)} 次。"
+
+        if text.startswith("微信图片发送失败") or text.startswith("TG图片发送失败"):
+            channel_label = "微信" if text.startswith("微信") else "TG"
+            return f"{channel_label}图片发送失败：{cls._diagnose_error_text(text)}"
+
+        if text.startswith("微信图片发送停止重试"):
+            return (
+                "微信图片发送已停止：会话上下文已失效，并非真实限流；"
+                "请先在微信里给 Hermes 发任意一条消息，收到回复后再重试。"
+            )
+
+        if any(text.startswith(prefix) for prefix in (
+            "微信图片发送最终失败",
+            "微信发送最终失败",
+            "TG图片发送最终失败",
+            "TG发送最终失败",
+        )):
+            channel_label = "微信" if text.startswith("微信") else "TG"
+            return f"{channel_label}图片最终发送失败：{cls._diagnose_error_text(text)}"
+
+        if any(text.startswith(prefix) for prefix in (
+            "微信发送失败: 图片未送达",
+            "微信手动发送失败: 图片未送达",
+            "TG发送失败: 图片未送达",
+            "TG手动发送失败: 图片未送达",
+        )):
+            channel_label = "微信" if text.startswith("微信") else "TG"
+            return f"{channel_label}图片未送达，已跳过文案发送。"
+
+        if text.startswith("推送未完全成功"):
+            return "图片推送未完成，请查看前面的失败原因。"
+
+        if text.startswith("微信图片发送成功") or text.startswith("TG图片发送成功"):
+            channel_label = "微信" if text.startswith("微信") else "TG"
+            return f"{channel_label}图片发送成功。"
+
+        m = re.search(
+            r'开始定时生图:\s*theme=([^,\s]+),(?:\s*size=([^,\s]+),)?\s*schedule_time=([^\s,]+)\s*(.*)',
+            text,
+        )
+        if m:
+            activity = (m.group(4) or "").strip()
+            size_text = f"，尺寸：{m.group(2)}" if m.group(2) else ""
+            return f"开始定时生图：{m.group(3)}{size_text}，动作：{activity or '未记录'}。"
 
         m = re.search(r'定时任务已设置:\s*日程\(([^)]+)\)\s*\+\s*动态生图\(根据日程时间\)', text)
         if m:
@@ -818,9 +1394,20 @@ class GalleryServer:
         if m:
             return f"开始生图：引擎 {m.group(2)}，模型 {m.group(3)}，风格 {m.group(4)}，尺寸 {m.group(5)}。"
 
+        m = re.search(
+            r'生图引擎自动回退:\s*requested=([^,\s]+),\s*failed=([^,\s]+),\s*actual=([^,\s]+),\s*reason=(.*)',
+            text,
+        )
+        if m:
+            labels = {"gptimage": "GPT Image", "gitee": "Gitee", "gemini": "Gemini"}
+            failed_label = labels.get(m.group(2), m.group(2))
+            actual_label = labels.get(m.group(3), m.group(3))
+            reason = m.group(4).strip().rstrip("。")
+            return f"{failed_label} 生图失败，已自动改用 {actual_label}；最终图片由 {actual_label} 生成。原因：{reason}。"
+
         m = re.search(r'生图成功:\s*(.+)', text)
         if m:
-            return f"生图成功：{m.group(1).strip()}。"
+            return f"生图成功：{cls._display_log_image_name(m.group(1))}。"
 
         if text.startswith("生图失败"):
             return "生图失败：" + cls._diagnose_error_text(text)
@@ -836,8 +1423,9 @@ class GalleryServer:
             return text + "。"
         if text.startswith("自定义生图失败") or text.startswith("Custom generate error"):
             return "自定义生图失败：" + cls._diagnose_error_text(text)
-        if text.startswith("图片重抽成功"):
-            return text + "。"
+        m = re.search(r'图片重抽成功:\s*([^\s]+)\s*->\s*([^\s]+)', text)
+        if m:
+            return f"图片重抽成功：{cls._display_log_image_name(m.group(1))} 已替换为新图。"
         if text.startswith("图片重抽失败") or text.startswith("Reroll image error"):
             return "图片重抽失败：" + cls._diagnose_error_text(text)
 
@@ -861,6 +1449,10 @@ class GalleryServer:
             return "Agnes 图片接口失败，已停止，不再改走 GPT 聊天兼容端点。"
         if text.startswith("Agnes Images API unsupported; not retrying chat-compatible GPT Image endpoint"):
             return "当前中转不支持 Agnes 图片接口，已停止，不再改走 GPT 聊天兼容端点。"
+        if text.startswith("Images API failed; chat-compatible GPT Image fallback is disabled"):
+            return "图片接口失败，Chat 端点回退未开启，已停止继续换线路。"
+        if text.startswith("Images API unsupported; chat-compatible GPT Image fallback is disabled"):
+            return "当前中转不支持 Images API，Chat 端点回退未开启，未改走 /chat/completions。"
         if text.startswith("Images API failed; retrying chat-compatible GPT Image endpoint"):
             return "图片接口失败，正在改用聊天兼容 GPT Image 端点重试。"
         if (
@@ -1083,8 +1675,21 @@ class GalleryServer:
 
             match = LOG_ENTRY_RE.match(line)
             if not match:
-                if entries and cls._is_error_detail_line(line):
-                    entries[-1]["message"] = f"{entries[-1]['message']} | {line.strip()}"
+                if entries:
+                    detail_line = line.strip()
+                    previous_detail = str(entries[-1].get("detail") or "").strip()
+                    entries[-1]["detail"] = (
+                        f"{previous_detail}\n{detail_line}".strip()
+                        if previous_detail
+                        else detail_line
+                    )
+                    if cls._is_error_detail_line(line):
+                        diagnosis = cls._diagnose_error_text(entries[-1]["detail"])
+                        if diagnosis != "详见下方原始错误。":
+                            entries[-1]["message"] = entries[-1]["message"].replace(
+                                "详见下方原始错误。",
+                                diagnosis,
+                            )
                 continue
 
             ts = match.group("ts")
@@ -1096,41 +1701,82 @@ class GalleryServer:
             if logger_name == "aiohttp.access":
                 access = cls._access_log_parts(message)
                 if access:
-                    if cls._is_normal_access_status(access["status"]):
+                    if (
+                        cls._is_normal_access_status(access["status"])
+                        or cls._is_ignorable_access_path(access["path"])
+                    ):
                         hidden_access_count += 1
                         continue
-                    message_text = f"接口异常：{access['method']} {access['path']} -> {access['status']}"
+                    if (
+                        access["status"] == 409
+                        and access["method"] == "POST"
+                        and access["path"] == "/api/generate-now"
+                    ):
+                        message_text = "现在在干嘛未执行：今日生图计划已达上限"
+                        display_level = "INFO"
+                    else:
+                        message_text = f"接口异常：{access['method']} {access['path']} -> {access['status']}"
                     if access["status"] >= 500:
                         display_level = "ERROR"
-                    elif access["status"] >= 400:
+                    elif access["status"] >= 400 and display_level != "INFO":
                         display_level = "WARN"
                 else:
                     message_text = message.strip()
             else:
                 message_text = cls._translate_log_message(message, level, logger_name)
 
+            category, category_label = cls._log_category(logger_name, f"{message} {message_text}")
+            translated = message_text.strip()
+            raw_message = message.strip()
+            is_noise = cls._is_log_noise(raw_message)
             entries.append({
                 "time": cls._format_log_time(ts),
                 "level": display_level,
                 "logger": logger_name,
-                "message": message_text,
+                "source": cls._log_source_label(logger_name),
+                "category": category,
+                "category_label": category_label,
+                "message": translated,
+                "detail": raw_message if raw_message != translated else "",
+                "important": display_level in {"WARN", "ERROR"} or (
+                    not is_noise and cls._is_useful_log_message(level, logger_name, message, line)
+                ),
+                "repeat_count": 1,
             })
 
-        selected = entries[-max_items:]
+        collapsed = {}
+        for item in entries:
+            key = (item["level"], item["category"], item["message"])
+            previous = collapsed.pop(key, None)
+            if previous:
+                item["repeat_count"] = previous.get("repeat_count", 1) + 1
+                item["first_time"] = previous.get("first_time") or previous.get("time")
+            collapsed[key] = item
+
+        selected = list(collapsed.values())[-max_items:]
         counts = {"DEBUG": 0, "INFO": 0, "WARN": 0, "ERROR": 0}
+        event_counts = {"DEBUG": 0, "INFO": 0, "WARN": 0, "ERROR": 0}
         for item in selected:
             counts[item["level"]] = counts.get(item["level"], 0) + 1
+            event_counts[item["level"]] = event_counts.get(item["level"], 0) + item.get("repeat_count", 1)
+
+        important_count = sum(1 for item in selected if item.get("important"))
 
         output = [
             f"运行日志（最近 {len(selected)} 条）",
-            f"INFO {counts.get('INFO', 0)} · DEBUG {counts.get('DEBUG', 0)} · WARN {counts.get('WARN', 0)} · ERROR {counts.get('ERROR', 0)}",
+            f"重点 {important_count} · INFO {counts.get('INFO', 0)} · DEBUG {counts.get('DEBUG', 0)} · WARN {counts.get('WARN', 0)} · ERROR {counts.get('ERROR', 0)}",
         ]
         if hidden_access_count:
-            output.append(f"已隐藏普通接口访问日志 {hidden_access_count} 条（2xx/3xx）。")
+            output.append(f"已隐藏普通接口访问或图标探测日志 {hidden_access_count} 条。")
         if selected:
             output.append("")
             for item in selected:
-                output.append(f"[{item['level']}] {item['time']} {item['logger']} ｜ {item['message']}")
+                repeat_count = max(0, item.get("repeat_count", 1) - 1)
+                repeat = f" 重复 {repeat_count} 次" if repeat_count else ""
+                output.append(
+                    f"[{item['level']}] {item['time']} [{item['category_label']}] "
+                    f"{item['message']}{repeat}"
+                )
         else:
             output.append("")
             output.append("最近没有可显示的分类日志。")
@@ -1139,21 +1785,23 @@ class GalleryServer:
             "text": "\n".join(output),
             "filtered_count": len(selected),
             "total_count": len(entries),
+            "entries": selected,
+            "important_count": important_count,
             "raw_error_count": counts.get("ERROR", 0),
             "level_counts": counts,
+            "level_event_counts": event_counts,
             "hidden_access_count": hidden_access_count,
         }
 
     async def handle_logs(self, request: web.Request):
         """Return a tail of the live gallery service log for the UI log viewer."""
-        api_key = os.environ.get("GALLERY_API_KEY", "")
-        if not api_key and not self._is_local_request(request):
+        if not self._request_has_gallery_access(request):
             return web.json_response(
                 {
-                    "error": "local_only",
-                    "message": "实时日志只允许本机查看；远程查看请配置 GALLERY_API_KEY。",
+                    "error": "password_required",
+                    "message": "请输入画廊访问密码。",
                 },
-                status=403,
+                status=401,
             )
         try:
             lines = int(request.query.get("lines", "300"))
@@ -1174,7 +1822,7 @@ class GalleryServer:
             mode = str(request.query.get("mode") or "").strip().lower()
             raw_mode = mode == "raw" or request.query.get("raw") == "1"
             level_mode = mode in {"levels", "level", "structured"}
-            read_lines = lines if raw_mode else min(5000, lines * (8 if level_mode else 4))
+            read_lines = lines if raw_mode else min(20000, max(5000, lines * (100 if level_mode else 20)))
             text = self._redact_log_text(self._tail_log_file(path, read_lines))
             stat = os.stat(path)
             payload = {
@@ -1261,7 +1909,7 @@ class GalleryServer:
     @classmethod
     def _favorite_outfit_wardrobe_response_item(cls, item: dict) -> dict:
         wardrobe = cls._favorite_outfit_wardrobe_payload(item)
-        if not wardrobe:
+        if not wardrobe and not normalize_image_versions((item or {}).get("wardrobe_image_versions")):
             return {}
         result = {}
         for key in (
@@ -1280,6 +1928,13 @@ class GalleryServer:
             value = wardrobe.get(key)
             if value not in ("", None):
                 result[key] = value
+        versions = normalize_image_versions((item or {}).get("wardrobe_image_versions"))
+        if versions:
+            result["version_count"] = len(versions)
+            result["has_versions"] = True
+        elif wardrobe:
+            result["version_count"] = 0
+            result["has_versions"] = False
         return result
 
     @staticmethod
@@ -1330,6 +1985,25 @@ class GalleryServer:
             "label": "衣柜",
             "style": "wardrobe",
             "source": "wardrobe",
+        }
+
+    def _xiaohongshu_reference_for_value(self, value: str) -> dict:
+        ref_name = self._reference_basename(value)
+        if not ref_name:
+            return {}
+        record = self.xiaohongshu_reference_store.load().get(ref_name)
+        if not isinstance(record, dict):
+            return {}
+        path = self._safe_reference_path(self.xiaohongshu_reference_dir, ref_name)
+        if not path:
+            return {}
+        return {
+            "id": str(record.get("id") or f"xiaohongshu_{hashlib.sha1(ref_name.encode('utf-8')).hexdigest()[:12]}"),
+            "filename": ref_name,
+            "url": f"/local-refs/xiaohongshu/{quote(ref_name)}",
+            "label": str(record.get("label") or "小红书穿搭"),
+            "source": "xiaohongshu",
+            "path": path,
         }
 
     def _ensure_entry_reference_label(self, entry: dict) -> dict:
@@ -1416,6 +2090,34 @@ class GalleryServer:
         except Exception as e:
             logger.error("Load favorite outfits error: %s", e)
             return []
+
+    def _recover_interrupted_wardrobe_image_statuses(self) -> None:
+        """Mark persisted in-progress states as interrupted after a process restart."""
+        now = int(time.time())
+
+        def _recover(items: list[dict]) -> list[dict]:
+            updated = []
+            for item in items:
+                candidate = dict(item)
+                status = candidate.get("wardrobe_image_status")
+                state = str((status or {}).get("status") or "").strip()
+                if state in {"queued", "generating"}:
+                    started_at = int((status or {}).get("started_at") or (status or {}).get("updated_at") or now)
+                    candidate["wardrobe_image_status"] = {
+                        "status": "failed",
+                        "message": "上次衣架图任务因服务重启中断，可以重试",
+                        "error": "generation_interrupted",
+                        "started_at": started_at,
+                        "updated_at": now,
+                    }
+                updated.append(candidate)
+            return updated
+
+        try:
+            if os.path.exists(self._favorite_outfits_path()):
+                self._update_favorite_outfits(_recover)
+        except Exception as e:
+            logger.error("Recover interrupted wardrobe image states failed: %s", e)
 
     def _favorite_outfit_by_id(self, outfit_id: str) -> Optional[dict]:
         if not outfit_id:
@@ -1530,7 +2232,7 @@ class GalleryServer:
         if not isinstance(outfit, dict) or not outfit:
             return web.json_response({"error": "outfit_required"}, status=400)
 
-        date_text = str(body.get("date") or date.today().isoformat()).strip()
+        date_text = str(body.get("date") or self._today().isoformat()).strip()
         outfit_style = str(body.get("outfit_style") or outfit.get("风格") or "").strip()
         outfit_id = self._favorite_outfit_id(date_text, outfit_style, outfit)
 
@@ -1766,7 +2468,7 @@ class GalleryServer:
         })
 
     async def handle_disliked_outfits(self, request: web.Request):
-        """记录用户不喜欢的今日穿搭方案，供后续日程 LLM 减少相似风格。"""
+        """记录用户不喜欢的今日穿搭方案，供后续日程阻止高度相似穿搭。"""
         if request.method == "GET":
             items = sorted(
                 [self._favorite_outfit_response_item(item) for item in self._load_disliked_outfits()],
@@ -1777,7 +2479,7 @@ class GalleryServer:
                 "items": items,
                 "count": len(items),
                 "generation_reference": bool(items),
-                "reference_scope": "negative_hair_outfit_style_only",
+                "reference_scope": "hard_negative_outfit_similarity",
             })
 
         try:
@@ -1791,7 +2493,7 @@ class GalleryServer:
         if not isinstance(outfit, dict) or not outfit:
             return web.json_response({"error": "outfit_required"}, status=400)
 
-        date_text = str(body.get("date") or date.today().isoformat()).strip()
+        date_text = str(body.get("date") or self._today().isoformat()).strip()
         outfit_style = str(body.get("outfit_style") or outfit.get("风格") or "").strip()
         outfit_id = self._favorite_outfit_id(date_text, outfit_style, outfit)
 
@@ -1823,7 +2525,8 @@ class GalleryServer:
             if should_dislike:
                 next_items.insert(0, item)
             next_items.sort(key=lambda x: x.get("created_at", 0), reverse=True)
-            return next_items[:50]
+            # This file is the scheduler's permanent hard-deny history.
+            return next_items
 
         try:
             items = self._update_disliked_outfits(_apply)
@@ -2000,11 +2703,23 @@ class GalleryServer:
                 previous_filename = str(previous_wardrobe.get("filename") or "").strip()
                 previous_path = self._safe_reference_path(self.wardrobe_reference_dir, previous_filename) if previous_filename else ""
                 new_path = str(result.get("path") or "").strip()
-                if previous_path and previous_path != new_path:
+                archived_version = None
+                if previous_path and previous_path != new_path and os.path.isfile(previous_path):
                     try:
-                        os.unlink(previous_path)
-                    except OSError as e:
-                        logger.warning("Delete previous wardrobe reference failed: %s", e)
+                        archived_version = archive_image_version(
+                            self.data_dir,
+                            previous_path,
+                            original_image_filename=previous_filename,
+                            archived_at=datetime.now().isoformat(timespec="seconds"),
+                            target="wardrobe_reroll",
+                            target_label="重生衣架图",
+                            instruction="",
+                            date=str(item.get("date") or ""),
+                            time="",
+                        )
+                    except Exception as e:
+                        logger.warning("Archive previous wardrobe reference failed: %s", e)
+                        archived_version = None
 
                 def _apply(items: list[dict]) -> list[dict]:
                     updated = []
@@ -2015,6 +2730,11 @@ class GalleryServer:
                         candidate_ids = {existing.get("id"), self._favorite_outfit_item_id(existing)}
                         if outfit_id in candidate_ids:
                             merged = dict(existing)
+                            versions = normalize_image_versions(merged.get("wardrobe_image_versions"))
+                            if archived_version:
+                                versions.append(archived_version)
+                            if versions:
+                                merged["wardrobe_image_versions"] = versions
                             merged["wardrobe_image"] = wardrobe_payload
                             merged.pop("wardrobe_image_status", None)
                             updated.append(merged)
@@ -2032,13 +2752,48 @@ class GalleryServer:
                         os.unlink(new_path)
                     except OSError:
                         pass
+                    if archived_version:
+                        delete_image_versions(self.data_dir, [archived_version])
                     raise
                 except Exception as e:
                     self._set_favorite_outfit_wardrobe_status(outfit_id, "failed", "衣架图保存失败", str(e))
                     logger.error("Save favorite outfit wardrobe image error: %s", e)
+                    if archived_version:
+                        delete_image_versions(self.data_dir, [archived_version])
                     raise
 
+                # Keep previous file only when archive failed; otherwise archive is source of truth.
+                if previous_path and previous_path != new_path and archived_version:
+                    try:
+                        os.unlink(previous_path)
+                    except OSError as e:
+                        logger.warning("Delete previous wardrobe reference after archive failed: %s", e)
+                elif previous_path and previous_path != new_path and not archived_version:
+                    # Fallback: if archive failed, keep previous file to avoid data loss.
+                    logger.warning(
+                        "Keeping previous wardrobe image because archive failed: %s",
+                        previous_filename,
+                    )
+
+                if archived_version:
+                    wardrobe_payload = dict(wardrobe_payload)
+                    wardrobe_payload["version_count"] = len(
+                        normalize_image_versions(
+                            (self._favorite_outfit_by_id(outfit_id) or {}).get("wardrobe_image_versions")
+                        )
+                    )
+                    wardrobe_payload["has_versions"] = wardrobe_payload["version_count"] > 0
+                    wardrobe_payload["archived_version_id"] = archived_version.get("id", "")
+
                 return wardrobe_payload
+        except Exception as e:
+            self._set_favorite_outfit_wardrobe_status(
+                outfit_id,
+                "failed",
+                "衣架图生成失败，可以手动重试",
+                str(e),
+            )
+            raise
         finally:
             try:
                 if not lock.locked():
@@ -2111,6 +2866,251 @@ class GalleryServer:
             "id": outfit_id,
             "wardrobe_image": wardrobe_payload,
         })
+
+    def _public_wardrobe_version(self, outfit_id: str, record: dict, position: int = 0) -> dict:
+        record = dict(record or {})
+        version_id = str(record.get("id") or "").strip().lower()
+        payload = {
+            "id": version_id,
+            "image_url": (
+                f"/api/favorite-outfits/{outfit_id}/wardrobe-image/versions/{version_id}"
+                if version_id
+                else ""
+            ),
+            "archived_at": record.get("archived_at", ""),
+            "target": record.get("target", ""),
+            "target_label": record.get("target_label", ""),
+            "instruction": record.get("instruction", ""),
+            "date": record.get("date", ""),
+            "time": record.get("time", ""),
+            "position": position,
+        }
+        for field in ("width", "height", "file_size_bytes"):
+            if record.get(field):
+                payload[field] = record[field]
+        return payload
+
+    async def handle_favorite_outfit_wardrobe_versions(self, request: web.Request):
+        """List archived wardrobe hanger-image versions for one favorite outfit."""
+        outfit_id = str(request.match_info.get("outfit_id") or "").strip()
+        item = self._favorite_outfit_by_id(outfit_id)
+        if not item:
+            return web.json_response({"error": "favorite_outfit_not_found"}, status=404)
+        records = normalize_image_versions(item.get("wardrobe_image_versions"))
+        available = []
+        for position, record in enumerate(records, start=1):
+            path = image_version_path(self.data_dir, record)
+            if path and path.is_file():
+                available.append(self._public_wardrobe_version(outfit_id, record, position))
+        available.reverse()
+        return web.json_response({
+            "id": outfit_id,
+            "version_count": len(available),
+            "items": available,
+            "current": self._favorite_outfit_wardrobe_response_item(item),
+        })
+
+    async def handle_favorite_outfit_wardrobe_version_file(self, request: web.Request):
+        """Serve one archived wardrobe hanger image."""
+        outfit_id = str(request.match_info.get("outfit_id") or "").strip()
+        item = self._favorite_outfit_by_id(outfit_id)
+        if not item:
+            raise web.HTTPNotFound()
+        resolved = find_image_version(
+            self.data_dir,
+            item.get("wardrobe_image_versions"),
+            request.match_info.get("version_id", ""),
+        )
+        if not resolved:
+            raise web.HTTPNotFound()
+        _, path = resolved
+        return web.FileResponse(
+            path,
+            headers={"Cache-Control": "private, max-age=31536000, immutable"},
+        )
+
+    async def handle_activate_favorite_outfit_wardrobe_version(self, request: web.Request):
+        """Restore one archived wardrobe image as the current hanger image."""
+        outfit_id = str(request.match_info.get("outfit_id") or "").strip()
+        version_id = str(request.match_info.get("version_id") or "").strip().lower()
+        item = self._favorite_outfit_by_id(outfit_id)
+        if not item:
+            return web.json_response({"error": "favorite_outfit_not_found"}, status=404)
+
+        lock = self._wardrobe_image_locks.setdefault(outfit_id, asyncio.Lock())
+        if lock.locked():
+            return web.json_response(
+                {
+                    "error": "wardrobe_image_generating",
+                    "message": "这套衣架图正在生成中，请稍后再切换版本",
+                },
+                status=409,
+            )
+
+        async with lock:
+            item = self._favorite_outfit_by_id(outfit_id)
+            if not item:
+                return web.json_response({"error": "favorite_outfit_not_found"}, status=404)
+            records = normalize_image_versions(item.get("wardrobe_image_versions"))
+            resolved = find_image_version(self.data_dir, records, version_id)
+            if not resolved:
+                return web.json_response(
+                    {
+                        "error": "version_not_found",
+                        "message": "该历史版本已变化，请重新打开",
+                    },
+                    status=404,
+                )
+            selected_record, selected_path = resolved
+            current = self._favorite_outfit_wardrobe_payload(item)
+            current_filename = str(current.get("filename") or "").strip()
+            current_path = (
+                self._safe_reference_path(self.wardrobe_reference_dir, current_filename)
+                if current_filename
+                else ""
+            )
+            if not current_path or not os.path.isfile(current_path):
+                # Still allow restore if only archive exists; create new current file name.
+                current_path = ""
+
+            switched_at = datetime.now().isoformat(timespec="seconds")
+            archived_current = None
+            if current_path and os.path.isfile(current_path):
+                try:
+                    archived_current = archive_image_version(
+                        self.data_dir,
+                        current_path,
+                        original_image_filename=current_filename,
+                        archived_at=switched_at,
+                        target="version_switch",
+                        target_label="切换前当前版本",
+                        instruction="",
+                        date=str(item.get("date") or ""),
+                        time="",
+                    )
+                except Exception as e:
+                    logger.error("Archive current wardrobe before switch failed: %s", e)
+                    return web.json_response(
+                        {
+                            "error": "version_archive_failed",
+                            "message": "保留当前衣架图失败，未切换",
+                        },
+                        status=500,
+                    )
+
+            ext = Path(selected_path).suffix.lower() or ".png"
+            if current_filename:
+                target_filename = current_filename
+            else:
+                target_filename = f"wardrobe_{outfit_id[:8]}_{int(time.time())}{ext}"
+            target_path = self._safe_reference_path(self.wardrobe_reference_dir, target_filename)
+            if not target_path:
+                return web.json_response({"error": "invalid_wardrobe_path"}, status=500)
+
+            try:
+                loop = asyncio.get_running_loop()
+                replaced = await loop.run_in_executor(
+                    None,
+                    lambda: replace_image_from_version(selected_path, target_path),
+                )
+            except Exception as e:
+                if archived_current:
+                    delete_image_versions(self.data_dir, [archived_current])
+                logger.error("Restore wardrobe version failed: %s", e)
+                return web.json_response(
+                    {
+                        "error": "version_restore_failed",
+                        "message": "切换衣架图版本失败",
+                    },
+                    status=500,
+                )
+
+            wardrobe_payload = {
+                "filename": os.path.basename(target_path),
+                "url": f"/local-refs/wardrobe/{os.path.basename(target_path)}",
+                "prompt": str(current.get("prompt") or ""),
+                "size": str(current.get("size") or ""),
+                "source": str(current.get("source") or "wardrobe"),
+                "model_name": str(current.get("model_name") or ""),
+                "generation_mode": str(current.get("generation_mode") or "text2img"),
+                "created_at": int(time.time()),
+                "file_size_bytes": int((replaced or {}).get("file_size_bytes") or 0),
+                "width": int((replaced or {}).get("width") or 0),
+                "height": int((replaced or {}).get("height") or 0),
+            }
+
+            def _apply(items: list[dict]) -> list[dict]:
+                updated = []
+                found = False
+                for existing in items:
+                    if not isinstance(existing, dict):
+                        continue
+                    candidate_ids = {existing.get("id"), self._favorite_outfit_item_id(existing)}
+                    if outfit_id in candidate_ids:
+                        merged = dict(existing)
+                        versions = normalize_image_versions(merged.get("wardrobe_image_versions"))
+                        # Drop activated version from history; append previous current.
+                        versions = [v for v in versions if v.get("id") != selected_record.get("id")]
+                        if archived_current:
+                            versions.append(archived_current)
+                        if versions:
+                            merged["wardrobe_image_versions"] = versions
+                        else:
+                            merged.pop("wardrobe_image_versions", None)
+                        merged["wardrobe_image"] = wardrobe_payload
+                        merged.pop("wardrobe_image_status", None)
+                        updated.append(merged)
+                        found = True
+                    else:
+                        updated.append(existing)
+                if not found:
+                    raise ValueError("favorite_outfit_not_found")
+                return updated
+
+            try:
+                self._update_favorite_outfits(_apply)
+            except Exception as e:
+                logger.error("Save wardrobe version switch failed: %s", e)
+                # Roll back the already-switched file so disk matches the unchanged JSON.
+                if archived_current:
+                    previous_path = image_version_path(self.data_dir, archived_current)
+                    try:
+                        if not previous_path or not previous_path.is_file():
+                            raise FileNotFoundError("archived_current_missing")
+                        await loop.run_in_executor(
+                            None,
+                            lambda: replace_image_from_version(previous_path, target_path),
+                        )
+                    except Exception as rollback_error:
+                        # Keep the archive copy: it is the only pre-switch content left.
+                        logger.error(
+                            "Rollback wardrobe switch failed, pre-switch copy kept at %s: %s",
+                            previous_path,
+                            rollback_error,
+                        )
+                    else:
+                        delete_image_versions(self.data_dir, [archived_current])
+                else:
+                    # No current file existed before the switch; drop the new one.
+                    try:
+                        os.remove(target_path)
+                    except FileNotFoundError:
+                        pass
+                    except OSError as rollback_error:
+                        logger.error("Rollback new wardrobe file failed: %s", rollback_error)
+                return web.json_response({"error": "save_failed", "message": str(e)}, status=500)
+
+            # Remove restored archive file after successful activation.
+            delete_image_versions(self.data_dir, [selected_record])
+
+            fresh = self._favorite_outfit_by_id(outfit_id) or {}
+            response_image = self._favorite_outfit_wardrobe_response_item(fresh)
+            return web.json_response({
+                "success": True,
+                "id": outfit_id,
+                "wardrobe_image": response_image,
+                "version_count": int(response_image.get("version_count") or 0),
+            })
 
     def _plugin_config_path(self) -> str:
         return os.path.join(self.data_dir, "plugin_config.json")
@@ -2224,6 +3224,32 @@ class GalleryServer:
             local = ""
         return local or os.environ.get("GPT_IMAGE_BASE_URL", "") or configured
 
+    def _effective_gitee_image_url(self, keys_config: Optional[dict] = None) -> str:
+        keys_config = keys_config if isinstance(keys_config, dict) else self._load_api_keys_config()
+        image_config = self.config.get("image_gen", {}) if isinstance(self.config.get("image_gen"), dict) else {}
+        configured = str(image_config.get("gitee_url", "") or DEFAULT_GITEE_IMAGE_URL).strip()
+        local = str(keys_config.get("gitee_url", "") or "").strip()
+        if local == configured:
+            local = ""
+        return os.environ.get("GITEE_API_URL", "").strip() or local or configured
+
+    def _effective_gitee_api_key(
+        self,
+        plugin_config: Optional[dict] = None,
+        local_override: str = "",
+    ) -> str:
+        plugin_config = plugin_config if isinstance(plugin_config, dict) else self._load_plugin_config()
+        gitee_config = plugin_config.get("gitee_config", {})
+        if not isinstance(gitee_config, dict):
+            gitee_config = {}
+        api_keys = gitee_config.get("api_keys", [])
+        local_key = str((api_keys[0] if isinstance(api_keys, list) and api_keys else "") or "").strip()
+        return (
+            os.environ.get("GITEE_API_KEY", "").strip()
+            or str(local_override or "").strip()
+            or local_key
+        )
+
     @classmethod
     def _models_base_url(cls, url: str) -> str:
         base = cls._configured_image_base_url(url)
@@ -2233,6 +3259,12 @@ class GalleryServer:
 
     def _resolve_image_dir(self) -> str:
         image_dir = resolve_image_dir(self.config, self.data_dir)
+        if not self._image_dir_is_allowed(image_dir):
+            logger.error(
+                "Configured image dir is outside allowed roots: %s; using default",
+                image_dir,
+            )
+            return self.default_image_dir
         if os.path.exists(image_dir) and not os.path.isdir(image_dir):
             logger.error(f"Configured image dir is not a directory: {image_dir}; using default")
             return self.default_image_dir
@@ -2240,7 +3272,9 @@ class GalleryServer:
 
     def _set_runtime_image_dir(self, image_dir: str):
         image_dir = image_dir or self.default_image_dir
-        self.image_dir = os.path.abspath(os.path.expanduser(image_dir))
+        if not self._image_dir_is_allowed(image_dir):
+            raise ValueError("image_dir_not_allowed")
+        self.image_dir = str(Path(image_dir).expanduser().resolve())
         os.makedirs(self.image_dir, exist_ok=True)
         if self.on_image_dir_changed:
             self.on_image_dir_changed(self.image_dir)
@@ -2253,15 +3287,85 @@ class GalleryServer:
                 result.append(clean)
         return result
 
+    def _allowed_image_roots(self) -> list[Path]:
+        roots = [Path(self.data_dir)]
+        configured = self.gallery_config.get("allowed_image_roots", [])
+        if isinstance(configured, str):
+            configured = [configured]
+        for value in configured if isinstance(configured, (list, tuple)) else []:
+            raw = str(value or "").strip()
+            if raw:
+                roots.append(Path(raw).expanduser())
+        result = []
+        for root in roots:
+            try:
+                resolved = root.resolve()
+            except OSError:
+                continue
+            if resolved not in result:
+                result.append(resolved)
+        return result
+
+    def _image_dir_is_allowed(self, image_dir: str) -> bool:
+        try:
+            candidate = Path(image_dir).expanduser().resolve()
+        except OSError:
+            return False
+        for root in self._allowed_image_roots():
+            try:
+                candidate.relative_to(root)
+                return True
+            except ValueError:
+                continue
+        return False
+
     @staticmethod
     def _safe_image_relative_path(filename: str) -> Optional[Path]:
         raw = unquote(filename or "").strip()
         if not raw or raw.startswith(("/", "\\")) or "\x00" in raw:
             return None
         rel = Path(raw)
-        if rel.is_absolute() or any(part in ("", ".", "..") for part in rel.parts):
+        if (
+            rel.is_absolute()
+            or len(rel.parts) != 1
+            or any(part in ("", ".", "..") for part in rel.parts)
+            or not rel.name.lower().endswith(REFERENCE_IMAGE_EXTENSIONS)
+        ):
             return None
         return rel
+
+    def _registered_image_filenames(self) -> set[str]:
+        schedule_path = os.path.join(self.data_dir, "schedule_data.json")
+        metadata_path = os.path.join(self.data_dir, "image_metadata.json")
+        signature = []
+        for path in (schedule_path, metadata_path):
+            try:
+                stat = os.stat(path)
+                signature.append((path, stat.st_ino, stat.st_mtime_ns, stat.st_size))
+            except OSError:
+                signature.append((path, 0, 0, 0))
+        signature_value = tuple(signature)
+        if self._registered_image_cache.get("signature") == signature_value:
+            return set(self._registered_image_cache.get("filenames") or set())
+
+        filenames = set()
+        for key, entry in ScheduleStore(self.data_dir).load().items():
+            if not isinstance(entry, dict):
+                continue
+            filename = str(entry.get("image_filename") or "").strip()
+            if not filename and str(key).lower().endswith(REFERENCE_IMAGE_EXTENSIONS):
+                filename = str(key)
+            if self._safe_image_relative_path(filename):
+                filenames.add(filename)
+        for filename in ImageMetadataStore(self.data_dir).load():
+            if self._safe_image_relative_path(str(filename)):
+                filenames.add(str(filename))
+
+        self._registered_image_cache = {
+            "signature": signature_value,
+            "filenames": set(filenames),
+        }
+        return filenames
 
     def _image_file_path(self, filename: str) -> str:
         rel = self._safe_image_relative_path(filename)
@@ -2289,6 +3393,17 @@ class GalleryServer:
             return os.stat(path)
         except OSError:
             return None
+
+    def _image_revision_token(self, filename: str) -> str:
+        """Return a stable cache token for the current bytes of one image."""
+        if not hasattr(self, "image_dir"):
+            return ""
+        stat = self._image_stat(filename)
+        if stat is None:
+            return ""
+        mtime_ns = int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000)))
+        ctime_ns = int(getattr(stat, "st_ctime_ns", int(stat.st_ctime * 1_000_000_000)))
+        return f"{ctime_ns:x}-{mtime_ns:x}-{int(stat.st_size):x}"
 
     def _image_file_info(self, filename: str) -> dict:
         path = self._image_file_path(filename)
@@ -2344,12 +3459,420 @@ class GalleryServer:
                 errors.append(f"{candidate}: {e}")
         return deleted, errors
 
+    @staticmethod
+    def _normalize_gallery_image_filename(filename: str) -> str:
+        raw = unquote(str(filename or "")).strip()
+        if not raw or not re.fullmatch(r"[a-zA-Z0-9_.-]+", raw) or ".." in raw:
+            raise ValueError("invalid_filename")
+        return raw
+
+    def _reserve_image_mutation_lock(self, img_id: str) -> asyncio.Lock:
+        """Reserve the shared per-image lock before waiting for it."""
+        lock = self._image_mutation_locks.setdefault(img_id, asyncio.Lock())
+        self._image_mutation_lock_users[img_id] = (
+            self._image_mutation_lock_users.get(img_id, 0) + 1
+        )
+        return lock
+
+    def _release_image_mutation_lock(self, img_id: str, lock: asyncio.Lock) -> None:
+        users = self._image_mutation_lock_users.get(img_id, 0)
+        if users > 1:
+            self._image_mutation_lock_users[img_id] = users - 1
+            return
+        self._image_mutation_lock_users.pop(img_id, None)
+        if self._image_mutation_locks.get(img_id) is lock:
+            self._image_mutation_locks.pop(img_id, None)
+
+    async def _run_image_mutation(self, img_id: str, mutation):
+        lock = self._reserve_image_mutation_lock(img_id)
+        try:
+            async with lock:
+                return await mutation()
+        finally:
+            self._release_image_mutation_lock(img_id, lock)
+
+    def _delete_gallery_image(self, filename: str) -> dict:
+        """Remove one image from storage, gallery data, and image metadata."""
+        img_id = self._normalize_gallery_image_filename(filename)
+        deleted_file_count, errors = self._delete_image_files(img_id)
+
+        removed_entry_count = 0
+        version_records = []
+        store = ScheduleStore(self.data_dir)
+
+        def _delete_entries(all_data):
+            nonlocal removed_entry_count
+            if not isinstance(all_data, dict):
+                return all_data
+            for key, entry in list(all_data.items()):
+                if key == img_id or (
+                    isinstance(entry, dict)
+                    and entry.get("image_filename") == img_id
+                ):
+                    if isinstance(entry, dict):
+                        version_records.extend(
+                            normalize_image_versions(entry.get("image_versions"))
+                        )
+                    del all_data[key]
+                    removed_entry_count += 1
+            return all_data
+
+        store.update(_delete_entries)
+
+        metadata_deleted = False
+
+        def _delete_metadata(metadata):
+            nonlocal metadata_deleted
+            if img_id in metadata:
+                del metadata[img_id]
+                metadata_deleted = True
+            return metadata
+
+        ImageMetadataStore(self.data_dir).update(_delete_metadata)
+        deleted_version_count, version_errors = delete_image_versions(
+            self.data_dir,
+            version_records,
+        )
+        errors.extend(version_errors)
+
+        return {
+            "image_filename": img_id,
+            "deleted_file_count": deleted_file_count,
+            "removed_entry_count": removed_entry_count,
+            "metadata_deleted": metadata_deleted,
+            "deleted_version_count": deleted_version_count,
+            "errors": errors,
+        }
+
     async def handle_image_file(self, request: web.Request):
         filename = request.match_info.get("filename", "")
-        path = self._image_file_path(filename)
+        rel = self._safe_image_relative_path(filename)
+        if rel is None or rel.name not in self._registered_image_filenames():
+            raise web.HTTPNotFound()
+        path = self._image_file_path(rel.name)
         if not path:
             raise web.HTTPNotFound()
         return web.FileResponse(path)
+
+    def _image_version_records_for_image(self, img_id: str) -> tuple[dict, list[dict]]:
+        entry = self._gallery_entry_for_image(img_id)
+        if not entry:
+            return {}, []
+        return entry, normalize_image_versions(entry.get("image_versions"))
+
+    _VERSION_INSTRUCTION_BOILERPLATE = frozenset({
+        "重抽前的当前图片",
+        "切换时自动保留的当前图片",
+        "保留的编辑前图片",
+        "切换前当前版本",
+    })
+
+    @staticmethod
+    def _public_image_version(img_id: str, record: dict, position: int) -> dict:
+        target = str(record.get("target", "") or "").strip()
+        raw_instruction = str(record.get("instruction", "") or "").strip()
+        # Labels already describe archive source; hide boilerplate notes.
+        if (
+            not raw_instruction
+            or raw_instruction in GalleryServer._VERSION_INSTRUCTION_BOILERPLATE
+            or target in {"reroll", "version_switch"}
+        ):
+            instruction = ""
+        else:
+            instruction = raw_instruction
+        payload = {
+            "id": record["id"],
+            "image_url": f"/api/images/{quote(img_id, safe='')}/versions/{record['id']}",
+            "position": position,
+            "archived_at": record.get("archived_at", ""),
+            "target": target,
+            "target_label": record.get("target_label", "") or "编辑",
+            "instruction": instruction,
+            "date": record.get("date", ""),
+            "time": record.get("time", ""),
+        }
+        for field in ("width", "height", "file_size_bytes"):
+            if record.get(field):
+                payload[field] = record[field]
+        return payload
+
+    async def handle_image_versions(self, request: web.Request):
+        """List the available private versions for one gallery card."""
+        try:
+            img_id = self._normalize_gallery_image_filename(
+                request.match_info.get("img_id", "")
+            )
+        except ValueError:
+            return web.json_response({"error": "invalid_filename"}, status=400)
+
+        entry, records = self._image_version_records_for_image(img_id)
+        if not entry:
+            return web.json_response({"error": "not_found"}, status=404)
+
+        available = []
+        for position, record in enumerate(records, start=1):
+            path = image_version_path(self.data_dir, record)
+            if path and path.is_file():
+                available.append(self._public_image_version(img_id, record, position))
+        available.reverse()
+        edit_history = entry.get("edit_history")
+        edit_count = len(edit_history) if isinstance(edit_history, list) else 0
+        return web.json_response({
+            "image_filename": img_id,
+            "version_count": len(available),
+            "unavailable_count": max(0, edit_count - len(available)),
+            "items": available,
+        })
+
+    async def handle_image_version_file(self, request: web.Request):
+        """Serve one archived version only when it belongs to the current card."""
+        try:
+            img_id = self._normalize_gallery_image_filename(
+                request.match_info.get("img_id", "")
+            )
+        except ValueError:
+            raise web.HTTPNotFound()
+        entry, records = self._image_version_records_for_image(img_id)
+        if not entry:
+            raise web.HTTPNotFound()
+        resolved = find_image_version(
+            self.data_dir,
+            records,
+            request.match_info.get("version_id", ""),
+        )
+        if not resolved:
+            raise web.HTTPNotFound()
+        _, path = resolved
+        return web.FileResponse(
+            path,
+            headers={"Cache-Control": "private, max-age=31536000, immutable"},
+        )
+
+    async def handle_activate_image_version(self, request: web.Request):
+        """Switch one archived image into the current card without losing either version."""
+        try:
+            img_id = self._normalize_gallery_image_filename(
+                request.match_info.get("img_id", "")
+            )
+        except ValueError:
+            return web.json_response({"error": "invalid_filename"}, status=400)
+        version_id = str(request.match_info.get("version_id") or "").strip().lower()
+        lock = self._reserve_image_mutation_lock(img_id)
+        acquired = False
+        try:
+            try:
+                # Version switch must not sit behind a multi-minute reroll/edit.
+                # Fail fast so the UI does not spin forever on "切换中".
+                await asyncio.wait_for(lock.acquire(), timeout=1.5)
+                acquired = True
+            except asyncio.TimeoutError:
+                return web.json_response(
+                    {
+                        "error": "image_busy",
+                        "message": "当前图片正在重抽或编辑，请稍后再切换版本",
+                    },
+                    status=409,
+                )
+
+            try:
+                entry, records = self._image_version_records_for_image(img_id)
+                if not entry:
+                    return web.json_response({"error": "not_found"}, status=404)
+                resolved = find_image_version(self.data_dir, records, version_id)
+                if not resolved:
+                    return web.json_response(
+                        {
+                            "error": "version_not_found",
+                            "message": "该历史版本已变化，请重新打开",
+                        },
+                        status=404,
+                    )
+                selected_record, selected_path = resolved
+                current_path_text = self._image_file_path(img_id)
+                if not current_path_text:
+                    return web.json_response(
+                        {
+                            "error": "current_image_not_found",
+                            "message": "当前图片文件不存在",
+                        },
+                        status=404,
+                    )
+                current_path = Path(current_path_text).resolve()
+                try:
+                    initial_stat = current_path.stat()
+                except OSError:
+                    return web.json_response(
+                        {
+                            "error": "current_image_not_found",
+                            "message": "当前图片文件不存在",
+                        },
+                        status=404,
+                    )
+                initial_signature = (initial_stat.st_mtime_ns, initial_stat.st_size)
+                switched_at = datetime.now().isoformat(timespec="seconds")
+                descriptor = entry.get("active_version_descriptor")
+                descriptor = descriptor if isinstance(descriptor, dict) else {}
+                current_instruction = str(
+                    descriptor.get("instruction")
+                    or entry.get("edit_instruction")
+                    or ""
+                ).strip()
+                try:
+                    loop = asyncio.get_running_loop()
+                    archived_current = await loop.run_in_executor(
+                        None,
+                        lambda: archive_image_version(
+                            self.data_dir,
+                            str(current_path),
+                            original_image_filename=img_id,
+                            archived_at=str(descriptor.get("archived_at") or switched_at),
+                            target=str(descriptor.get("target") or "version_switch"),
+                            target_label=str(descriptor.get("target_label") or "当前版本"),
+                            instruction=current_instruction,
+                            date=str(descriptor.get("date") or entry.get("date") or ""),
+                            time=str(descriptor.get("time") or entry.get("time") or ""),
+                        ),
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "Archive current image before version switch failed: image=%s error=%s",
+                        img_id,
+                        exc,
+                        exc_info=True,
+                    )
+                    return web.json_response(
+                        {
+                            "error": "version_archive_failed",
+                            "message": "切换前当前图片归档失败",
+                        },
+                        status=500,
+                    )
+
+                replaced = False
+                try:
+                    latest_stat = current_path.stat()
+                    if (latest_stat.st_mtime_ns, latest_stat.st_size) != initial_signature:
+                        raise RuntimeError("version_source_changed")
+                    replacement_info = await loop.run_in_executor(
+                        None,
+                        lambda: replace_image_from_version(selected_path, current_path),
+                    )
+                    replaced = True
+
+                    result = {}
+                    mutation = {"updated": False}
+
+                    def _activate(all_data):
+                        key, current_entry = self._find_image_entry(all_data, img_id)
+                        if not key or not current_entry:
+                            return all_data
+                        current_records = normalize_image_versions(
+                            current_entry.get("image_versions")
+                        )
+                        if not any(record.get("id") == version_id for record in current_records):
+                            return all_data
+                        next_records = [
+                            record for record in current_records
+                            if record.get("id") != version_id
+                        ]
+                        next_records.append(archived_current)
+                        current_entry["image_versions"] = next_records
+                        current_entry["version_count"] = len(next_records)
+                        current_entry["version_switched_at"] = switched_at
+                        current_entry.update(replacement_info)
+                        current_entry["size"] = (
+                            f"{replacement_info['width']}x{replacement_info['height']}"
+                        )
+                        current_entry["active_version_descriptor"] = {
+                            field: selected_record.get(field, "")
+                            for field in (
+                                "target",
+                                "target_label",
+                                "instruction",
+                                "date",
+                                "time",
+                                "archived_at",
+                            )
+                            if selected_record.get(field)
+                        }
+                        all_data[key] = current_entry
+                        result.update(current_entry)
+                        mutation["updated"] = True
+                        return all_data
+
+                    await loop.run_in_executor(
+                        None,
+                        lambda: ScheduleStore(self.data_dir).update(_activate),
+                    )
+                    if not mutation["updated"]:
+                        raise RuntimeError("version_source_changed")
+                except Exception as exc:
+                    if replaced:
+                        archived_path = image_version_path(self.data_dir, archived_current)
+                        if archived_path and archived_path.is_file():
+                            try:
+                                await loop.run_in_executor(
+                                    None,
+                                    lambda: replace_image_from_version(
+                                        archived_path,
+                                        current_path,
+                                    ),
+                                )
+                            except Exception as rollback_exc:
+                                logger.error(
+                                    "Rollback image version switch failed: image=%s error=%s",
+                                    img_id,
+                                    rollback_exc,
+                                    exc_info=True,
+                                )
+                    await loop.run_in_executor(
+                        None,
+                        lambda: delete_image_versions(self.data_dir, [archived_current]),
+                    )
+                    status = 409 if str(exc) == "version_source_changed" else 500
+                    logger.error(
+                        "Activate image version failed: image=%s version=%s error=%s",
+                        img_id,
+                        version_id,
+                        exc,
+                        exc_info=status >= 500,
+                    )
+                    message = (
+                        "当前图片已发生变化，请重试"
+                        if str(exc) == "version_source_changed"
+                        else "版本切换失败"
+                    )
+                    return web.json_response(
+                        {"error": str(exc), "message": message},
+                        status=status,
+                    )
+
+                _, delete_errors = await loop.run_in_executor(
+                    None,
+                    lambda: delete_image_versions(self.data_dir, [selected_record]),
+                )
+                if delete_errors:
+                    logger.warning(
+                        "Old image version cleanup failed after switch: image=%s errors=%s",
+                        img_id,
+                        delete_errors,
+                    )
+                self._image_info_cache.pop(str(current_path), None)
+                payload = self._enrich_photo_schedule_time(
+                    result,
+                    self._load_image_metadata(),
+                )
+                payload["image_revision"] = (
+                    self._image_revision_token(img_id)
+                    or str(int(time.time() * 1000))
+                )
+                payload["switched_version_id"] = version_id
+                return web.json_response(payload)
+            finally:
+                if acquired and lock.locked():
+                    lock.release()
+        finally:
+            self._release_image_mutation_lock(img_id, lock)
 
     def _gallery_entry_for_image(self, img_id: str) -> dict:
         img_id = str(img_id or "").strip()
@@ -2429,11 +3952,12 @@ class GalleryServer:
             "error": "send_failed",
             "channel": channel,
             "agent": delivery.get("agent", ""),
-            "message": f"{label}发送失败，请查看运行日志。",
+            "message": self._manual_send_last_error or f"{label}发送失败，请查看运行日志。",
         }, status=500)
 
     async def _send_existing_image(self, channel: str, image_path: str, caption: str, delivery: dict) -> bool:
         channel = normalize_push_channel(channel)
+        self._manual_send_last_error = ""
         agent = delivery.get("agent", "")
         logger.info("手动发送图片: channel=%s agent=%s image=%s", channel, agent, os.path.basename(image_path))
         if agent == "openclaw":
@@ -2484,7 +4008,9 @@ class GalleryServer:
                 return False
             caption_ok = True
             if caption:
-                await asyncio.sleep(SEND_CAPTION_DELAY_SECONDS)
+                caption_delay = SEND_WECHAT_CAPTION_DELAY_SECONDS if channel == "wechat" else SEND_CAPTION_DELAY_SECONDS
+                logger.info("%s图片发送成功，等待 %ss 后发送文案以降低限流概率", label, caption_delay)
+                await asyncio.sleep(caption_delay)
                 caption_ok = await self._run_manual_hermes_send(
                     hermes_cmd,
                     target,
@@ -2602,6 +4128,19 @@ class GalleryServer:
                 logger.info("%s发送成功", label)
                 return True
             last_output = output or f"exit code {result.returncode}"
+            if self._is_wechat_context_error(last_output):
+                self._manual_send_last_error = (
+                    "微信会话上下文已失效。请先在微信里给 Hermes 发任意一条消息，"
+                    "收到回复后再重新发送图片。"
+                )
+                log_fn = logger.error if required else logger.warning
+                log_fn(
+                    "%s发送停止重试: 微信会话上下文已失效；"
+                    "请先在微信里给 Hermes 发任意一条消息，收到回复后再重试。 output=%s",
+                    label,
+                    last_output,
+                )
+                return False
             retryable = self._is_retryable_send_error(last_output)
             cooldown_seconds = self._extract_send_cooldown_seconds(last_output)
             if cooldown_seconds:
@@ -2646,7 +4185,19 @@ class GalleryServer:
         return ("..." + output[-1500:]) if len(output) > 1500 else output
 
     @staticmethod
-    def _is_retryable_send_error(output: str) -> bool:
+    def _is_wechat_context_error(output: str) -> bool:
+        text = (output or "").lower()
+        if any(marker in text for marker in SEND_CONTEXT_ERROR_MARKERS):
+            return True
+        has_minus_two = bool(
+            re.search(r'\b(?:ret|errcode)\b["\']?\s*(?:=|:)\s*-2\b', text)
+        )
+        return has_minus_two and "unknown error" in text
+
+    @classmethod
+    def _is_retryable_send_error(cls, output: str) -> bool:
+        if cls._is_wechat_context_error(output):
+            return False
         text = (output or "").lower()
         return any(marker in text for marker in SEND_RETRYABLE_MARKERS)
 
@@ -2766,18 +4317,26 @@ class GalleryServer:
 
     def _has_image_generation_key(self) -> bool:
         keys = self._load_api_keys_config()
-        image_config = self.config.get("image_gen", {}) if isinstance(self.config.get("image_gen"), dict) else {}
-        if (
-            keys.get("gpt_base_url")
-            or os.getenv("GPT_IMAGE_BASE_URL")
-            or image_config.get("gpt_base_url")
-            or keys.get("gpt_key")
-            or os.getenv("GPT_IMAGE_API_KEY")
+        endpoints = keys.get("gpt_image_endpoints") or []
+        if any(
+            isinstance(item, dict)
+            and str(item.get("base_url", "") or "").strip()
+            and str(item.get("api_key", "") or "").strip()
+            for item in endpoints
         ):
             return True
+        gpt_url = self._effective_gpt_image_base_url(keys)
+        gpt_key = (
+            str(keys.get("gpt_key", "") or "").strip()
+            or os.getenv("GPT_IMAGE_API_KEY", "").strip()
+            or str(keys.get("cpa_key", "") or "").strip()
+            or os.getenv("CPA_API_KEY", "").strip()
+        )
+        if gpt_url and gpt_key:
+            return True
         plugin_config = self._load_plugin_config()
-        gitee_keys = plugin_config.get("gitee_config", {}).get("api_keys", [])
-        return bool(gitee_keys and gitee_keys[0])
+        gitee_key = self._effective_gitee_api_key(plugin_config)
+        return bool(self._effective_gitee_image_url(keys) and gitee_key)
 
     def _python_executable(self) -> str:
         return configured_python(self.config) or sys.executable
@@ -2827,18 +4386,122 @@ class GalleryServer:
             env=env,
         )
 
+    def _local_update_changed_files(self, project_root: Path, env: dict[str, str]) -> list[str]:
+        """Return all staged, unstaged, and untracked paths conservatively."""
+        commands = (
+            ["diff", "--no-renames", "--name-only", "--"],
+            ["diff", "--cached", "--no-renames", "--name-only", "--"],
+            ["ls-files", "--others", "--exclude-standard"],
+        )
+        changed = set()
+        for args in commands:
+            result = self._git_run(args, project_root, env)
+            if result.returncode != 0:
+                raise RuntimeError(
+                    result.stderr.strip()
+                    or result.stdout.strip()
+                    or "无法读取本地改动列表"
+                )
+            changed.update(line.strip() for line in result.stdout.splitlines() if line.strip())
+        return sorted(changed)
+
     def _safe_update_ref(self, remote: str, branch: str) -> str:
         remote_ref = f"{remote}/{branch}"
         if not re.match(r"^[A-Za-z0-9._/-]+$", remote_ref):
             raise ValueError("更新源包含非法字符")
         return remote_ref
 
-    def _safe_update_changed_files(self, project_root: Path, remote_ref: str, env: dict[str, str]) -> list[str]:
-        result = self._git_run(["diff", "--name-only", "HEAD.." + remote_ref, "--"], project_root, env)
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "无法读取远端改动列表")
-        files = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-        return [path for path in files if not self._is_protected_update_path(path)]
+    def _rollback_safe_update(
+        self,
+        project_root: Path,
+        env: dict[str, str],
+        original_head: str,
+        changed_files: list[str],
+        tracked_before: list[str],
+        absent_before: list[str],
+    ) -> list[str]:
+        """Restore HEAD, index, and update-owned worktree paths after a failure."""
+        errors = []
+        current_head = self._git_run(["rev-parse", "HEAD"], project_root, env)
+        if current_head.returncode != 0:
+            errors.append(
+                "读取回滚前 HEAD 失败: "
+                + (current_head.stderr.strip() or current_head.stdout.strip() or "unknown")
+            )
+        elif current_head.stdout.strip() != original_head:
+            restore_head = self._git_run(
+                ["update-ref", "HEAD", original_head],
+                project_root,
+                env,
+            )
+            if restore_head.returncode != 0:
+                errors.append(
+                    "恢复 HEAD 失败: "
+                    + (restore_head.stderr.strip() or restore_head.stdout.strip() or "unknown")
+                )
+
+        if changed_files:
+            restore_index = self._git_run(
+                ["reset", original_head, "--", *changed_files],
+                project_root,
+                env,
+            )
+            if restore_index.returncode != 0:
+                errors.append(
+                    "恢复索引失败: "
+                    + (restore_index.stderr.strip() or restore_index.stdout.strip() or "unknown")
+                )
+        if tracked_before:
+            restore_worktree = self._git_run(
+                ["checkout", original_head, "--", *tracked_before],
+                project_root,
+                env,
+                timeout=90,
+            )
+            if restore_worktree.returncode != 0:
+                errors.append(
+                    "恢复代码文件失败: "
+                    + (
+                        restore_worktree.stderr.strip()
+                        or restore_worktree.stdout.strip()
+                        or "unknown"
+                    )
+                )
+
+        root = project_root.resolve()
+        for path in absent_before:
+            candidate = (project_root / path).resolve()
+            try:
+                candidate.relative_to(root)
+            except ValueError:
+                errors.append(f"拒绝清理仓库外路径: {path}")
+                continue
+            try:
+                if candidate.is_symlink() or candidate.is_file():
+                    candidate.unlink()
+                elif candidate.exists():
+                    errors.append(f"回滚新增路径不是普通文件: {path}")
+            except OSError as exc:
+                errors.append(f"清理升级新增文件失败: {path}: {exc}")
+        return errors
+
+    @staticmethod
+    def _safe_update_failure_payload(
+        response: dict,
+        message: str,
+        rollback_errors: list[str],
+    ) -> tuple[dict, int]:
+        rollback_ok = not rollback_errors
+        return {
+            **response,
+            "status": "error",
+            "error": "safe_update_failed",
+            "message": message,
+            "will_restart": False,
+            "safe_update": False,
+            "rolled_back": rollback_ok,
+            "rollback_errors": rollback_errors,
+        }, 500
 
     @staticmethod
     def _body_bool(body: dict, key: str, default: bool = False) -> bool:
@@ -2855,6 +4518,39 @@ class GalleryServer:
         if text in {"0", "false", "no", "off", ""}:
             return False
         return default
+
+    @staticmethod
+    def _atomic_replace_text_files(files: list[tuple[str, str]]) -> None:
+        """Stage every text payload before replacing any destination file."""
+        staged: list[tuple[str, str]] = []
+        try:
+            for path, content in files:
+                parent = os.path.dirname(os.path.abspath(path))
+                os.makedirs(parent, exist_ok=True)
+                fd, temp_path = tempfile.mkstemp(
+                    dir=parent,
+                    prefix=f".{os.path.basename(path)}.",
+                    suffix=".tmp",
+                )
+                try:
+                    if os.path.exists(path):
+                        os.fchmod(fd, os.stat(path).st_mode & 0o777)
+                    with os.fdopen(fd, "w", encoding="utf-8") as file_obj:
+                        file_obj.write(content)
+                        file_obj.flush()
+                        os.fsync(file_obj.fileno())
+                except Exception:
+                    if os.path.exists(temp_path):
+                        os.unlink(temp_path)
+                    raise
+                staged.append((temp_path, path))
+
+            for temp_path, path in staged:
+                os.replace(temp_path, path)
+        finally:
+            for temp_path, _path in staged:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
 
     @staticmethod
     def _clamp_photo_job_limit(value) -> int:
@@ -2901,7 +4597,7 @@ class GalleryServer:
         return limit
 
     def _today_completed_photo_count(self) -> int:
-        today_str = date.today().isoformat()
+        today_str = self._today().isoformat()
         seen = set()
         try:
             store = ScheduleStore(self.data_dir)
@@ -2913,7 +4609,9 @@ class GalleryServer:
                     continue
                 if entry.get("date") != today_str or entry.get("status") != "ok":
                     continue
-                if entry.get("source", "") != "cron":
+                if str(entry.get("source") or "").strip() not in TODAY_PHOTO_SOURCES:
+                    continue
+                if entry.get("delivery_status") in {"sending", "failed"}:
                     continue
                 img_file = entry.get("image_filename", "")
                 if not img_file or img_file in seen:
@@ -2931,7 +4629,7 @@ class GalleryServer:
             max_daily = self.get_photo_job_limit()
             return web.json_response({
                 "status": "unavailable",
-                "date": date.today().isoformat(),
+                "date": self._today().isoformat(),
                 "jobs": [],
                 "max_daily": max_daily,
                 "min": MIN_PHOTO_JOB_LIMIT,
@@ -2946,12 +4644,16 @@ class GalleryServer:
             jobs = self.on_list_photo_jobs()
             max_daily = self.get_photo_job_limit()
             completed_today = self._today_completed_photo_count()
-            active_today = sum(1 for job in jobs if job.get("status") in ("scheduled", "running"))
-            failed_today = sum(1 for job in jobs if job.get("status") == "failed")
+            active_today = sum(
+                1 for job in jobs if job.get("status") in ("scheduled", "running", "sending")
+            )
+            failed_today = sum(
+                1 for job in jobs if job.get("status") in ("failed", "delivery_failed")
+            )
             planned_today = completed_today + len(jobs)
             return web.json_response({
                 "status": "ok",
-                "date": date.today().isoformat(),
+                "date": self._today().isoformat(),
                 "jobs": jobs,
                 "max_daily": max_daily,
                 "min": MIN_PHOTO_JOB_LIMIT,
@@ -3024,13 +4726,55 @@ class GalleryServer:
             logger.error(f"Update photo plan error: {e}", exc_info=True)
             return web.json_response({"error": str(e)}, status=500)
 
+    async def handle_update_outfit_plan(self, request: web.Request):
+        """Update the hairstyle or outfit used by today's pending photo slots."""
+        if not self.on_update_outfit_plan:
+            return web.json_response({"error": "update_unavailable"}, status=503)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+
+        field = normalize_outfit_plan_field(body.get("field"))
+        if not field:
+            return web.json_response(
+                {"error": "invalid_outfit_field", "message": "只能编辑发型或穿搭"},
+                status=400,
+            )
+        raw_value = str(body.get("value") or "").strip()
+        value = normalize_outfit_plan_value(raw_value)
+        if not value:
+            return web.json_response(
+                {"error": "empty_outfit_value", "message": f"{field}不能为空"},
+                status=400,
+            )
+        if len(raw_value) > MAX_OUTFIT_PLAN_EDIT_LENGTH:
+            return web.json_response(
+                {"error": "outfit_value_too_long", "message": f"{field}内容太长了"},
+                status=400,
+            )
+
+        try:
+            result = self.on_update_outfit_plan(field, value)
+            status = result.get("status") if isinstance(result, dict) else ""
+            if status == "not_found":
+                return web.json_response(result, status=404)
+            if status == "error":
+                return web.json_response(result, status=400)
+            return web.json_response(result)
+        except Exception as e:
+            logger.error("Update outfit plan error: %s", e, exc_info=True)
+            return web.json_response({"error": str(e)}, status=500)
+
     async def handle_photo_job_limit(self, request: web.Request):
         """Read or update the daily dynamic photo-job limit."""
         if request.method == "GET":
             max_daily = self.get_photo_job_limit()
             return web.json_response({
                 "status": "ok",
-                "date": date.today().isoformat(),
+                "date": self._today().isoformat(),
                 "max_daily": max_daily,
                 "min": MIN_PHOTO_JOB_LIMIT,
                 "max": MAX_PHOTO_JOB_LIMIT,
@@ -3044,12 +4788,16 @@ class GalleryServer:
             if self.on_rebuild_photo_jobs:
                 jobs = self.on_rebuild_photo_jobs() or []
             completed_today = self._today_completed_photo_count()
-            active_today = sum(1 for job in jobs if job.get("status") in ("scheduled", "running"))
-            failed_today = sum(1 for job in jobs if job.get("status") == "failed")
+            active_today = sum(
+                1 for job in jobs if job.get("status") in ("scheduled", "running", "sending")
+            )
+            failed_today = sum(
+                1 for job in jobs if job.get("status") in ("failed", "delivery_failed")
+            )
             planned_today = completed_today + len(jobs)
             return web.json_response({
                 "status": "ok",
-                "date": date.today().isoformat(),
+                "date": self._today().isoformat(),
                 "max_daily": limit,
                 "min": MIN_PHOTO_JOB_LIMIT,
                 "max": MAX_PHOTO_JOB_LIMIT,
@@ -3069,7 +4817,7 @@ class GalleryServer:
         if not self.on_refresh_schedule:
             return web.json_response({"error": "no_scheduler"}, status=500)
         try:
-            entry = await self.on_refresh_schedule()
+            entry = await self._refresh_schedule_singleflight()
             if entry and entry.status == "ok":
                 source = getattr(entry, "source", "") or ""
                 if source == "preserved":
@@ -3091,6 +4839,233 @@ class GalleryServer:
             logger.error(f"Refresh schedule error: {e}")
             return web.json_response({"error": str(e)}, status=500)
 
+    def theme_day_enabled(self) -> bool:
+        """Whether the user has switched the theme-day mode on."""
+        return self.theme_day_state_store.load().get("enabled") is True
+
+    def theme_day_state(self) -> dict:
+        state = self.theme_day_state_store.load()
+        return {
+            "enabled": state.get("enabled") is True,
+            "updated_at": str(state.get("updated_at") or ""),
+        }
+
+    def set_theme_day_enabled(self, enabled: bool) -> dict:
+        now_text = self._now().isoformat(timespec="seconds")
+        self.theme_day_state_store.update(lambda state: {
+            **state,
+            "enabled": bool(enabled),
+            "updated_at": now_text,
+        })
+        return self.theme_day_state()
+
+    async def handle_theme_day_state(self, request: web.Request):
+        """Read or update the persistent theme-day mode switch."""
+        if request.method == "GET":
+            return web.json_response(self.theme_day_state())
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        enabled_raw = body.get("enabled") if isinstance(body, dict) else None
+        enabled = (
+            enabled_raw
+            if isinstance(enabled_raw, bool)
+            else str(enabled_raw or "").strip().lower() in {"1", "true", "yes", "on"}
+        )
+        return web.json_response(self.set_theme_day_enabled(enabled))
+
+    async def handle_theme_day(self, request: web.Request):
+        """Generate a random or user-named theme day for today/tomorrow."""
+        if not self.on_theme_day:
+            return web.json_response({"error": "theme_day_unavailable"}, status=503)
+        if not self.theme_day_enabled():
+            return web.json_response(
+                {
+                    "error": "theme_day_disabled",
+                    "message": "请先开启主题日开关，再生成主题日程。",
+                },
+                status=400,
+            )
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            return web.json_response({"error": "invalid_json"}, status=400)
+
+        theme = re.sub(r"\s+", " ", str(body.get("theme") or "")).strip()
+        description = re.sub(r"\s+", " ", str(body.get("description") or "")).strip()
+        if not theme and description:
+            theme = description
+        manual_reference_url = str(
+            body.get("manual_reference_url")
+            or body.get("manual_reference")
+            or ""
+        ).strip()
+        target = str(body.get("target") or "today").strip().lower()
+        mode = str(body.get("mode") or ("random" if not theme else "custom")).strip().lower()
+        target_date = str(body.get("target_date") or "").strip()
+        if target not in {"today", "tomorrow", "next", "next_day", "今天", "当天", "明天", "第二天"}:
+            return web.json_response({"error": "invalid_target", "message": "请选择当天或第二天"}, status=400)
+        if mode not in {"random", "custom"}:
+            return web.json_response({"error": "invalid_mode"}, status=400)
+        if mode == "custom" and not theme:
+            return web.json_response({"error": "theme_required", "message": "自定义主题不能为空"}, status=400)
+        if len(theme) > 160:
+            return web.json_response({"error": "theme_too_long", "message": "主题日描述不能超过 160 个字符"}, status=400)
+        async_raw = body.get("async")
+        async_mode = (
+            async_raw
+            if isinstance(async_raw, bool)
+            else str(async_raw or "").strip().lower() in {"1", "true", "yes", "on"}
+        )
+        active_task = self._theme_day_task
+        if active_task is not None and not active_task.done():
+            active_job = self._theme_day_job or {}
+            return web.json_response(
+                {
+                    "error": "theme_day_busy",
+                    "message": "已有主题日正在生成，请稍候；小红书检索可能需要一两分钟。",
+                    "job_id": active_job.get("job_id", ""),
+                },
+                status=409,
+            )
+        if async_mode:
+            job = {
+                "job_id": uuid.uuid4().hex,
+                "status": "running",
+                "message": "主题日已开始生成，小红书检索可能需要几分钟。",
+                "started_at": self._now().isoformat(timespec="seconds"),
+                "target": target,
+                "theme": theme,
+                "mode": mode,
+                "description": description,
+            }
+            self._theme_day_job = job
+            self._theme_day_task = asyncio.create_task(
+                self._run_theme_day_job(
+                    job,
+                    theme,
+                    target,
+                    target_date,
+                    mode,
+                    description,
+                    manual_reference_url,
+                )
+            )
+            return web.json_response(job, status=202)
+        try:
+            task = asyncio.create_task(
+                self.on_theme_day(
+                    theme,
+                    target=target,
+                    target_date=target_date,
+                    mode=mode,
+                    description=description,
+                    manual_reference_url=manual_reference_url,
+                )
+            )
+            self._theme_day_task = task
+            try:
+                entry = await task
+            finally:
+                if self._theme_day_task is task:
+                    self._theme_day_task = None
+            if not entry or entry.status != "ok":
+                return web.json_response({
+                    "error": "theme_day_generate_failed",
+                    "entry": entry.to_dict() if entry else None,
+                }, status=500)
+            return web.json_response({
+                "status": "ok",
+                "message": "主题日日程已生成",
+                "entry": entry.to_dict(),
+            })
+        except ValueError as exc:
+            return web.json_response({"error": "invalid_theme_day", "message": str(exc)}, status=400)
+        except Exception as exc:
+            logger.error("Theme day generation error: %s", exc, exc_info=True)
+            return web.json_response({"error": str(exc)}, status=500)
+
+    async def _run_theme_day_job(
+        self,
+        job: dict,
+        theme: str,
+        target: str,
+        target_date: str,
+        mode: str,
+        description: str = "",
+        manual_reference_url: str = "",
+    ) -> None:
+        """Run an async theme-day request and retain its result for polling."""
+        try:
+            entry = await self.on_theme_day(
+                theme,
+                target=target,
+                target_date=target_date,
+                mode=mode,
+                description=description,
+                manual_reference_url=manual_reference_url,
+                progress_callback=lambda phase: job.update({"phase": str(phase)}),
+            )
+            if not entry or entry.status != "ok":
+                job.update({
+                    "status": "error",
+                    "error": "theme_day_generate_failed",
+                    "message": "主题日日程生成失败，请稍后重试。",
+                })
+            else:
+                job.update({
+                    "status": "ok",
+                    "message": "主题日日程已生成",
+                    "entry": entry.to_dict(),
+                    "finished_at": self._now().isoformat(timespec="seconds"),
+                })
+        except ValueError as exc:
+            job.update({
+                "status": "error",
+                "error": "invalid_theme_day",
+                "message": str(exc),
+            })
+        except Exception as exc:
+            logger.error("Async theme day generation error: %s", exc, exc_info=True)
+            job.update({
+                "status": "error",
+                "error": str(exc),
+                "message": str(exc) or "主题日日程生成失败",
+            })
+        finally:
+            if self._theme_day_task is asyncio.current_task():
+                self._theme_day_task = None
+
+    async def handle_theme_day_status(self, request: web.Request):
+        """Return the latest state for an asynchronously generated theme day."""
+        requested_job_id = str(request.query.get("job_id") or "").strip()
+        job = self._theme_day_job
+        if not isinstance(job, dict) or (
+            requested_job_id and requested_job_id != str(job.get("job_id") or "")
+        ):
+            return web.json_response(
+                {"error": "theme_day_job_not_found", "message": "主题日任务不存在或已过期。"},
+                status=404,
+            )
+        return web.json_response(dict(job))
+
+    async def _refresh_schedule_singleflight(self):
+        """Share one schedule refresh across startup/UI/generate-now callers."""
+        if not self.on_refresh_schedule:
+            return None
+        task = getattr(self, "_schedule_refresh_task", None)
+        if task is None or task.done():
+            task = asyncio.create_task(self.on_refresh_schedule())
+            self._schedule_refresh_task = task
+        try:
+            return await asyncio.shield(task)
+        finally:
+            if task.done() and getattr(self, "_schedule_refresh_task", None) is task:
+                self._schedule_refresh_task = None
+
     async def handle_get_keys(self, request: web.Request):
         """获取 API 密钥配置状态（返回 masked 值）"""
         keys_config = {}
@@ -3106,8 +5081,10 @@ class GalleryServer:
 
         # 读取 plugin_config.json 获取 gitee_config
         plugin_config_path = os.path.join(self.data_dir, "plugin_config.json")
+        plugin_config = {}
         gitee_key = ""
         gitee_fallback_enabled = False
+        gpt_chat_fallback_enabled = False
         if os.path.exists(plugin_config_path):
             try:
                 with open(plugin_config_path, 'r') as f:
@@ -3116,31 +5093,20 @@ class GalleryServer:
                     if gitee_keys:
                         gitee_key = gitee_keys[0]
                     gitee_fallback_enabled = bool(plugin_config.get("gitee_fallback_enabled", False))
+                    gpt_chat_fallback_enabled = bool(
+                        plugin_config.get("gpt_chat_fallback_enabled", False)
+                    )
             except Exception as e:
                 logger.error(f"Load plugin config error: {e}")
+        gitee_key = self._effective_gitee_api_key(plugin_config)
 
-        # 读取 config.yaml 的 LLM 模型链
-        llm_model = ""
-        llm_model_chain = []
-        if self.config_path and os.path.exists(self.config_path):
-            try:
-                import yaml
-                with open(self.config_path, 'r', encoding='utf-8') as f:
-                    full_config = yaml.safe_load(f) or {}
-                full_llm_config = full_config.get("llm", {}) if isinstance(full_config.get("llm"), dict) else {}
-                llm_model_chain = configured_llm_models(full_llm_config)
-                llm_model = llm_model_chain[0] if llm_model_chain else full_llm_config.get("model", "")
-            except Exception as e:
-                logger.error(f"Load config.yaml error: {e}")
+        # self.config already includes data/runtime_config.json overrides.
+        full_llm_config = self.config.get("llm", {}) if isinstance(self.config.get("llm"), dict) else {}
+        llm_model_chain = configured_llm_models(full_llm_config)
+        llm_model = llm_model_chain[0] if llm_model_chain else full_llm_config.get("model", "")
 
         image_config = self.config.get("image_gen", {})
         llm_config = self.config.get("llm", {})
-        prompt_compact_default = self._body_bool(image_config, "prompt_compact_enabled", False)
-        prompt_compact_enabled = self._body_bool(
-            keys_config,
-            "gpt_prompt_compact_enabled",
-            prompt_compact_default,
-        )
         raw_default_gpt_base_url = str(image_config.get("gpt_base_url", "") or "").strip()
         default_gpt_base_url = self._configured_image_base_url(raw_default_gpt_base_url)
         local_gpt_base_url = str(keys_config.get("gpt_base_url", "") or "").strip()
@@ -3153,10 +5119,12 @@ class GalleryServer:
         local_cpa_url = str(keys_config.get("cpa_url", "") or "").strip()
         if local_cpa_url == default_cpa_url:
             local_cpa_url = ""
-        default_gitee_url = str(image_config.get("gitee_url", "") or "").strip()
+        default_gitee_url = str(image_config.get("gitee_url", "") or DEFAULT_GITEE_IMAGE_URL).strip()
         local_gitee_url = str(keys_config.get("gitee_url", "") or "").strip()
         if local_gitee_url == default_gitee_url:
             local_gitee_url = ""
+        effective_gitee_url = self._effective_gitee_image_url(keys_config)
+        effective_gpt_base_url = self._effective_gpt_image_base_url(keys_config)
         default_github_api = self._github_api_url()
         persona = load_runtime_persona(self.config, self.data_dir)
         persona_source = normalize_persona_source(keys_config.get("persona_source"))
@@ -3179,21 +5147,13 @@ class GalleryServer:
         return web.json_response({
             "gallery_title": gallery_title,
             "gitee_key": self._mask_key(gitee_key),
-            "gitee_url": local_gitee_url or default_gitee_url,
+            "gitee_url": effective_gitee_url,
             "gitee_url_local": local_gitee_url,
             "gitee_url_default": default_gitee_url,
             "gpt_key": self._mask_key(keys_config.get("gpt_key", "")),
-            "gpt_base_url": local_gpt_base_url or default_gpt_base_url,
+            "gpt_base_url": effective_gpt_base_url,
             "gpt_base_url_local": local_gpt_base_url,
             "gpt_base_url_default": default_gpt_base_url,
-            "gpt_prompt_compact_enabled": prompt_compact_enabled,
-            "gpt_prompt_compact_target_chars": config_int(
-                self.config,
-                "image_gen.prompt_compact_target_chars",
-                480,
-                200,
-                1200,
-            ),
             "gpt_image_endpoints": [
                 {
                     "label": str(endpoint.get("label", "") or "").strip(),
@@ -3234,7 +5194,9 @@ class GalleryServer:
             "llm_model": llm_model,
             "llm_models": self.config.get("llm", {}),
             "llm_model_chain": llm_model_chain,
+            "llm_stream_enabled": bool(full_llm_config.get("stream", False)),
             "gitee_fallback_enabled": gitee_fallback_enabled,
+            "gpt_chat_fallback_enabled": gpt_chat_fallback_enabled,
             "push_channel": push_channel,
             "push_channel_local": normalize_push_channel(local_push_channel_raw) if local_push_channel_raw else "",
             "push_agent": push_agent,
@@ -3474,7 +5436,7 @@ class GalleryServer:
                 continue
             if hour < 12:
                 buckets["上午"].append(label)
-            elif hour < 18:
+            elif hour < 19:
                 buckets["午后"].append(label)
             else:
                 buckets["晚上"].append(label)
@@ -3590,6 +5552,12 @@ class GalleryServer:
         if not isinstance(entry, dict):
             return entry
         normalized = dict(entry)
+        image_versions = normalize_image_versions(normalized.pop("image_versions", None))
+        edit_history = normalized.get("edit_history")
+        edit_history_count = len(edit_history) if isinstance(edit_history, list) else 0
+        normalized["version_count"] = len(image_versions)
+        normalized["edit_history_count"] = edit_history_count
+        normalized["has_image_history"] = bool(image_versions or edit_history_count)
         img_file = normalized.get("image_filename", "")
         if img_file:
             for field in ("schedule", "schedule_prompt", "schedule_details"):
@@ -3609,10 +5577,14 @@ class GalleryServer:
             if meta_entry.get("source") == "hermes_api" or img_file.startswith("hermes_"):
                 normalized["source"] = "hermes_api"
                 source = "hermes_api"
+            meta_model = meta_entry.get("model_name") or meta_entry.get("model")
+            if meta_model and not normalized.get("model_name"):
+                normalized["model_name"] = meta_model
             for field in (
                 "prompt_mode",
                 "pure_prompt",
                 "custom_ref_mode",
+                "requested_size",
                 "requested_generation_mode",
                 "generation_mode",
                 "ref_image",
@@ -3624,10 +5596,19 @@ class GalleryServer:
                 "selected_reference",
                 "model_name",
                 "caption",
+                "caption_status",
                 "display_outfit",
                 "outfit_description",
+                "delivery_status",
+                "delivery_updated_at",
+                "delivery_sent_at",
+                "delivery_error",
             ):
-                if field in meta_entry and (field not in normalized or normalized.get(field) in ("", None)):
+                if field in meta_entry and (
+                    field == "caption_status"
+                    or field not in normalized
+                    or normalized.get(field) in ("", None)
+                ):
                     normalized[field] = meta_entry.get(field)
             meta_prompt = meta_entry.get("prompt", "")
             current_prompt = normalized.get("prompt", "") or ""
@@ -3664,6 +5645,14 @@ class GalleryServer:
                 normalized["height"] = image_info.get("height")
             if image_info.get("file_size_bytes"):
                 normalized["file_size_bytes"] = image_info["file_size_bytes"]
+            image_revision = self._image_revision_token(img_file)
+            if image_revision:
+                # The card filename stays stable across rerolls and version
+                # switches. Expose a token derived from the current inode so a
+                # full page reload cannot reuse bytes from the previous image.
+                normalized["image_revision"] = image_revision
+
+        self._normalize_entry_reference_preview(normalized, img_file, image_versions)
 
         model_label = self._display_model_name(normalized.get("model_name", ""))
         if model_label and model_label != normalized.get("model_name"):
@@ -3685,6 +5674,67 @@ class GalleryServer:
 
         self._ensure_entry_reference_label(normalized)
         return normalized
+
+    def _normalize_entry_reference_preview(
+        self,
+        entry: dict,
+        image_filename: str,
+        image_versions: list[dict],
+    ) -> None:
+        """Keep reference previews from requesting replaced gallery files.
+
+        Precision edits archive the previous image outside the public /images
+        directory. Older records still point at that removed public path. When
+        the archive exists, expose its authenticated version URL; otherwise
+        remove only the broken preview fields while retaining the reference
+        label and edit provenance.
+        """
+        selected = entry.get("selected_reference")
+        if not isinstance(selected, dict):
+            return
+        if str(selected.get("source") or "").strip().lower() != "gallery":
+            return
+
+        selected_filename = self._reference_basename(
+            selected.get("filename") or selected.get("url") or selected.get("path")
+        )
+        if not selected_filename:
+            return
+        public_path = Path(self.image_dir) / selected_filename
+        if public_path.is_file():
+            return
+
+        archived = None
+        for record in image_versions:
+            if str(record.get("original_image_filename") or "").strip() != selected_filename:
+                continue
+            path = image_version_path(self.data_dir, record)
+            if path and path.is_file():
+                archived = record
+                break
+
+        cleaned = dict(selected)
+        cleaned.pop("path", None)
+        cleaned.pop("filename", None)
+        if archived and image_filename:
+            cleaned["url"] = (
+                f"/api/images/{quote(str(image_filename), safe='')}/versions/"
+                f"{archived['id']}"
+            )
+        else:
+            cleaned.pop("url", None)
+        entry["selected_reference"] = cleaned
+
+        # These legacy fields are fallback candidates in the frontend. Clear
+        # only values that resolve to the same missing gallery source.
+        for field in (
+            "ref_image",
+            "ref_image_path",
+            "requested_ref_image",
+            "requested_ref_image_path",
+        ):
+            if self._reference_basename(entry.get(field, "")) == selected_filename:
+                entry[field] = ""
 
     @staticmethod
     def _entry_outfit_needs_repair(outfit: str) -> bool:
@@ -3751,36 +5801,23 @@ class GalleryServer:
         return "、".join(keywords[:5])
 
     def _load_image_metadata(self) -> dict:
-        path = os.path.join(self.data_dir, "image_metadata.json")
-        try:
-            if os.path.exists(path):
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                return data if isinstance(data, dict) else {}
-        except Exception as e:
-            logger.error(f"Load image metadata error: {e}")
-        return {}
+        return ImageMetadataStore(self.data_dir).load()
 
     def _save_image_metadata(self, metadata: dict):
-        path = os.path.join(self.data_dir, "image_metadata.json")
-        tmp_path = f"{path}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, path)
+        """Replace metadata atomically for compatibility with maintenance callers."""
+        ImageMetadataStore(self.data_dir).save(metadata)
 
     def _update_image_metadata_entry(self, filename: str, meta_entry: dict):
         """Atomically merge one metadata entry without clobbering concurrent writes."""
         if not filename:
             raise ValueError("filename_required")
-        lock_path = os.path.join(self.data_dir, ".image_metadata.lock")
-        with open(lock_path, "w") as lf:
-            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
-            try:
-                metadata = self._load_image_metadata()
-                metadata[filename] = meta_entry
-                self._save_image_metadata(metadata)
-            finally:
-                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+        def _merge(metadata):
+            existing = dict(metadata.get(filename) or {})
+            existing.update(meta_entry or {})
+            metadata[filename] = existing
+            return metadata
+
+        ImageMetadataStore(self.data_dir).update(_merge)
 
     def _iter_gallery_image_files(self) -> dict[str, str]:
         files = {}
@@ -3943,7 +5980,7 @@ class GalleryServer:
                     raise OSError("image file missing")
                 date_text, time_text = self._date_time_from_timestamp(int(stat.st_mtime))
             except OSError:
-                date_text = date.today().isoformat()
+                date_text = self._today().isoformat()
                 time_text = ""
 
         prompt = meta.get("prompt", "")
@@ -3973,6 +6010,7 @@ class GalleryServer:
             "image_filename": filename,
             "prompt": prompt,
             "caption": str(meta.get("caption") or "").strip(),
+            "caption_status": str(meta.get("caption_status") or "").strip(),
             "favorite": False,
             "status": "ok",
             "source": source,
@@ -4031,28 +6069,27 @@ class GalleryServer:
         """保存 API 密钥配置"""
         try:
             body = await request.json()
+            if not isinstance(body, dict):
+                return web.json_response({"error": "invalid_json"}, status=400)
             image_dir_changed = "image_dir" in body
 
-            # 使用 ScheduleStore 的文件锁保护写入
-            store = ScheduleStore(self.data_dir)
-            lock_path = store.lock_path
-
+            lock_path = os.path.join(self.data_dir, ".config.lock")
             with open(lock_path, "w") as lf:
                 fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
                 try:
-                    # 读取现有配置
                     api_keys_path = os.path.join(self.data_dir, "api_keys_config.json")
                     keys_config = {}
                     if os.path.exists(api_keys_path):
-                        with open(api_keys_path, 'r') as f:
+                        with open(api_keys_path, "r", encoding="utf-8") as f:
                             keys_config = json.load(f)
+                        if not isinstance(keys_config, dict):
+                            keys_config = {}
 
                     image_config = self.config.get("image_gen", {}) if isinstance(self.config.get("image_gen"), dict) else {}
                     llm_config = self.config.get("llm", {}) if isinstance(self.config.get("llm"), dict) else {}
                     raw_default_gpt_base_url = str(image_config.get("gpt_base_url", "") or "").strip()
                     default_gpt_base_url = self._configured_image_base_url(raw_default_gpt_base_url)
-                    default_gitee_url = str(image_config.get("gitee_url", "") or "").strip()
-                    default_github_api = self._github_api_url()
+                    default_gitee_url = str(image_config.get("gitee_url", "") or DEFAULT_GITEE_IMAGE_URL).strip()
                     self._drop_redundant_local_url_override(
                         keys_config,
                         "gpt_base_url",
@@ -4071,7 +6108,6 @@ class GalleryServer:
                     )
                     keys_config.pop("github_api", None)
 
-                    # 更新配置（只更新提供的字段）
                     if "gpt_key" in body and body["gpt_key"]:
                         keys_config["gpt_key"] = body["gpt_key"]
                     if "gpt_base_url" in body:
@@ -4079,12 +6115,6 @@ class GalleryServer:
                             keys_config,
                             body.get("gpt_base_url"),
                             default_gpt_base_url,
-                        )
-                    if "gpt_prompt_compact_enabled" in body:
-                        keys_config["gpt_prompt_compact_enabled"] = self._body_bool(
-                            body,
-                            "gpt_prompt_compact_enabled",
-                            False,
                         )
                     if "gpt_image_endpoints" in body:
                         cleaned_endpoints, endpoint_error = self._clean_gpt_image_endpoints(
@@ -4110,7 +6140,6 @@ class GalleryServer:
                             body.get("gitee_url"),
                             default_gitee_url,
                         )
-                    # appearance: always update (empty string = remove local appearance)
                     if "appearance" in body:
                         keys_config["appearance"] = body["appearance"]
                     if "persona_source" in body:
@@ -4134,7 +6163,6 @@ class GalleryServer:
                         keys_config["schedule_forbidden_keywords"] = normalize_schedule_forbidden_keywords(
                             body.get("schedule_forbidden_keywords")
                         )
-                    # GitHub proxy is local-only and may be cleared with an empty string.
                     if "github_proxy" in body:
                         keys_config["github_proxy"] = str(body["github_proxy"] or "").strip()
                     if "image_dir" in body:
@@ -4143,6 +6171,10 @@ class GalleryServer:
                             return web.json_response({"error": "图片目录包含非法字符"}, status=400)
                         if image_dir_raw:
                             target_image_dir = normalize_image_dir(image_dir_raw, self.data_dir)
+                            if not self._image_dir_is_allowed(target_image_dir):
+                                return web.json_response({
+                                    "error": "图片目录不在允许范围内；请使用当前图片目录、data 目录，或在 gallery.allowed_image_roots 中显式配置"
+                                }, status=400)
                             if os.path.exists(target_image_dir) and not os.path.isdir(target_image_dir):
                                 return web.json_response({"error": "图片存放位置不是文件夹"}, status=400)
                             os.makedirs(target_image_dir, exist_ok=True)
@@ -4152,16 +6184,24 @@ class GalleryServer:
 
                     if self._body_bool(body, "validate_required_config"):
                         plugin_config = self._load_plugin_config()
-                        gitee_keys = plugin_config.get("gitee_config", {}).get("api_keys", [])
-                        existing_gitee_key = str((gitee_keys[0] if gitee_keys else "") or "").strip()
+                        effective_gitee_key = self._effective_gitee_api_key(
+                            plugin_config,
+                            local_override=body.get("gitee_key", ""),
+                        )
+                        effective_gitee_url = self._effective_gitee_image_url(keys_config)
+                        effective_gpt_base_url = self._effective_gpt_image_base_url(keys_config)
+                        effective_cpa_url = (
+                            str(keys_config.get("cpa_url", "") or "").strip()
+                            or os.environ.get("CPA_BASE_URL", "").strip()
+                            or str(llm_config.get("base_url", "") or "").strip()
+                        )
                         required_fields = [
-                            ("Gitee API URL", keys_config.get("gitee_url") or default_gitee_url),
-                            ("Gitee API Key", body.get("gitee_key") or existing_gitee_key),
-                            ("GPT Image Base URL", keys_config.get("gpt_base_url") or default_gpt_base_url),
+                            ("Gitee API URL", effective_gitee_url),
+                            ("Gitee API Key", effective_gitee_key),
+                            ("GPT Image Base URL", effective_gpt_base_url),
                             ("GPT Image Key", body.get("gpt_key") or keys_config.get("gpt_key")),
-                            ("CPA Base URL", keys_config.get("cpa_url") or llm_config.get("base_url")),
+                            ("CPA Base URL", effective_cpa_url),
                             ("CPA API Key", body.get("cpa_key") or keys_config.get("cpa_key")),
-                            ("GitHub API 代理", keys_config.get("github_proxy")),
                         ]
                         missing = [label for label, value in required_fields if not str(value or "").strip()]
                         if missing:
@@ -4171,92 +6211,123 @@ class GalleryServer:
                                 "missing": missing,
                             }, status=400)
 
-                    # 写入 api_keys_config.json
-                    with open(api_keys_path, 'w', encoding='utf-8') as f:
-                        json.dump(keys_config, f, ensure_ascii=False, indent=2)
-
-                    # 更新 plugin_config.json 的 Gitee 配置
-                    if "gitee_key" in body or "gitee_fallback_enabled" in body:
-                        plugin_config_path = os.path.join(self.data_dir, "plugin_config.json")
+                    plugin_config_path = os.path.join(self.data_dir, "plugin_config.json")
+                    plugin_config = None
+                    plugin_changed = (
+                        "gitee_key" in body
+                        or "gitee_fallback_enabled" in body
+                        or "gpt_chat_fallback_enabled" in body
+                    )
+                    if plugin_changed:
                         plugin_config = {}
                         if os.path.exists(plugin_config_path):
-                            with open(plugin_config_path, 'r') as f:
+                            with open(plugin_config_path, "r", encoding="utf-8") as f:
                                 plugin_config = json.load(f)
+                            if not isinstance(plugin_config, dict):
+                                plugin_config = {}
 
                         if "gitee_fallback_enabled" in body:
-                            plugin_config["gitee_fallback_enabled"] = bool(body["gitee_fallback_enabled"])
+                            plugin_config["gitee_fallback_enabled"] = self._body_bool(
+                                body, "gitee_fallback_enabled"
+                            )
+                        if "gpt_chat_fallback_enabled" in body:
+                            plugin_config["gpt_chat_fallback_enabled"] = self._body_bool(
+                                body, "gpt_chat_fallback_enabled"
+                            )
 
                         if body.get("gitee_key"):
-                            if "gitee_config" not in plugin_config:
-                                plugin_config["gitee_config"] = {}
-                            if "api_keys" not in plugin_config["gitee_config"]:
-                                plugin_config["gitee_config"]["api_keys"] = []
-
-                            # 更新或添加第一个 key
-                            if plugin_config["gitee_config"]["api_keys"]:
-                                plugin_config["gitee_config"]["api_keys"][0] = body["gitee_key"]
+                            gitee_config = plugin_config.get("gitee_config")
+                            if not isinstance(gitee_config, dict):
+                                gitee_config = {}
+                                plugin_config["gitee_config"] = gitee_config
+                            api_keys = gitee_config.get("api_keys")
+                            if not isinstance(api_keys, list):
+                                api_keys = []
+                                gitee_config["api_keys"] = api_keys
+                            if api_keys:
+                                api_keys[0] = body["gitee_key"]
                             else:
-                                plugin_config["gitee_config"]["api_keys"].append(body["gitee_key"])
+                                api_keys.append(body["gitee_key"])
 
-                        with open(plugin_config_path, 'w', encoding='utf-8') as f:
-                            json.dump(plugin_config, f, ensure_ascii=False, indent=2)
+                    llm_models_changed = "llm_model" in body or "llm_models" in body
+                    llm_stream_changed = "llm_stream_enabled" in body
+                    llm_changed = llm_models_changed or llm_stream_changed
+                    integration_keys = [
+                        key for key in ("hermes_cli", "openclaw_cli") if key in body
+                    ]
+                    config_changed = llm_changed or bool(integration_keys)
+                    runtime_path = runtime_config_path(self.data_dir)
+                    runtime_config = {}
+                    if config_changed:
+                        if os.path.exists(runtime_path):
+                            with open(runtime_path, "r", encoding="utf-8") as f:
+                                runtime_config = normalize_runtime_config(json.load(f) or {})
+
+                        if llm_changed:
+                            if not isinstance(runtime_config.get("llm"), dict):
+                                runtime_config["llm"] = {}
+                        if llm_models_changed:
+                            raw_llm_models = body.get("llm_models", [])
+                            if isinstance(raw_llm_models, dict):
+                                requested_models = configured_llm_models(raw_llm_models)
+                            elif isinstance(raw_llm_models, (list, tuple)):
+                                requested_models = raw_llm_models
+                            else:
+                                requested_models = []
+                            requested_chain = normalize_llm_models(
+                                body.get("llm_model", ""),
+                                requested_models,
+                            )
+                            runtime_config["llm"]["models"] = requested_chain
+                            runtime_config["llm"]["model"] = requested_chain[0] if requested_chain else ""
+                            runtime_config["llm"]["fallback_model"] = (
+                                requested_chain[1] if len(requested_chain) > 1 else ""
+                            )
+                        if llm_stream_changed:
+                            runtime_config["llm"]["stream"] = self._body_bool(
+                                body, "llm_stream_enabled"
+                            )
+
+                        if integration_keys:
+                            if not isinstance(runtime_config.get("integrations"), dict):
+                                runtime_config["integrations"] = {}
+                            for key in integration_keys:
+                                value = str(body.get(key) or "").strip()
+                                runtime_config["integrations"][key] = value
+
+                    pending_files = [(
+                        api_keys_path,
+                        json.dumps(keys_config, ensure_ascii=False, indent=2) + "\n",
+                    )]
+                    if plugin_changed:
+                        pending_files.append((
+                            plugin_config_path,
+                            json.dumps(plugin_config, ensure_ascii=False, indent=2) + "\n",
+                        ))
+                    if config_changed:
+                        pending_files.append((
+                            runtime_path,
+                            json.dumps(runtime_config, ensure_ascii=False, indent=2) + "\n",
+                        ))
+
+                    self._atomic_replace_text_files(pending_files)
+
+                    if llm_changed:
+                        current_llm = dict(self.config.get("llm") or {})
+                        current_llm.update(runtime_config["llm"])
+                        self.config["llm"] = current_llm
+                        logger.info(
+                            "LLM settings updated: models=%s stream=%s",
+                            ", ".join(current_llm.get("models") or []) or "(empty)",
+                            bool(current_llm.get("stream", False)),
+                        )
+                    if integration_keys:
+                        current_integrations = dict(self.config.get("integrations") or {})
+                        current_integrations.update(runtime_config["integrations"])
+                        self.config["integrations"] = current_integrations
+                        logger.info("Integrations updated: %s", integration_keys)
                 finally:
                     fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
-
-            # 保存 LLM 模型链到 config.yaml
-            if (
-                ("llm_model" in body or "llm_models" in body)
-                and self.config_path
-                and os.path.exists(self.config_path)
-            ):
-                try:
-                    import yaml
-                    with open(self.config_path, 'r', encoding='utf-8') as f:
-                        full_config = yaml.safe_load(f) or {}
-                    if "llm" not in full_config or not isinstance(full_config.get("llm"), dict):
-                        full_config["llm"] = {}
-                    raw_llm_models = body.get("llm_models", [])
-                    if isinstance(raw_llm_models, dict):
-                        requested_models = configured_llm_models(raw_llm_models)
-                    elif isinstance(raw_llm_models, (list, tuple)):
-                        requested_models = raw_llm_models
-                    else:
-                        requested_models = []
-                    requested_chain = normalize_llm_models(
-                        body.get("llm_model", ""),
-                        requested_models,
-                    )
-                    full_config["llm"]["models"] = requested_chain
-                    full_config["llm"]["model"] = requested_chain[0] if requested_chain else ""
-                    full_config["llm"]["fallback_model"] = requested_chain[1] if len(requested_chain) > 1 else ""
-                    with open(self.config_path, 'w', encoding='utf-8') as f:
-                        yaml.dump(full_config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-                    # 更新内存中的 config
-                    self.config["llm"] = full_config["llm"]
-                    logger.info("LLM model chain updated to: %s", ", ".join(requested_chain) or "(empty)")
-                except Exception as e:
-                    logger.error(f"Save llm models error: {e}")
-
-            hermes_or_openclaw_keys = [key for key in ("hermes_cli", "openclaw_cli") if key in body]
-            if hermes_or_openclaw_keys and self.config_path and os.path.exists(self.config_path):
-                try:
-                    import yaml
-                    with open(self.config_path, 'r', encoding='utf-8') as f:
-                        full_config = yaml.safe_load(f) or {}
-                    if "integrations" not in full_config or not isinstance(full_config.get("integrations"), dict):
-                        full_config["integrations"] = {}
-                    for key in hermes_or_openclaw_keys:
-                        value = str(body.get(key) or "").strip()
-                        if value:
-                            full_config["integrations"][key] = value
-                        else:
-                            full_config["integrations"].pop(key, None)
-                    with open(self.config_path, 'w', encoding='utf-8') as f:
-                        yaml.dump(full_config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-                    self.config["integrations"] = full_config["integrations"]
-                    logger.info("Integrations updated: %s", hermes_or_openclaw_keys)
-                except Exception as e:
-                    logger.error(f"Save integrations error: {e}")
 
             if image_dir_changed:
                 self._set_runtime_image_dir(self._resolve_image_dir())
@@ -4592,7 +6663,7 @@ class GalleryServer:
 
     async def handle_today(self, request: web.Request):
         """获取今日数据 - 返回今日所有照片 + 日程信息"""
-        today_str = date.today().isoformat()
+        today_str = self._today().isoformat()
         try:
             store = ScheduleStore(self.data_dir)
             all_data = store.load()
@@ -4652,6 +6723,7 @@ class GalleryServer:
                     "photos": photos,
                     "schedule": schedule_info.get("schedule", ""),
                     "outfit_style": schedule_info.get("outfit_style", ""),
+                    "theme_day": schedule_info.get("theme_day", ""),
                 })
             elif schedule_info:
                 return web.json_response({
@@ -4659,6 +6731,7 @@ class GalleryServer:
                     "photos": [],
                     "schedule": schedule_info.get("schedule", ""),
                     "outfit_style": schedule_info.get("outfit_style", ""),
+                    "theme_day": schedule_info.get("theme_day", ""),
                     "status": schedule_info.get("status", "no_photos"),
                 })
             else:
@@ -4669,7 +6742,17 @@ class GalleryServer:
 
     async def handle_schedule_detail(self, request: web.Request):
         """返回今日日程详情（彩蛋弹窗用）"""
-        today_str = date.today().isoformat()
+        service_today = self._today()
+        today_str = service_today.isoformat()
+        requested_date = str(request.query.get("date") or "").strip()
+        if requested_date:
+            try:
+                requested = date.fromisoformat(requested_date)
+            except ValueError:
+                return web.json_response({"status": "invalid_date"}, status=400)
+            if requested not in {service_today, service_today + timedelta(days=1)}:
+                return web.json_response({"status": "invalid_date", "message": "只支持当天或第二天"}, status=400)
+            today_str = requested.isoformat()
         try:
             store = ScheduleStore(self.data_dir)
             all_data = store.load()
@@ -4717,6 +6800,7 @@ class GalleryServer:
             outfit_keywords = ""
             scene_keywords = ""
             caption = ""
+            schedule_llm_model = ""
 
             if schedule_entry:
                 outfit_style = schedule_entry.get("outfit_style", "")
@@ -4725,6 +6809,11 @@ class GalleryServer:
                 outfit_keywords = schedule_entry.get("outfit_keywords", "")
                 scene_keywords = schedule_entry.get("scene_keywords", "")
                 caption = schedule_entry.get("caption", "")
+                schedule_llm_model = str(
+                    schedule_entry.get("schedule_llm_model")
+                    or schedule_entry.get("llm_model")
+                    or ""
+                ).strip()
                 outfit_parts.update(self._parse_outfit_parts(schedule_entry.get("outfit", "")))
                 self._enrich_outfit_parts_from_entry(outfit_parts, schedule_entry)
                 # 解析 schedule
@@ -4795,6 +6884,8 @@ class GalleryServer:
                 "status": "ok",
                 "date": today_str,
                 "outfit_style": outfit_style,
+                "theme_day": str((schedule_entry or {}).get("theme_day") or "").strip(),
+                "theme_day_mode": str((schedule_entry or {}).get("theme_day_mode") or "").strip(),
                 "base_style": base_style,
                 "outfit": outfit_parts,
                 "schedule": schedule_items,
@@ -4802,6 +6893,7 @@ class GalleryServer:
                 "prompt": prompt,
                 "outfit_keywords": outfit_keywords,
                 "scene_keywords": scene_keywords,
+                "schedule_llm_model": schedule_llm_model,
                 "outfit_favorite_id": outfit_id,
                 "outfit_favorite": bool(outfit_id and outfit_id in favorite_ids),
                 "outfit_disliked_id": outfit_id,
@@ -4898,6 +6990,50 @@ class GalleryServer:
             return ext
         return REFERENCE_MIME_EXTENSIONS.get((content_type or "").split(";")[0].strip().lower(), "")
 
+    @staticmethod
+    def _verify_reference_image(path: str) -> None:
+        """Validate decoded image content before it can be persisted or analyzed."""
+        with Image.open(path) as image:
+            image.verify()
+        with Image.open(path) as image:
+            width, height = image.size
+            if width <= 0 or height <= 0 or width * height > MAX_REFERENCE_IMAGE_PIXELS:
+                raise ValueError("invalid_image_dimensions")
+
+    @staticmethod
+    def _default_reference_upload_spec(style: str) -> dict:
+        normalized_style = str(style or "").strip().lower()
+        if normalized_style not in CUSTOM_DEFAULT_REFERENCE_STYLES:
+            return {}
+        for filename, info in BUILTIN_REFERENCE_MAP.items():
+            if str(info.get("style") or "").strip().lower() == normalized_style:
+                return {
+                    "filename": filename,
+                    "style": normalized_style,
+                    "label": info.get("label", ""),
+                    "prompt": info.get("prompt", ""),
+                }
+        return {}
+
+    @staticmethod
+    def _write_default_reference_image(source_path: str, target_path: str) -> None:
+        target_tmp = f"{target_path}.{uuid.uuid4().hex}.tmp"
+        try:
+            with Image.open(source_path) as source:
+                source.seek(0)
+                image = ImageOps.exif_transpose(source)
+                if image.mode in ("RGBA", "LA") or "transparency" in image.info:
+                    rgba = image.convert("RGBA")
+                    normalized = Image.new("RGB", rgba.size, "white")
+                    normalized.paste(rgba, mask=rgba.getchannel("A"))
+                else:
+                    normalized = image.convert("RGB")
+                normalized.save(target_tmp, format="JPEG", quality=95, optimize=True)
+            os.replace(target_tmp, target_path)
+        finally:
+            if os.path.exists(target_tmp):
+                os.remove(target_tmp)
+
     def _reference_profiles(self) -> list[dict]:
         return load_reference_profiles(
             self.data_dir,
@@ -4930,6 +7066,120 @@ class GalleryServer:
         result["selection_reason"] = selected.get("selection_reason", "")
         result["random_fallback"] = bool(selected.get("random_fallback"))
         return result
+
+    def _reference_profile_result(
+        self,
+        profile: dict,
+        selection_mode: str = "",
+        selection_reason: str = "",
+    ) -> dict:
+        path = resolve_reference_profile_path(profile, self.reference_dir, self.app_reference_dir)
+        if not path:
+            return {}
+        result = reference_profile_response(profile)
+        result["path"] = path
+        try:
+            version = os.stat(path).st_mtime_ns
+        except OSError:
+            version = 0
+        url = str(result.get("url") or "").strip()
+        if url and version:
+            separator = "&" if "?" in url else "?"
+            result["url"] = f"{url}{separator}v={version}"
+            result["version"] = version
+        if selection_mode:
+            result["selection_mode"] = selection_mode
+        if selection_reason:
+            result["selection_reason"] = selection_reason
+        return result
+
+    def _reference_profile_for_value(self, value: str) -> dict:
+        ref_name = self._reference_basename(value)
+        raw_value = str(value or "").strip()
+        if not ref_name and not raw_value:
+            return {}
+        for profile in self._reference_profiles():
+            result = self._reference_profile_result(profile)
+            if not result:
+                continue
+            candidates = {
+                self._reference_basename(result.get("filename", "")),
+                self._reference_basename(result.get("url", "")),
+                self._reference_basename(result.get("path", "")),
+            }
+            if ref_name and ref_name in candidates:
+                return result
+            if raw_value and raw_value in {result.get("url", ""), result.get("path", "")}:
+                return result
+        return {}
+
+    def _select_default_custom_reference_sync(self) -> dict:
+        profiles = [
+            profile
+            for profile in self._reference_profiles()
+            if profile.get("active") is not False
+        ]
+        default_style_refs = []
+        for profile in profiles:
+            if profile.get("source") != "default" or not profile.get("builtin"):
+                continue
+            if str(profile.get("style") or "").strip().lower() not in CUSTOM_DEFAULT_REFERENCE_STYLES:
+                continue
+            result = self._reference_profile_result(
+                profile,
+                selection_mode="custom_default_style",
+                selection_reason="自定义生图默认从三种风格底模中随机选取",
+            )
+            if result:
+                default_style_refs.append(result)
+        if default_style_refs:
+            return random.choice(default_style_refs)
+
+        existing_refs = []
+        for profile in profiles:
+            if profile.get("source") == "default":
+                continue
+            result = self._reference_profile_result(
+                profile,
+                selection_mode="custom_random_reference",
+                selection_reason="三种风格底模不可用，随机选取已有参考像",
+            )
+            if result:
+                existing_refs.append(result)
+        if existing_refs:
+            return random.choice(existing_refs)
+        return {}
+
+    def _is_xiaohongshu_reference(self, raw_value: str, resolved_path: str = "") -> bool:
+        """Return whether a raw/resolved reference belongs to the XHS import area."""
+        normalized = unquote(str(raw_value or "").split("?", 1)[0]).replace("\\", "/").lower()
+        if "/xiaohongshu/" in normalized or self._xiaohongshu_reference_for_value(raw_value):
+            return True
+        if not resolved_path:
+            return False
+        try:
+            Path(resolved_path).resolve().relative_to(Path(self.xiaohongshu_reference_dir).resolve())
+            return True
+        except (OSError, ValueError):
+            return False
+
+    def _preferred_xiaohongshu_identity_reference(self, current_path: str = "") -> str:
+        """Prefer the face-only crop for built-in/default XHS identity references."""
+        current_path = str(current_path or "").strip()
+        default_filenames = set(DEFAULT_STYLE_REFERENCE_FILES.values())
+        should_use_face_crop = not current_path or os.path.basename(current_path) in default_filenames
+        if not should_use_face_crop:
+            return current_path
+
+        for base_dir in (self.reference_dir, self.app_reference_dir):
+            candidate = self._safe_reference_path(base_dir, XIAOHONGSHU_DEFAULT_FACE_REFERENCE_FILE)
+            if candidate and os.path.isfile(candidate) and self._is_reference_image_file(candidate):
+                return candidate
+
+        if current_path:
+            return current_path
+        fallback = self._select_default_custom_reference_sync()
+        return str(fallback.get("path") or "").strip()
 
     def _iter_uploaded_refs(self) -> list[dict]:
         refs = []
@@ -5049,52 +7299,1360 @@ class GalleryServer:
 
     async def handle_ref_list(self, request: web.Request):
         """返回参考图列表（内置底模 + 用户上传）"""
-        refs = [
-            reference_profile_response(profile)
-            for profile in self._reference_profiles()
-            if profile.get("source") != "wardrobe"
-        ]
+        refs = []
+        for profile in self._reference_profiles():
+            if profile.get("source") == "wardrobe":
+                continue
+            result = self._reference_profile_result(profile)
+            if result:
+                result.pop("path", None)
+                refs.append(result)
         refs.extend(self._iter_wardrobe_refs())
         return web.json_response(refs)
 
     async def handle_uploaded_refs(self, request: web.Request):
         """列出已上传的自定义参考图"""
         try:
-            refs = [
-                reference_profile_response(profile)
-                for profile in self._reference_profiles()
-                if profile.get("source") == "upload"
-            ]
+            refs = []
+            for profile in self._reference_profiles():
+                if profile.get("source") != "upload":
+                    continue
+                result = self._reference_profile_result(profile)
+                if result:
+                    result.pop("path", None)
+                    refs.append(result)
             return web.json_response(refs)
         except Exception as e:
             logger.error(f"List uploaded refs error: {e}")
             return web.json_response([])
 
-    async def handle_upload_ref(self, request: web.Request):
-        """上传自定义参考图到 data/references/uploads 持久化目录"""
-        reader = await request.multipart()
-        field = await reader.next()
-        if not field or not field.filename:
-            return web.json_response({"error": "no_file"}, status=400)
+    @staticmethod
+    def _xiaohongshu_error_response(exc: XiaohongshuError) -> web.Response:
+        return web.json_response(
+            {"error": exc.code, "message": exc.message},
+            status=exc.status,
+        )
 
-        ext = self._reference_ext(field.filename, field.headers.get("Content-Type", ""))
-        if not ext:
-            return web.json_response({"error": "invalid_image_type"}, status=400)
+    async def _xiaohongshu_json_body(self, request: web.Request) -> dict:
+        try:
+            body = await request.json()
+        except Exception as exc:
+            raise XiaohongshuError("invalid_json", "请求内容不是有效 JSON。", status=400) from exc
+        if not isinstance(body, dict):
+            raise XiaohongshuError("invalid_json", "请求内容不是有效 JSON。", status=400)
+        return body
 
-        save_name = f"upload_{int(time.time())}_{uuid.uuid4().hex[:8]}{ext}"
-        save_path = os.path.join(self.uploaded_reference_dir, save_name)
+    async def handle_xiaohongshu_status(self, request: web.Request):
+        """Return local MCP process and account login state."""
+        start_service = str(request.query.get("start") or "1").strip().lower() not in {"0", "false", "no"}
+        return web.json_response(await self.xiaohongshu_client.status(start_service=start_service))
+
+    async def handle_xiaohongshu_login_qrcode(self, request: web.Request):
+        """Return a QR image from the read-only local MCP bridge."""
+        try:
+            return web.json_response(await self.xiaohongshu_client.login_qrcode())
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+
+    @staticmethod
+    def _normalize_xiaohongshu_creator_id(value: object) -> str:
+        user_id = str(value or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{4,128}", user_id):
+            raise XiaohongshuError("invalid_creator", "小红书博主 ID 无效。", status=400)
+        return user_id
+
+    @staticmethod
+    def _public_xiaohongshu_creator(record: dict) -> dict:
+        record = record if isinstance(record, dict) else {}
+        return {
+            key: record.get(key)
+            for key in (
+                "user_id", "nickname", "avatar_url", "description", "red_id",
+                "added_at", "updated_at", "last_opened_at", "note_count",
+            )
+            if record.get(key) not in (None, "")
+        }
+
+    def _xiaohongshu_creator_items(self) -> list[dict]:
+        records = self.xiaohongshu_creator_store.load()
+        items = []
+        for user_id, record in records.items():
+            if not isinstance(record, dict):
+                continue
+            item = self._public_xiaohongshu_creator({**record, "user_id": user_id})
+            item["favorited"] = True
+            items.append(item)
+        items.sort(
+            key=lambda item: (
+                str(item.get("last_opened_at") or item.get("updated_at") or item.get("added_at") or ""),
+                str(item.get("nickname") or "").casefold(),
+            ),
+            reverse=True,
+        )
+        return items
+
+    @staticmethod
+    def _parse_xiaohongshu_creator_url(value: object) -> tuple[str, str]:
+        text = str(value or "").strip()
+        parsed = urlparse(text)
+        hostname = str(parsed.hostname or "").lower().rstrip(".")
+        if parsed.scheme not in {"http", "https"} or not (
+            hostname == "xiaohongshu.com" or hostname.endswith(".xiaohongshu.com")
+        ):
+            return "", ""
+        matched = re.search(r"/user/profile/([A-Za-z0-9_-]{4,128})", parsed.path)
+        if not matched:
+            return "", ""
+        token = str((parse_qs(parsed.query).get("xsec_token") or [""])[0]).strip()
+        return matched.group(1), token
+
+    async def _load_xiaohongshu_creator_profile(
+        self,
+        user_id: object,
+        xsec_token: object = "",
+        nickname: object = "",
+    ) -> dict:
+        user_id = self._normalize_xiaohongshu_creator_id(user_id)
+        records = self.xiaohongshu_creator_store.load()
+        stored = records.get(user_id) if isinstance(records.get(user_id), dict) else {}
+        token = str(xsec_token or stored.get("xsec_token") or "").strip()
+        creator_name = str(nickname or stored.get("nickname") or "").strip()[:80]
+        profile = None
+        original_error = None
+        if token:
+            try:
+                profile = await self.xiaohongshu_client.profile(user_id, token)
+            except XiaohongshuError as exc:
+                original_error = exc
+
+        if profile is None and creator_name:
+            candidates = await self.xiaohongshu_client.search_creators(
+                creator_name,
+                max_results=30,
+            )
+            normalized_name = "".join(creator_name.casefold().split())
+            matched = next(
+                (item for item in candidates if str(item.get("user_id") or "") == user_id),
+                None,
+            )
+            if matched is None:
+                matched = next(
+                    (
+                        item for item in candidates
+                        if "".join(str(item.get("nickname") or "").casefold().split()) == normalized_name
+                    ),
+                    None,
+                )
+            refreshed_token = str((matched or {}).get("xsec_token") or "").strip()
+            if refreshed_token:
+                token = refreshed_token
+                profile = await self.xiaohongshu_client.profile(user_id, token)
+
+        if profile is None:
+            if original_error is not None:
+                raise original_error
+            raise XiaohongshuError(
+                "creator_token_missing",
+                "无法访问该博主主页，请搜索博主昵称或粘贴带访问参数的完整主页链接。",
+                status=400,
+            )
+
+        creator = profile.get("creator") if isinstance(profile.get("creator"), dict) else {}
+        notes = profile.get("notes") if isinstance(profile.get("notes"), list) else []
+        creator.update({
+            "user_id": user_id,
+            "nickname": str(creator.get("nickname") or creator_name or stored.get("nickname") or "小红书博主")[:80],
+            "xsec_token": token,
+            "favorited": bool(stored),
+        })
+        profile["creator"] = creator
+        profile["notes"] = notes
+
+        if stored:
+            opened_at = self._now().isoformat(timespec="seconds")
+            def _update_creator(data: dict) -> dict:
+                current = data.get(user_id) if isinstance(data.get(user_id), dict) else {}
+                current.update({
+                    "user_id": user_id,
+                    "nickname": creator["nickname"],
+                    "avatar_url": str(creator.get("avatar_url") or current.get("avatar_url") or "")[:2048],
+                    "description": str(creator.get("description") or current.get("description") or "")[:300],
+                    "red_id": str(creator.get("red_id") or current.get("red_id") or "")[:80],
+                    "xsec_token": token,
+                    "note_count": len(notes),
+                    "last_opened_at": opened_at,
+                    "updated_at": opened_at,
+                })
+                data[user_id] = current
+                return data
+            self.xiaohongshu_creator_store.update(_update_creator)
+        return profile
+    def xiaohongshu_schedule_enabled(self) -> bool:
+        return self.xiaohongshu_schedule_store.load().get("enabled") is True
+
+    @staticmethod
+    def _xiaohongshu_schedule_query(daily: dict) -> str:
+        """Use the preselected keyword; never derive concrete garments from LLM output."""
+        daily = daily if isinstance(daily, dict) else {}
+        explicit = re.sub(
+            r"\s+",
+            " ",
+            str(daily.get("xiaohongshu_search_query") or ""),
+        ).strip(" -:：")
+        if explicit:
+            explicit = re.sub(r"(?:真人穿搭|真人|全身|OOTD)", "", explicit, flags=re.IGNORECASE)
+            explicit = re.sub(r"[\s,，]+", "", explicit).strip(" -:：")
+            # A bare generic word is not a meaningful style query. Ignore it
+            # and derive a style-specific query from the day's schedule instead.
+            if explicit.casefold() in {"", "穿搭", "ootd", "真人"}:
+                explicit = ""
+            elif "穿搭" not in explicit:
+                explicit = f"{explicit}穿搭"
+            if explicit:
+                return explicit[:24]
+
+        style = re.sub(r"\s+", " ", str(daily.get("outfit_style") or "")).strip()
+        style = re.sub(r"^(?:风格|穿搭风格)[：:]\s*", "", style)[:16]
+        source_text = "\n".join(
+            str(daily.get(field) or "")
+            for field in ("reference_query", "outfit", "schedule")
+        )
+        contexts = ("居家", "通勤", "约会", "休闲", "度假", "运动", "复古", "甜美", "清新", "街头", "学院", "法式", "韩系")
+        context = next((item for item in contexts if item in source_text or item in style), "")
+        base = "".join(part for part in (style, context) if part).strip()
+        if not base:
+            base = "当季自然日常穿搭"
+        if "穿搭" not in base:
+            base = f"{base}穿搭"
+        return base[:24]
+
+    @staticmethod
+    def _xiaohongshu_schedule_candidate_score(item: dict, query: str) -> tuple:
+        title = str((item or {}).get("title") or "").lower()
+        keywords = [
+            token.lower()
+            for token in re.split(r"[\s,，。；;|/]+", str(query or ""))
+            if len(token.strip()) >= 2
+        ]
+        relevance = sum(3 for token in keywords if token in title)
+        relevance += sum(2 for token in ("穿搭", "ootd", "通勤", "约会", "全身") if token in title)
+        relevance -= sum(4 for token in ("美甲", "妆容", "探店", "食谱", "家居") if token in title)
+        width = int((item or {}).get("width") or 0)
+        height = int((item or {}).get("height") or 0)
+        portrait = 2 if height > width > 0 else 0
+        liked = str((item or {}).get("liked_count") or "").strip().lower()
+        liked_score = 0
+        try:
+            liked_score = int(float(liked.rstrip("万w")) * (10000 if liked.endswith(("万", "w")) else 1))
+        except ValueError:
+            pass
+        return relevance, portrait, liked_score
+
+    @staticmethod
+    def _xiaohongshu_detail_image_score(item: dict) -> tuple:
+        width = max(0, int((item or {}).get("width") or 0))
+        height = max(0, int((item or {}).get("height") or 0))
+        ratio = (height / width) if width else 0
+        portrait_fit = 2 if 1.15 <= ratio <= 2.2 else (1 if height > width > 0 else 0)
+        return portrait_fit, width * height, -int((item or {}).get("index") or 0)
+
+    @staticmethod
+    def _xiaohongshu_image_identity(value: str) -> str:
+        """Normalize CDN variants enough to exclude a search-selected cover from detail images."""
+        try:
+            basename = unquote(urlparse(str(value or "")).path).rstrip("/").rsplit("/", 1)[-1]
+        except Exception:
+            return ""
+        basename = basename.split("!", 1)[0]
+        basename = re.sub(r"\.(?:jpe?g|png|webp|avif)$", "", basename, flags=re.IGNORECASE)
+        return basename.strip().lower()
+
+    @staticmethod
+    def _create_xiaohongshu_validation_sheet(candidate_paths: list[str], output_dir: str) -> str:
+        """Create one numbered contact sheet so vision selection needs a single LLM call."""
+        if not candidate_paths:
+            return ""
+        cell_width, cell_height = 512, 768
+        columns = 2
+        rows = (len(candidate_paths) + columns - 1) // columns
+        canvas = Image.new("RGB", (columns * cell_width, rows * cell_height), (238, 238, 238))
+        draw = ImageDraw.Draw(canvas)
+        try:
+            font = ImageFont.truetype("DejaVuSans-Bold.ttf", 36)
+        except OSError:
+            font = ImageFont.load_default()
+        for offset, path in enumerate(candidate_paths):
+            column = offset % columns
+            row = offset // columns
+            left = column * cell_width
+            top = row * cell_height
+            with Image.open(path) as source:
+                tile = ImageOps.contain(
+                    ImageOps.exif_transpose(source).convert("RGB"),
+                    (cell_width - 24, cell_height - 24),
+                    method=Image.Resampling.LANCZOS,
+                )
+            x = left + (cell_width - tile.width) // 2
+            y = top + (cell_height - tile.height) // 2
+            canvas.paste(tile, (x, y))
+            draw.rectangle((left + 10, top + 10, left + 72, top + 64), fill=(211, 34, 42))
+            draw.text((left + 29, top + 16), str(offset + 1), fill="white", font=font)
+        os.makedirs(output_dir, exist_ok=True)
+        target = os.path.join(output_dir, f".xhs_validation_{uuid.uuid4().hex}.jpg")
+        canvas.save(target, format="JPEG", quality=88, optimize=True)
+        return target
+
+    def _discard_xiaohongshu_candidate_path(self, path: str) -> None:
+        filename = os.path.basename(str(path or ""))
+        safe_path = self._safe_reference_path(self.xiaohongshu_reference_dir, filename)
+        if not safe_path or self.xiaohongshu_reference_store.load().get(filename):
+            return
+        try:
+            os.remove(safe_path)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("清理小红书候选临时图失败: %s", exc)
+
+    def _xiaohongshu_schedule_daily_entry(self, schedule_date: str) -> dict:
+        try:
+            data = ScheduleStore(self.data_dir).load()
+        except Exception as exc:
+            logger.warning("读取小红书日程选图上下文失败: %s", exc)
+            return {}
+        direct = data.get(schedule_date)
+        if isinstance(direct, dict):
+            return direct
+        for entry in data.values():
+            if (
+                isinstance(entry, dict)
+                and entry.get("date") == schedule_date
+                and not entry.get("image_filename")
+            ):
+                return entry
+        return {}
+
+    def _xiaohongshu_schedule_reference(self, schedule_date: str) -> dict:
+        state = self.xiaohongshu_schedule_store.load()
+        references = state.get("references") if isinstance(state.get("references"), dict) else {}
+        record = references.get(schedule_date)
+        if not isinstance(record, dict):
+            return {}
+        filename = str(record.get("filename") or "").strip()
+        path = self._safe_reference_path(self.xiaohongshu_reference_dir, filename)
+        indexed = self.xiaohongshu_reference_store.load().get(filename)
+        if not path or not isinstance(indexed, dict) or indexed.get("scope") != "daily_schedule":
+            return {}
+        result = dict(record)
+        result.update({
+            "path": path,
+            "url": f"/local-refs/xiaohongshu/{quote(filename)}",
+            "source": "xiaohongshu",
+            "scope": "daily_schedule",
+            "selection_mode": "xiaohongshu_schedule",
+            "selection_reason": f"xiaohongshu_schedule:{schedule_date}",
+        })
+        return result
+
+    def xiaohongshu_schedule_state(self, schedule_date: str = "") -> dict:
+        schedule_date = schedule_date or self._today().isoformat()
+        state = self.xiaohongshu_schedule_store.load()
+        reference = self._xiaohongshu_schedule_reference(schedule_date)
+        public_reference = {
+            key: reference.get(key)
+            for key in (
+                "id", "filename", "url", "label", "title", "author", "query",
+                "source", "scope", "schedule_date", "created_at", "image_index",
+                "validation_score", "validation_reason", "selection_source",
+                "creator_id", "creator_name",
+            )
+            if reference.get(key) not in (None, "")
+        }
+        enabled = state.get("enabled") is True
+        last_error = str(state.get("last_error") or "")
+        last_error_at = str(state.get("last_error_at") or "")
+        reference_created_at = str(reference.get("created_at") or "")
+        state_updated_at = str(state.get("updated_at") or "")
+        if (
+            reference
+            and last_error
+            and not last_error_at
+            and reference_created_at
+            and state_updated_at <= reference_created_at
+        ):
+            last_error = ""
+        status = (
+            "disabled"
+            if not enabled
+            else ("stale" if reference and last_error else ("ready" if reference else ("error" if last_error else "missing")))
+        )
+        return {
+            "enabled": enabled,
+            "prefer_creators": state.get("prefer_creators") is True,
+            "favorite_creator_count": len(self._xiaohongshu_creator_items()),
+            "schedule_date": schedule_date,
+            "status": status,
+            "today_reference": public_reference,
+            "last_error": last_error,
+            "updated_at": state_updated_at,
+        }
+
+    def _save_xiaohongshu_schedule_error(self, message: str) -> None:
+        def _update(state: dict) -> dict:
+            state["last_error"] = str(message or "小红书今日穿搭选择失败")[:300]
+            now_text = self._now().isoformat(timespec="seconds")
+            state["last_error_at"] = now_text
+            state["updated_at"] = now_text
+            return state
+        self.xiaohongshu_schedule_store.update(_update)
+
+    def _cleanup_old_xiaohongshu_schedule_references(self, schedule_date: str) -> None:
+        try:
+            cutoff = date.fromisoformat(schedule_date) - timedelta(days=1)
+        except ValueError:
+            return
+        state = self.xiaohongshu_schedule_store.load()
+        references = state.get("references") if isinstance(state.get("references"), dict) else {}
+        stale = []
+        for key, record in references.items():
+            try:
+                is_stale = date.fromisoformat(str(key)) < cutoff
+            except ValueError:
+                is_stale = True
+            if is_stale and isinstance(record, dict):
+                stale.append((str(key), str(record.get("filename") or "")))
+        if not stale:
+            return
+        stale_dates = {item[0] for item in stale}
+
+        def _remove_state(current: dict) -> dict:
+            current_refs = current.get("references") if isinstance(current.get("references"), dict) else {}
+            current["references"] = {key: value for key, value in current_refs.items() if key not in stale_dates}
+            return current
+
+        self.xiaohongshu_schedule_store.update(_remove_state)
+        for _key, filename in stale:
+            record = self.xiaohongshu_reference_store.load().get(filename)
+            if filename and isinstance(record, dict) and record.get("scope") == "daily_schedule":
+                try:
+                    self._delete_xiaohongshu_reference_file(filename, allow_daily_schedule=True)
+                except OSError as exc:
+                    logger.warning("清理过期小红书日程参考图失败: %s", exc)
+
+    async def ensure_xiaohongshu_schedule_reference(
+        self,
+        schedule_date: str,
+        daily: dict,
+        *,
+        force: bool = False,
+    ) -> dict:
+        """Return today's XHS outfit reference, falling back silently on every failure."""
+        if not self.xiaohongshu_schedule_enabled():
+            return {}
+        try:
+            date.fromisoformat(schedule_date)
+        except ValueError:
+            self._save_xiaohongshu_schedule_error("日程日期无效，已回退原参考图")
+            return {}
+
+        async with self._xiaohongshu_schedule_lock:
+            existing = self._xiaohongshu_schedule_reference(schedule_date)
+            if existing and not force:
+                def _clear_reuse_error(state: dict) -> dict:
+                    state["last_error"] = ""
+                    state["last_error_at"] = ""
+                    return state
+                self.xiaohongshu_schedule_store.update(_clear_reuse_error)
+                return existing
+            query = self._xiaohongshu_schedule_query(daily)
+            if not query:
+                self._save_xiaohongshu_schedule_error("日程没有可用的穿搭关键词，已回退原参考图")
+                return {}
+            query_saved_at = self._now().isoformat(timespec="seconds")
+            self.xiaohongshu_schedule_store.update(lambda state: {
+                **state,
+                "pending_query": query,
+                "updated_at": query_saved_at,
+            })
+            selection_deadline = time.monotonic() + 240
+            cleanup_paths: list[str] = []
+            new_schedule_filename = ""
+            schedule_state_saved = False
+            old_filename = str(existing.get("filename") or "")
+
+            def _remaining_timeout(cap: float) -> float:
+                return min(cap, selection_deadline - time.monotonic())
+
+            stage = "login_status"
+            try:
+                timeout = _remaining_timeout(20)
+                if timeout <= 0:
+                    raise asyncio.TimeoutError
+                status = await asyncio.wait_for(
+                    self.xiaohongshu_client.status(start_service=True),
+                    timeout=timeout,
+                )
+                if not status.get("is_logged_in"):
+                    raise XiaohongshuError("login_required", "小红书未登录，已回退原参考图", status=401)
+
+                favorite_items = []
+                schedule_settings = self.xiaohongshu_schedule_store.load()
+                if schedule_settings.get("prefer_creators") is True:
+                    favorite_records = [
+                        {**record, "user_id": user_id}
+                        for user_id, record in self.xiaohongshu_creator_store.load().items()
+                        if isinstance(record, dict)
+                    ]
+                    if favorite_records:
+                        favorite_records.sort(key=lambda item: str(item.get("user_id") or ""))
+                        offset = int(
+                            hashlib.sha1(schedule_date.encode("utf-8")).hexdigest()[:8],
+                            16,
+                        ) % len(favorite_records)
+                        selected_creator = favorite_records[offset]
+                        creator_id = str(selected_creator.get("user_id") or "")
+                        creator_name = str(selected_creator.get("nickname") or "")
+                        stage = f"creator_profile:{creator_id}"
+                        try:
+                            timeout = _remaining_timeout(80)
+                            if timeout <= 0:
+                                raise asyncio.TimeoutError
+                            profile = await asyncio.wait_for(
+                                self._load_xiaohongshu_creator_profile(
+                                    creator_id,
+                                    selected_creator.get("xsec_token", ""),
+                                    creator_name,
+                                ),
+                                timeout=timeout,
+                            )
+                            profile_creator = (
+                                profile.get("creator")
+                                if isinstance(profile.get("creator"), dict)
+                                else {}
+                            )
+                            creator_name = str(
+                                profile_creator.get("nickname") or creator_name
+                            ).strip()
+                            profile_notes = [
+                                note
+                                for note in (profile.get("notes") or [])
+                                if isinstance(note, dict)
+                            ]
+                            profile_notes.sort(
+                                key=lambda item: self._xiaohongshu_schedule_candidate_score(item, query),
+                                reverse=True,
+                            )
+                            favorite_items = [
+                                {
+                                    **item,
+                                    "creator_priority": True,
+                                    "creator_id": creator_id,
+                                    "creator_name": creator_name,
+                                    "selection_source": "favorite_creator",
+                                }
+                                for item in profile_notes[:2]
+                            ]
+                            logger.info(
+                                "小红书日程已读取常用博主: creator=%s notes=%s",
+                                creator_name or creator_id,
+                                len(favorite_items),
+                            )
+                        except (XiaohongshuError, asyncio.TimeoutError) as exc:
+                            logger.warning(
+                                "读取常用博主主页失败，继续全站搜索: creator=%s message=%s",
+                                creator_name or creator_id,
+                                exc.message if isinstance(exc, XiaohongshuError) else "超时",
+                            )
+                stage = "search"
+                started = time.monotonic()
+                logger.info(
+                    "小红书日程穿搭搜索开始: date=%s max_results=10 query=%s",
+                    schedule_date,
+                    query,
+                )
+                timeout = _remaining_timeout(150)
+                if timeout <= 0:
+                    raise asyncio.TimeoutError
+                search_error = None
+                try:
+                    search_items = await asyncio.wait_for(
+                        self.xiaohongshu_client.search(query, max_results=10),
+                        timeout=timeout,
+                    )
+                except (XiaohongshuError, asyncio.TimeoutError) as exc:
+                    search_items = []
+                    search_error = exc
+                logger.info(
+                    "小红书日程穿搭搜索完成: date=%s results=%s elapsed=%.1fs",
+                    schedule_date,
+                    len(search_items),
+                    time.monotonic() - started,
+                )
+                search_items.sort(
+                    key=lambda item: self._xiaohongshu_schedule_candidate_score(item, query),
+                    reverse=True,
+                )
+                seen_feed_ids = {str(item.get("id") or "") for item in favorite_items}
+                items = favorite_items + [
+                    {**item, "selection_source": "keyword_search"}
+                    for item in search_items
+                    if str(item.get("id") or "") not in seen_feed_ids
+                ]
+                if not items:
+                    if search_error is not None:
+                        raise search_error
+                    raise XiaohongshuError("no_results", "没有找到合适的小红书穿搭，已回退原参考图")
+
+                candidates = []
+                seen_urls = set()
+                # The cover is only an entry point. A single outfit note often contains
+                # several useful full-body photos after its collage cover, so inspect
+                # multiple inner images from each strong note and validate them in batches.
+                for item in items[:6 if favorite_items else 4]:
+                    if _remaining_timeout(1) <= 0:
+                        break
+                    feed_id = str(item.get("id") or "").strip()
+                    xsec_token = str(item.get("xsec_token") or "").strip()
+                    cover_identity = self._xiaohongshu_image_identity(item.get("cover_url") or "")
+                    if not feed_id or not xsec_token:
+                        continue
+                    stage = f"detail:{feed_id}"
+                    started = time.monotonic()
+                    try:
+                        timeout = _remaining_timeout(30)
+                        if timeout <= 0:
+                            raise asyncio.TimeoutError
+                        detail = await asyncio.wait_for(
+                            self.xiaohongshu_client.detail(feed_id, xsec_token),
+                            timeout=timeout,
+                        )
+                    except (XiaohongshuError, asyncio.TimeoutError) as exc:
+                        code = exc.code if isinstance(exc, XiaohongshuError) else "detail_timeout"
+                        message = exc.message if isinstance(exc, XiaohongshuError) else "读取笔记详情超时"
+                        logger.warning(
+                            "读取小红书日程候选笔记失败: feed_id=%s code=%s message=%s",
+                            feed_id,
+                            code,
+                            message,
+                        )
+                        continue
+                    logger.info(
+                        "小红书日程候选笔记读取完成: feed_id=%s images=%s elapsed=%.1fs",
+                        feed_id,
+                        len(detail.get("images") or []),
+                        time.monotonic() - started,
+                    )
+                    detail_images = [
+                        image
+                        for image in (detail.get("images") or [])
+                        if isinstance(image, dict)
+                        and int(image.get("index") or 0) > 0
+                        and str(image.get("url") or "").strip()
+                    ]
+                    detail_images.sort(key=self._xiaohongshu_detail_image_score, reverse=True)
+                    for candidate_image in detail_images:
+                        image_url = str(candidate_image.get("url") or "").strip()
+                        image_identity = self._xiaohongshu_image_identity(image_url)
+                        if (
+                            not image_url
+                            or image_url in seen_urls
+                            or (cover_identity and image_identity == cover_identity)
+                        ):
+                            continue
+                        seen_urls.add(image_url)
+                        known_width = int(candidate_image.get("width") or 0)
+                        known_height = int(candidate_image.get("height") or 0)
+                        # Only discard obviously tiny assets here.  Orientation and
+                        # whether this is really a full-body outfit are visual
+                        # questions; leave those to the vision validator instead of
+                        # rejecting a legitimate landscape full-body photo early.
+                        if known_width and known_height and min(known_width, known_height) < 400:
+                            continue
+                        stage = f"download:{feed_id}:{candidate_image.get('index', '')}"
+                        started = time.monotonic()
+                        imported_path = ""
+                        try:
+                            timeout = _remaining_timeout(20)
+                            if timeout <= 0:
+                                raise asyncio.TimeoutError
+                            downloaded = await asyncio.wait_for(
+                                self.xiaohongshu_client.import_image(
+                                    image_url,
+                                    self.xiaohongshu_reference_dir,
+                                ),
+                                timeout=timeout,
+                            )
+                            imported_path = str(downloaded.get("path") or "")
+                            if imported_path:
+                                cleanup_paths.append(imported_path)
+                            self._verify_reference_image(imported_path)
+                            with Image.open(imported_path) as source:
+                                actual_width, actual_height = source.size
+                            if min(actual_width, actual_height) < 400:
+                                self._discard_xiaohongshu_candidate_path(imported_path)
+                                continue
+                        except (
+                            XiaohongshuError,
+                            asyncio.TimeoutError,
+                            Image.DecompressionBombError,
+                            UnidentifiedImageError,
+                            OSError,
+                            ValueError,
+                        ) as exc:
+                            if not isinstance(exc, XiaohongshuError):
+                                self._discard_xiaohongshu_candidate_path(imported_path)
+                            message = exc.message if isinstance(exc, XiaohongshuError) else (str(exc) or "候选图处理超时")
+                            code = exc.code if isinstance(exc, XiaohongshuError) else "invalid_image"
+                            logger.warning(
+                                "下载小红书日程候选图失败: feed_id=%s image_index=%s code=%s message=%s",
+                                feed_id,
+                                candidate_image.get("index", ""),
+                                code,
+                                message,
+                            )
+                            continue
+                        logger.info(
+                            "小红书日程候选正文图已准备: feed_id=%s image_index=%s elapsed=%.1fs",
+                            feed_id,
+                            candidate_image.get("index", ""),
+                            time.monotonic() - started,
+                        )
+                        candidates.append({
+                            "item": {
+                                **item,
+                                "title": str(detail.get("title") or item.get("title") or "").strip(),
+                                "author": str(detail.get("author") or item.get("author") or "").strip(),
+                            },
+                            "image": candidate_image,
+                            "downloaded": downloaded,
+                            "path": imported_path,
+                        })
+                if not candidates:
+                    raise XiaohongshuError(
+                        "no_inner_images",
+                        "候选笔记没有可用的非封面正文图片，已回退原参考图",
+                    )
+
+                validator = self.on_validate_xiaohongshu_outfit
+                if not callable(validator):
+                    for candidate in candidates:
+                        self._discard_xiaohongshu_candidate_path(candidate.get("path", ""))
+                    raise XiaohongshuError(
+                        "vision_unavailable",
+                        "穿搭图片视觉质检不可用，已回退原参考图",
+                    )
+                stage = "vision_validation"
+                validation = {}
+                validation_score = 0
+                selected_index = 0
+                rejection_reasons = []
+                for batch_start in range(0, len(candidates), 4):
+                    batch = candidates[batch_start:batch_start + 4]
+                    validation_sheet = ""
+                    try:
+                        validation_sheet = self._create_xiaohongshu_validation_sheet(
+                            [candidate["path"] for candidate in batch],
+                            self.xiaohongshu_reference_dir,
+                        )
+                        timeout = _remaining_timeout(60)
+                        if timeout <= 0:
+                            raise asyncio.TimeoutError
+                        batch_validation = await asyncio.wait_for(
+                            validator(validation_sheet, query, len(batch)),
+                            timeout=timeout,
+                        )
+                    except asyncio.TimeoutError:
+                        raise
+                    except Exception as exc:
+                        logger.warning("小红书穿搭视觉质检失败: %s", exc)
+                        batch_validation = {
+                            "accepted": False,
+                            "selected_index": 0,
+                            "reason": "视觉质检不可用",
+                        }
+                    finally:
+                        if validation_sheet:
+                            try:
+                                os.remove(validation_sheet)
+                            except FileNotFoundError:
+                                pass
+
+                    try:
+                        local_index = int((batch_validation or {}).get("selected_index") or 0)
+                    except (TypeError, ValueError):
+                        local_index = 0
+                    try:
+                        validation_person_count = int((batch_validation or {}).get("person_count") or 0)
+                        batch_score = int((batch_validation or {}).get("quality_score") or 0)
+                    except (TypeError, ValueError):
+                        validation_person_count = 0
+                        batch_score = 0
+                    accepted = (
+                        (batch_validation or {}).get("accepted") is True
+                        and (batch_validation or {}).get("is_real_photo") is True
+                        and (batch_validation or {}).get("is_collage") is False
+                        and validation_person_count == 1
+                        and (batch_validation or {}).get("single_outfit") is True
+                        and (batch_validation or {}).get("full_body_visible") is True
+                        and (batch_validation or {}).get("clothing_clear") is True
+                        and (batch_validation or {}).get("quality_sufficient") is True
+                        and (batch_validation or {}).get("keyword_match") is True
+                        and batch_score >= 70
+                        and 1 <= local_index <= len(batch)
+                    )
+                    if accepted:
+                        validation = batch_validation
+                        validation_score = batch_score
+                        selected_index = batch_start + local_index
+                        break
+                    reason = str((batch_validation or {}).get("reason") or "该批没有合格图片")[:160]
+                    rejection_reasons.append(reason)
+                    logger.warning(
+                        "小红书穿搭视觉质检第 %s 批未选中图片: %s",
+                        batch_start // 4 + 1,
+                        reason,
+                    )
+
+                if not selected_index:
+                    reason = "；".join(rejection_reasons)[:240] or "没有合格的单人全身穿搭照"
+                    for candidate in candidates:
+                        self._discard_xiaohongshu_candidate_path(candidate.get("path", ""))
+                    logger.warning("小红书穿搭视觉质检未选中图片: %s", reason)
+                    raise XiaohongshuError(
+                        "no_qualified_full_body_image",
+                        f"没有找到合格的单人全身穿搭照：{reason}",
+                    )
+
+                selected_candidate = candidates[selected_index - 1]
+                for offset, candidate in enumerate(candidates, start=1):
+                    if offset != selected_index:
+                        self._discard_xiaohongshu_candidate_path(candidate.get("path", ""))
+                chosen = selected_candidate["item"]
+                chosen_image = selected_candidate["image"]
+                downloaded = selected_candidate["downloaded"]
+                logger.info(
+                    "小红书穿搭视觉质检通过: feed_id=%s image_index=%s score=%s reason=%s",
+                    chosen.get("id", ""),
+                    chosen_image.get("index", ""),
+                    (validation or {}).get("quality_score", ""),
+                    (validation or {}).get("reason", ""),
+                )
+
+                stage = "verify"
+                imported_path = str(downloaded["path"])
+                imported_filename = os.path.basename(imported_path)
+                extension = Path(imported_path).suffix.lower()
+                schedule_digest = hashlib.sha256(
+                    f"{schedule_date}:{chosen_image.get('url', '')}".encode("utf-8")
+                ).hexdigest()[:24]
+                filename = f"xhs_schedule_{schedule_date.replace('-', '')}_{schedule_digest}{extension}"
+                path = os.path.join(self.xiaohongshu_reference_dir, filename)
+                new_schedule_filename = filename
+                cleanup_paths.append(path)
+                if os.path.abspath(imported_path) != os.path.abspath(path):
+                    shutil.copy2(imported_path, path)
+                    imported_record = self.xiaohongshu_reference_store.load().get(imported_filename)
+                    if not isinstance(imported_record, dict):
+                        try:
+                            os.remove(imported_path)
+                        except OSError:
+                            pass
+                try:
+                    self._verify_reference_image(path)
+                    with Image.open(path) as image:
+                        width, height = image.size
+                except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError) as exc:
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+                    self._discard_xiaohongshu_candidate_path(imported_path)
+                    raise XiaohongshuError("invalid_image", "小红书今日参考图无效，已回退原参考图") from exc
+
+                title = str(chosen.get("title") or "今日穿搭").strip()[:80]
+                author = str(chosen.get("author") or "").strip()[:60]
+                created_at = self._now().isoformat(timespec="seconds")
+                record = {
+                    "id": f"xiaohongshu_schedule_{hashlib.sha1((schedule_date + filename).encode('utf-8')).hexdigest()[:12]}",
+                    "filename": filename,
+                    "label": f"今日穿搭 · {title}",
+                    "title": title,
+                    "author": author,
+                    "source": "xiaohongshu",
+                    "scope": "daily_schedule",
+                    "schedule_date": schedule_date,
+                    "query": query,
+                    "feed_id": str(chosen.get("id") or ""),
+                    "selection_source": str(chosen.get("selection_source") or "keyword_search"),
+                    "creator_id": str(chosen.get("creator_id") or chosen.get("user_id") or ""),
+                    "creator_name": str(chosen.get("creator_name") or author or "")[:80],
+                    "image_index": int(chosen_image.get("index") or 0),
+                    "validation_score": validation_score,
+                    "validation_reason": str((validation or {}).get("reason") or "")[:160],
+                    "visual_validation": {
+                        key: (validation or {}).get(key)
+                        for key in (
+                            "person_count", "is_real_photo", "is_collage", "single_outfit",
+                            "full_body_visible", "clothing_clear", "quality_sufficient", "keyword_match",
+                        )
+                        if (validation or {}).get(key) is not None
+                    },
+                    "width": width,
+                    "height": height,
+                    "size_bytes": os.path.getsize(path),
+                    "created_at": created_at,
+                }
+                self.xiaohongshu_reference_store.update(lambda records: {**records, filename: record})
+
+                def _save_state(state: dict) -> dict:
+                    references = state.get("references") if isinstance(state.get("references"), dict) else {}
+                    references[schedule_date] = record
+                    state.update({
+                        "enabled": True,
+                        "references": references,
+                        "pending_query": "",
+                        "last_error": "",
+                        "last_error_at": "",
+                        "updated_at": created_at,
+                    })
+                    return state
+                self.xiaohongshu_schedule_store.update(_save_state)
+                schedule_state_saved = True
+                if old_filename and old_filename != filename:
+                    self._delete_xiaohongshu_reference_file(old_filename, allow_daily_schedule=True)
+                self._cleanup_old_xiaohongshu_schedule_references(schedule_date)
+                result = dict(record)
+                result.update({
+                    "path": path,
+                    "url": f"/local-refs/xiaohongshu/{quote(filename)}",
+                    "selection_mode": "xiaohongshu_schedule",
+                    "selection_reason": f"xiaohongshu_schedule:{schedule_date}",
+                })
+                logger.info("小红书今日穿搭已选择: date=%s title=%s query=%s", schedule_date, title, query)
+                return result
+            except asyncio.TimeoutError:
+                message = "小红书选图超过 240 秒，已停止并回退原参考图"
+                logger.warning("小红书日程穿搭选择超时: stage=%s", stage)
+                self._save_xiaohongshu_schedule_error(message)
+            except XiaohongshuError as exc:
+                logger.warning(
+                    "小红书日程穿搭选择失败，回退原流程: stage=%s code=%s message=%s",
+                    stage,
+                    exc.code,
+                    exc.message,
+                )
+                self._save_xiaohongshu_schedule_error(exc.message)
+            except Exception as exc:
+                logger.warning("小红书日程穿搭选择异常，回退原流程: %s", exc, exc_info=True)
+                self._save_xiaohongshu_schedule_error("选择今日穿搭失败，已回退原参考图")
+            finally:
+                if (
+                    new_schedule_filename
+                    and not schedule_state_saved
+                    and new_schedule_filename != old_filename
+                ):
+                    record = self.xiaohongshu_reference_store.load().get(new_schedule_filename)
+                    if isinstance(record, dict) and record.get("scope") == "daily_schedule":
+                        try:
+                            self._delete_xiaohongshu_reference_file(
+                                new_schedule_filename,
+                                allow_daily_schedule=True,
+                            )
+                        except OSError as exc:
+                            logger.warning("清理未完成的小红书日程参考图失败: %s", exc)
+                for cleanup_path in cleanup_paths:
+                    self._discard_xiaohongshu_candidate_path(cleanup_path)
+            return {}
+
+    async def handle_xiaohongshu_schedule_mode(self, request: web.Request):
+        """Read/update daily XHS outfit mode and optionally choose today's reference."""
+        schedule_date = self._today().isoformat()
+        if request.method == "GET":
+            return web.json_response(self.xiaohongshu_schedule_state(schedule_date))
+        try:
+            body = await self._xiaohongshu_json_body(request)
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+        enabled_raw = body.get("enabled")
+        enabled = enabled_raw if isinstance(enabled_raw, bool) else str(enabled_raw or "").strip().lower() in {"1", "true", "yes", "on"}
+        previous_enabled = self.xiaohongshu_schedule_enabled()
+        now_text = self._now().isoformat(timespec="seconds")
+        def _update(state: dict) -> dict:
+            state["enabled"] = enabled
+            if "prefer_creators" in body:
+                prefer_raw = body.get("prefer_creators")
+                state["prefer_creators"] = (
+                    prefer_raw
+                    if isinstance(prefer_raw, bool)
+                    else str(prefer_raw or "").strip().lower() in {"1", "true", "yes", "on"}
+                )
+            state["updated_at"] = now_text
+            if not enabled:
+                state["last_error"] = ""
+                state["last_error_at"] = ""
+            return state
+        self.xiaohongshu_schedule_store.update(_update)
+        if enabled:
+            daily = self._xiaohongshu_schedule_daily_entry(schedule_date)
+            manual_query = str(body.get("keyword") or "").strip()
+            if manual_query:
+                daily = dict(daily or {})
+                daily["xiaohongshu_search_query"] = manual_query[:80]
+            await self.ensure_xiaohongshu_schedule_reference(
+                schedule_date,
+                daily,
+                force=bool(body.get("refresh")) or not previous_enabled,
+            )
+        return web.json_response(self.xiaohongshu_schedule_state(schedule_date))
+
+    async def handle_xiaohongshu_search(self, request: web.Request):
+        """Search image notes without exposing any write-capable MCP route."""
+        try:
+            body = await self._xiaohongshu_json_body(request)
+            items = await self.xiaohongshu_client.search(
+                body.get("keyword", ""),
+                max_results=body.get("max_results", 30),
+            )
+            return web.json_response({"items": items, "count": len(items)})
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+
+    async def handle_xiaohongshu_detail(self, request: web.Request):
+        """Load the image list for one image note."""
+        try:
+            body = await self._xiaohongshu_json_body(request)
+            detail = await self.xiaohongshu_client.detail(
+                body.get("feed_id", ""),
+                body.get("xsec_token", ""),
+            )
+            return web.json_response(detail)
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+
+    async def handle_xiaohongshu_creator_search(self, request: web.Request):
+        """Search creator candidates or resolve one complete profile URL."""
+        try:
+            body = await self._xiaohongshu_json_body(request)
+            keyword = str(body.get("keyword") or "").strip()
+            direct_user_id, direct_token = self._parse_xiaohongshu_creator_url(keyword)
+            favorites = self.xiaohongshu_creator_store.load()
+            if direct_user_id:
+                profile = await self._load_xiaohongshu_creator_profile(
+                    direct_user_id,
+                    direct_token,
+                )
+                creator = dict(profile.get("creator") or {})
+                creator["matched_note_count"] = len(profile.get("notes") or [])
+                creator["favorited"] = direct_user_id in favorites
+                return web.json_response({"items": [creator], "count": 1})
+            creators = await self.xiaohongshu_client.search_creators(
+                keyword,
+                max_results=body.get("max_results", 30),
+            )
+            for creator in creators:
+                creator["favorited"] = str(creator.get("user_id") or "") in favorites
+            return web.json_response({"items": creators, "count": len(creators)})
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+
+    async def handle_xiaohongshu_creator_profile(self, request: web.Request):
+        """Open one creator page, refreshing its cached access token if needed."""
+        try:
+            body = await self._xiaohongshu_json_body(request)
+            profile = await self._load_xiaohongshu_creator_profile(
+                body.get("user_id", ""),
+                body.get("xsec_token", ""),
+                body.get("nickname", ""),
+            )
+            return web.json_response(profile)
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+
+    async def handle_xiaohongshu_creators(self, request: web.Request):
+        """List or save favorite creators without exposing cached tokens."""
+        if request.method == "GET":
+            items = self._xiaohongshu_creator_items()
+            return web.json_response({"items": items, "count": len(items)})
+        try:
+            body = await self._xiaohongshu_json_body(request)
+            user_id = self._normalize_xiaohongshu_creator_id(body.get("user_id"))
+            nickname = str(body.get("nickname") or "").strip()[:80]
+            if not nickname:
+                raise XiaohongshuError("creator_name_required", "缺少小红书博主昵称。", status=400)
+            now_text = self._now().isoformat(timespec="seconds")
+            def _save_creator(records: dict) -> dict:
+                current = records.get(user_id) if isinstance(records.get(user_id), dict) else {}
+                current.update({
+                    "user_id": user_id,
+                    "nickname": nickname,
+                    "avatar_url": str(body.get("avatar_url") or current.get("avatar_url") or "")[:2048],
+                    "description": str(body.get("description") or current.get("description") or "")[:300],
+                    "red_id": str(body.get("red_id") or current.get("red_id") or "")[:80],
+                    "xsec_token": str(body.get("xsec_token") or current.get("xsec_token") or "")[:4096],
+                    "note_count": max(0, int(body.get("note_count") or current.get("note_count") or 0)),
+                    "added_at": str(current.get("added_at") or now_text),
+                    "updated_at": now_text,
+                })
+                records[user_id] = current
+                return records
+            saved = self.xiaohongshu_creator_store.update(_save_creator).get(user_id, {})
+            result = self._public_xiaohongshu_creator(saved)
+            result["favorited"] = True
+            return web.json_response(result)
+        except (TypeError, ValueError):
+            return self._xiaohongshu_error_response(
+                XiaohongshuError("invalid_creator", "博主收藏信息无效。", status=400)
+            )
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+
+    async def handle_delete_xiaohongshu_creator(self, request: web.Request):
+        """Remove one favorite creator without affecting downloaded references."""
+        try:
+            user_id = self._normalize_xiaohongshu_creator_id(request.match_info.get("user_id"))
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+        removed = {"value": False}
+        def _remove_creator(records: dict) -> dict:
+            removed["value"] = records.pop(user_id, None) is not None
+            return records
+        self.xiaohongshu_creator_store.update(_remove_creator)
+        return web.json_response({"success": True, "removed": removed["value"], "user_id": user_id})
+    def _xiaohongshu_reference_items(self) -> list[dict]:
+        records = self.xiaohongshu_reference_store.load()
+        items = []
+        for filename, record in records.items():
+            if not isinstance(record, dict):
+                continue
+            if record.get("scope") == "daily_schedule":
+                continue
+            path = self._safe_reference_path(self.xiaohongshu_reference_dir, filename)
+            if not path:
+                continue
+            item = dict(record)
+            item.update({
+                "filename": filename,
+                "url": f"/local-refs/xiaohongshu/{quote(filename)}",
+                "source": "xiaohongshu",
+            })
+            item.pop("path", None)
+            items.append(item)
+        items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+        return items[:24]
+
+    async def handle_xiaohongshu_references(self, request: web.Request):
+        """List already imported local Xiaohongshu reference images."""
+        return web.json_response(self._xiaohongshu_reference_items())
+
+    def _xiaohongshu_reference_filenames_for_paths(self, paths: list[str]) -> list[str]:
+        """Return registered Xiaohongshu filenames contained in the local cache."""
+        records = self.xiaohongshu_reference_store.load()
+        result = []
+        try:
+            reference_root = Path(self.xiaohongshu_reference_dir).resolve()
+        except OSError:
+            return result
+        for raw_path in paths:
+            try:
+                path = Path(str(raw_path or "")).resolve()
+                path.relative_to(reference_root)
+            except (OSError, ValueError):
+                continue
+            filename = path.name
+            if (
+                filename not in result
+                and isinstance(records.get(filename), dict)
+                and records[filename].get("scope") != "daily_schedule"
+                and self._is_reference_image_file(filename)
+            ):
+                result.append(filename)
+        return result
+
+    def _delete_xiaohongshu_reference_file(self, filename: str, *, allow_daily_schedule: bool = False) -> bool:
+        """Delete one registered Xiaohongshu cache file and its index record."""
+        record = self.xiaohongshu_reference_store.load().get(filename)
+        if not isinstance(record, dict):
+            return False
+        if record.get("scope") == "daily_schedule" and not allow_daily_schedule:
+            return False
+        path = self._safe_reference_path(self.xiaohongshu_reference_dir, filename)
+        if path:
+            os.remove(path)
+
+        def _remove(records: dict) -> dict:
+            records.pop(filename, None)
+            return records
+
+        self.xiaohongshu_reference_store.update(_remove)
+        return True
+
+    async def handle_delete_xiaohongshu_reference(self, request: web.Request):
+        """Delete one explicitly selected local Xiaohongshu reference."""
+        filename = str(request.match_info.get("filename") or "").strip()
+        if (
+            not filename
+            or not re.fullmatch(r"[a-zA-Z0-9_.-]+", filename)
+            or not self._is_reference_image_file(filename)
+        ):
+            return web.json_response({"error": "invalid_filename"}, status=400)
 
         try:
-            with open(save_path, "wb") as f:
-                while True:
-                    chunk = await field.read_chunk()
-                    if not chunk:
-                        break
-                    f.write(chunk)
-        except Exception:
-            if os.path.exists(save_path):
-                os.remove(save_path)
-            raise
+            if not self._delete_xiaohongshu_reference_file(filename):
+                return web.json_response({"error": "not_found"}, status=404)
+            return web.json_response({"success": True, "filename": filename})
+        except OSError as exc:
+            logger.error("Delete Xiaohongshu reference error: %s", exc)
+            return web.json_response(
+                {"error": "delete_failed", "message": "删除小红书参考图失败。"},
+                status=500,
+            )
+
+    async def handle_xiaohongshu_import(self, request: web.Request):
+        """Download and validate one Xiaohongshu image into local references."""
+        try:
+            body = await self._xiaohongshu_json_body(request)
+            downloaded = await self.xiaohongshu_client.import_image(
+                body.get("url", ""),
+                self.xiaohongshu_reference_dir,
+            )
+            path = downloaded["path"]
+            try:
+                self._verify_reference_image(path)
+                with Image.open(path) as image:
+                    width, height = image.size
+            except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError) as exc:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+                raise XiaohongshuError("invalid_image", "下载内容不是有效图片。", status=400) from exc
+
+            filename = downloaded["filename"]
+            title = str(body.get("title") or "小红书穿搭").strip()[:80] or "小红书穿搭"
+            author = str(body.get("author") or "").strip()[:60]
+            label = f"小红书 · {title}"
+            record = {
+                "id": f"xiaohongshu_{hashlib.sha1(filename.encode('utf-8')).hexdigest()[:12]}",
+                "filename": filename,
+                "label": label,
+                "title": title,
+                "author": author,
+                "source": "xiaohongshu",
+                "width": width,
+                "height": height,
+                "size_bytes": downloaded["size_bytes"],
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+            }
+
+            def _save(records: dict) -> dict:
+                records[filename] = record
+                return records
+
+            self.xiaohongshu_reference_store.update(_save)
+            response = dict(record)
+            response["url"] = f"/local-refs/xiaohongshu/{quote(filename)}"
+            return web.json_response(response)
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+
+    async def handle_upload_ref(self, request: web.Request):
+        """上传普通参考图，或按 style 替换固定默认底模。"""
+        temp_path = ""
+        original_filename = ""
+        content_type = ""
+        style = ""
+        try:
+            if (
+                request.content_length is not None
+                and request.content_length
+                > MAX_REFERENCE_UPLOAD_BYTES + MAX_REFERENCE_MULTIPART_OVERHEAD_BYTES
+            ):
+                return web.json_response({"error": "image_too_large"}, status=413)
+            reader = await request.multipart()
+            while True:
+                field = await reader.next()
+                if field is None:
+                    break
+                if field.name == "style" and not field.filename:
+                    style_chunks = []
+                    style_size = 0
+                    while True:
+                        chunk = await field.read_chunk()
+                        if not chunk:
+                            break
+                        style_size += len(chunk)
+                        if style_size > MAX_REFERENCE_STYLE_BYTES:
+                            return web.json_response({"error": "invalid_style"}, status=400)
+                        style_chunks.append(chunk)
+                    style = b"".join(style_chunks).decode("utf-8", errors="ignore").strip().lower()
+                    continue
+                if not field.filename or temp_path:
+                    return web.json_response({"error": "invalid_upload_form"}, status=400)
+
+                original_filename = field.filename
+                content_type = field.headers.get("Content-Type", "")
+                ext = self._reference_ext(original_filename, content_type)
+                if not ext:
+                    return web.json_response({"error": "invalid_image_type"}, status=400)
+                temp_path = os.path.join(
+                    self.uploaded_reference_dir,
+                    f".reference_upload_{uuid.uuid4().hex}{ext}",
+                )
+                uploaded_bytes = 0
+                with open(temp_path, "wb") as f:
+                    while True:
+                        chunk = await field.read_chunk()
+                        if not chunk:
+                            break
+                        uploaded_bytes += len(chunk)
+                        if uploaded_bytes > MAX_REFERENCE_UPLOAD_BYTES:
+                            return web.json_response({"error": "image_too_large"}, status=413)
+                        f.write(chunk)
+
+            if not temp_path:
+                return web.json_response({"error": "no_file"}, status=400)
+
+            try:
+                self._verify_reference_image(temp_path)
+            except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError):
+                return web.json_response({"error": "invalid_image"}, status=400)
+
+            if style:
+                spec = self._default_reference_upload_spec(style)
+                if not spec:
+                    return web.json_response({"error": "invalid_style"}, status=400)
+                save_name = spec["filename"]
+                save_path = os.path.join(self.reference_dir, save_name)
+                try:
+                    self._write_default_reference_image(temp_path, save_path)
+                except (UnidentifiedImageError, OSError, ValueError):
+                    return web.json_response({"error": "invalid_image"}, status=400)
+
+                profile = upsert_reference_profile(self.data_dir, {
+                    "filename": save_name,
+                    "url": f"/local-refs/{save_name}",
+                    "label": spec["label"],
+                    "style": spec["style"],
+                    "prompt": spec["prompt"],
+                    "tags": [spec["style"], spec["label"]],
+                    "source": "default",
+                    "builtin": True,
+                    "active": True,
+                    "analysis_status": "uploaded",
+                    "analysis_error": "",
+                })
+                result = self._reference_profile_result(profile)
+                result.pop("path", None)
+                return web.json_response(result or reference_profile_response(profile))
+
+            ext = self._reference_ext(original_filename, content_type)
+            save_name = f"upload_{int(time.time())}_{uuid.uuid4().hex[:8]}{ext}"
+            save_path = os.path.join(self.uploaded_reference_dir, save_name)
+            os.replace(temp_path, save_path)
+            temp_path = ""
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
 
         loop = asyncio.get_running_loop()
         analysis = await loop.run_in_executor(
@@ -5144,9 +8702,37 @@ class GalleryServer:
             logger.error(f"Delete uploaded ref error: {e}")
             return web.json_response({"error": str(e)}, status=500)
 
-    def _entry_sort_key(self, entry):
-        """Sort key: date desc, then time desc."""
-        return (entry.get("date", ""), entry.get("time", ""))
+    @staticmethod
+    def _entry_sort_key(entry):
+        """Stable sort key: date desc, time desc, then filename desc."""
+        return (
+            str(entry.get("date") or ""),
+            str(entry.get("time") or ""),
+            str(entry.get("image_filename") or entry.get("id") or ""),
+        )
+
+    @classmethod
+    def _gallery_cursor_for_entry(cls, entry: dict) -> str:
+        payload = json.dumps(
+            list(cls._entry_sort_key(entry)),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+    @staticmethod
+    def _gallery_cursor_key(cursor: str) -> tuple[str, str, str]:
+        raw = str(cursor or "").strip()
+        if not raw:
+            return ("", "", "")
+        try:
+            payload = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+            decoded = json.loads(payload.decode("utf-8"))
+        except Exception as exc:
+            raise ValueError("invalid_cursor") from exc
+        if not isinstance(decoded, list) or len(decoded) != 3:
+            raise ValueError("invalid_cursor")
+        return tuple(str(value or "") for value in decoded)
 
     @staticmethod
     def _normalize_api_source(*values) -> str:
@@ -5164,31 +8750,81 @@ class GalleryServer:
 
     @staticmethod
     def _caption_has_instruction_leak(text: str) -> bool:
-        compact = re.sub(r"\s+", "", str(text or ""))
-        if not compact:
-            return False
-        markers = (
-            "我们被要求",
-            "被要求以",
-            "口吻写一句",
-            "照片的配文",
-            "内容要像",
-            "真实想法",
-            "具体到正在做的事",
-            "下一步安排",
-            "当前日程",
-            "请写一条",
-            "直接输出",
-            "不要加引号",
-            "不要写长段落",
-            "禁止使用",
-            "输出1-2句",
-            "小心思要像",
-            "下面的口吻",
-            "读者称呼",
-            "这是一条",
-        )
-        return any(marker in compact for marker in markers)
+        try:
+            from zhuzhu.core import _caption_has_instruction_leak as core_leak
+            return bool(core_leak(text))
+        except Exception:
+            raw = str(text or "")
+            compact = re.sub(r"\s+", "", raw)
+            if not compact:
+                return False
+            chinese_markers = (
+                "我们被要求",
+                "被要求以",
+                "口吻写一句",
+                "照片的配文",
+                "内容要像",
+                "真实想法",
+                "具体到正在做的事",
+                "下一步安排",
+                "当前日程",
+                "请写一条",
+                "直接输出",
+                "不要加引号",
+                "不要写长段落",
+                "禁止使用",
+                "输出1-2句",
+                "小心思要像",
+                "下面的口吻",
+                "读者称呼",
+                "这是一条",
+            )
+            english_markers = (
+                "theuserwantsme",
+                "iwantyoutowrite",
+                "writeashort",
+                "littlethought",
+                "inthetoneof",
+                "foraphoto",
+                "asrequested",
+                "hereisacaption",
+                "captionin",
+                "intheroleof",
+            )
+            lower = re.sub(r"\s+", "", raw.lower())
+            if any(marker in compact for marker in chinese_markers):
+                return True
+            if any(marker in lower for marker in english_markers):
+                return True
+            lower_raw = raw.lower()
+            english_patterns = (
+                r"\bthe user wants\b",
+                r"\bi need to write\b",
+                r"\bwrite a short\b",
+                r"\blittle thought\b",
+                r"\bin the tone of\b",
+                r"\bfor a photo\b",
+                r"\bas an ai\b",
+                r"\bhere(?:'s| is) (?:a |the )?caption\b",
+            )
+            return any(re.search(pattern, lower_raw) for pattern in english_patterns)
+
+    @staticmethod
+    def _caption_is_mostly_chinese(text: str) -> bool:
+        try:
+            from zhuzhu.core import _caption_is_mostly_chinese as core_cn
+            return bool(core_cn(text))
+        except Exception:
+            compact = re.sub(r"\s+", "", str(text or ""))
+            if not compact:
+                return False
+            cjk = len(re.findall(r"[一-鿿]", compact))
+            latin = len(re.findall(r"[A-Za-z]", compact))
+            if cjk < 4:
+                return False
+            if latin >= 12 and cjk * 2 < latin:
+                return False
+            return True
 
     @staticmethod
     def _clean_caption_text(text: str, limit: int = 180) -> str:
@@ -5198,6 +8834,8 @@ class GalleryServer:
         text = text.strip(" \t\n\r\"'“”‘’")
         if GalleryServer._caption_has_instruction_leak(text):
             return ""
+        if not GalleryServer._caption_is_mostly_chinese(text):
+            return ""
         if len(text) > limit:
             text = text[:limit].rstrip(" \t\n\r，,。.!！?；;、") + "…"
         return text
@@ -5205,8 +8843,12 @@ class GalleryServer:
     @staticmethod
     def _caption_text_usable(text: str) -> bool:
         text = repair_mojibake_text(text)
-        text = re.sub(r"\s+", "", str(text or "")).strip("，,。.!！?；;、")
-        return len(text) >= 4 and not GalleryServer._caption_has_instruction_leak(text)
+        compact = re.sub(r"\s+", "", str(text or "")).strip("，,。.!！?；;、")
+        return (
+            len(compact) >= 4
+            and not GalleryServer._caption_has_instruction_leak(text)
+            and GalleryServer._caption_is_mostly_chinese(text)
+        )
 
     @classmethod
     def _prefer_caption_text(cls, candidate: str = "", current: str = "") -> str:
@@ -5425,7 +9067,9 @@ class GalleryServer:
                 "max_tokens": 220,
                 "temperature": 0.2,
             }
-            resp = requests.post(chat_url, headers=headers, json=payload, timeout=5)
+            # Display translation is non-critical, but 5s is too tight for Grok under load.
+            translate_timeout = 20
+            resp = requests.post(chat_url, headers=headers, json=payload, timeout=translate_timeout)
             if resp.status_code == 400:
                 try:
                     body = resp.json()
@@ -5433,7 +9077,7 @@ class GalleryServer:
                     body = resp.text
                 if llm_temperature_param_error(body):
                     payload.pop("temperature", None)
-                    return requests.post(chat_url, headers=headers, json=payload, timeout=5)
+                    return requests.post(chat_url, headers=headers, json=payload, timeout=translate_timeout)
             return resp
 
         loop = asyncio.get_running_loop()
@@ -5524,16 +9168,127 @@ class GalleryServer:
             return translated
         return self._fallback_hermes_display_description(prompt, mode_label)
 
+    @staticmethod
+    def _gallery_style_label(entry: dict) -> str:
+        raw_style = str((entry or {}).get("outfit_style") or "").strip()
+        if raw_style.lower() in GALLERY_BASE_MODEL_STYLES:
+            return "自定义"
+        return raw_style
+
+    @classmethod
+    def _gallery_entry_matches_style(cls, entry: dict, requested_style: str) -> bool:
+        needle = str(requested_style or "").strip().lstrip("#").casefold()
+        if not needle:
+            return True
+        raw_style = str((entry or {}).get("outfit_style") or "").strip()
+        display_style = cls._gallery_style_label(entry)
+        if raw_style.casefold() == needle or display_style.casefold() == needle:
+            return True
+        caption = str((entry or {}).get("caption") or "")
+        return any(
+            tag.casefold() == needle or tag.lstrip("#").casefold() == needle
+            for tag in re.findall(r"#[^\s#]+", caption)
+        )
+
     async def handle_gallery(self, request: web.Request):
-        """获取所有画廊条目"""
-        entries = self._load_all_entries()
-        # 支持收藏过滤
+        """Return a legacy full list or a cursor-paginated gallery page."""
+        all_entries = self._load_all_entries()
+        total_all = len(all_entries)
+        favorite_total = sum(1 for entry in all_entries if entry.get("favorite") is True)
+        styles = sorted({
+            label
+            for entry in all_entries
+            for label in (self._gallery_style_label(entry),)
+            if label
+        }, key=str.casefold)
+        entries = list(all_entries)
         favorites_only = request.query.get("favorites", "").lower() == "true"
         if favorites_only:
             entries = [e for e in entries if e.get("favorite")]
-        # 按日期+时间倒序
+        requested_style = str(request.query.get("style") or "").strip().lstrip("#")[:80]
+        if requested_style:
+            entries = [
+                entry
+                for entry in entries
+                if self._gallery_entry_matches_style(entry, requested_style)
+            ]
         entries.sort(key=lambda e: self._entry_sort_key(e), reverse=True)
-        return web.json_response(entries)
+
+        paginated = any(
+            key in request.query
+            for key in ("limit", "cursor", "include_prompt", "style")
+        )
+        if not paginated:
+            return web.json_response(entries)
+
+        try:
+            limit = int(request.query.get("limit", "48"))
+        except (TypeError, ValueError):
+            return web.json_response({"error": "invalid_pagination"}, status=400)
+        limit = max(1, min(limit, 100))
+        cursor_text = str(request.query.get("cursor") or "").strip()
+        remaining_entries = entries
+        if cursor_text:
+            try:
+                cursor_key = self._gallery_cursor_key(cursor_text)
+            except ValueError:
+                return web.json_response({"error": "invalid_cursor"}, status=400)
+            remaining_entries = [
+                entry
+                for entry in entries
+                if self._entry_sort_key(entry) < cursor_key
+            ]
+        include_prompt = str(request.query.get("include_prompt", "false")).lower() in {
+            "1", "true", "yes", "on",
+        }
+        page = []
+        for entry in remaining_entries[:limit]:
+            payload = dict(entry)
+            prompt = str(payload.get("prompt") or "")
+            payload["has_prompt"] = bool(prompt)
+            if not include_prompt:
+                payload.pop("prompt", None)
+            page.append(payload)
+        has_more = len(remaining_entries) > len(page)
+        next_cursor = self._gallery_cursor_for_entry(page[-1]) if has_more and page else ""
+        return web.json_response({
+            "items": page,
+            "total": len(entries),
+            "total_all": total_all,
+            "favorite_total": favorite_total,
+            "styles": styles,
+            "style": requested_style,
+            "limit": limit,
+            "cursor": cursor_text,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+        })
+
+    async def handle_image_detail(self, request: web.Request):
+        """Return the full stored payload for one registered gallery image."""
+        try:
+            img_id = self._normalize_gallery_image_filename(
+                request.match_info.get("img_id", "")
+            )
+        except ValueError:
+            return web.json_response({"error": "invalid_filename"}, status=400)
+        if img_id not in self._registered_image_filenames() or not self._image_exists(img_id):
+            return web.json_response({"error": "not_found"}, status=404)
+
+        metadata = self._load_image_metadata()
+        entry = self._gallery_entry_for_image(img_id)
+        if entry:
+            payload = self._enrich_photo_schedule_time(entry, metadata)
+        else:
+            meta = metadata.get(img_id)
+            if not isinstance(meta, dict):
+                return web.json_response({"error": "not_found"}, status=404)
+            payload = self._normalize_entry_display(
+                self._metadata_gallery_entry(img_id, meta),
+                metadata,
+            )
+        payload["has_prompt"] = bool(str(payload.get("prompt") or ""))
+        return web.json_response(payload)
 
     async def handle_keyword_cloud(self, request: web.Request):
         """Return high-frequency keywords from historical image-generation calls."""
@@ -6080,6 +9835,79 @@ class GalleryServer:
         text = re.sub(r"\s+", " ", text).strip()
         return text[:limit].rstrip()
 
+    def _set_group_chat_reply_progress(
+        self,
+        room_id: str,
+        phase: str,
+        character_id: str = "",
+        character_name: str = "",
+        token: str = "",
+    ) -> str:
+        clean_room_id = str(room_id or "").strip()
+        if not clean_room_id:
+            return ""
+        clean_token = str(token or "").strip() or uuid.uuid4().hex
+        clean_phase = "image" if str(phase or "").strip().lower() == "image" else "typing"
+        now = self._now().isoformat(timespec="seconds")
+        current = self._group_chat_reply_progress.get(clean_room_id) or {}
+        started_at = current.get("started_at") if current.get("_token") == clean_token else ""
+        self._group_chat_reply_progress[clean_room_id] = {
+            "_token": clean_token,
+            "phase": clean_phase,
+            "character_id": str(character_id or "").strip(),
+            "character_name": str(character_name or "").strip(),
+            "started_at": started_at or now,
+            "updated_at": now,
+        }
+        return clean_token
+
+    def _clear_group_chat_reply_progress(self, room_id: str, token: str = "") -> None:
+        clean_room_id = str(room_id or "").strip()
+        current = self._group_chat_reply_progress.get(clean_room_id)
+        if not current:
+            return
+        clean_token = str(token or "").strip()
+        if clean_token and current.get("_token") != clean_token:
+            return
+        self._group_chat_reply_progress.pop(clean_room_id, None)
+
+    def _public_group_chat_reply_progress(self, room_id: str) -> Optional[dict]:
+        progress = self._group_chat_reply_progress.get(str(room_id or "").strip())
+        if not progress:
+            return None
+        return {
+            key: value
+            for key, value in progress.items()
+            if not str(key).startswith("_")
+        }
+
+    def _track_group_chat_background_task(self, task: asyncio.Task) -> asyncio.Task:
+        self._group_chat_background_tasks.add(task)
+
+        def _done(completed: asyncio.Task) -> None:
+            self._group_chat_background_tasks.discard(completed)
+            if completed.cancelled():
+                return
+            try:
+                completed.exception()
+            except asyncio.CancelledError:
+                return
+
+        task.add_done_callback(_done)
+        return task
+
+    async def _cleanup_group_chat_background_tasks(self, _app) -> None:
+        tasks = [task for task in self._group_chat_background_tasks if not task.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._group_chat_background_tasks.clear()
+        self._group_chat_reply_progress.clear()
+
+    async def _cleanup_xiaohongshu_client(self, _app) -> None:
+        await self.xiaohongshu_client.close()
+
     @staticmethod
     def _group_chat_normalized_placeholder_text(value: str) -> str:
         return re.sub(r"[\s\"'“”‘’`，,。.!！?？:：]+", "", str(value or "")).strip()
@@ -6093,6 +9921,21 @@ class GalleryServer:
             normalized == cls._group_chat_normalized_placeholder_text(placeholder)
             for placeholder in GROUP_CHAT_REPLY_PLACEHOLDERS
         )
+
+    @staticmethod
+    def _is_group_chat_internal_reasoning(value: str) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return False
+        flags = re.IGNORECASE | re.DOTALL
+        if any(re.search(pattern, text, flags) for pattern in GROUP_CHAT_INTERNAL_REASONING_HARD_PATTERNS):
+            return True
+        signal_count = sum(
+            1
+            for pattern in GROUP_CHAT_INTERNAL_REASONING_SOFT_PATTERNS
+            if re.search(pattern, text, flags)
+        )
+        return signal_count >= 2
 
     @staticmethod
     def _group_chat_message_sender_name(message: dict) -> str:
@@ -6111,6 +9954,8 @@ class GalleryServer:
         lines = []
         for message in messages[-MAX_GROUP_CHAT_REPLY_CONTEXT:]:
             if not isinstance(message, dict):
+                continue
+            if self._should_hide_public_group_message(message):
                 continue
             name = self._group_chat_message_sender_name(message)
             content = self._group_chat_text(message.get("content", ""), limit=600)
@@ -6141,6 +9986,7 @@ class GalleryServer:
         return (
             f"你正在扮演群聊《{room_name}》里的角色「{name}」。\n"
             "只输出 JSON，不要 Markdown，不要代码块，不要额外解释。\n"
+            "绝对不要输出分析过程、推理、计划、指令复述、字段说明或角色设定解读；这些内容不得出现在 message 或 image_request.prompt 中。\n"
             "JSON 必须包含两个字段：message 和 image_request。\n"
             "message 必须填写这个角色真实要发送到当前对话里的中文聊天内容，禁止填写字段说明、模板文案或占位句。\n"
             "image_request 默认为 null。\n"
@@ -6149,6 +9995,8 @@ class GalleryServer:
             "style、size、character_ids（合照时填写参与角色 id）。\n"
             "当用户明确要求看照片/图片/自拍/合照，或角色自己说要拍照、发照片、给大家看时，必须使用 image_request；不要只口头说会去拍。\n"
             "image_request.prompt 要描述可直接生成的画面：场景、动作、表情、穿搭、氛围和构图，不要写成聊天句子。\n"
+            "image_request.prompt 里的所有人物必须明确为 21 岁以上成年人，并保持非色情的日常摄影表达；"
+            "不要写 18 岁、未成年、学生或校服身份、性化身材或诱惑性描述，可改写为成年时尚造型。\n"
             "如果只是普通聊天，image_request 必须为 null。\n"
             "回复要自然、像即时聊天，通常 1 到 3 句；可以接住最近一条消息，也可以主动延展话题。\n"
             f"群聊参与者：{('、'.join(participant_names) or '未配置')}\n"
@@ -6323,6 +10171,8 @@ class GalleryServer:
         if not data:
             if self._is_group_chat_placeholder_reply(raw_text):
                 return "", None
+            if self._is_group_chat_internal_reasoning(raw_text):
+                return "", None
             inferred = self._group_chat_infer_image_request(raw_text, character_name)
             return raw_text, inferred
 
@@ -6334,7 +10184,7 @@ class GalleryServer:
             or "",
             limit=MAX_GROUP_CHAT_MESSAGE_CHARS,
         )
-        if self._is_group_chat_placeholder_reply(message):
+        if self._is_group_chat_placeholder_reply(message) or self._is_group_chat_internal_reasoning(message):
             message = ""
         image_request = data.get("image_request")
         if image_request is None:
@@ -6353,9 +10203,12 @@ class GalleryServer:
                         break
 
         image_payload = self._group_chat_tool_args(image_request)
+        image_prompt = self._group_chat_text(image_payload.get("prompt", ""), limit=1400)
+        if image_prompt and self._is_group_chat_internal_reasoning(image_prompt):
+            image_payload = {}
         if not image_payload:
-            image_payload = self._group_chat_infer_image_request(message or raw_text, character_name)
-        return message or raw_text, image_payload or None
+            image_payload = self._group_chat_infer_image_request(message, character_name)
+        return message, image_payload or None
 
     @staticmethod
     def _group_chat_infer_image_request(message: str, character_name: str = "") -> Optional[dict]:
@@ -6568,6 +10421,84 @@ class GalleryServer:
         )
         return self._public_group_message(message), message
 
+    async def _run_group_chat_image_task(
+        self,
+        progress_token: str,
+        room_id: str,
+        room: dict,
+        character: dict,
+        body: dict,
+        image_request: dict,
+        reply_text: str,
+        used_model: str,
+        preferred_model: str,
+        trigger_message_id: str,
+        rewind_message_id: str,
+        parent_message_id: str = "",
+    ) -> tuple[dict, dict]:
+        character_id = str(character.get("id") or "").strip()
+        try:
+            return await self._generate_group_chat_image_message(
+                room_id,
+                room,
+                character,
+                body,
+                image_request,
+                reply_text,
+                used_model,
+                preferred_model,
+                trigger_message_id,
+                rewind_message_id,
+                parent_message_id,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(
+                "Group chat image tool call failed: room=%s character=%s err=%s",
+                room_id,
+                character_id,
+                e,
+            )
+            raise
+        finally:
+            self._clear_group_chat_reply_progress(room_id, progress_token)
+
+    def _start_group_chat_image_task(
+        self,
+        progress_token: str,
+        room_id: str,
+        room: dict,
+        character: dict,
+        body: dict,
+        image_request: dict,
+        reply_text: str,
+        used_model: str,
+        preferred_model: str,
+        trigger_message_id: str,
+        rewind_message_id: str,
+        parent_message_id: str = "",
+    ) -> asyncio.Task:
+        character_id = str(character.get("id") or "").strip() or "character"
+        task = asyncio.create_task(
+            self._run_group_chat_image_task(
+                progress_token,
+                room_id,
+                room,
+                character,
+                body,
+                image_request,
+                reply_text,
+                used_model,
+                preferred_model,
+                trigger_message_id,
+                rewind_message_id,
+                parent_message_id,
+            ),
+            name=f"group-chat-image:{room_id}:{character_id}",
+        )
+        return self._track_group_chat_background_task(task)
+
     async def _call_group_chat_llm(
         self,
         prompt: str,
@@ -6602,10 +10533,20 @@ class GalleryServer:
             for model in models:
                 payload = {
                     "model": model,
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "你是群聊角色回复器。只返回一个 JSON 对象，禁止输出分析、推理、计划、"
+                                "指令复述、Markdown 或 JSON 之外的任何文字。"
+                            ),
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
                     "max_tokens": 700,
                     "temperature": 0.72,
                     "stream": False,
+                    "response_format": {"type": "json_object"},
                 }
                 if self._should_disable_llm_thinking(model):
                     payload["thinking"] = {"type": "disabled"}
@@ -6618,6 +10559,9 @@ class GalleryServer:
                             changed = False
                             if "temperature" in retry_payload and llm_temperature_param_error(data):
                                 retry_payload.pop("temperature", None)
+                                changed = True
+                            if "response_format" in retry_payload:
+                                retry_payload.pop("response_format", None)
                                 changed = True
                             if "thinking" in retry_payload and "thinking" in llm_response_excerpt(data, 500).lower():
                                 retry_payload.pop("thinking", None)
@@ -6733,6 +10677,7 @@ class GalleryServer:
         if is_image:
             clean_metadata = dict(metadata)
             clean_metadata["caption"] = ""
+            clean_metadata.pop("prompt", None)
             item["type"] = "image"
             item["content"] = "生成图片"
             item["metadata"] = clean_metadata
@@ -6744,6 +10689,8 @@ class GalleryServer:
             return True
         metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
         if metadata.get("auto_reply") and cls._is_group_chat_placeholder_reply(message.get("content", "")):
+            return True
+        if metadata.get("auto_reply") and cls._is_group_chat_internal_reasoning(message.get("content", "")):
             return True
         return False
 
@@ -6768,7 +10715,24 @@ class GalleryServer:
         public_room["message_count"] = len(messages)
         public_room["hermes_bridge"] = payload.get("hermes_bridge", {})
         public_room["title"] = public_room.get("name", "")
+        public_room["reply_progress"] = self._public_group_chat_reply_progress(room_id)
         return public_room
+
+    def _public_group_store_payload(
+        self,
+        payload: Optional[dict],
+        public_room: Optional[dict] = None,
+        message_limit: int = 50,
+    ) -> Optional[dict]:
+        if not isinstance(payload, dict):
+            return None
+        safe_payload = dict(payload)
+        safe_payload["messages"] = self._public_group_messages(payload.get("messages", []))
+        safe_payload["room"] = public_room or self._public_group_room_payload(
+            payload.get("room") or {},
+            message_limit=message_limit,
+        )
+        return safe_payload
 
     async def handle_group_chat_rooms(self, request: web.Request):
         """List or create local group-chat rooms."""
@@ -6881,7 +10845,7 @@ class GalleryServer:
                     "success": True,
                     "removed_count": result.get("removed_count", 0),
                     "room": public_room,
-                    "room_payload": payload,
+                    "room_payload": self._public_group_store_payload(payload, public_room),
                 })
 
             body = await request.json()
@@ -6914,7 +10878,11 @@ class GalleryServer:
             payload = self.group_chat_store.room_payload(room_id, message_limit=50)
             public_message = self._public_group_message(message)
             public_room = self._public_group_room_payload((payload or {}).get("room") or {}, message_limit=50) if payload else None
-            return web.json_response({"message": public_message, "room": public_room, "room_payload": payload}, status=201)
+            return web.json_response({
+                "message": public_message,
+                "room": public_room,
+                "room_payload": self._public_group_store_payload(payload, public_room),
+            }, status=201)
         except KeyError:
             return web.json_response({"error": "room_not_found"}, status=404)
         except Exception as e:
@@ -6929,14 +10897,50 @@ class GalleryServer:
             if request.method.upper() != "DELETE":
                 return web.json_response({"error": "method_not_allowed"}, status=405)
             result = self.group_chat_store.delete_message(room_id, message_id)
+            deleted_message = result.get("message", {})
+            metadata = deleted_message.get("metadata") if isinstance(deleted_message, dict) else {}
+            raw_image_filename = (
+                metadata.get("image_filename")
+                if isinstance(metadata, dict)
+                else ""
+            )
+            image_filename = ""
+            gallery_cleanup = {}
+            gallery_error = ""
+            if raw_image_filename:
+                try:
+                    image_filename = self._normalize_gallery_image_filename(raw_image_filename)
+                    gallery_cleanup = self._delete_gallery_image(image_filename)
+                except ValueError as e:
+                    gallery_error = str(e) or "invalid_filename"
+                    logger.warning(
+                        "Skip invalid group chat image cleanup: room=%s message=%s filename=%r",
+                        room_id,
+                        message_id,
+                        raw_image_filename,
+                    )
+                except Exception as e:
+                    gallery_error = str(e) or "gallery_delete_failed"
+                    logger.error(
+                        "Group chat gallery image cleanup failed: room=%s message=%s filename=%r err=%s",
+                        room_id,
+                        message_id,
+                        raw_image_filename,
+                        e,
+                        exc_info=True,
+                    )
             payload = self.group_chat_store.room_payload(room_id, message_limit=50)
             public_room = self._public_group_room_payload((payload or {}).get("room") or {}, message_limit=50) if payload else None
             return web.json_response({
                 "success": True,
-                "message": self._public_group_message(result.get("message", {})),
+                "message": self._public_group_message(deleted_message),
                 "removed_count": result.get("removed_count", 0),
+                "image_filename": image_filename,
+                "gallery_deleted": bool(gallery_cleanup) and not gallery_cleanup.get("errors"),
+                "gallery_cleanup": gallery_cleanup,
+                "gallery_error": gallery_error,
                 "room": public_room,
-                "room_payload": payload,
+                "room_payload": self._public_group_store_payload(payload, public_room),
             })
         except KeyError:
             return web.json_response({"error": "room_not_found"}, status=404)
@@ -6951,6 +10955,21 @@ class GalleryServer:
     async def handle_group_chat_reply(self, request: web.Request):
         """Generate LLM-backed replies for enabled participants in a room."""
         room_id = request.match_info.get("room_id", "")
+        rewind_snapshot: list[dict] = []
+        rewind_generated_ids: set[str] = set()
+        rewind_restored = False
+
+        def restore_rewind_snapshot() -> None:
+            nonlocal rewind_restored
+            if rewind_restored or not rewind_snapshot:
+                return
+            self.group_chat_store.restore_messages(
+                room_id,
+                rewind_snapshot,
+                discard_message_ids=rewind_generated_ids,
+            )
+            rewind_restored = True
+
         try:
             try:
                 body = await request.json()
@@ -6972,6 +10991,9 @@ class GalleryServer:
             rewind_message_id = str(body.get("rewind_message_id") or body.get("rewindMessageId") or "").strip()
             rewind_result = None
             regenerate_plan = {}
+            regenerate_requires_image = False
+            if regenerate_message_id or rewind_message_id:
+                rewind_snapshot = self.group_chat_store.list_messages(room_id)
             if regenerate_message_id:
                 try:
                     regenerate_plan = self._group_chat_regenerate_plan(room_id, regenerate_message_id)
@@ -6992,6 +11014,7 @@ class GalleryServer:
                 force_image_request = regenerate_plan.get("force_image_request")
                 if isinstance(force_image_request, dict) and force_image_request:
                     body["_force_image_request"] = force_image_request
+                    regenerate_requires_image = True
                     body["_regenerate_hint"] = (
                         "这是回溯重发：请重新生成被点击的这条消息本身。"
                         "原消息包含图片，本次必须重新写一条聊天文字，并提供 image_request 对象重新生成图片。"
@@ -7016,15 +11039,18 @@ class GalleryServer:
             if not targets:
                 response = {"error": "no_reply_participants"}
                 if rewind_message_id:
+                    restore_rewind_snapshot()
+                    room = self.group_chat_store.get_room(room_id) or room
                     payload = self.group_chat_store.room_payload(room_id, message_limit=50)
                     response.update({
                         "messages": [],
                         "rewind": {
                             "message_id": rewind_message_id,
                             "removed_count": (rewind_result or {}).get("removed_count", 0),
+                            "restored": True,
                         },
                         "room": self._public_group_room_payload((payload or {}).get("room") or room, message_limit=50) if payload else None,
-                        "room_payload": payload,
+                        "room_payload": self._public_group_store_payload(payload),
                     })
                 return web.json_response(response, status=400)
 
@@ -7045,20 +11071,47 @@ class GalleryServer:
                 character_id = str(character.get("id") or "").strip()
                 character_name = str(character.get("name") or character_id or "角色").strip()
                 preferred_model = str(character.get("llm_model") or "").strip()
-                prompt = self._group_chat_reply_prompt(
-                    room,
-                    character,
-                    participants,
-                    messages + generated,
-                    regenerate_hint=str(body.get("_regenerate_hint") or ""),
+                progress_token = self._set_group_chat_reply_progress(
+                    room_id,
+                    "typing",
+                    character_id,
+                    character_name,
                 )
+                image_task = None
                 try:
-                    raw_content, used_model = await self._call_group_chat_llm(
-                        prompt,
-                        preferred_model=preferred_model,
-                        timeout_seconds=timeout_seconds,
+                    prompt = self._group_chat_reply_prompt(
+                        room,
+                        character,
+                        participants,
+                        messages + generated,
+                        regenerate_hint=str(body.get("_regenerate_hint") or ""),
                     )
-                    content, image_request = self._group_chat_parse_reply_output(raw_content, character_name)
+                    content = ""
+                    image_request = None
+                    used_model = ""
+                    for output_attempt in range(2):
+                        request_prompt = prompt
+                        if output_attempt:
+                            request_prompt += (
+                                "\n上一次返回包含内部分析或不是有效的公开回复。"
+                                "这次必须直接返回完整 JSON，不得解释思考过程。"
+                            )
+                        raw_content, used_model = await self._call_group_chat_llm(
+                            request_prompt,
+                            preferred_model=preferred_model,
+                            timeout_seconds=timeout_seconds,
+                        )
+                        content, image_request = self._group_chat_parse_reply_output(raw_content, character_name)
+                        if content or image_request:
+                            break
+                        logger.warning(
+                            "Group chat LLM returned non-public reasoning or invalid output: "
+                            "room=%s character=%s model=%s attempt=%s",
+                            room_id,
+                            character_id,
+                            used_model,
+                            output_attempt + 1,
+                        )
                     force_image_request = body.get("_force_image_request") if isinstance(body.get("_force_image_request"), dict) else {}
                     if force_image_request:
                         if not isinstance(image_request, dict):
@@ -7100,11 +11153,21 @@ class GalleryServer:
                         parent_message_id = str(message.get("id") or "")
                         public_message = self._public_group_message(message)
                         generated.append(public_message)
+                        if rewind_snapshot and parent_message_id:
+                            rewind_generated_ids.add(parent_message_id)
                         messages.append(message)
 
                     if image_request:
                         try:
-                            public_image, image_message = await self._generate_group_chat_image_message(
+                            self._set_group_chat_reply_progress(
+                                room_id,
+                                "image",
+                                character_id,
+                                character_name,
+                                token=progress_token,
+                            )
+                            image_task = self._start_group_chat_image_task(
+                                progress_token,
                                 room_id,
                                 room,
                                 character,
@@ -7117,15 +11180,13 @@ class GalleryServer:
                                 rewind_message_id,
                                 parent_message_id,
                             )
+                            public_image, image_message = await asyncio.shield(image_task)
                             generated.append(public_image)
+                            image_message_id = str(image_message.get("id") or "")
+                            if rewind_snapshot and image_message_id:
+                                rewind_generated_ids.add(image_message_id)
                             messages.append(image_message)
                         except Exception as image_error:
-                            logger.warning(
-                                "Group chat image tool call failed: room=%s character=%s err=%s",
-                                room_id,
-                                character_id,
-                                image_error,
-                            )
                             failures.append({
                                 "character_id": character_id,
                                 "character_name": character_name,
@@ -7144,12 +11205,29 @@ class GalleryServer:
                         "character_name": character_name,
                         "error": str(e),
                     })
+                finally:
+                    if image_task is None:
+                        self._clear_group_chat_reply_progress(room_id, progress_token)
+
+            generated_image = any(
+                str(item.get("type") or item.get("message_type") or "").strip().lower() == "image"
+                for item in generated
+                if isinstance(item, dict)
+            )
+            rollback_required = not generated or (regenerate_requires_image and not generated_image)
+            if rollback_required and rewind_message_id:
+                restore_rewind_snapshot()
 
             payload = self.group_chat_store.room_payload(room_id, message_limit=50)
             public_room = self._public_group_room_payload((payload or {}).get("room") or room, message_limit=50) if payload else None
-            if not generated:
+            if rollback_required:
                 response = {
                     "error": "reply_generation_failed",
+                    "message": (
+                        "图片重新生成失败，已保留原图和原聊天记录。"
+                        if regenerate_requires_image
+                        else "回溯重发失败，已保留原聊天记录。"
+                    ),
                     "failures": failures,
                 }
                 if rewind_message_id:
@@ -7158,9 +11236,10 @@ class GalleryServer:
                         "rewind": {
                             "message_id": rewind_message_id,
                             "removed_count": (rewind_result or {}).get("removed_count", 0),
+                            "restored": rewind_restored,
                         },
                         "room": public_room,
-                        "room_payload": payload,
+                        "room_payload": self._public_group_store_payload(payload, public_room),
                     })
                 return web.json_response(response, status=502)
             return web.json_response({
@@ -7171,9 +11250,17 @@ class GalleryServer:
                     "removed_count": (rewind_result or {}).get("removed_count", 0),
                 } if rewind_message_id else None,
                 "room": public_room,
-                "room_payload": payload,
+                "room_payload": self._public_group_store_payload(payload, public_room),
             })
         except Exception as e:
+            try:
+                restore_rewind_snapshot()
+            except Exception as restore_error:
+                logger.error(
+                    "Group chat rewind restore failed: room=%s err=%s",
+                    room_id,
+                    restore_error,
+                )
             logger.error("Group chat reply API error: %s", e)
             return web.json_response({"error": str(e)}, status=500)
 
@@ -7203,7 +11290,11 @@ class GalleryServer:
             )
             payload = self.group_chat_store.room_payload(room_id, message_limit=50)
             public_room = self._public_group_room_payload((payload or {}).get("room") or {}, message_limit=50) if payload else None
-            return web.json_response({"participant": participant, "room": public_room, "room_payload": payload})
+            return web.json_response({
+                "participant": participant,
+                "room": public_room,
+                "room_payload": self._public_group_store_payload(payload, public_room),
+            })
         except KeyError:
             return web.json_response({"error": "room_not_found"}, status=404)
         except ValueError as e:
@@ -7343,6 +11434,11 @@ class GalleryServer:
                 "fitted knit top, high-waisted skirt, small shoulder bag, earrings",
             )
         if has(("街", "散步", "路灯", "公园", "出门", "逛", "夜市", "外出")):
+            if hour < 19:
+                return (
+                    "taking a relaxed walk outside in natural afternoon daylight, gentle candid pose near a sidewalk or park path, light breeze, lively everyday urban atmosphere",
+                    "fitted knit top, high-waisted skirt, light cardigan, small shoulder bag",
+                )
             return (
                 "taking a relaxed walk outside under city lights, gentle candid pose near a sidewalk or park path, soft evening breeze, lively but romantic urban atmosphere",
                 "elegant satin slip dress, sheer lace cardigan, delicate necklace, low heels",
@@ -7352,7 +11448,7 @@ class GalleryServer:
                 "doing a quiet morning routine at home in soft window light, natural relaxed pose, tidy room and mirror nearby, calm start-of-day atmosphere",
                 "cream knit cardigan, white camisole top, light pleated skirt, mary jane shoes",
             )
-        if hour < 18:
+        if hour < 19:
             return (
                 "spending a relaxed daytime moment indoors with soft sunlight, natural candid pose, small personal items nearby, clean cozy everyday atmosphere",
                 "fitted crop top, high-waisted wide-leg trousers, simple earrings",
@@ -7422,7 +11518,7 @@ class GalleryServer:
             activity = nearest_activity or "在晨光里整理今天的穿搭"
             prompt = "arranging today's outfit in soft morning light, relaxed natural pose, tidy bedroom mirror, warm calm atmosphere"
             outfit = "cream knit cardigan, white camisole top, light blue pleated skirt, beige mary jane shoes"
-        elif hour < 18:
+        elif hour < 19:
             activity = nearest_activity or "在午后阳光里享受轻松日常"
             prompt = "enjoying a relaxed afternoon moment, casual natural pose, bright cafe or city street setting, clean daylight atmosphere"
             outfit = "fitted crop top, high-waisted wide-leg trousers, small shoulder bag, simple earrings"
@@ -7433,7 +11529,7 @@ class GalleryServer:
         return activity, prompt, outfit
 
     def _today_schedule_entry(self, today_str: str = "") -> dict:
-        today_str = today_str or date.today().isoformat()
+        today_str = today_str or self._today().isoformat()
         try:
             all_data = ScheduleStore(self.data_dir).load()
         except Exception as e:
@@ -7847,7 +11943,7 @@ JSON 格式：
             return "bedtime"
         if hour < 12:
             return "morning"
-        if hour < 18:
+        if hour < 19:
             return "noon"
         if hour <= 20:
             return "evening"
@@ -7867,7 +11963,7 @@ JSON 格式：
             except Exception:
                 extra_hint = ""
 
-            now = datetime.now()
+            now = self._now()
             now_str = now.strftime("%H:%M")
             today_str = now.strftime("%Y-%m-%d")
             logger.info("Generate now: time=%s, extra_hint=%r, using today's schedule chain", now_str, extra_hint)
@@ -7876,15 +11972,78 @@ JSON 格式：
             daily = self._today_schedule_entry(today_str)
             schedule_text = daily.get("schedule", "") if daily else ""
             if not schedule_text:
-                return web.json_response({
-                    "error": "schedule_missing",
-                    "message": "请先刷新今日日程，再使用“现在在干嘛”。",
-                }, status=400)
+                logger.warning("Generate now found no schedule; refreshing today's schedule first")
+                try:
+                    refreshed = await self._refresh_schedule_singleflight()
+                except Exception as e:
+                    logger.error("Generate now schedule refresh failed: %s", e)
+                    refreshed = None
+                daily = self._today_schedule_entry(today_str)
+                if not daily and refreshed is not None:
+                    daily = refreshed.to_dict() if hasattr(refreshed, "to_dict") else dict(refreshed or {})
+                schedule_text = daily.get("schedule", "") if daily else ""
+                if not schedule_text:
+                    return web.json_response({
+                        "error": "schedule_missing",
+                        "message": "今日日程补生成失败，请稍后重试。",
+                    }, status=503)
             if not self._schedule_items_for_inference(schedule_text):
                 return web.json_response({
                     "error": "schedule_time_not_found",
                     "message": "今日日程里没有可用于生图的时间点。",
                 }, status=400)
+
+            # 「现在在干嘛」占用今日生图计划额度，与定时/补拍共用上限。
+            max_daily = self.get_photo_job_limit()
+            planned_total = 0
+            remaining = max_daily
+            completed = failed = inflight = scheduled = 0
+            if callable(self.on_photo_quota_snapshot):
+                try:
+                    snapshot = self.on_photo_quota_snapshot(
+                        today_str,
+                        include_scheduled=True,
+                    )
+                    (
+                        max_daily,
+                        completed,
+                        failed,
+                        inflight,
+                        scheduled,
+                        planned_total,
+                        remaining,
+                    ) = snapshot
+                except Exception as quota_error:
+                    logger.error("Generate now quota snapshot failed: %s", quota_error)
+                    planned_total = self._today_completed_photo_count()
+                    remaining = max(0, max_daily - planned_total)
+            else:
+                planned_total = self._today_completed_photo_count()
+                remaining = max(0, max_daily - planned_total)
+            if remaining <= 0:
+                logger.info(
+                    "Generate now blocked by daily photo plan limit: planned=%s max=%s",
+                    planned_total,
+                    max_daily,
+                )
+                return web.json_response(
+                    {
+                        "error": "limit_reached",
+                        "status": "limit_reached",
+                        "message": (
+                            f"今日生图计划已达上限 {planned_total}/{max_daily}"
+                            f"（已完成 {completed}、失败 {failed}、进行中 {inflight}、待执行 {scheduled}）"
+                        ),
+                        "max_daily": max_daily,
+                        "completed_today": completed,
+                        "failed_today": failed,
+                        "running_today": inflight,
+                        "scheduled_today": scheduled,
+                        "planned_today": planned_total,
+                        "remaining_today": 0,
+                    },
+                    status=409,
+                )
 
             now_detail = await self._infer_generate_now_detail(now, daily)
             now_activity = self._clean_activity_text(now_detail.get("activity_zh", ""), max_len=72)
@@ -7910,29 +12069,28 @@ JSON 格式：
 
             keys_config = self._load_api_keys_config()
             plugin_config = self._load_plugin_config()
-            gpt_key = keys_config.get("gpt_key", "") or os.environ.get("GPT_IMAGE_API_KEY", "")
-            raw_configured_gpt_base_url = str(self.config.get("image_gen", {}).get("gpt_base_url", "") or "").strip()
-            configured_gpt_base_url = self._configured_image_base_url(
-                raw_configured_gpt_base_url
+            gpt_key = (
+                keys_config.get("gpt_key", "")
+                or os.environ.get("GPT_IMAGE_API_KEY", "")
+                or keys_config.get("cpa_key", "")
+                or os.environ.get("CPA_API_KEY", "")
             )
-            local_gpt_base_url = str(keys_config.get("gpt_base_url", "") or "").strip()
-            if (
-                local_gpt_base_url == raw_configured_gpt_base_url
-                or self._gpt_image_endpoint_identity(local_gpt_base_url) == self._gpt_image_endpoint_identity(configured_gpt_base_url)
-            ):
-                local_gpt_base_url = ""
-            gpt_base_url = (
-                local_gpt_base_url
-                or os.environ.get("GPT_IMAGE_BASE_URL", "")
-                or configured_gpt_base_url
-            )
-            gitee_keys = plugin_config.get("gitee_config", {}).get("api_keys", [])
-            gitee_key = gitee_keys[0] if gitee_keys else ""
-            gpt_available = bool(str(gpt_base_url or "").strip() or str(gpt_key or "").strip())
-            if not gpt_available and not gitee_key:
+            gpt_base_url = self._effective_gpt_image_base_url(keys_config)
+            gpt_image_endpoints = keys_config.get("gpt_image_endpoints") or []
+            complete_gpt_endpoints = [
+                item for item in gpt_image_endpoints
+                if isinstance(item, dict)
+                and str(item.get("base_url", "") or "").strip()
+                and str(item.get("api_key", "") or "").strip()
+            ]
+            gitee_key = self._effective_gitee_api_key(plugin_config)
+            gitee_url = self._effective_gitee_image_url(keys_config)
+            gpt_available = bool(complete_gpt_endpoints or (gpt_base_url and gpt_key))
+            gitee_available = bool(gitee_url and gitee_key)
+            if not gpt_available and not gitee_available:
                 return web.json_response({
-                    "error": "missing_image_key",
-                    "message": "请先在设置里配置 GPT Image Base URL 或 Gitee Key，再使用“现在在干嘛”。",
+                    "error": "missing_image_config",
+                    "message": "请先完整配置 GPT Image Base URL + Key，或 Gitee API URL + Key，再使用“现在在干嘛”。",
                 }, status=400)
 
             # 2) 调用统一日程生图链路。generate.py 会根据 schedule_time 读取
@@ -7941,7 +12099,10 @@ JSON 格式：
             cpa_base_url = request_config["base_url"]
             cpa_key = request_config["api_key"]
             generate_script = self._generate_script()
-            engine = self.config.get("image_gen", {}).get("default_engine", "gptimage") if gpt_available else "gitee"
+            preferred_engine = self.config.get("image_gen", {}).get("default_engine", "gptimage")
+            engine = "gitee" if preferred_engine == "gitee" and gitee_available else "gptimage"
+            if engine == "gptimage" and not gpt_available:
+                engine = "gitee"
             child_env_extra = {}
             if gpt_base_url:
                 child_env_extra["GPT_IMAGE_BASE_URL"] = gpt_base_url
@@ -7949,9 +12110,12 @@ JSON 格式：
                 child_env_extra["CPA_API_KEY"] = cpa_key
             if gpt_key or cpa_key:
                 child_env_extra["GPT_IMAGE_API_KEY"] = gpt_key or cpa_key
-            gpt_image_endpoints = keys_config.get("gpt_image_endpoints") or []
-            if isinstance(gpt_image_endpoints, list) and gpt_image_endpoints:
-                child_env_extra["GPT_IMAGE_ENDPOINTS"] = json.dumps(gpt_image_endpoints, ensure_ascii=False)
+            if complete_gpt_endpoints:
+                child_env_extra["GPT_IMAGE_ENDPOINTS"] = json.dumps(complete_gpt_endpoints, ensure_ascii=False)
+            if gitee_url:
+                child_env_extra["GITEE_API_URL"] = gitee_url
+            if gitee_key:
+                child_env_extra["GITEE_API_KEY"] = gitee_key
             if cpa_base_url:
                 child_env_extra["CPA_BASE_URL"] = cpa_base_url
             child_env = self._child_env(child_env_extra)
@@ -7983,6 +12147,7 @@ JSON 格式：
                 "--caption",
                 "--source", "web",
                 "--engine", engine,
+                "--size", schedule_image_size(self.config),
                 "--schedule-time", schedule_time,
                 "--schedule-detail-json", schedule_detail_json,
             ]
@@ -8010,8 +12175,8 @@ JSON 格式：
                 detail = stderr.decode(errors='replace')[-500:]
                 if "GPT_IMAGE_API_KEY or gpt_key is required" in detail:
                     return web.json_response({
-                        "error": "missing_image_key",
-                        "message": "请先在设置里配置 GPT Image Base URL 或 Gitee Key，再使用“现在在干嘛”。",
+                        "error": "missing_image_config",
+                        "message": "请先完整配置 GPT Image Base URL + Key，或 Gitee API URL + Key，再使用“现在在干嘛”。",
                     }, status=400)
                 return web.json_response({
                     "error": "generate_failed",
@@ -8087,6 +12252,7 @@ JSON 格式：
         """自定义 prompt 生图"""
         if not self.on_generate_custom:
             return web.json_response({"error": "no_generator"}, status=500)
+        temporary_xiaohongshu_filenames: list[str] = []
         try:
             body = await request.json()
             user_prompt = body.get("prompt", "").strip()
@@ -8104,9 +12270,86 @@ JSON 格式：
             else:
                 pure = bool(pure_raw)
             raw_ref_image = body.get("ref_image", "")
-            ref_image = self._resolve_reference_image(raw_ref_image, allow_any_path=True)
-            if raw_ref_image and not ref_image:
+            raw_ref_images = body.get("ref_images") or body.get("references") or []
+            if isinstance(raw_ref_images, str):
+                raw_ref_images = [part.strip() for part in raw_ref_images.split(",") if part.strip()]
+            if not isinstance(raw_ref_images, list):
+                raw_ref_images = []
+            # also accept ref_image_2 / face_ref aliases
+            for key in ("ref_image_2", "face_ref", "face_image", "identity_ref"):
+                extra = str(body.get(key) or "").strip()
+                if extra:
+                    raw_ref_images.append(extra)
+            if raw_ref_image:
+                raw_ref_images = [raw_ref_image] + list(raw_ref_images)
+            # de-dupe preserve order
+            seen_raw = set()
+            unique_raw = []
+            for item in raw_ref_images:
+                token = str(item or "").strip()
+                if not token or token in seen_raw:
+                    continue
+                seen_raw.add(token)
+                unique_raw.append(token)
+            resolved_pairs = []
+            for token in unique_raw:
+                resolved = self._resolve_reference_image(token, allow_any_path=True)
+                if not resolved:
+                    return web.json_response({"error": "invalid_ref_image", "ref": token}, status=400)
+                if not any(path == resolved for _, path in resolved_pairs):
+                    resolved_pairs.append((token, resolved))
+            temporary_xiaohongshu_filenames = self._xiaohongshu_reference_filenames_for_paths(
+                [path for _, path in resolved_pairs]
+            )
+
+            xiaohongshu_pairs = [
+                pair for pair in resolved_pairs
+                if self._is_xiaohongshu_reference(pair[0], pair[1])
+            ]
+            selected_raw_reference = str(raw_ref_image or "").strip()
+            if xiaohongshu_pairs:
+                # XHS mode always uses one outfit image first, then identity refs.
+                # If the caller forgot a face reference, append the default face-only crop.
+                xhs_token, xhs_path = xiaohongshu_pairs[0]
+                identity_paths = [
+                    path for token, path in resolved_pairs
+                    if not self._is_xiaohongshu_reference(token, path)
+                ]
+                preferred_identity = self._preferred_xiaohongshu_identity_reference(
+                    identity_paths[0] if identity_paths else ""
+                )
+                if identity_paths:
+                    identity_paths[0] = preferred_identity or identity_paths[0]
+                elif preferred_identity:
+                    identity_paths.append(preferred_identity)
+
+                resolved_refs = [xhs_path]
+                for identity_path in identity_paths:
+                    if identity_path and identity_path not in resolved_refs:
+                        resolved_refs.append(identity_path)
+                selected_raw_reference = xhs_token
+            else:
+                resolved_refs = [path for _, path in resolved_pairs]
+            ref_image = resolved_refs[0] if resolved_refs else ""
+            if raw_ref_image and not ref_image and not unique_raw:
                 return web.json_response({"error": "invalid_ref_image"}, status=400)
+            selected_reference = {}
+            if ref_image:
+                selected_reference = (
+                    self._reference_profile_for_value(selected_raw_reference)
+                    or self._reference_profile_for_value(ref_image)
+                    or self._wardrobe_reference_for_value(selected_raw_reference)
+                    or self._wardrobe_reference_for_value(ref_image)
+                    or self._xiaohongshu_reference_for_value(selected_raw_reference)
+                    or self._xiaohongshu_reference_for_value(ref_image)
+                )
+                if selected_reference and not selected_reference.get("path"):
+                    selected_reference["path"] = ref_image
+            elif not pure and not resolved_refs:
+                selected_reference = self._select_default_custom_reference_sync()
+                ref_image = str(selected_reference.get("path") or "").strip()
+                if ref_image:
+                    resolved_refs = [ref_image]
             api_source = self._normalize_api_source(
                 body.get("api_source"),
                 body.get("source"),
@@ -8138,7 +12381,19 @@ JSON 格式：
             raw_image_model = str(body.get("model") or body.get("image_model") or body.get("gpt_model") or "").strip()
             if raw_image_model and not image_model and raw_image_model.lower() not in {"default", "auto", "current"}:
                 return web.json_response({"error": "invalid_image_model"}, status=400)
-            entry = await self.on_generate_custom(user_prompt, size, ref_image, shot_type, pure, api_source, api_caption, image_model, api_description)
+            entry = await self.on_generate_custom(
+                user_prompt,
+                size,
+                ref_image,
+                shot_type,
+                pure,
+                api_source,
+                api_caption,
+                image_model,
+                api_description,
+                selected_reference,
+                resolved_refs,
+            )
             if entry and entry.status == "ok":
                 payload = entry.to_dict()
                 try:
@@ -8150,6 +12405,58 @@ JSON 格式：
         except Exception as e:
             logger.error(f"Custom generate error: {e}")
             return web.json_response({"error": str(e)}, status=500)
+        finally:
+            for filename in temporary_xiaohongshu_filenames:
+                try:
+                    self._delete_xiaohongshu_reference_file(filename)
+                except OSError as exc:
+                    logger.warning(
+                        "Cleanup temporary Xiaohongshu reference failed: %s (%s)",
+                        filename,
+                        exc,
+                    )
+
+    def _delete_cleanup_candidate(self, filename: str, errors: list) -> Optional[int]:
+        """Delete one cleanup candidate's file, entry, metadata, and versions.
+
+        Caller must hold that image's mutation lock so this stays atomic with
+        respect to reroll/edit/version-switch/delete on the same image.
+        Returns the number of archived version files removed, or None when the
+        image file could not be fully removed (nothing else is touched then).
+        """
+        _, delete_errors = self._delete_image_files(filename)
+        if delete_errors:
+            errors.extend(delete_errors)
+            if self._image_exists(filename):
+                return None
+
+        version_records = []
+
+        def _remove_entry(all_data):
+            for key, entry in list(all_data.items()):
+                if key == filename or (
+                    isinstance(entry, dict) and entry.get("image_filename") == filename
+                ):
+                    if isinstance(entry, dict):
+                        version_records.extend(
+                            normalize_image_versions(entry.get("image_versions"))
+                        )
+                    del all_data[key]
+            return all_data
+
+        ScheduleStore(self.data_dir).update(_remove_entry)
+
+        def _remove_metadata(metadata):
+            metadata.pop(filename, None)
+            return metadata
+
+        ImageMetadataStore(self.data_dir).update(_remove_metadata)
+        deleted_version_count, version_errors = delete_image_versions(
+            self.data_dir,
+            version_records,
+        )
+        errors.extend(version_errors)
+        return deleted_version_count
 
     async def handle_cleanup_images(self, request: web.Request):
         """Preview or delete old non-favorite gallery images."""
@@ -8171,46 +12478,42 @@ JSON 格式：
                 })
 
             deleted_filenames = []
+            skipped_locked = []
             errors = []
+            deleted_version_count = 0
+
             for item in candidates:
                 filename = item["filename"]
-                _, delete_errors = self._delete_image_files(filename)
-                if delete_errors:
-                    errors.extend(delete_errors)
-                    if self._image_exists(filename):
+                lock = self._reserve_image_mutation_lock(filename)
+                acquired = False
+                try:
+                    try:
+                        # Cleanup must never queue behind a live reroll/edit/
+                        # version-switch/delete; skip a busy image instead of
+                        # stalling the whole batch on one locked card.
+                        await asyncio.wait_for(lock.acquire(), timeout=0.1)
+                        acquired = True
+                    except asyncio.TimeoutError:
+                        skipped_locked.append(filename)
                         continue
-                deleted_filenames.append(filename)
-
-            deleted_set = set(deleted_filenames)
-            if deleted_set:
-                store = ScheduleStore(self.data_dir)
-
-                def _remove_deleted_entries(all_data):
-                    for key, entry in list(all_data.items()):
-                        if key in deleted_set:
-                            del all_data[key]
-                            continue
-                        if isinstance(entry, dict) and entry.get("image_filename") in deleted_set:
-                            del all_data[key]
-                    return all_data
-
-                store.update(_remove_deleted_entries)
-
-                metadata = self._load_image_metadata()
-                changed = False
-                for filename in deleted_set:
-                    if filename in metadata:
-                        del metadata[filename]
-                        changed = True
-                if changed:
-                    self._save_image_metadata(metadata)
+                    version_count = self._delete_cleanup_candidate(filename, errors)
+                    if version_count is not None:
+                        deleted_filenames.append(filename)
+                        deleted_version_count += version_count
+                finally:
+                    if acquired and lock.locked():
+                        lock.release()
+                    self._release_image_mutation_lock(filename, lock)
 
             return web.json_response({
                 "success": True,
                 "dry_run": False,
                 **plan,
                 "deleted_count": len(deleted_filenames),
+                "deleted_version_count": deleted_version_count,
                 "deleted": deleted_filenames,
+                "skipped_locked": skipped_locked,
+                "skipped_locked_count": len(skipped_locked),
                 "errors": errors,
             })
         except ValueError as e:
@@ -8221,61 +12524,171 @@ JSON 格式：
 
     async def handle_delete_image(self, request: web.Request):
         """删除图片和条目"""
-        img_id = request.match_info.get("img_id")
-        # Path traversal validation: only allow safe characters
-        if not img_id or not re.match(r'^[a-zA-Z0-9_.-]+$', img_id) or '..' in img_id:
-            return web.json_response({"error": "invalid_filename"}, status=400)
         try:
-            # 1. Delete image file
-            self._delete_image_files(img_id)
-
-            # 2. Remove from schedule_data.json
-            store = ScheduleStore(self.data_dir)
-            def _delete_entry(all_data):
-                removed = False
-                # Try direct key match (filename as key)
-                if img_id in all_data:
-                    del all_data[img_id]
-                    removed = True
-                else:
-                    # Try matching by image_filename field
-                    for key, entry in list(all_data.items()):
-                        if entry.get("image_filename") == img_id:
-                            del all_data[key]
-                            removed = True
-                return all_data
-            store.update(_delete_entry)
-
-            metadata = self._load_image_metadata()
-            if img_id in metadata:
-                del metadata[img_id]
-                self._save_image_metadata(metadata)
-
-            return web.json_response({"success": True})
-        except Exception as e:
-            logger.error(f"Delete image error: {e}")
-            return web.json_response({"error": str(e)}, status=500)
+            img_id = self._normalize_gallery_image_filename(
+                request.match_info.get("img_id", "")
+            )
+        except ValueError:
+            return web.json_response({"error": "invalid_filename"}, status=400)
+        lock = self._reserve_image_mutation_lock(img_id)
+        acquired = False
+        try:
+            try:
+                # Delete must not sit behind a multi-minute reroll/edit.
+                # Fail fast so the UI does not spin forever on "删除中".
+                await asyncio.wait_for(lock.acquire(), timeout=1.5)
+                acquired = True
+            except asyncio.TimeoutError:
+                return web.json_response(
+                    {
+                        "error": "image_mutation_in_progress",
+                        "message": "当前图片正在重抽或编辑，请稍后再删除",
+                    },
+                    status=409,
+                )
+            try:
+                result = self._delete_gallery_image(img_id)
+                return web.json_response({"success": True, **result})
+            except ValueError as e:
+                return web.json_response({"error": str(e) or "invalid_filename"}, status=400)
+            except Exception as e:
+                logger.error(f"Delete image error: {e}")
+                return web.json_response({"error": str(e)}, status=500)
+            finally:
+                if acquired and lock.locked():
+                    lock.release()
+        finally:
+            self._release_image_mutation_lock(img_id, lock)
 
     async def handle_reroll_image(self, request: web.Request):
         """Generate a fresh image from an existing gallery card."""
-        img_id = request.match_info.get("img_id")
-        if not img_id or not re.match(r'^[a-zA-Z0-9_.-]+$', img_id) or '..' in img_id:
+        try:
+            img_id = self._normalize_gallery_image_filename(
+                request.match_info.get("img_id", "")
+            )
+        except ValueError:
             return web.json_response({"error": "invalid_filename"}, status=400)
         if not self.on_reroll_image:
             return web.json_response({"error": "reroll_unavailable"}, status=503)
+        reroll_image = self.on_reroll_image
         try:
-            entry = await self.on_reroll_image(img_id)
+            entry = await self._run_image_mutation(
+                img_id,
+                lambda: reroll_image(img_id),
+            )
             if not entry or entry.get("status") != "ok":
-                return web.json_response(
-                    {"error": (entry or {}).get("error") or "generate_failed"},
-                    status=500 if (entry or {}).get("error") != "not_found" else 404,
+                error = (entry or {}).get("error") or "generate_failed"
+                status = (
+                    404 if error == "not_found"
+                    else 409 if error == "reroll_source_changed"
+                    else 500
                 )
+                return web.json_response({"error": error}, status=status)
             metadata = self._load_image_metadata()
             normalized = self._enrich_photo_schedule_time(entry, metadata)
+            # Reroll keeps the card filename stable, so provide a revision
+            # token for browsers that otherwise retain the old image bytes.
+            current_path = self._image_file_path(img_id)
+            if current_path:
+                self._image_info_cache.pop(str(current_path), None)
+            normalized["image_revision"] = (
+                self._image_revision_token(img_id)
+                or str(int(time.time() * 1000))
+            )
             return web.json_response(normalized)
         except Exception as e:
             logger.error(f"Reroll image error: {e}")
             return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_edit_image(self, request: web.Request):
+        """Precision-edit a gallery image and replace its current card."""
+        img_id = request.match_info.get("img_id")
+        try:
+            img_id = self._normalize_gallery_image_filename(img_id)
+        except ValueError:
+            return web.json_response({"error": "invalid_filename", "message": "图片标识无效"}, status=400)
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid_json", "message": "编辑参数格式无效"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "invalid_json", "message": "编辑参数格式无效"}, status=400)
+
+        target = normalize_image_edit_target(body.get("target"))
+        raw_instruction = str(body.get("instruction") or "")
+        instruction = normalize_image_edit_instruction(raw_instruction)
+        if not target:
+            return web.json_response({"error": "invalid_edit_target", "message": "请选择有效的编辑范围"}, status=400)
+        if len(raw_instruction.strip()) > MAX_IMAGE_EDIT_INSTRUCTION_LENGTH:
+            return web.json_response({"error": "edit_instruction_too_long", "message": "编辑内容不能超过 800 字"}, status=400)
+        schedule_description = None
+        if "schedule_description" in body:
+            raw_schedule_description = str(body.get("schedule_description") or "").strip()
+            if len(raw_schedule_description) > MAX_IMAGE_EDIT_SCHEDULE_DESCRIPTION_LENGTH:
+                return web.json_response(
+                    {"error": "schedule_description_too_long", "message": "日程说明不能超过 160 字"},
+                    status=400,
+                )
+            schedule_description = normalize_image_edit_schedule_description(raw_schedule_description)
+            if not schedule_description:
+                return web.json_response(
+                    {"error": "schedule_description_required", "message": "日程说明不能为空"},
+                    status=400,
+                )
+        if not instruction and schedule_description is None:
+            return web.json_response(
+                {"error": "edit_instruction_required", "message": "请输入修改内容或调整日程说明"},
+                status=400,
+            )
+        if not self.on_edit_image:
+            return web.json_response({"error": "image_edit_unavailable", "message": "图片编辑功能暂不可用"}, status=503)
+        edit_image = self.on_edit_image
+
+        try:
+            entry = await self._run_image_mutation(
+                img_id,
+                lambda: edit_image(
+                    img_id,
+                    target,
+                    instruction,
+                    schedule_description,
+                ),
+            )
+            if not entry or entry.get("status") != "ok":
+                error = (entry or {}).get("error") or "edit_generate_failed"
+                if error in {"not_found", "image_file_missing"}:
+                    status = 404
+                elif error == "edit_source_changed":
+                    status = 409
+                elif error in {
+                    "invalid_edit_target",
+                    "edit_instruction_required",
+                    "schedule_description_required",
+                    "schedule_description_too_long",
+                }:
+                    status = 400
+                else:
+                    status = 500
+                messages = {
+                    "not_found": "图片记录不存在",
+                    "image_file_missing": "原图片文件不存在",
+                    "edit_reference_lost": "编辑结果未保留原图，已拒绝该结果",
+                    "edit_generate_failed": "GPT Image 未能完成本次精准编辑",
+                    "edit_source_changed": "原图片在编辑期间已被删除或替换，本次结果未保存",
+                    "version_archive_failed": "旧版本保存失败，本次编辑未替换原图",
+                    "edit_instruction_required": "请输入修改内容或调整日程说明",
+                    "schedule_description_required": "日程说明不能为空",
+                    "schedule_description_too_long": "日程说明不能超过 160 字",
+                }
+                return web.json_response(
+                    {"error": error, "message": messages.get(error, "图片编辑失败")},
+                    status=status,
+                )
+            metadata = self._load_image_metadata()
+            return web.json_response(self._enrich_photo_schedule_time(entry, metadata))
+        except Exception as e:
+            logger.error("Image edit error: %s", e, exc_info=True)
+            return web.json_response({"error": "image_edit_failed", "message": str(e)}, status=500)
 
     @staticmethod
     def _coerce_bool(value, default: bool) -> bool:
@@ -8595,7 +13008,11 @@ JSON 格式：
             return {"error": f"检查更新失败: {e}"}, 500
 
     def _safe_update_plan(self, project_root: Path, remote_ref: str, env: dict[str, str]) -> dict:
-        all_changed = self._git_run(["diff", "--name-status", "HEAD.." + remote_ref, "--"], project_root, env)
+        all_changed = self._git_run(
+            ["diff", "--no-renames", "--name-status", "HEAD.." + remote_ref, "--"],
+            project_root,
+            env,
+        )
         if all_changed.returncode != 0:
             raise RuntimeError(all_changed.stderr.strip() or all_changed.stdout.strip() or "无法读取远端改动列表")
         all_files = []
@@ -8649,8 +13066,49 @@ JSON 格式：
         if fetch.returncode != 0:
             return {"error": f"git fetch 失败: {fetch.stderr.strip() or fetch.stdout.strip()}"}, 500
 
+        fast_forward = self._git_run(
+            ["merge-base", "--is-ancestor", "HEAD", remote_ref],
+            project_root,
+            env,
+        )
+        if fast_forward.returncode != 0:
+            if fast_forward.returncode != 1 or fast_forward.stderr.strip():
+                detail = fast_forward.stderr.strip() or fast_forward.stdout.strip()
+                return {
+                    "error": "update_git_check_failed",
+                    "message": f"无法验证远端更新关系: {detail or 'git merge-base failed'}",
+                    "safe_update": False,
+                }, 500
+            return {
+                "status": "conflict",
+                "error": "update_not_fast_forward",
+                "message": "远端更新不是当前版本的快进提交，已停止自动升级。",
+                "safe_update": False,
+            }, 409
+        current_head = self._git_run(["rev-parse", "HEAD"], project_root, env)
+        if current_head.returncode != 0 or not current_head.stdout.strip():
+            return {"error": "无法读取当前 Git 提交"}, 500
+        current_head_ref = current_head.stdout.strip()
+
         plan = self._safe_update_plan(project_root, remote_ref, env)
         changed_files = plan["updated_files"]
+        local_changed_files = self._local_update_changed_files(project_root, env)
+        conflicting_files = sorted(set(changed_files).intersection(local_changed_files))
+        plan["local_changed_files"] = local_changed_files
+        plan["conflicting_files"] = conflicting_files
+        if conflicting_files:
+            return {
+                **plan,
+                "status": "conflict",
+                "error": "local_changes_conflict",
+                "message": "本地未提交修改与远端更新冲突，已停止升级，未覆盖任何文件。",
+                "remote": remote,
+                "branch": branch,
+                "remote_ref": remote_ref,
+                "dry_run": bool(dry_run),
+                "will_restart": False,
+                "safe_update": False,
+            }, 409
         response = {
             **plan,
             "status": "ok",
@@ -8668,20 +13126,110 @@ JSON 格式：
             )
             return response, 200
 
-        if not changed_files:
+        if not plan.get("all_changed_files"):
             response["message"] = "没有可更新的代码文件；本地数据与配置已保持不变"
             return response, 200
 
         checkout_files = plan.get("checkout_files") or []
         deleted_files = plan.get("deleted_files") or []
+        latest_local_changes = self._local_update_changed_files(project_root, env)
+        latest_conflicts = sorted(set(changed_files).intersection(latest_local_changes))
+        if latest_conflicts:
+            return {
+                **response,
+                "status": "conflict",
+                "error": "local_changes_conflict",
+                "message": "升级前检测到新的本地修改，已停止升级，未覆盖任何文件。",
+                "local_changed_files": latest_local_changes,
+                "conflicting_files": latest_conflicts,
+                "will_restart": False,
+                "safe_update": False,
+            }, 409
+
+        tracked_before = []
+        absent_before = []
+        if changed_files:
+            tracked_result = self._git_run(
+                ["ls-tree", "-r", "--name-only", current_head_ref, "--", *changed_files],
+                project_root,
+                env,
+            )
+            if tracked_result.returncode != 0:
+                detail = tracked_result.stderr.strip() or tracked_result.stdout.strip()
+                return {
+                    **response,
+                    "status": "error",
+                    "error": "safe_update_snapshot_failed",
+                    "message": f"升级前快照失败: {detail or 'git ls-tree failed'}",
+                    "will_restart": False,
+                    "safe_update": False,
+                }, 500
+            tracked_before = [
+                line.strip()
+                for line in tracked_result.stdout.splitlines()
+                if line.strip()
+            ]
+            tracked_set = set(tracked_before)
+            collisions = []
+            for path in changed_files:
+                if path in tracked_set:
+                    continue
+                if os.path.lexists(project_root / path):
+                    collisions.append(path)
+                else:
+                    absent_before.append(path)
+            if collisions:
+                return {
+                    **response,
+                    "status": "conflict",
+                    "error": "update_path_collision",
+                    "message": "远端新增文件与本地现有路径冲突，已停止升级，未覆盖任何文件。",
+                    "conflicting_files": sorted(collisions),
+                    "will_restart": False,
+                    "safe_update": False,
+                }, 409
+
+        def _rollback_failure(label: str, result) -> tuple[dict, int]:
+            detail = result.stderr.strip() or result.stdout.strip() or "unknown"
+            rollback_errors = self._rollback_safe_update(
+                project_root,
+                env,
+                current_head_ref,
+                changed_files,
+                tracked_before,
+                absent_before,
+            )
+            return self._safe_update_failure_payload(
+                response,
+                f"{label}: {detail}",
+                rollback_errors,
+            )
+
         if checkout_files:
             result = self._git_run(["checkout", remote_ref, "--", *checkout_files], project_root, env, timeout=90)
             if result.returncode != 0:
-                return {"error": f"安全更新失败: {result.stderr.strip() or result.stdout.strip()}"}, 500
+                return _rollback_failure("安全更新失败", result)
         if deleted_files:
             result = self._git_run(["rm", "-r", "--ignore-unmatch", "--", *deleted_files], project_root, env, timeout=90)
             if result.returncode != 0:
-                return {"error": f"安全更新删除旧文件失败: {result.stderr.strip() or result.stdout.strip()}"}, 500
+                return _rollback_failure("安全更新删除旧文件失败", result)
+
+        move_head = self._git_run(
+            ["update-ref", "HEAD", remote_ref, current_head_ref],
+            project_root,
+            env,
+        )
+        if move_head.returncode != 0:
+            return _rollback_failure("更新 Git 基线失败", move_head)
+        reset_paths = sorted(set(plan.get("all_changed_files") or []))
+        if reset_paths:
+            reset_index = self._git_run(
+                ["reset", "HEAD", "--", *reset_paths],
+                project_root,
+                env,
+            )
+            if reset_index.returncode != 0:
+                return _rollback_failure("刷新 Git 索引失败", reset_index)
 
         response["message"] = "更新成功，服务即将重启；本地 API Key、Base URL、appearance、图片和参考图已保留"
         if restart:
@@ -8795,11 +13343,7 @@ JSON 格式：
         if not result:
             return None
 
-        submitted_prompt = prompt
-        if engine == "gptimage":
-            img_data, elapsed, submitted_prompt = result
-        else:
-            img_data, elapsed = result
+        img_data, elapsed = result
         created_at = int(time.time())
         generation_mode = "img2img" if ref_image else "text2img"
         base_style = ""
@@ -8833,7 +13377,7 @@ JSON 格式：
 
         meta_entry = {
             "category": category,
-            "prompt": submitted_prompt,
+            "prompt": prompt,
             "custom_prompt": prompt,
             "user_prompt": prompt,
             "model": model_name,
@@ -8843,6 +13387,7 @@ JSON 格式：
             "display_outfit": display_outfit,
             "outfit_description": display_outfit,
             "size": size or "",
+            "requested_size": size or "",
             "created_at": created_at,
             "generation_time": elapsed,
             "source": source,

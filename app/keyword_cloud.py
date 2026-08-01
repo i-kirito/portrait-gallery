@@ -1,6 +1,7 @@
 """Keyword cloud extraction for user-entered image-generation prompts."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -16,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
 DEFAULT_CLOUD_LIMIT = 48
+MAX_SCHEDULE_CLOUD_TERMS = 5
+MIN_SCHEDULE_CLOUD_POOL = 12
 USER_PROMPT_FIELDS = (
     "custom_prompt",
     "user_prompt",
@@ -235,25 +238,43 @@ def build_keyword_cloud_payload(data_dir: str, limit: int = DEFAULT_CLOUD_LIMIT)
     }
 
 
-def build_schedule_keyword_prompt_block(data_dir: str, limit: int = 18) -> str:
-    """Build a compact prompt block so the daily schedule can use cloud keywords."""
-    payload = build_keyword_cloud_payload(data_dir, limit=limit)
+def build_schedule_keyword_prompt_block(
+    data_dir: str,
+    limit: int = MAX_SCHEDULE_CLOUD_TERMS,
+    selection_key: str = "",
+) -> str:
+    """Build a low-weight, rotating keyword hint for daily schedule generation."""
+    selected_limit = max(1, min(int(limit or 1), MAX_SCHEDULE_CLOUD_TERMS))
+    pool_limit = min(
+        DEFAULT_CLOUD_LIMIT,
+        max(MIN_SCHEDULE_CLOUD_POOL, selected_limit * 3),
+    )
+    payload = build_keyword_cloud_payload(data_dir, limit=pool_limit)
     keywords = payload.get("keywords") or []
     if not keywords:
         return "（暂无历史用户输入与收藏衣柜词云）"
 
+    candidates = keywords[:pool_limit]
+    if selection_key:
+        candidates = sorted(
+            candidates,
+            key=lambda item: hashlib.sha256(
+                f"{selection_key}\0{str(item.get('text') or '').casefold()}".encode("utf-8")
+            ).digest(),
+        )
+    selected = candidates[:selected_limit]
     top_terms = "、".join(
-        f"{item.get('text')}({int(item.get('count') or 0)})"
-        for item in keywords[:limit]
+        str(item.get("text") or "").strip()
+        for item in selected
         if item.get("text")
     )
     if not top_terms:
         return "（暂无历史用户输入与收藏衣柜词云）"
     return (
-        "这些词来自历史用户手动输入的生图描述/关键词，以及收藏衣柜里的穿搭、发型和风格偏好，"
-        "只作为软偏好参考。请挑选 1-3 个适合今天的方向融入新的日程/场景/道具组合，"
-        "不要硬塞全部关键词，也不要连续复刻同一套场景。\n"
-        f"高频词云：{top_terms}"
+        "这些词来自历史用户手动输入和收藏衣柜，只是低权重的软偏好参考候选，不是任务，也不要求命中。"
+        "今天最多自然采用 1 个，也可以全部忽略。真实日历、当天合理性、近期去重、禁词和不喜欢反馈优先；"
+        "不要为了使用词云改变日程，不要复刻旧场景或完整穿搭，同一个词不要连续多日使用。\n"
+        f"可选灵感：{top_terms}"
     )
 
 
@@ -631,7 +652,11 @@ def _normalize_source(source: Any, filename: Any = "") -> str:
         return "openclaw"
     if "hermes" in raw or name.startswith("hermes_"):
         return "hermes_api"
-    if raw in {"custom", "custom_ui"} or "_custom_" in name or name.startswith("zhuzhu_custom"):
+    if (
+        raw in {"custom", "custom_ui"}
+        or "_custom_" in name
+        or name.startswith(("custom_", "zhuzhu_custom"))
+    ):
         return "custom"
     if raw in SOURCE_LABELS:
         return raw

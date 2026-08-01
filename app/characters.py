@@ -100,6 +100,74 @@ _POSITION_KEYS = (
     "standingPrompt",
     "composition",
 )
+_IMAGE_ADULT_GUARD = (
+    "All depicted people are clearly adults aged 21 or older. "
+    "Non-sexual everyday portrait with age-appropriate styling."
+)
+NATURAL_FACE_SHAPE_GUARD = (
+    "Preserve the subject's recognizable identity and naturally observed facial width, "
+    "cheek volume, jaw contour, and chin proportions. Keep realistic, balanced facial proportions and a soft, "
+    "realistic jawline. Do not beautify by narrowing or lengthening the face, hollowing the cheeks, "
+    "sharpening the jaw, or creating a pointed V-shaped chin."
+)
+_IMAGE_PROMPT_REPLACEMENTS = (
+    (r"(?i)\bdelicate\s+(?:facial\s+)?features\b", "natural facial features"),
+    (
+        r"(?i)\b(?:classic\s+)?(?:Japanese\s+)?JK(?:\s+school)?\s+uniform\b",
+        "Japanese sailor-inspired fashion outfit",
+    ),
+    (r"(?i)\bschool\s+uniform\b", "preppy sailor-inspired fashion outfit"),
+    (r"(?i)\b(?:teenage|teenaged|teenager|teen)\b", "adult"),
+    (r"(?i)\byoung[- ]looking\b", "adult"),
+    (r"(?i)\byoung\s+(?:girl|woman)\b", "adult woman"),
+    (r"(?i)\byoung\s+(?:boy|man)\b", "adult man"),
+    (r"(?i)\bboy\b", "adult man"),
+    (
+        r"(?i)\b(?:large|prominent|voluptuous)(?:\s+natural)?\s+(?:breasts?|bust)\b",
+        "natural adult body proportions",
+    ),
+    (r"(?i)\b(?:breasts?|bust|cleavage)\b", "adult body proportions"),
+    (r"(?i)\bhourglass\s+figure\b", "balanced adult proportions"),
+    (r"(?i)\bslim\s+waist\b", "natural waistline"),
+    (r"(?i)\bseductive\b", "warm and confident"),
+    (r"(?i)\b(?:erotic|sexualized|sexually suggestive|lustful)\b", "non-sexual"),
+    (r"(?i)\b(?:sexy|sensual|provocative|fetishized)\b", "stylish"),
+    (r"(?<!\d)(?:1[0-9]|20)\s*岁", "21岁以上"),
+    (r"少女风", "甜美风"),
+    (r"(?:未成年(?:人)?|少女|女孩|女童)", "成年女性"),
+    (r"(?:男孩|男童)", "成年男性"),
+    (r"(?:JK\s*)?校服", "水手领学院风时装"),
+    (r"(?:学生妹|高中生|中学生|小学生)", "成年时尚模特"),
+    (r"(?:爆乳|巨乳|大胸|丰满胸部|胸部丰满)", "自然成年人体态"),
+    (r"(?:性感|色气|色情|情色|诱惑|挑逗|魅魔|涩涩|好色|欲求不满)", "自然"),
+)
+
+_DAILY_IMAGE_PROMPT_REPLACEMENTS = (
+    (r"(?i)\b(?:very\s+)?youthful\b", "mature adult"),
+    (r"(?i)\binnocent\b", "natural"),
+    (r"(?i)\bdoll[- ]like\b", "distinctive"),
+    (
+        r"(?i)\b(?:lace[- ]trimmed\s+)?(?:silk|satin)\s+camisole\b",
+        "opaque satin square-neck sleeveless top with a modest full-coverage neckline",
+    ),
+    (
+        r"(?i)\b(?:silk|satin)\s+slip(?:\s+(?:nightgown|dress))?\b",
+        "opaque relaxed midi lounge dress with a modest neckline",
+    ),
+    (
+        r"(?i)\b(?:sheer|see-through|transparent)\s+(?:lace\s+)?(?:robe|top|dress|garment)\b",
+        "opaque lightweight lounge layer",
+    ),
+    (r"(?i)\b(?:lingerie|bralette|bra|panties|thong)\b", "modest opaque lounge wear"),
+    (r"(?i)\b(?:sheer|see-through|transparent)\b", "opaque"),
+    (r"(?i)\b(?:intimate|alluring|sultry)\b", "relaxed and polished"),
+    (
+        r"(?i)(?<!high-waisted )\bblack\s+velvet\s+shorts\b",
+        "tailored high-waisted black velvet shorts",
+    ),
+    (r"(?:真丝|缎面)?吊带(?:背心|裙)", "不透视方领缎面无袖上衣"),
+    (r"(?:诱人|撩人|妩媚|暧昧)", "成熟利落"),
+)
 
 
 def _clean_text(value: Any, limit: int = _TEXT_LIMIT) -> str:
@@ -782,6 +850,31 @@ def _prompt_sentence(label: str, value: Any) -> str:
     return f"{label}: {text}." if text else ""
 
 
+def sanitize_image_prompt(value: Any, limit: int = _PROMPT_LIMIT) -> str:
+    """Return a clearly adult, non-sexual visual prompt fragment."""
+    source_limit = max(limit * 2, _PROMPT_LIMIT) if limit else 0
+    text = _clean_text(value, source_limit)
+    if not text:
+        return ""
+    for pattern, replacement in _IMAGE_PROMPT_REPLACEMENTS:
+        text = re.sub(pattern, replacement, text)
+    text = re.sub(r"\s+([,.;:，。；：])", r"\1", text)
+    text = re.sub(r"\s{2,}", " ", text)
+    return _clean_text(text, limit)
+
+
+def sanitize_daily_image_prompt(value: Any, limit: int = _PROMPT_LIMIT) -> str:
+    """Normalize daily-photo prompts into clearly adult everyday photography."""
+    text = sanitize_image_prompt(value, limit=0)
+    if not text:
+        return ""
+    for pattern, replacement in _DAILY_IMAGE_PROMPT_REPLACEMENTS:
+        text = re.sub(pattern, replacement, text)
+    text = re.sub(r"\s+([,.;:，。；：])", r"\1", text)
+    text = re.sub(r"\s{2,}", " ", text)
+    return _clean_text(text, limit)
+
+
 def build_character_prompt(character: Mapping[str, Any] | None) -> str:
     """Build a single-character image prompt fragment."""
     normalized = normalize_character(character, fallback_id="character")
@@ -798,6 +891,30 @@ def build_character_prompt(character: Mapping[str, Any] | None) -> str:
             "Reference image hint: apply the configured reference image only to "
             f"{normalized['name']} when the generation pipeline provides it."
         )
+    return " ".join(part for part in parts if part).strip()
+
+
+def build_character_image_prompt(
+    character: Mapping[str, Any] | None,
+    *,
+    include_safety_guard: bool = True,
+) -> str:
+    """Build an image-only prompt without conversational persona or voice."""
+    normalized = normalize_character(character, fallback_id="character")
+    parts = [
+        sanitize_image_prompt(normalized.get("prompt_prefix")),
+        f"Character {normalized['name']} (id: {normalized['id']}).",
+        _prompt_sentence("Visual identity", sanitize_image_prompt(normalized.get("appearance"))),
+        _prompt_sentence("Reference style", sanitize_image_prompt(normalized.get("reference_style"))),
+    ]
+    if normalized.get("reference_image"):
+        parts.append(
+            "Reference image hint: apply the configured reference image only to "
+            f"{normalized['name']} when the generation pipeline provides it."
+        )
+    parts.append(NATURAL_FACE_SHAPE_GUARD)
+    if include_safety_guard:
+        parts.append(_IMAGE_ADULT_GUARD)
     return " ".join(part for part in parts if part).strip()
 
 
@@ -871,11 +988,54 @@ def build_group_prompt(
     return " ".join(part for part in parts if part).strip()
 
 
+def build_group_image_prompt(
+    characters: Iterable[Mapping[str, Any]] | CharacterRegistry,
+    scene_prompt: Any = "",
+) -> str:
+    """Build a multi-character image prompt without chat-only relationship text."""
+    normalized = _coerce_character_sequence(characters)
+    total = len(normalized)
+    parts = [
+        f"Group portrait with {total} distinct character{'s' if total != 1 else ''}.",
+        _IMAGE_ADULT_GUARD,
+        "Keep each person's face, body features, outfit, and identity separate; do not merge or duplicate them.",
+    ]
+
+    scene = sanitize_image_prompt(scene_prompt)
+    if scene:
+        parts.append(f"Scene: {scene}.")
+
+    lineup_names = ", ".join(character["name"] for character in normalized)
+    if lineup_names:
+        parts.append(f"Left-to-right lineup should stay consistent for: {lineup_names}.")
+
+    for index, character in enumerate(normalized, start=1):
+        position = _position_hint(character, index, total)
+        parts.append(
+            " ".join(
+                part
+                for part in (
+                    f"Character {index}: {build_character_image_prompt(character, include_safety_guard=False)}",
+                    _prompt_sentence("Placement cue", position),
+                )
+                if part
+            )
+        )
+
+    parts.append(
+        "Compose them together in one coherent shared photo with natural, non-sexual interaction, "
+        "believable scale, and consistent eye lines."
+    )
+    return " ".join(part for part in parts if part).strip()
+
+
 __all__ = [
     "Character",
     "CharacterRegistry",
     "LOCAL_CHARACTER_SOURCE",
+    "build_character_image_prompt",
     "build_character_prompt",
+    "build_group_image_prompt",
     "build_group_prompt",
     "default_character",
     "delete_manual_character",
@@ -885,6 +1045,9 @@ __all__ = [
     "load_character_registry",
     "normalize_character",
     "normalize_character_id",
+    "NATURAL_FACE_SHAPE_GUARD",
+    "sanitize_daily_image_prompt",
+    "sanitize_image_prompt",
     "slugify_id",
     "upsert_manual_character",
 ]

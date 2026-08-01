@@ -23,7 +23,7 @@ chat data, and local references belong in `data/`. Logs belong in `logs/`.
 - `docker compose build` builds the container image.
 - `docker compose up -d` starts the service with `./data` and `./config`
   mounted into the container.
-- `PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.2 docker compose up -d`
+- `PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.10 docker compose up -d`
   runs a pinned published image from Docker Hub.
 - `curl http://localhost:18889/api/health` verifies that the server is
   responding.
@@ -51,7 +51,7 @@ with `curl`. For UI changes, verify the gallery in a browser at
 
 Git history uses Conventional Commit-style subjects, for example
 `feat: add disliked outfit feedback`, `fix: harden gallery image generation
-flows`, and `chore: release 1.3.2`. Keep commits scoped and use `feat:`,
+flows`, and `chore: release 1.3.3`. Keep commits scoped and use `feat:`,
 `fix:`, `style:`, `chore:`, or similar prefixes. Pull requests should include a
 summary, testing notes, linked issues when applicable, screenshots for UI
 changes, and any configuration, Docker image, or migration steps.
@@ -59,7 +59,7 @@ changes, and any configuration, Docker image, or migration steps.
 ## Security & Configuration Tips
 
 Prefer environment variables or local-only config for API keys. Set
-`GALLERY_API_KEY` before exposing the service beyond localhost, and pass it via
-`X-API-Key` or `?key=...` for protected API calls. Treat `config/config.yaml`,
-`data/`, `logs/`, and generated images as deployment-specific unless a change is
-intentionally part of the product.
+`GALLERY_PASSWORD` or complete the first-run Web password setup before exposing
+the service beyond localhost. Treat `config/config.yaml`, `data/`, `logs/`, and
+generated images as deployment-specific unless a change is intentionally part of
+the product.

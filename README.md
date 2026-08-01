@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.3.2**
+当前版本：**v1.3.10**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -63,13 +63,7 @@ python3 main.py
 
 访问 **http://localhost:18889** 即可使用画廊。
 
-如果设置了 `GALLERY_API_KEY`，首次访问请带上密钥：
-
-```text
-http://localhost:18889/?key=your-gallery-api-key
-```
-
-前端会把密钥保存在浏览器 `localStorage`，后续同源 `/api/*` 请求会自动带上 `X-API-Key`。
+首次部署时，本机打开 Web UI 会先要求设置访问密码；也可以提前通过 `GALLERY_PASSWORD` 环境变量预置密码。非本机访问需要输入密码，验证通过后服务端会签发独立的 7 天会话 Cookie；修改密码会立即使旧会话失效。
 
 ### 5. 部署方式
 
@@ -102,9 +96,30 @@ curl http://localhost:18889/api/health
 如果要使用已经发布到 Docker Hub/GHCR 的镜像，通过 `PORTRAIT_GALLERY_IMAGE` 指定：
 
 ```bash
-PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.2 docker compose up -d
+PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.10 docker compose up -d
 curl http://localhost:18889/api/health
 ```
+
+#### 方式四：一键发布新版本
+
+仓库提供 `scripts/release.sh`，可一键完成版本号更新、Git tag、多架构 Docker 镜像推送和 GitHub Release：
+
+```bash
+# 预演（不改文件、不推送）
+./scripts/release.sh 1.3.9 --dry-run --notes $'- fix A\n- feat B'
+
+# 正式发布（工作区需干净）
+./scripts/release.sh 1.3.9 --notes-file /tmp/notes.md
+
+# 或自动 bump patch
+./scripts/release.sh --bump patch --notes $'- bugfix'
+
+# 仅重发当前 VERSION 对应镜像
+./scripts/release.sh --docker-only
+```
+
+默认镜像为 `ikirito9/hermes-portrait-gallery`，builder 为 `portrait-gallery-publisher`，平台 `linux/amd64,linux/arm64`。
+
 
 本地开发仍可使用源码构建：
 
@@ -212,6 +227,25 @@ curl -X POST http://localhost:18889/api/generate-custom \
 
 **theme 可选值**：`morning` / `noon` / `evening` / `bedtime` / `sexy` / `custom`
 
+### 主题日日程
+
+主题日支持当天或第二天，自定义主题留空时可随机抽取；开启 Web 设置中的小红书日程模式后，会先搜索匹配主题的真人穿搭，再让视觉 LLM 围绕参考图生成整天计划。
+
+```bash
+# 当天指定主题
+curl -X POST http://localhost:18889/api/theme-day \
+  -H "Content-Type: application/json" \
+  -d '{"target":"today","mode":"custom","theme":"霍格沃兹体验日"}'
+
+# 第二天随机主题
+curl -X POST http://localhost:18889/api/theme-day \
+  -H "Content-Type: application/json" \
+  -d '{"target":"tomorrow","mode":"random"}'
+
+# 读取第二天已生成的主题日详情
+curl "http://localhost:18889/api/schedule-detail?date=YYYY-MM-DD"
+```
+
 ### Hermes 安全升级 API
 
 Hermes 可以直接调用下面的接口完成检查和一键升级；升级只更新仓库代码，会跳过本地密钥、配置、画廊图片、参考图和运行时数据。
@@ -231,7 +265,7 @@ curl -X POST http://localhost:18889/api/hermes/update \
   -d '{"dry_run": false, "restart": true}'
 ```
 
-如果旧版本（尤其是 `v1.2.3`）在 Web 一键升级时返回 `local_or_api_key_required`，请在部署机器执行手动安全升级命令：
+如果旧版本（尤其是 `v1.2.3`）在 Web 一键升级时返回本机/认证相关错误，请在部署机器执行手动安全升级命令：
 
 ```bash
 cd /path/to/portrait-gallery
@@ -274,7 +308,12 @@ curl http://localhost:18889/api/config/keys
 # 保存 API 密钥
 curl -X POST http://localhost:18889/api/config/keys \
   -H "Content-Type: application/json" \
-  -d '{"gpt_key": "sk-xxx", "gpt_base_url": "https://your-endpoint/v1/chat/completions"}'
+  -d '{
+    "gitee_url": "https://ai.gitee.com/v1/images/generations",
+    "gitee_key": "gitee-xxx",
+    "gpt_base_url": "https://your-gpt-image-endpoint/v1",
+    "gpt_key": "sk-xxx"
+  }'
 ```
 
 ## 🔑 环境变量
@@ -282,21 +321,32 @@ curl -X POST http://localhost:18889/api/config/keys \
 | 变量 | 说明 |
 |------|------|
 | `CPA_API_KEY` | CPA 代理 API Key（覆盖 config） |
+| `GITEE_API_URL` | Gitee 生图完整端点；默认 `https://ai.gitee.com/v1/images/generations` |
+| `GITEE_API_KEY` | Gitee 生图 API Key（覆盖 Web 配置） |
 | `GPT_IMAGE_API_KEY` | GPT Image API Key（覆盖 config） |
-| `GPT_IMAGE_BASE_URL` | GPT Image 端点（覆盖 config） |
+| `GPT_IMAGE_BASE_URL` | GPT Image 基础地址，通常填写到 `/v1`（覆盖 config） |
 | `GITHUB_PROXY` | GitHub 更新检查/在线更新代理（也可在 Web 设置中填写） |
 | `GITHUB_REPOSITORY` | GitHub Release 检查仓库，格式 `OWNER/REPO` |
 | `GITHUB_RELEASE_API` | GitHub Release API 完整地址，优先级高于 `GITHUB_REPOSITORY` |
-| `GALLERY_API_KEY` | Web UI 认证密钥（留空则不认证） |
+| `GALLERY_PASSWORD` | Web UI 访问密码；留空时首次本机打开页面设置 |
 | `PORTRAIT_GALLERY_IMAGE` | Docker Compose 使用的镜像名/标签，默认 `hermes-portrait-gallery:latest` |
 
-启用 `GALLERY_API_KEY` 后，命令行 API 需要带认证：
+Docker Compose 会读取本地 `.env` 并把 `GALLERY_PASSWORD` 传入容器；不要把 `.env` 提交到仓库。
+
+远程命令行访问受保护 API 时，需要保存登录返回的签名会话 Cookie：
 
 ```bash
-curl -H "X-API-Key: $GALLERY_API_KEY" http://localhost:18889/api/gallery
-# 或
-curl "http://localhost:18889/api/gallery?key=$GALLERY_API_KEY"
+curl -c /tmp/portrait-gallery.cookies \
+  -X POST http://localhost:18889/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"password": "your-gallery-password"}'
+
+curl -b /tmp/portrait-gallery.cookies \
+  http://localhost:18889/api/gallery
 ```
+
+脚本也可以从登录响应读取 `session_token`，后续通过 `X-Gallery-Session` 或
+`Authorization: Bearer SESSION_TOKEN` 请求，不需要依赖固定来源 IP。
 
 ### Hermes 生图文案
 
@@ -313,8 +363,8 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 ## 🖥️ 前端功能
 
 - **今日 Tab** — 横版大卡片，直接展示穿搭/日程/caption，今日生图计划可双击编辑活动内容
-- **全部 Tab** — 6 列网格，点击弹窗查看详情（收藏/分享/删除）
-- **收藏 Tab** — 筛选已收藏图片
+- **全部 Tab** — 响应式网格，卡片支持收藏、重抽、编辑和删除
+- **收藏 Tab** — 显示全图库真实收藏总数，并一次展示全部收藏图片
 - **衣柜 Tab** — 展示收藏穿搭方案和 GPT 生成的衣架参考图，支持编辑、重生和图生图引用
 - **角色 Tab** — 管理本地角色、人设、外貌、绑定模型、单人照、设定图和多角色合照
 - **群聊 Tab** — 创建群聊房间、编辑参与角色、保存消息、删除/清空上下文、回溯重发回复和触发群聊图片生成
@@ -322,6 +372,83 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥、三级 LLM 模型链、Gitee 回退、日程风格和升级选项
 
 ## 🧾 Release Notes
+
+### v1.3.10
+
+- 新增可选 LLM 流式响应开关（默认关闭），适合 Grok 等长请求，避免代理空等超时。
+- OpenAI-compatible SSE 会缓冲成现有 completion 结构，并处理流式错误。
+- 流式内容按原始 UTF-8 解码，并修复 Latin-1 mojibake，避免中文日程校验失败。
+- Grok 日程 JSON 请求默认关闭 reasoning，保留兼容重试。
+- Web 设置页可直接开关流式响应；相关 runtime 配置与回归测试已补齐。
+
+### v1.3.9
+
+- 跨日 00:00–01:59 夜间尾巴任务按正确日程日恢复，引用/配额/失败记账不再串日。
+- 日程多样性改为软约束提示，不再因语义重复直接否决整份计划。
+- GPT Image 增加 unavailable_channel / reference_unavailable 分类，渠道与参考图失败更稳。
+- 前端长请求统一 fetchWithTimeout，减少生图/重抽/衣架操作挂死。
+- 在线升级与并发写路径更稳，补齐 overnight / diversity / failover 回归测试。
+- 新增 scripts/release.sh 一键发布 GitHub Release 与多架构 Docker 镜像。
+
+### v1.3.8
+
+- 小心思过滤加强：拦截英文任务复述 / instruction leak，强制中文正文，坏文案自动回退本地 fallback。
+- 参考图表情守卫加强：禁止复制嘟嘴 / duck face / pout 嘴型，甜妹风 reference prompt 改为自然放松嘴型。
+- 今日日程标题旁显示生成模型标识（含历史「模型未知」兜底）。
+- 生图时段覆盖：早 06–11:59 / 中 12–13:59 / 午 14–18:59 / 晚 19–01:59 至少各有一条；00:00–01:59 归次日执行。
+- 旧 `zhuzhu_*` 参考预览 404 修复：版本 API / 本地 refs 归一化，避免失效路径。
+- 图片版本切换与重抽替换链路更稳，相关回归测试补齐。
+
+### v1.3.7
+
+- 自定义生图支持有序多参考图：第一张锁动作/穿搭/场景，后续参考只迁脸与发色；API/UI 均可传 ref_images。
+- 双参考上游失败自动降级为 face-only；multi-ref 对 timeout / Codex images/edits EOF 快速失败，日志带 kind 与 refs。
+- 自定义生图轻量 prompt 路径：场景优先，避免过长 quality 堆叠导致崩图；日程 photo_style_en 由 LLM 按当日氛围判断摄影语言。
+- 「现在生图」受每日计划配额约束；重抽改为替换原卡片并保留历史版本，支持版本回退。
+- 衣柜衣架图支持历史版本归档/切换；参考像标签改为悬停缩略图，不再展示冗长文件名。
+- 日程生成加强近期动作去重（LLM 判断近 3 天），可出现双人互动日程，但生图强制单主体入镜。
+- 图片版本激活、翻译超时与 GPT Image 失败分类（moderation/timeout/EOF）更稳健。
+
+### v1.3.6
+
+- 全部画廊改为滚动接近底部时自动加载下一页，并加入旧浏览器滚动回退与网络失败冷却，避免重复请求风暴。
+- 精准编辑与编辑后重抽会保留被替换的旧图；卡片详情可查看历史图片版本，删除卡片时同步清理对应归档文件。
+- 自定义生图新增自动、常用比例和自定义宽高三种尺寸模式，扩充 3:2、16:9、21:9 等比例并统一前后端边界校验。
+- 日程图片按活动意图选择普通人像、明确 OOTD 或风景构图，普通生活照更稳定地避免高机位、远景和无意全身构图。
+- 收藏按钮可在当前列表内即时同步状态；衣柜卡片和操作按钮针对手机端重新排布，长穿搭说明不再挤压操作区。
+- 群聊回复增加内部推理文本识别与兼容重试，生图进度状态补充失败后的最终错误信息。
+
+### v1.3.5
+
+- 画廊分页改用稳定游标，删除已加载卡片后不会漏图；收藏角标使用服务端真实总数，收藏 Tab 会自动取完并直接展示全部收藏图片。
+- 图库卡片恢复“重抽”按钮，精准编辑支持后台运行和日程说明同步修改；提交前会核验源卡版本，避免旧编辑结果覆盖重抽结果或复活已删除卡片。
+- 今日穿搭方案支持直接编辑发型与穿搭，并同步更新仍未执行的生图任务；衣柜参考资料、生成中状态和首次底模引导的持久化更稳健。
+- 定时图片发送新增 `pending / sending / sent / failed` 持久状态，服务重启可把已生成但未送达的原图恢复为手动重发，不会重复生图。
+- Web 认证从按 IP 授权升级为签名会话 Cookie/Header，密码变化会使旧会话失效；运行时模型与集成配置写入独立原子文件，局域网域名访问继续受同源保护。
+- 在线升级改为稳定快进并保留无关文件的 staged 状态；图库、参考资料和元数据继续使用锁内原子更新。
+- 真实日期提示会区分完整官方日历年份与零散自定义日期；自建年度假期表需在 `schedule.calendar.complete_years` 明确声明完整年份。
+- 设置、日志、图片编辑弹窗补充焦点管理和触控尺寸，移动端风格标签改为横向滚动且卡片长标签会安全截断。
+
+### v1.3.4
+
+- 日程生成接入真实日期上下文与三天内去重校验，识别周末、法定节假日和调休工作日，减少休息日上班/上学以及连续赖床、做饭等模板化安排。
+- 衣柜、收藏穿搭和关键词云继续作为低权重软偏好：每日轮换少量候选，可完全忽略，并结合“不喜欢”反馈避免照搬旧穿搭、旧场景和连续命中同一偏好。
+- 新增画廊精准编辑与原位替换，支持仅修改背景、穿搭、发型、表情或道具；编辑结果重抽会使用当前图片继续图生图，并保留编辑目标、指令和历史。
+- 日程与生图恢复链路增强：启动缺失日程会后台补生成，并发刷新合并为单任务；过期计划不自动补拍但可手动重试，日程图片统一限制为 3:4，图库文件名改用实际时间与活动语义。
+- 微信发送增加串行冷却、限流重试和上下文失效识别，日志会给出可执行提示；局域网域名访问可正常控制 API 和读取日志。
+- 生图配置统一：Gitee 环境变量优先且恢复 HTTPS 证书校验，GPT Image 聊天端点 fallback 与 Gitee fallback 均保持显式开启，默认 URL 与有效覆盖值按最终配置校验。
+- 安全与持久化加固：远程请求不能伪造 `Host: localhost` 绕过保护，参考图上传限制 10 MiB 并校验真实图片，图库/元数据改为锁内原子更新，在线升级会阻止覆盖本地修改，API Key 不再进入 URL 或明文日志。
+- 修复配置写入失败误报成功、DeepSeek 网络错误额外兼容重试，以及单角色图片被误标为群聊等问题。
+
+### v1.3.3
+
+- Web 访问控制切换为访问密码方案：支持 `GALLERY_PASSWORD` 环境变量、首次本机 Web 设置密码、非本地访问登录，以及已登录 IP 持久化；移除旧版 `GALLERY_API_KEY` / `X-API-Key` 入口。
+- 远程访问会保护 API、生成图片和本地参考图；Docker Compose 支持从本地 `.env` 透传 `GALLERY_PASSWORD`，避免把部署密码写进仓库。
+- 群聊图片生成增加后台任务与进度状态，前端可持续展示当前角色/阶段；取消等待不会中断后台生图，图片消息删除会同步清理画廊图片和元数据。
+- 角色与群聊生图提示词改为 image-only 构建，并净化未成年、校服、露骨身体描述和挑逗语义，降低上游安全拒绝概率。
+- GPT Image 失败处理更明确：额度用完、工作区停用、无可用账号/渠道等终止错误不再盲目重试；聊天端点 fallback 默认关闭，仅显式开启或显式 chat endpoint 时使用。
+- 日志视图增强：保留完整生图提示词细节，过滤成功访问噪声，解释微信上下文失效和生图引擎回退原因，方便排查真实故障。
+- 日程与参考图体验补强：调度历史去重更稳定，衣柜/默认参考图上传与回退链路增加测试覆盖。
 
 ### v1.3.2
 
@@ -356,7 +483,7 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 
 ### v1.2.5
 
-- 修复 Docker/localhost 场景下一键安全升级可能被误判为远程写操作并返回 `local_or_api_key_required` 的问题。
+- 修复 Docker/localhost 场景下一键安全升级可能被误判为远程写操作并返回本机认证错误的问题。
 - 检查更新改为只读 GET 请求；升级被鉴权拦截时会显示手动安全升级命令。
 - 优化移动端顶部 Tab 和卡片底部 `收藏 / 分享 / 删除` 按钮尺寸。
 
@@ -483,7 +610,7 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 ### v1.0.7
 
 - 修复 Python 3.9 本地运行时对 `dict | None` 类型注解不兼容导致的启动失败。
-- 修复开启 `GALLERY_API_KEY` 后 Web UI 主接口未带认证导致首页、设置、生图等功能不可用的问题。
+- 修复开启旧版 Web 访问密钥后主接口未带认证导致首页、设置、生图等功能不可用的问题。
 - 优化在线更新接口：`git pull` 成功后先返回响应，再延迟重启，避免前端误报更新失败。
 - 补全旧图片条目的展示数据：从 `image_metadata.json` 回填完整 prompt、规范模型名、修复误显示为画质 prompt 的穿搭字段，并用当日日程 caption 做合理回填。
 - 生成链路写入 caption、model、source 等 gallery 字段，让今日/全部/彩蛋视图展示更完整。

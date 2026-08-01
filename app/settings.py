@@ -4,14 +4,18 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import yaml
 
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_PROJECT_ROOT = APP_DIR.parent
+
+DEFAULT_GITEE_IMAGE_URL = "https://ai.gitee.com/v1/images/generations"
 
 DEFAULT_OUTFIT_STYLES = [
     "冷御风", "甜美风", "元气风", "温柔风", "优雅风",
@@ -19,15 +23,37 @@ DEFAULT_OUTFIT_STYLES = [
 ]
 
 GENERIC_APPEARANCE = (
-    "adult portrait subject with natural facial features, realistic body proportions, "
-    "polished everyday styling, clear face, expressive eyes, and a coherent personal look"
+    "adult woman with natural facial features, realistic body proportions, everyday styling, "
+    "clear face, expressive eyes, and a coherent personal look — photographed as a real person, not a rendered model"
+)
+
+XIAOHONGSHU_OUTFIT_REFERENCE_MARKER = "[XHS_OUTFIT_REFERENCE_MODE]"
+XIAOHONGSHU_DEFAULT_FACE_REFERENCE_FILE = "reference_face_faceonly.jpg"
+
+DEFAULT_PHOTO_REALISM_FLOOR = (
+    "Real photographed person. "
+    "Natural skin texture. "
+    "No plastic skin. "
+    "No heavy retouching. "
+    "No AI artifacts."
 )
 
 DEFAULT_QUALITY_PREFIX = (
-    "Candid smartphone photo, natural lighting, real skin texture with visible pores "
-    "and subtle imperfections. Casual composition, slightly imperfect framing as if "
-    "taken by a friend. Warm natural tones, no heavy retouching, no AI artifacts, "
-    "no plastic skin."
+    "Candid real-life smartphone photograph.\n"
+    "Natural ambient light only.\n"
+    "True-to-life color.\n"
+    "Mild optical softness.\n"
+    "Subtle sensor noise.\n"
+    "No HDR glow.\n"
+    "No cinematic color grade.\n\n"
+    "Casual everyday snapshot.\n"
+    "Natural handheld phone camera.\n"
+    "Relaxed candid moment.\n"
+    "Slightly imperfect but natural framing.\n"
+    "No heavy retouching.\n"
+    "No AI artifacts.\n"
+    "No plastic skin.\n"
+    "Natural skin texture."
 )
 
 DEFAULT_STYLE_REFERENCE_FILES = {
@@ -38,8 +64,8 @@ DEFAULT_STYLE_REFERENCE_FILES = {
 
 DEFAULT_STYLE_REFERENCE_PROMPTS = {
     "cool": (
-        "Cool elegant portrait reference: mature, confident, sharp and polished look, "
-        "sleek fashion styling, cool-toned or dark outfit mood, refined facial structure, "
+        "Cool elegant portrait reference: mature, confident, polished look, "
+        "sleek fashion styling, cool-toned or dark outfit mood, natural facial proportions, "
         "calm aloof expression, high-fashion city vibe, suitable for 酷飒风、冷御风、优雅风、复古风 and other chic or edgy schedules."
     ),
     "girly": (
@@ -49,10 +75,52 @@ DEFAULT_STYLE_REFERENCE_PROMPTS = {
     ),
     "sweet": (
         "Soft sweet portrait reference: gentle, warm, delicate and romantic look, "
-        "soft styling, tender facial mood, cozy pastel or fresh outfit atmosphere, "
-        "dreamy approachable vibe, suitable for 甜美风、温柔风、清新风 and relaxed cozy schedules."
+        "soft styling, cozy pastel or fresh outfit atmosphere, dreamy approachable vibe, "
+        "use only for identity/style mood and never force the reference mouth shape onto every photo, "
+        "suitable for 甜美风、温柔风、清新风 and relaxed cozy schedules."
     ),
 }
+
+RUNTIME_CONFIG_MUTABLE_FIELDS = {
+    "llm": {"model", "models", "fallback_model", "stream"},
+    "integrations": {"hermes_cli", "openclaw_cli"},
+}
+
+
+def configured_timezone(config: dict | None = None) -> ZoneInfo:
+    timezone_name = str(get_nested(config or {}, "config.timezone", "") or "").strip()
+    timezone_name = timezone_name or os.getenv("TZ", "") or "Asia/Shanghai"
+    try:
+        return ZoneInfo(timezone_name)
+    except Exception:
+        return ZoneInfo("Asia/Shanghai")
+
+
+def service_now(config: dict | None = None) -> datetime:
+    return datetime.now(configured_timezone(config))
+
+
+def service_today(config: dict | None = None) -> date:
+    return service_now(config).date()
+
+
+def normalize_runtime_config(value: Any) -> dict:
+    """Keep Web-mutated overrides inside the intentionally writable surface."""
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    for section, allowed_fields in RUNTIME_CONFIG_MUTABLE_FIELDS.items():
+        section_value = value.get(section)
+        if not isinstance(section_value, dict):
+            continue
+        cleaned = {
+            key: field_value
+            for key, field_value in section_value.items()
+            if key in allowed_fields
+        }
+        if cleaned:
+            result[section] = cleaned
+    return result
 
 DEFAULT_BASE_STYLE_LABELS = {
     "cool": "冷御风",
@@ -87,25 +155,108 @@ DEFAULT_THEME_STYLE_MAP = {
 DEFAULT_CUSTOM_IMAGE_ASPECT = "1:1"
 DEFAULT_CUSTOM_IMAGE_RESOLUTION = "1k"
 DEFAULT_CUSTOM_IMAGE_SIZE = "1024x1024"
+DEFAULT_SCHEDULE_IMAGE_SIZE = "1536x2048"
 DEFAULT_CUSTOM_SHOT_TYPE = "selfie"
 
-CUSTOM_IMAGE_FRAMING_RULE = (
-    "strict framing rule: preserve the requested camera view and shot type, "
-    "keep the full head, hairline, face, visible shoulders, hands, held objects, and requested props inside the frame with a little breathing room, "
-    "never crop off any visible or requested body part or important prop, avoid extreme face crops, passport-photo framing, oversized heads, or changing the shot into another view; "
-    "on landscape or wide canvas, recompose with more surrounding background instead of cutting off the subject"
+LEGACY_SCHEDULE_IMAGE_FRAMING_RULE = (
+    "Mandatory 3:4 full-body environmental framing: pull the camera back and show the entire person "
+    "from the complete top of the hair to both shoes, adapted naturally to the scheduled action. "
+    "Keep clear breathing room above the hair and below the feet, with the head safely inside the upper "
+    "80 percent of the canvas and all limbs, hands, footwear, and important props inside the frame. "
+    "For seated or leaning actions, show the complete head, full seated posture, legs, feet, and surrounding "
+    "activity area. Use an eye-level camera at a comfortable distance; no close-up, medium crop, high-angle "
+    "crop, oversized person, cut-off forehead, missing hair, cropped knees, or cropped shoes. "
+    "Fill the entire 3:4 canvas edge to edge with the photographed scene; no black bars, blurred side panels, "
+    "letterboxing, pillarboxing, frames, borders, or blank margins. "
+    "This complete-subject framing rule overrides any casual or slightly imperfect framing instruction."
 )
 
+SCHEDULE_IMAGE_FRAMING_MARKER = "Professional 3:4 lifestyle photography composition:"
+
+SCHEDULE_IMAGE_FRAMING_RULE = (
+    f"{SCHEDULE_IMAGE_FRAMING_MARKER} FRAMING MODE: ORDINARY DAILY PORTRAIT (mandatory). "
+    "Use an eye-level medium or medium-long portrait cropped from the complete head to the waist, hips, or mid-thigh; "
+    "never use a head-to-toe view. Keep knees, lower legs, feet, shoes, and most of the floor outside the frame; they "
+    "do not need to be visible even when the outfit description lists them or the subject is standing or walking. "
+    "For a desk, table, cooking, craft, plant-care, or handheld-object activity, prioritize the face, both hands, the "
+    "tool or prop, and the immediate work surface. The subject should fill roughly 70 to 90 percent of the frame height "
+    "without cutting the hair, face, hands, or important props. Place the camera at the subject's eye or upper-torso "
+    "height with a level horizon and a natural 50-85mm-equivalent portrait perspective. No high-angle, overhead, "
+    "downward-looking, wide-angle, ultra-wide, distant-camera, or surveillance-like view. Do not foreshorten the body, "
+    "enlarge the head relative to the body, shorten the legs, or make the subject look small or squat. Preserve elegant, "
+    "natural human proportions and use the immediate environment only to support the action. Do not copy a reference "
+    "image's camera distance or crop. Fill the entire 3:4 canvas edge to edge with the photographed scene; no black "
+    "bars, blurred side panels, letterboxing, pillarboxing, frames, borders, or blank margins. This mandatory framing "
+    "mode overrides any outfit details, visible-shoes request, generic full-body wording, or slightly imperfect framing."
+)
+
+SCHEDULE_IMAGE_OOTD_FRAMING_RULE = (
+    f"{SCHEDULE_IMAGE_FRAMING_MARKER} FRAMING MODE: EXPLICIT OOTD OR CLOTHING SHOWCASE. "
+    "Use a level, eye-height full-body fashion photograph only because the scheduled Activity or Action explicitly "
+    "centers on showing the complete outfit. Keep the complete hair and both shoes inside the frame with restrained "
+    "breathing room, use a natural 50-70mm-equivalent perspective, and preserve long, realistic body proportions. "
+    "No high-angle, overhead, downward-looking, ultra-wide, distorted, or distant catalog view. The subject must remain "
+    "the clear visual focus. Fill the entire 3:4 canvas edge to edge; no black bars, blurred panels, frames, borders, or "
+    "blank margins. Do not copy the reference image's camera distance or crop."
+)
+
+SCHEDULE_IMAGE_SCENERY_FRAMING_RULE = (
+    f"{SCHEDULE_IMAGE_FRAMING_MARKER} FRAMING MODE: EXPLICIT SCENERY OR SENSE-OF-PLACE PHOTO. "
+    "Use a wider environmental composition because the scheduled Activity or Action explicitly centers on sharing or "
+    "photographing the scenery, landscape, architecture, skyline, or view. Keep a level natural camera, undistorted "
+    "human proportions, and a readable relationship between the person and place; full-body visibility is optional, "
+    "not mandatory. Avoid high-angle, overhead, ultra-wide distortion, excessive empty floor or ceiling, and a tiny "
+    "incidental subject. Fill the entire 3:4 canvas edge to edge; no black bars, blurred panels, frames, borders, or "
+    "blank margins. Do not copy the reference image's camera distance or crop."
+)
+
+SCHEDULE_OOTD_INTENT_RE = re.compile(
+    r"(?:\bootd\b|(?:showcase|show|check|style|photograph|share)\b.{0,40}\b(?:outfit|look|clothing)\b|"
+    r"(?:outfit|look|clothing)\b.{0,40}\b(?:showcase|check|photo)|"
+    r"(?:展示|分享|拍摄|检查|试穿|搭配).{0,12}(?:穿搭|造型|服装)|"
+    r"(?:穿搭|造型|服装).{0,12}(?:展示|分享|拍摄|检查|试穿))",
+    re.IGNORECASE | re.DOTALL,
+)
+
+SCHEDULE_SCENERY_INTENT_RE = re.compile(
+    r"(?:\b(?:share|photograph|capture|admire|show)\b.{0,50}\b"
+    r"(?:scenery|landscape|architecture|skyline|panorama|seascape|mountain view|city view)\b|"
+    r"(?:分享|拍摄|记录|欣赏).{0,12}(?:风景|景色|建筑|天际线|全景|山景|海景|夜景))",
+    re.IGNORECASE | re.DOTALL,
+)
+
+SCHEDULE_ACTIVITY_ACTION_RE = re.compile(
+    r"\bActivity:\s*(?P<activity>.*?)\s+Action:\s*(?P<action>.*?)"
+    r"(?=\s+(?:Scene|Outfit|Hair|Props|Lighting|Time):|(?:\.\s*)?Style:|$)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+CUSTOM_IMAGE_FRAMING_RULE = (
+    "Keep the requested camera distance and main subject fully inside the frame; "
+    "do not crop the head, important hands, held props, or the described action."
+)
+
+# Keep shot guidance short. Long pose menus and weighted tags tend to over-constrain
+# custom generations and make the model ignore the user's scene description.
 CUSTOM_SHOT_TYPE_PROMPTS = {
-    "selfie": "camera view: authentic smartphone selfie mode, (mirror selfie style:1.2) or front-facing selfie, unmistakable self-shot evidence, visible phone, mirror reflection, or extended selfie arm perspective, looking at the phone screen, camera lens, or mirror, realistic phone-screen light reflection on the face, cute natural pose, arm-length selfie with the phone held slightly farther away, slightly pulled-back selfie POV, head, shoulders, upper torso, at least one hand, and room for a small gesture visible, a little surrounding background around her for posing space, complete head and hairline visible with a little margin, not an extreme face crop, not a big-head selfie, not a tight head-and-shoulders crop, not a normal half-body portrait, not a studio portrait, not a distant shot",
-    "half_body": "camera view: default upper body medium shot, waist-up candid portrait photographed by someone else, third-person documentary photo, camera pulled back enough to show head, hair, shoulders, torso, both hands, and any handheld prop, from head to waist or upper hips, natural daily-life framing, outfit upper details clear, (dynamic random pose:1.2), (playful gestures:1.1), if using a phone then the phone is only an activity prop in her hand or lap and both hands must be visible, gaze can be toward the prop or slightly off-camera, not a close-up, not a headshot, not a face-dominant crop, not a selfie, not a mirror selfie, not a front-camera arm-angle shot, not a full-body shot",
-    "full_body": "camera view: full body shot, full-body OOTD, head to toe visible, wide angle, far shot, camera pulled back, complete outfit visible with clear space above hair and below shoes, (dynamic natural pose:1.3), (random candid action:1.2), twirling around, adjusting clothes, reaching for something on shelf, stepping into shoes, checking outfit in mirror, stretching arms up, leaning against a doorframe, playful spinning, tying hair up, bending to pick something up, walking towards camera",
+    "selfie": (
+        "camera view: authentic smartphone selfie, natural arm-length selfie POV, "
+        "head to upper torso visible, soft candid expression"
+    ),
+    "half_body": (
+        "camera view: waist-up candid portrait photographed by someone else, "
+        "head to waist visible, natural everyday framing"
+    ),
+    "full_body": (
+        "camera view: full-body candid photo, head to toe visible, "
+        "camera pulled back enough to show the complete outfit and pose"
+    ),
 }
 
 CUSTOM_SHOT_LANDSCAPE_PROMPTS = {
-    "selfie": "landscape-specific framing: keep the horizontal image clearly recognizable as a selfie by showing the phone, extended arm perspective, or mirror reflection in the composition; use the extra width for background and gesture space, but do not let it become an ordinary third-person seated portrait",
-    "half_body": "landscape-specific framing: make the horizontal image clearly different from selfie mode, as if another person photographed her from outside the action at a comfortable medium distance; no visible selfie-taking arm, no mirror-selfie composition, no phone held up as the camera, no direct front-camera perspective; use the extra width for environment, hands, and props",
-    "full_body": "landscape-specific framing: use the extra width for environment and natural movement while keeping the entire body head-to-toe visible",
+    "selfie": "use the extra width for background while remaining a clear selfie",
+    "half_body": "use the extra width for environment while remaining a third-person waist-up portrait",
+    "full_body": "use the extra width for environment while keeping head-to-toe visibility",
 }
 
 CUSTOM_SHOT_TYPE_LABELS = {
@@ -145,6 +296,26 @@ CUSTOM_IMAGE_SIZE_MAP = {
         "2k": "2048x2048",
         "4k": "4096x4096",
     },
+    "3:2": {
+        "1k": "1536x1024",
+        "2k": "2048x1365",
+        "4k": "4096x2731",
+    },
+    "2:3": {
+        "1k": "1024x1536",
+        "2k": "1365x2048",
+        "4k": "2731x4096",
+    },
+    "16:9": {
+        "1k": "1366x768",
+        "2k": "2048x1152",
+        "4k": "4096x2304",
+    },
+    "9:16": {
+        "1k": "768x1366",
+        "2k": "1152x2048",
+        "4k": "2304x4096",
+    },
     "3:4": {
         "1k": "768x1024",
         "2k": "1536x2048",
@@ -155,23 +326,24 @@ CUSTOM_IMAGE_SIZE_MAP = {
         "2k": "2048x1536",
         "4k": "4096x3072",
     },
-    "2:3": {
-        "1k": "1024x1536",
-        "2k": "1365x2048",
-        "4k": "2731x4096",
-    },
-    "9:16": {
-        "1k": "768x1366",
-        "2k": "1152x2048",
-        "4k": "2304x4096",
+    "21:9": {
+        "1k": "1792x768",
+        "2k": "3584x1536",
+        "4k": "4096x1755",
     },
 }
+
+CUSTOM_IMAGE_MIN_DIMENSION = 256
+CUSTOM_IMAGE_MAX_DIMENSION = 4096
+CUSTOM_IMAGE_MAX_PIXELS = CUSTOM_IMAGE_MAX_DIMENSION * CUSTOM_IMAGE_MAX_DIMENSION
 
 CUSTOM_IMAGE_ALLOWED_SIZES = {
     size
     for by_resolution in CUSTOM_IMAGE_SIZE_MAP.values()
     for size in by_resolution.values()
 }
+
+SCHEDULE_IMAGE_ALLOWED_SIZES = set(CUSTOM_IMAGE_SIZE_MAP["3:4"].values())
 
 DEFAULT_PERSONA_SOURCE = "custom"
 PERSONA_SOURCE_ALIASES = {
@@ -243,6 +415,21 @@ def normalize_custom_image_resolution(value: Any) -> str:
     return DEFAULT_CUSTOM_IMAGE_RESOLUTION
 
 
+def _normalize_custom_image_dimensions(value: Any) -> str:
+    text = _non_empty(value).lower().replace("×", "x")
+    match = re.fullmatch(r"\s*(\d{2,5})\s*x\s*(\d{2,5})\s*", text)
+    if not match:
+        return ""
+    width, height = int(match.group(1)), int(match.group(2))
+    if not (
+        CUSTOM_IMAGE_MIN_DIMENSION <= width <= CUSTOM_IMAGE_MAX_DIMENSION
+        and CUSTOM_IMAGE_MIN_DIMENSION <= height <= CUSTOM_IMAGE_MAX_DIMENSION
+        and width * height <= CUSTOM_IMAGE_MAX_PIXELS
+    ):
+        return ""
+    return f"{width}x{height}"
+
+
 def normalize_custom_image_size(size: Any = "", aspect: Any = "", resolution: Any = "") -> str:
     aspect_text = _non_empty(aspect).replace("：", ":")
     resolution_text = _non_empty(resolution).lower()
@@ -252,10 +439,64 @@ def normalize_custom_image_size(size: Any = "", aspect: Any = "", resolution: An
     size_text = _non_empty(size).lower()
     if size_text in CUSTOM_IMAGE_ALLOWED_SIZES:
         return size_text
+    if "auto" in {size_text, aspect_text.lower(), resolution_text} or "自动" in {
+        size_text,
+        aspect_text,
+        resolution_text,
+    }:
+        return ""
+    custom_size = _normalize_custom_image_dimensions(size_text)
+    if custom_size:
+        return custom_size
 
     safe_aspect = normalize_custom_image_aspect(aspect)
     safe_resolution = normalize_custom_image_resolution(resolution)
     return CUSTOM_IMAGE_SIZE_MAP.get(safe_aspect, {}).get(safe_resolution, DEFAULT_CUSTOM_IMAGE_SIZE)
+
+
+def schedule_image_size(config: Any) -> str:
+    """Return the stable 3:4 output size used by gallery schedule photos."""
+    image_config = config.get("image_gen", {}) if isinstance(config, dict) else {}
+    if not isinstance(image_config, dict):
+        image_config = {}
+    configured = image_config.get("schedule_size") or image_config.get("metadata_size")
+    size_text = _non_empty(configured).lower()
+    return size_text if size_text in SCHEDULE_IMAGE_ALLOWED_SIZES else DEFAULT_SCHEDULE_IMAGE_SIZE
+
+
+def _schedule_activity_action_text(prompt: str) -> str:
+    matches = list(SCHEDULE_ACTIVITY_ACTION_RE.finditer(prompt or ""))
+    if not matches:
+        return ""
+    match = matches[-1]
+    return " ".join(
+        part.strip()
+        for part in (match.group("activity"), match.group("action"))
+        if part and part.strip()
+    )
+
+
+def schedule_image_framing_rule(prompt: Any) -> str:
+    activity_action = _schedule_activity_action_text(_non_empty(prompt))
+    if activity_action and SCHEDULE_OOTD_INTENT_RE.search(activity_action):
+        return SCHEDULE_IMAGE_OOTD_FRAMING_RULE
+    if activity_action and SCHEDULE_SCENERY_INTENT_RE.search(activity_action):
+        return SCHEDULE_IMAGE_SCENERY_FRAMING_RULE
+    return SCHEDULE_IMAGE_FRAMING_RULE
+
+
+def apply_schedule_image_framing(prompt: Any) -> str:
+    raw_text = _non_empty(prompt)
+    if not raw_text:
+        return raw_text
+    framing_rule = schedule_image_framing_rule(raw_text)
+    if raw_text.endswith(framing_rule):
+        return raw_text
+    text = raw_text.replace(LEGACY_SCHEDULE_IMAGE_FRAMING_RULE, "").rstrip(" .")
+    marker_index = text.find(SCHEDULE_IMAGE_FRAMING_MARKER)
+    if marker_index >= 0:
+        text = text[:marker_index].rstrip(" .")
+    return f"{text}. {framing_rule}"
 
 
 def normalize_custom_shot_type(value: Any) -> str:
@@ -608,6 +849,13 @@ def load_config(config_path: str = "") -> dict:
             local_config = yaml.safe_load(f) or {}
         if isinstance(local_config, dict):
             config = deep_merge(config, local_config)
+
+    # Mutable Web settings live with deployment data so the base config can
+    # remain read-only in Docker images.
+    data_dir = resolve_data_dir(config, path)
+    runtime_config = normalize_runtime_config(load_json_file(runtime_config_path(data_dir)))
+    if runtime_config:
+        config = deep_merge(config, runtime_config)
     return config
 
 
@@ -994,6 +1242,10 @@ def plugin_config_path(data_dir: str) -> str:
     return os.path.join(data_dir, "plugin_config.json")
 
 
+def runtime_config_path(data_dir: str) -> str:
+    return os.path.join(data_dir, "runtime_config.json")
+
+
 def normalize_chat_url(base_url: str) -> str:
     base = _non_empty(base_url).rstrip("/")
     if not base:
@@ -1135,7 +1387,14 @@ def llm_request_config(config: dict, data_dir: str) -> dict:
         or _non_empty(get_nested(config, "llm.api_key", ""))
     )
     models = configured_llm_models(config.get("llm", {}) if isinstance(config, dict) else {})
-    return {"base_url": base_url.rstrip("/"), "chat_url": normalize_chat_url(base_url), "api_key": api_key, "models": models}
+    stream = bool(get_nested(config, "llm.stream", False))
+    return {
+        "base_url": base_url.rstrip("/"),
+        "chat_url": normalize_chat_url(base_url),
+        "api_key": api_key,
+        "models": models,
+        "stream": stream,
+    }
 
 
 def apply_network_env(config: dict, env: dict[str, str] | None = None, data_dir: str = "") -> dict[str, str]:

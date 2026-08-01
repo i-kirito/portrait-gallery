@@ -19,6 +19,7 @@ class DailyEntry:
     image_filename: str = ""
     prompt: str = ""
     caption: str = ""
+    caption_status: str = ""  # pending / ready / failed for async visual captions
     status: str = "ok"  # ok / failed / generating
     source: str = ""  # cron / web / custom / hermes_api
     shot_type: str = ""  # selfie / half_body / full_body for custom generation
@@ -28,6 +29,12 @@ class DailyEntry:
     custom_ref_mode: str = ""  # text2img / reference / pure for custom generation
     outfit_keywords: str = ""  # LLM 提取的穿搭关键词（英文，逗号分隔）
     scene_keywords: str = ""   # LLM 提取的场景关键词（英文，逗号分隔）
+    photo_style_en: str = ""  # LLM 根据当日日程判断的摄影/镜头语言（英文）
+    schedule_llm_model: str = ""  # 生成该日程所用的 LLM 模型名
+    xiaohongshu_search_query: str = ""  # 先于日程选择的真人穿搭搜索词
+    theme_day: str = ""  # 用户指定或随机选择的主题日
+    theme_day_mode: str = ""  # random / custom
+    theme_description: str = ""  # 用户对主题日的自由描述，LLM 据此理解穿搭与行程主线
     generation_type: str = ""  # character / group_photo / chat 等扩展生图类型
     character_id: str = ""  # 单角色生图绑定的角色 ID
     character_ids: list[str] = field(default_factory=list)  # 合照/群聊关联角色
@@ -58,6 +65,7 @@ class DailyEntry:
             image_filename=data.get("image_filename", ""),
             prompt=data.get("prompt", ""),
             caption=data.get("caption", ""),
+            caption_status=str(data.get("caption_status") or "").strip(),
             status=data.get("status", "ok"),
             source=data.get("source", ""),
             shot_type=data.get("shot_type", ""),
@@ -67,6 +75,12 @@ class DailyEntry:
             custom_ref_mode=data.get("custom_ref_mode", ""),
             outfit_keywords=data.get("outfit_keywords", ""),
             scene_keywords=data.get("scene_keywords", ""),
+            photo_style_en=data.get("photo_style_en", ""),
+            schedule_llm_model=str(data.get("schedule_llm_model") or data.get("llm_model") or "").strip(),
+            xiaohongshu_search_query=str(data.get("xiaohongshu_search_query") or "").strip(),
+            theme_day=str(data.get("theme_day") or "").strip(),
+            theme_day_mode=str(data.get("theme_day_mode") or "").strip(),
+            theme_description=str(data.get("theme_description") or "").strip(),
             generation_type=data.get("generation_type", ""),
             character_id=data.get("character_id", ""),
             character_ids=data.get("character_ids", []) if isinstance(data.get("character_ids"), list) else [],
