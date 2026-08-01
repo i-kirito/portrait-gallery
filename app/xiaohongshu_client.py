@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import ipaddress
+import math
 import os
+import re
 import socket
 from pathlib import Path
 from typing import Any
@@ -40,6 +42,46 @@ IMAGE_EXTENSIONS = {
     "image/webp": ".webp",
     "image/gif": ".gif",
 }
+GO_DURATION_PART_RE = re.compile(r"(?P<amount>\d+(?:\.\d+)?)(?P<unit>ms|us|µs|ns|h|m|s)")
+GO_DURATION_UNIT_SECONDS = {
+    "h": 3600,
+    "m": 60,
+    "s": 1,
+    "ms": 0.001,
+    "us": 0.000001,
+    "µs": 0.000001,
+    "ns": 0.000000001,
+}
+
+
+def _timeout_seconds(value: Any) -> int:
+    """Normalize numeric or Go duration timeout values to whole seconds."""
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+        return max(0, int(numeric)) if math.isfinite(numeric) else 0
+
+    text = str(value or "").strip()
+    if not text:
+        return 0
+    try:
+        numeric = float(text)
+    except ValueError:
+        pass
+    else:
+        return max(0, int(numeric)) if math.isfinite(numeric) else 0
+
+    total = 0.0
+    position = 0
+    for match in GO_DURATION_PART_RE.finditer(text):
+        if match.start() != position:
+            return 0
+        total += float(match.group("amount")) * GO_DURATION_UNIT_SECONDS[match.group("unit")]
+        position = match.end()
+    if position != len(text) or position == 0:
+        return 0
+    return max(0, int(total))
 
 
 class XiaohongshuError(RuntimeError):
@@ -246,7 +288,7 @@ class XiaohongshuClient:
             raise XiaohongshuError("invalid_qrcode", "小红书服务没有返回有效二维码。")
         return {
             "is_logged_in": bool(data.get("is_logged_in")),
-            "timeout": int(data.get("timeout") or 0),
+            "timeout": _timeout_seconds(data.get("timeout")),
             "image": image,
         }
 
@@ -306,7 +348,9 @@ class XiaohongshuClient:
                 "id": feed_id,
                 "xsec_token": token,
                 "title": str(card.get("displayTitle") or "未命名穿搭").strip(),
+                "user_id": str(user.get("userId") or "").strip(),
                 "author": str(user.get("nickname") or user.get("nickName") or "").strip(),
+                "avatar_url": str(user.get("avatar") or "").strip(),
                 "cover_url": cover_url,
                 "width": int(cover.get("width") or 0),
                 "height": int(cover.get("height") or 0),
@@ -316,6 +360,128 @@ class XiaohongshuClient:
                 break
         return results
 
+    async def search_creators(
+        self,
+        keyword: str,
+        *,
+        max_results: int = DEFAULT_SEARCH_RESULTS,
+    ) -> list[dict]:
+        """Find creator candidates through image-note search results."""
+        keyword = str(keyword or "").strip()
+        items = await self.search(keyword, max_results=max_results)
+        creators: dict[str, dict] = {}
+        for item in items:
+            user_id = str(item.get("user_id") or "").strip()
+            nickname = str(item.get("author") or "").strip()
+            if not user_id or not nickname:
+                continue
+            creator = creators.setdefault(user_id, {
+                "user_id": user_id,
+                "nickname": nickname,
+                "avatar_url": str(item.get("avatar_url") or "").strip(),
+                "xsec_token": str(item.get("xsec_token") or "").strip(),
+                "matched_note_count": 0,
+                "sample_note": {
+                    "id": str(item.get("id") or ""),
+                    "title": str(item.get("title") or ""),
+                    "cover_url": str(item.get("cover_url") or ""),
+                },
+            })
+            creator["matched_note_count"] += 1
+            if not creator.get("avatar_url") and item.get("avatar_url"):
+                creator["avatar_url"] = str(item.get("avatar_url") or "").strip()
+            if item.get("xsec_token"):
+                creator["xsec_token"] = str(item.get("xsec_token") or "").strip()
+
+        normalized = "".join(keyword.casefold().split())
+
+        def _score(item: dict) -> tuple:
+            nickname = "".join(str(item.get("nickname") or "").casefold().split())
+            return (
+                2 if nickname == normalized else (1 if normalized and normalized in nickname else 0),
+                int(item.get("matched_note_count") or 0),
+                nickname,
+            )
+
+        return sorted(creators.values(), key=_score, reverse=True)
+
+    async def profile(self, user_id: str, xsec_token: str) -> dict:
+        """Return one creator profile and its image-note cards."""
+        user_id = str(user_id or "").strip()
+        xsec_token = str(xsec_token or "").strip()
+        if not user_id or not xsec_token:
+            raise XiaohongshuError("creator_required", "缺少小红书博主主页参数。", status=400)
+        request_body = {"user_id": user_id, "xsec_token": xsec_token}
+        try:
+            data = await self._request(
+                "POST",
+                "/api/v1/user/profile",
+                json_body=request_body,
+                timeout_seconds=80,
+            )
+        except XiaohongshuError as exc:
+            if exc.code != "upstream_error":
+                raise
+            await asyncio.sleep(0.5)
+            data = await self._request(
+                "POST",
+                "/api/v1/user/profile",
+                json_body=request_body,
+                timeout_seconds=80,
+            )
+
+        payload = data.get("data") if isinstance(data.get("data"), dict) else data
+        basic = payload.get("userBasicInfo") if isinstance(payload.get("userBasicInfo"), dict) else {}
+        interactions = payload.get("interactions") if isinstance(payload.get("interactions"), list) else []
+        notes = []
+        for feed in payload.get("feeds") or []:
+            if not isinstance(feed, dict):
+                continue
+            card = feed.get("noteCard") if isinstance(feed.get("noteCard"), dict) else {}
+            if str(card.get("type") or "").lower() != "normal":
+                continue
+            cover = card.get("cover") if isinstance(card.get("cover"), dict) else {}
+            cover_url = str(cover.get("urlDefault") or cover.get("url") or cover.get("urlPre") or "").strip()
+            feed_id = str(feed.get("id") or "").strip()
+            token = str(feed.get("xsecToken") or feed.get("xsec_token") or "").strip()
+            if not feed_id or not token or not cover_url:
+                continue
+            note_user = card.get("user") if isinstance(card.get("user"), dict) else {}
+            interact = card.get("interactInfo") if isinstance(card.get("interactInfo"), dict) else {}
+            notes.append({
+                "id": feed_id,
+                "xsec_token": token,
+                "title": str(card.get("displayTitle") or "未命名穿搭").strip(),
+                "user_id": str(note_user.get("userId") or user_id).strip(),
+                "author": str(note_user.get("nickname") or note_user.get("nickName") or basic.get("nickname") or "").strip(),
+                "avatar_url": str(note_user.get("avatar") or basic.get("imageb") or basic.get("images") or "").strip(),
+                "cover_url": cover_url,
+                "width": int(cover.get("width") or 0),
+                "height": int(cover.get("height") or 0),
+                "liked_count": str(interact.get("likedCount") or "").strip(),
+            })
+
+        stats = {}
+        for item in interactions:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("type") or item.get("name") or "").strip()
+            if key:
+                stats[key] = str(item.get("count") or "").strip()
+        nickname = str(basic.get("nickname") or (notes[0].get("author") if notes else "") or "").strip()
+        return {
+            "creator": {
+                "user_id": user_id,
+                "nickname": nickname,
+                "avatar_url": str(basic.get("imageb") or basic.get("images") or (notes[0].get("avatar_url") if notes else "") or "").strip(),
+                "description": str(basic.get("desc") or "").strip(),
+                "red_id": str(basic.get("redId") or "").strip(),
+                "ip_location": str(basic.get("ipLocation") or "").strip(),
+                "stats": stats,
+                "xsec_token": xsec_token,
+            },
+            "notes": notes,
+        }
     async def detail(self, feed_id: str, xsec_token: str) -> dict:
         feed_id = str(feed_id or "").strip()
         xsec_token = str(xsec_token or "").strip()
