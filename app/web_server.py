@@ -366,6 +366,8 @@ class GalleryServer:
         self._manual_send_cooldown_until = 0.0
         self._manual_send_last_error = ""
         self._schedule_refresh_task: Optional[asyncio.Task] = None
+        self._theme_day_task: Optional[asyncio.Task] = None
+        self._theme_day_job: Optional[dict] = None
         self._restart_scheduled = False
         os.makedirs(self.default_image_dir, exist_ok=True)
         os.makedirs(self.image_dir, exist_ok=True)
@@ -392,6 +394,7 @@ class GalleryServer:
         self.on_edit_image = None
         self.on_list_photo_jobs = None
         self.on_refresh_schedule = None
+        self.on_theme_day = None
         self.on_rebuild_photo_jobs = None
         self.on_retry_photo_job = None
         self.on_photo_quota_snapshot = None
@@ -692,6 +695,10 @@ class GalleryServer:
         )
         self.app.router.add_post("/api/generate", self.handle_generate)
         self.app.router.add_post("/api/refresh-schedule", self.handle_refresh_schedule)
+        self.app.router.add_post("/api/theme-day", self.handle_theme_day)
+        self.app.router.add_get("/api/theme-day/state", self.handle_theme_day_state)
+        self.app.router.add_post("/api/theme-day/state", self.handle_theme_day_state)
+        self.app.router.add_get("/api/theme-day/status", self.handle_theme_day_status)
         self.app.router.add_post("/api/generate-now", self.handle_generate_now)
         self.app.router.add_post("/api/generate-custom", self.handle_generate_custom)
         self.app.router.add_get("/api/characters", self.handle_characters)
@@ -4833,6 +4840,219 @@ class GalleryServer:
             logger.error(f"Refresh schedule error: {e}")
             return web.json_response({"error": str(e)}, status=500)
 
+    def theme_day_enabled(self) -> bool:
+        """Whether the user has switched the theme-day mode on."""
+        return self.theme_day_state_store.load().get("enabled") is True
+
+    def theme_day_state(self) -> dict:
+        state = self.theme_day_state_store.load()
+        return {
+            "enabled": state.get("enabled") is True,
+            "updated_at": str(state.get("updated_at") or ""),
+        }
+
+    def set_theme_day_enabled(self, enabled: bool) -> dict:
+        now_text = self._now().isoformat(timespec="seconds")
+        self.theme_day_state_store.update(lambda state: {
+            **state,
+            "enabled": bool(enabled),
+            "updated_at": now_text,
+        })
+        return self.theme_day_state()
+
+    async def handle_theme_day_state(self, request: web.Request):
+        """Read or update the persistent theme-day mode switch."""
+        if request.method == "GET":
+            return web.json_response(self.theme_day_state())
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        enabled_raw = body.get("enabled") if isinstance(body, dict) else None
+        enabled = (
+            enabled_raw
+            if isinstance(enabled_raw, bool)
+            else str(enabled_raw or "").strip().lower() in {"1", "true", "yes", "on"}
+        )
+        return web.json_response(self.set_theme_day_enabled(enabled))
+
+    async def handle_theme_day(self, request: web.Request):
+        """Generate a random or user-named theme day for today/tomorrow."""
+        if not self.on_theme_day:
+            return web.json_response({"error": "theme_day_unavailable"}, status=503)
+        if not self.theme_day_enabled():
+            return web.json_response(
+                {
+                    "error": "theme_day_disabled",
+                    "message": "请先开启主题日开关，再生成主题日程。",
+                },
+                status=400,
+            )
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            return web.json_response({"error": "invalid_json"}, status=400)
+
+        theme = re.sub(r"\s+", " ", str(body.get("theme") or "")).strip()
+        description = re.sub(r"\s+", " ", str(body.get("description") or "")).strip()
+        if not theme and description:
+            theme = description
+        manual_reference_url = str(
+            body.get("manual_reference_url")
+            or body.get("manual_reference")
+            or ""
+        ).strip()
+        target = str(body.get("target") or "today").strip().lower()
+        mode = str(body.get("mode") or ("random" if not theme else "custom")).strip().lower()
+        target_date = str(body.get("target_date") or "").strip()
+        if target not in {"today", "tomorrow", "next", "next_day", "今天", "当天", "明天", "第二天"}:
+            return web.json_response({"error": "invalid_target", "message": "请选择当天或第二天"}, status=400)
+        if mode not in {"random", "custom"}:
+            return web.json_response({"error": "invalid_mode"}, status=400)
+        if mode == "custom" and not theme:
+            return web.json_response({"error": "theme_required", "message": "自定义主题不能为空"}, status=400)
+        if len(theme) > 160:
+            return web.json_response({"error": "theme_too_long", "message": "主题日描述不能超过 160 个字符"}, status=400)
+        async_raw = body.get("async")
+        async_mode = (
+            async_raw
+            if isinstance(async_raw, bool)
+            else str(async_raw or "").strip().lower() in {"1", "true", "yes", "on"}
+        )
+        active_task = self._theme_day_task
+        if active_task is not None and not active_task.done():
+            active_job = self._theme_day_job or {}
+            return web.json_response(
+                {
+                    "error": "theme_day_busy",
+                    "message": "已有主题日正在生成，请稍候；小红书检索可能需要一两分钟。",
+                    "job_id": active_job.get("job_id", ""),
+                },
+                status=409,
+            )
+        if async_mode:
+            job = {
+                "job_id": uuid.uuid4().hex,
+                "status": "running",
+                "message": "主题日已开始生成，小红书检索可能需要几分钟。",
+                "started_at": self._now().isoformat(timespec="seconds"),
+                "target": target,
+                "theme": theme,
+                "mode": mode,
+                "description": description,
+            }
+            self._theme_day_job = job
+            self._theme_day_task = asyncio.create_task(
+                self._run_theme_day_job(
+                    job,
+                    theme,
+                    target,
+                    target_date,
+                    mode,
+                    description,
+                    manual_reference_url,
+                )
+            )
+            return web.json_response(job, status=202)
+        try:
+            task = asyncio.create_task(
+                self.on_theme_day(
+                    theme,
+                    target=target,
+                    target_date=target_date,
+                    mode=mode,
+                    description=description,
+                    manual_reference_url=manual_reference_url,
+                )
+            )
+            self._theme_day_task = task
+            try:
+                entry = await task
+            finally:
+                if self._theme_day_task is task:
+                    self._theme_day_task = None
+            if not entry or entry.status != "ok":
+                return web.json_response({
+                    "error": "theme_day_generate_failed",
+                    "entry": entry.to_dict() if entry else None,
+                }, status=500)
+            return web.json_response({
+                "status": "ok",
+                "message": "主题日日程已生成",
+                "entry": entry.to_dict(),
+            })
+        except ValueError as exc:
+            return web.json_response({"error": "invalid_theme_day", "message": str(exc)}, status=400)
+        except Exception as exc:
+            logger.error("Theme day generation error: %s", exc, exc_info=True)
+            return web.json_response({"error": str(exc)}, status=500)
+
+    async def _run_theme_day_job(
+        self,
+        job: dict,
+        theme: str,
+        target: str,
+        target_date: str,
+        mode: str,
+        description: str = "",
+        manual_reference_url: str = "",
+    ) -> None:
+        """Run an async theme-day request and retain its result for polling."""
+        try:
+            entry = await self.on_theme_day(
+                theme,
+                target=target,
+                target_date=target_date,
+                mode=mode,
+                description=description,
+                manual_reference_url=manual_reference_url,
+                progress_callback=lambda phase: job.update({"phase": str(phase)}),
+            )
+            if not entry or entry.status != "ok":
+                job.update({
+                    "status": "error",
+                    "error": "theme_day_generate_failed",
+                    "message": "主题日日程生成失败，请稍后重试。",
+                })
+            else:
+                job.update({
+                    "status": "ok",
+                    "message": "主题日日程已生成",
+                    "entry": entry.to_dict(),
+                    "finished_at": self._now().isoformat(timespec="seconds"),
+                })
+        except ValueError as exc:
+            job.update({
+                "status": "error",
+                "error": "invalid_theme_day",
+                "message": str(exc),
+            })
+        except Exception as exc:
+            logger.error("Async theme day generation error: %s", exc, exc_info=True)
+            job.update({
+                "status": "error",
+                "error": str(exc),
+                "message": str(exc) or "主题日日程生成失败",
+            })
+        finally:
+            if self._theme_day_task is asyncio.current_task():
+                self._theme_day_task = None
+
+    async def handle_theme_day_status(self, request: web.Request):
+        """Return the latest state for an asynchronously generated theme day."""
+        requested_job_id = str(request.query.get("job_id") or "").strip()
+        job = self._theme_day_job
+        if not isinstance(job, dict) or (
+            requested_job_id and requested_job_id != str(job.get("job_id") or "")
+        ):
+            return web.json_response(
+                {"error": "theme_day_job_not_found", "message": "主题日任务不存在或已过期。"},
+                status=404,
+            )
+        return web.json_response(dict(job))
+
     async def _refresh_schedule_singleflight(self):
         """Share one schedule refresh across startup/UI/generate-now callers."""
         if not self.on_refresh_schedule:
@@ -6547,6 +6767,7 @@ class GalleryServer:
                     "photos": photos,
                     "schedule": schedule_info.get("schedule", ""),
                     "outfit_style": schedule_info.get("outfit_style", ""),
+                    "theme_day": schedule_info.get("theme_day", ""),
                 })
             elif schedule_info:
                 return web.json_response({
@@ -6554,6 +6775,7 @@ class GalleryServer:
                     "photos": [],
                     "schedule": schedule_info.get("schedule", ""),
                     "outfit_style": schedule_info.get("outfit_style", ""),
+                    "theme_day": schedule_info.get("theme_day", ""),
                     "status": schedule_info.get("status", "no_photos"),
                 })
             else:
@@ -6564,7 +6786,17 @@ class GalleryServer:
 
     async def handle_schedule_detail(self, request: web.Request):
         """返回今日日程详情（彩蛋弹窗用）"""
-        today_str = self._today().isoformat()
+        service_today = self._today()
+        today_str = service_today.isoformat()
+        requested_date = str(request.query.get("date") or "").strip()
+        if requested_date:
+            try:
+                requested = date.fromisoformat(requested_date)
+            except ValueError:
+                return web.json_response({"status": "invalid_date"}, status=400)
+            if requested not in {service_today, service_today + timedelta(days=1)}:
+                return web.json_response({"status": "invalid_date", "message": "只支持当天或第二天"}, status=400)
+            today_str = requested.isoformat()
         try:
             store = ScheduleStore(self.data_dir)
             all_data = store.load()
@@ -6696,6 +6928,8 @@ class GalleryServer:
                 "status": "ok",
                 "date": today_str,
                 "outfit_style": outfit_style,
+                "theme_day": str((schedule_entry or {}).get("theme_day") or "").strip(),
+                "theme_day_mode": str((schedule_entry or {}).get("theme_day_mode") or "").strip(),
                 "base_style": base_style,
                 "outfit": outfit_parts,
                 "schedule": schedule_items,

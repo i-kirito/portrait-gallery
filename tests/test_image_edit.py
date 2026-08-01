@@ -604,6 +604,93 @@ class PortraitGalleryImageEditTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((40, 60, 80), Image.open(current_path).getpixel((0, 0)))
             delete_image_files.assert_called_once_with(generated_filename)
 
+    async def test_scheduled_xiaohongshu_reroll_rebuilds_outfit_and_face_references(self):
+        with tempfile.TemporaryDirectory(prefix="portrait-gallery-xhs-reroll-") as temp_dir:
+            data_dir = Path(temp_dir) / "data"
+            image_dir = data_dir / "images"
+            reference_dir = data_dir / "references" / "xiaohongshu"
+            image_dir.mkdir(parents=True)
+            reference_dir.mkdir(parents=True)
+            current_filename = "scheduled-xhs.png"
+            current_path = image_dir / current_filename
+            generated_filename = "scheduled-xhs-rerolled.png"
+            generated_path = image_dir / generated_filename
+            outfit_path = reference_dir / "xhs_schedule_20260801_outfit.webp"
+            face_path = data_dir / "reference_face_faceonly.jpg"
+            Image.new("RGB", (48, 64), (200, 210, 220)).save(current_path)
+            Image.new("RGB", (48, 64), (40, 60, 80)).save(generated_path)
+            Image.new("RGB", (48, 64), (20, 40, 60)).save(outfit_path)
+            Image.new("RGB", (48, 48), (120, 100, 80)).save(face_path)
+            selected_reference = {
+                "id": "xiaohongshu_schedule_test",
+                "filename": outfit_path.name,
+                "url": f"/local-refs/xiaohongshu/{outfit_path.name}",
+                "label": "今日穿搭",
+                "source": "xiaohongshu",
+                "selection_mode": "xiaohongshu_schedule",
+                "selection_reason": "xiaohongshu_schedule:2026-08-01",
+            }
+            ScheduleStore(str(data_dir)).save({
+                "card": {
+                    "id": current_filename,
+                    "date": "2026-08-01",
+                    "time": "10:27",
+                    "image_filename": current_filename,
+                    "image_path": f"/images/{current_filename}",
+                    "prompt": "stored scheduled portrait prompt",
+                    "outfit_style": "学院风",
+                    "outfit": "黑色长袍和绿色围巾",
+                    "status": "ok",
+                    "source": "cron",
+                    "schedule_time": "10:27 在温室上草药课",
+                    "selected_reference": selected_reference,
+                    "requested_ref_image_path": str(outfit_path),
+                },
+            })
+            (data_dir / "image_metadata.json").write_text(
+                json.dumps({
+                    current_filename: {
+                        "model": "gpt-image-2",
+                        "prompt": "stored scheduled portrait prompt",
+                        "requested_ref_image_path": str(outfit_path),
+                    },
+                }),
+                encoding="utf-8",
+            )
+            delete_image_files = Mock(return_value=([generated_filename], []))
+            ensure_reference = AsyncMock(return_value={})
+            app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+            app.data_dir = str(data_dir)
+            app.config = {}
+            app.web_server = SimpleNamespace(
+                _image_file_path=lambda filename: (
+                    str(current_path) if filename == current_filename else ""
+                ),
+                _delete_image_files=delete_image_files,
+                _resolve_reference_image=lambda value, allow_any_path=False: (
+                    str(value) if os.path.isfile(value) else ""
+                ),
+                ensure_xiaohongshu_schedule_reference=ensure_reference,
+                _preferred_xiaohongshu_identity_reference=Mock(return_value=str(face_path)),
+            )
+            app.image_gen = SimpleNamespace(
+                default_engine="gptimage",
+                output_dir=str(image_dir),
+                generate=AsyncMock(return_value=generated_filename),
+            )
+
+            result = await app.reroll_image(current_filename)
+
+            call = app.image_gen.generate.await_args
+            self.assertEqual(str(outfit_path), call.kwargs["ref_image"])
+            self.assertEqual(
+                [str(outfit_path), str(face_path)],
+                call.kwargs["ref_images"],
+            )
+            self.assertTrue(call.kwargs["xiaohongshu_outfit_reference"])
+            ensure_reference.assert_not_awaited()
+            self.assertEqual("xiaohongshu_schedule", result["selected_reference"]["selection_mode"])
+
 
 class ImageEditEndpointTest(unittest.IsolatedAsyncioTestCase):
     @staticmethod

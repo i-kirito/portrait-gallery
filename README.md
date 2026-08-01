@@ -227,6 +227,25 @@ curl -X POST http://localhost:18889/api/generate-custom \
 
 **theme 可选值**：`morning` / `noon` / `evening` / `bedtime` / `sexy` / `custom`
 
+### 主题日日程
+
+主题日支持当天或第二天，自定义主题留空时可随机抽取；开启 Web 设置中的小红书日程模式后，会先搜索匹配主题的真人穿搭，再让视觉 LLM 围绕参考图生成整天计划。
+
+```bash
+# 当天指定主题
+curl -X POST http://localhost:18889/api/theme-day \
+  -H "Content-Type: application/json" \
+  -d '{"target":"today","mode":"custom","theme":"霍格沃兹体验日"}'
+
+# 第二天随机主题
+curl -X POST http://localhost:18889/api/theme-day \
+  -H "Content-Type: application/json" \
+  -d '{"target":"tomorrow","mode":"random"}'
+
+# 读取第二天已生成的主题日详情
+curl "http://localhost:18889/api/schedule-detail?date=YYYY-MM-DD"
+```
+
 ### Hermes 安全升级 API
 
 Hermes 可以直接调用下面的接口完成检查和一键升级；升级只更新仓库代码，会跳过本地密钥、配置、画廊图片、参考图和运行时数据。

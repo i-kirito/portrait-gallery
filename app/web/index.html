@@ -5895,6 +5895,29 @@ textarea:focus-visible,
 .egg-header::after { content: ''; position: absolute; inset: 0; background: radial-gradient(circle at 88% 20%, rgba(255,255,255,0.28), transparent 28%), radial-gradient(circle at 18% 78%, rgba(255,255,255,0.18), transparent 22%); pointer-events: none; z-index: 0; }
 .egg-header h2 { color: #fff; font-size: 22px; margin: 0; font-family: 'ZCOOL KuaiLe', cursive; text-shadow: 0 2px 10px rgba(64,24,80,0.22); position: relative; z-index: 1; }
 .egg-header .egg-date { color: rgba(255,255,255,0.88); font-size: 13px; margin-top: 6px; position: relative; z-index: 1; }
+.egg-theme-day-controls { margin: -2px 0 18px; padding: 13px 14px; border: 1px solid rgba(216,180,254,0.38); border-radius: 14px; background: linear-gradient(135deg, rgba(255,247,251,0.96), rgba(246,242,255,0.96)); box-shadow: 0 6px 16px rgba(168,85,247,0.06); }
+.egg-theme-day-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
+.egg-theme-day-title { color: #7c3aed; font-size: 13px; font-weight: 800; }
+.egg-theme-day-hint { color: #9a8ca8; font-size: 11px; }
+.egg-theme-day-switch { margin-left: auto; transform: scale(0.82); transform-origin: right center; }
+.egg-theme-day-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.egg-theme-day-xhs-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; min-height: 30px; }
+.egg-theme-day-xhs-selected { min-width: 0; flex: 1; color: #6d28d9; font-size: 11px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.egg-theme-day-xhs-picker { margin-top: 8px; padding: 10px; border: 1px solid rgba(139,92,246,0.22); border-radius: 12px; background: rgba(255,255,255,0.72); }
+.egg-theme-day-xhs-search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.egg-theme-day-xhs-results, .egg-theme-day-xhs-images { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; margin-top: 8px; }
+.egg-theme-day-xhs-result, .egg-theme-day-xhs-image { position: relative; min-height: 112px; border: 0; border-radius: 8px; padding: 0; overflow: hidden; background: #f3e8ff; cursor: pointer; }
+.egg-theme-day-xhs-result img, .egg-theme-day-xhs-image img { width: 100%; height: 112px; object-fit: cover; display: block; }
+.egg-theme-day-xhs-result span, .egg-theme-day-xhs-image span { position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 5px; color: #fff; background: rgba(76,29,149,0.76); font-size: 10px; line-height: 1.25; text-align: left; }
+.egg-theme-day-input { min-width: 0; height: 38px; padding: 0 11px; border: 1px solid rgba(216,180,254,0.78); border-radius: 10px; background: #fff; color: #4c1d95; font: inherit; font-size: 13px; outline: none; }
+.egg-theme-day-input:focus { border-color: #a78bfa; box-shadow: 0 0 0 3px rgba(167,139,250,0.14); }
+.egg-theme-day-buttons { display: flex; gap: 7px; margin-top: 8px; flex-wrap: wrap; }
+.egg-theme-day-target { height: 30px; padding: 0 10px; border: 1px solid rgba(139,92,246,0.2); border-radius: 999px; background: #fff; color: #6d28d9; font-size: 11px; font-weight: 700; cursor: pointer; }
+.egg-theme-day-target.active { background: #8b5cf6; border-color: #8b5cf6; color: #fff; }
+.egg-theme-day-action { height: 30px; padding: 0 12px; border: 0; border-radius: 999px; background: linear-gradient(135deg, #ff6b9d, #c084fc); color: #fff; font-size: 11px; font-weight: 800; cursor: pointer; box-shadow: 0 5px 12px rgba(192,132,252,0.18); }
+.egg-theme-day-action:disabled, .egg-theme-day-target:disabled { opacity: 0.55; cursor: default; }
+.egg-theme-day-status { min-height: 16px; margin-top: 6px; color: #8b5cf6; font-size: 11px; line-height: 1.45; }
+.egg-theme-day-status.error { color: #be123c; }
 .egg-close { position: absolute; top: 16px; right: 18px; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.24); color: #fff; width: 32px; height: 32px; border-radius: 50%; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s, transform 0.2s; z-index: 2; }
 .egg-close:hover { background: rgba(255,255,255,0.4); transform: scale(1.05); }
 .egg-body { padding: 20px 22px 22px; }
@@ -6094,6 +6117,9 @@ textarea:focus-visible,
 @keyframes eggCardBeat { 0% { transform: scale(0.85) translateY(22px); } 54% { transform: scale(1.035) translateY(-2px); } 70% { transform: scale(0.985) translateY(1px); } 86% { transform: scale(1.012) translateY(0); } 100% { transform: scale(1) translateY(0); } }
 .egg-slot-empty { opacity: 0.5; font-style: italic; }
 @media (max-width: 420px) {
+  .egg-theme-day-row { grid-template-columns: 1fr; }
+  .egg-theme-day-hint { display: none; }
+  .egg-theme-day-xhs-search-row { grid-template-columns: 1fr; }
   .egg-section-title.with-action { grid-template-columns: 1fr; align-items: start; }
 	  .egg-title-actions { justify-self: end; flex-wrap: wrap; max-width: 100%; }
 	  .egg-outfit-fav-btn { min-width: 94px; }
@@ -6264,6 +6290,40 @@ textarea:focus-visible,
         </button>
       </div>
       <button class="egg-close">✕</button>
+    </div>
+    <div class="egg-theme-day-controls" id="eggThemeDayControls">
+      <div class="egg-theme-day-head">
+        <span class="egg-theme-day-title">✨ 主题日</span>
+        <label class="sk-switch egg-theme-day-switch" for="eggThemeDayEnabled" aria-label="启用主题日">
+          <input type="checkbox" id="eggThemeDayEnabled" onchange="setThemeDayEnabled(this.checked)">
+          <span class="sk-switch-knob"></span>
+        </label>
+      </div>
+      <div class="egg-theme-day-hint">关闭时按随机风格与日常日程生成；开启后可指定主题或手动选小红书穿搭</div>
+      <div class="egg-theme-day-row">
+        <input class="egg-theme-day-input" id="eggThemeDayInput" type="text" maxlength="160" placeholder="例如：穿越到霍格沃兹体验当学生的一天（留空可随机）">
+        <button class="egg-theme-day-action" id="eggThemeDayGenerateBtn" type="button" onclick="generateThemeDay(false)">生成主题日</button>
+      </div>
+      <div class="egg-theme-day-buttons">
+        <button class="egg-theme-day-target active" type="button" data-theme-target="today" onclick="selectThemeDayTarget('today')">当天</button>
+        <button class="egg-theme-day-target" type="button" data-theme-target="tomorrow" onclick="selectThemeDayTarget('tomorrow')">第二天</button>
+        <button class="egg-theme-day-action" type="button" onclick="generateThemeDay(true)">🎲 随机主题</button>
+      </div>
+      <div class="egg-theme-day-xhs-row">
+        <button class="egg-theme-day-target" id="eggThemeDayManualBtn" type="button" onclick="toggleThemeDayXhsPicker()">指定小红书穿搭</button>
+        <span class="egg-theme-day-xhs-selected" id="eggThemeDayXhsSelected"></span>
+      </div>
+      <div class="egg-theme-day-xhs-picker" id="eggThemeDayXhsPicker" hidden>
+        <div class="egg-theme-day-xhs-search-row">
+          <input class="egg-theme-day-input" id="eggThemeDayXhsKeyword" type="search" maxlength="80" placeholder="搜索霍格沃兹/魔法学院穿搭">
+          <button class="egg-theme-day-target" type="button" onclick="searchThemeDayXhs()">搜索</button>
+        </div>
+        <div class="egg-theme-day-status" id="eggThemeDayXhsStatus"></div>
+        <div class="egg-theme-day-xhs-results" id="eggThemeDayXhsResults"></div>
+        <div class="egg-theme-day-xhs-images" id="eggThemeDayXhsImages"></div>
+        <button class="egg-theme-day-target" id="eggThemeDayXhsClear" type="button" onclick="clearThemeDayXhs()">清除手动指定</button>
+      </div>
+      <div class="egg-theme-day-status" id="eggThemeDayStatus"></div>
     </div>
     <div class="egg-body" id="eggBody">
       <div class="egg-loading">加载中...</div>
@@ -7408,6 +7468,14 @@ let availableLlmModels = [];
 let llmModelsRequest = null;
 let llmModelChain = [];
 let scheduleEggCache = { html: "", dateText: "", updatedAt: 0 };
+let selectedThemeDayTarget = "today";
+let themeDayBusy = false;
+let themeDayEnabled = false;
+let themeDayManualReferenceUrl = "";
+let themeDayXhsResults = [];
+let themeDayXhsActiveNote = null;
+let themeDayXhsBusy = false;
+let themeDayManualReferenceBusy = false;
 
 const accessibleDialogState = new WeakMap();
 
@@ -15937,6 +16005,420 @@ function themeLabel(t, timeStr) {
   }[t] || t;
 }
 
+function themeDayScheduleDate() {
+  var d = new Date();
+  if (selectedThemeDayTarget === 'tomorrow') d.setDate(d.getDate() + 1);
+  var yyyy = d.getFullYear();
+  var mm = String(d.getMonth() + 1).padStart(2, '0');
+  var dd = String(d.getDate()).padStart(2, '0');
+  return yyyy + '-' + mm + '-' + dd;
+}
+
+function renderThemeDayEnabled() {
+  var toggle = document.getElementById('eggThemeDayEnabled');
+  var interactionLocked = themeDayBusy || themeDayManualReferenceBusy;
+  var controls = [
+    'eggThemeDayInput',
+    'eggThemeDayGenerateBtn',
+    'eggThemeDayManualBtn',
+    'eggThemeDayXhsKeyword',
+    'eggThemeDayXhsClear'
+  ];
+  var targets = Array.prototype.slice.call(document.querySelectorAll('.egg-theme-day-target'));
+  var actions = Array.prototype.slice.call(document.querySelectorAll('.egg-theme-day-action'));
+  if (toggle) toggle.disabled = interactionLocked;
+  targets.forEach(function(btn) {
+    if (btn.id === 'eggThemeDayEnabled') return;
+    btn.disabled = !themeDayEnabled || interactionLocked;
+  });
+  actions.forEach(function(btn) { btn.disabled = !themeDayEnabled || interactionLocked; });
+  controls.forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.disabled = !themeDayEnabled || interactionLocked;
+  });
+}
+
+async function loadThemeDayState() {
+  try {
+    var response = await fetch('/api/theme-day/state', {cache: 'no-store'});
+    var data = await response.json().catch(function() { return {}; });
+    if (!response.ok) throw new Error(data.message || data.error || 'HTTP ' + response.status);
+    themeDayEnabled = data.enabled === true;
+    var toggle = document.getElementById('eggThemeDayEnabled');
+    if (toggle) toggle.checked = themeDayEnabled;
+    renderThemeDayEnabled();
+    await loadThemeDayManualReference();
+  } catch (error) {
+    themeDayEnabled = false;
+    renderThemeDayEnabled();
+    var status = document.getElementById('eggThemeDayStatus');
+    if (status) {
+      status.classList.add('error');
+      status.textContent = '主题日状态读取失败：' + error.message;
+    }
+  }
+}
+
+async function setThemeDayEnabled(enabled) {
+  var toggle = document.getElementById('eggThemeDayEnabled');
+  if (themeDayBusy || themeDayManualReferenceBusy) {
+    if (toggle) toggle.checked = themeDayEnabled;
+    return;
+  }
+  themeDayEnabled = Boolean(enabled);
+  if (toggle) toggle.checked = themeDayEnabled;
+  renderThemeDayEnabled();
+  var status = document.getElementById('eggThemeDayStatus');
+  if (status) {
+    status.classList.remove('error');
+    status.textContent = themeDayEnabled ? '主题日已开启，可以指定主题或小红书穿搭' : '主题日已关闭，自动日程恢复随机风格与日常日程';
+  }
+  try {
+    var response = await fetch('/api/theme-day/state', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled: themeDayEnabled})
+    });
+    var data = await response.json().catch(function() { return {}; });
+    if (!response.ok) throw new Error(data.message || data.error || 'HTTP ' + response.status);
+    themeDayEnabled = data.enabled === true;
+    if (toggle) toggle.checked = themeDayEnabled;
+    renderThemeDayEnabled();
+    if (themeDayEnabled) await loadThemeDayManualReference();
+  } catch (error) {
+    themeDayEnabled = !themeDayEnabled;
+    if (toggle) toggle.checked = themeDayEnabled;
+    renderThemeDayEnabled();
+    if (status) {
+      status.classList.add('error');
+      status.textContent = '主题日开关保存失败：' + error.message;
+    }
+  }
+}
+
+function renderThemeDayManualReference() {
+  var el = document.getElementById('eggThemeDayXhsSelected');
+  if (!el) return;
+  if (themeDayManualReferenceUrl) {
+    el.textContent = '已手动指定小红书穿搭';
+  } else {
+    el.textContent = '';
+  }
+}
+
+async function loadThemeDayManualReference() {
+  themeDayManualReferenceUrl = "";
+  renderThemeDayManualReference();
+  try {
+    var response = await fetch(
+      '/api/xiaohongshu/schedule-mode?schedule_date=' + encodeURIComponent(themeDayScheduleDate()),
+      {cache: 'no-store'}
+    );
+    var data = await response.json().catch(function() { return {}; });
+    if (!response.ok) return;
+    var ref = data && data.today_reference && typeof data.today_reference === 'object'
+      ? data.today_reference
+      : {};
+    if (ref.url && String(ref.selection_source || '') === 'manual') {
+      themeDayManualReferenceUrl = ref.url;
+    }
+    renderThemeDayManualReference();
+  } catch (error) {
+    renderThemeDayManualReference();
+  }
+}
+
+function toggleThemeDayXhsPicker() {
+  var picker = document.getElementById('eggThemeDayXhsPicker');
+  if (picker) picker.hidden = !picker.hidden;
+}
+
+function renderThemeDayXhsResults() {
+  var container = document.getElementById('eggThemeDayXhsResults');
+  if (!container) return;
+  if (!themeDayXhsResults.length) {
+    container.innerHTML = '';
+    return;
+  }
+  container.innerHTML = themeDayXhsResults.map(function(item, index) {
+    return '<button type="button" class="egg-theme-day-xhs-result" onclick="openThemeDayXhsNote(' + index + ')" title="' + escapeAttr(item.title || '小红书穿搭') + '">' +
+      '<img src="' + escapeAttr(item.cover_url || '') + '" alt="' + escapeAttr(item.title || '小红书穿搭') + '" loading="lazy" referrerpolicy="no-referrer">' +
+      '<span>' + escapeHtml(item.title || '未命名穿搭') + '</span></button>';
+  }).join('');
+}
+
+async function searchThemeDayXhs() {
+  if (themeDayXhsBusy) return;
+  var input = document.getElementById('eggThemeDayXhsKeyword');
+  var keyword = input ? String(input.value || '').trim() : '';
+  if (!keyword) {
+    var status = document.getElementById('eggThemeDayXhsStatus');
+    if (status) status.textContent = '请输入搜索关键词';
+    return;
+  }
+  themeDayXhsBusy = true;
+  themeDayXhsActiveNote = null;
+  var status = document.getElementById('eggThemeDayXhsStatus');
+  if (status) status.textContent = '正在搜索小红书图文笔记…';
+  try {
+    var response = await fetch('/api/xiaohongshu/search', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({keyword: keyword, max_results: 30})
+    });
+    var data = await response.json().catch(function() { return {}; });
+    if (!response.ok || data.error) throw new Error(data.message || data.error || 'HTTP ' + response.status);
+    themeDayXhsResults = Array.isArray(data.items) ? data.items : [];
+    renderThemeDayXhsResults();
+    var images = document.getElementById('eggThemeDayXhsImages');
+    if (images) images.innerHTML = '';
+    if (status) status.textContent = themeDayXhsResults.length ? '找到 ' + themeDayXhsResults.length + ' 条图文笔记，点击查看图片' : '没有找到图文笔记';
+  } catch (error) {
+    themeDayXhsResults = [];
+    renderThemeDayXhsResults();
+    if (status) status.textContent = '搜索失败：' + error.message;
+  } finally {
+    themeDayXhsBusy = false;
+  }
+}
+
+async function openThemeDayXhsNote(index) {
+  var item = themeDayXhsResults[index];
+  var container = document.getElementById('eggThemeDayXhsImages');
+  var status = document.getElementById('eggThemeDayXhsStatus');
+  if (!item || !container) return;
+  document.querySelectorAll('.egg-theme-day-xhs-result').forEach(function(card, cardIndex) {
+    card.classList.toggle('active', cardIndex === index);
+  });
+  if (status) status.textContent = '正在读取笔记图片…';
+  try {
+    var response = await fetch('/api/xiaohongshu/detail', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({feed_id: item.id, xsec_token: item.xsec_token || ''})
+    });
+    var data = await response.json().catch(function() { return {}; });
+    if (!response.ok || data.error) throw new Error(data.message || data.error || 'HTTP ' + response.status);
+    themeDayXhsActiveNote = data;
+    var images = Array.isArray(data.images) ? data.images : [];
+    container.innerHTML = images.map(function(image, imageIndex) {
+      return '<button type="button" class="egg-theme-day-xhs-image" onclick="chooseThemeDayXhsImage(' + imageIndex + ')" title="设为' + (selectedThemeDayTarget === 'tomorrow' ? '第二天' : '当天') + '日程穿搭">' +
+        '<img src="' + escapeAttr(image.url || '') + '" alt="' + escapeAttr(data.title || '小红书穿搭') + '" loading="lazy" referrerpolicy="no-referrer">' +
+        '<span>设为' + (selectedThemeDayTarget === 'tomorrow' ? '第二天' : '当天') + '穿搭</span></button>';
+    }).join('');
+    if (status) status.textContent = images.length ? (data.title || item.title || '这条笔记') + ' · ' + images.length + ' 张图片' : '这条笔记没有可用图片';
+  } catch (error) {
+    if (status) status.textContent = '读取笔记失败：' + error.message;
+  }
+}
+
+async function chooseThemeDayXhsImage(imageIndex) {
+  if (themeDayXhsBusy) return;
+  var note = themeDayXhsActiveNote;
+  var image = note && Array.isArray(note.images) ? note.images[imageIndex] : null;
+  var status = document.getElementById('eggThemeDayXhsStatus');
+  if (!note || !image) return;
+  var scheduleDate = themeDayScheduleDate();
+  var targetLabel = selectedThemeDayTarget === 'tomorrow' ? '第二天' : '当天';
+  themeDayXhsBusy = true;
+  themeDayManualReferenceBusy = true;
+  renderThemeDayEnabled();
+  if (status) status.textContent = '正在下载并指定这张穿搭…';
+  try {
+    var importResponse = await fetch('/api/xiaohongshu/import', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        url: image.url,
+        title: note.title,
+        author: note.author
+      })
+    });
+    var imported = await importResponse.json().catch(function() { return {}; });
+    if (!importResponse.ok || imported.error) throw new Error(imported.message || imported.error || 'HTTP ' + importResponse.status);
+    var response = await fetch('/api/xiaohongshu/schedule-mode', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        enabled: true,
+        schedule_date: scheduleDate,
+        manual_reference_url: imported.url,
+        title: note.title,
+        author: note.author
+      })
+    });
+    var data = await response.json().catch(function() { return {}; });
+    if (!response.ok || data.error) throw new Error(data.message || data.error || 'HTTP ' + response.status);
+    var selectedReference = data && data.today_reference && typeof data.today_reference === 'object'
+      ? data.today_reference
+      : {};
+    if (!selectedReference.url) throw new Error('后端没有返回已指定的穿搭图');
+    themeDayManualReferenceUrl = selectedReference.url;
+    renderThemeDayManualReference();
+    if (status) status.textContent = '已手动指定' + targetLabel + '的小红书穿搭，可以生成主题日了';
+  } catch (error) {
+    if (status) status.textContent = '指定失败：' + error.message;
+  } finally {
+    themeDayXhsBusy = false;
+    themeDayManualReferenceBusy = false;
+    renderThemeDayEnabled();
+  }
+}
+
+async function clearThemeDayXhs() {
+  if (themeDayXhsBusy) return;
+  var scheduleDate = themeDayScheduleDate();
+  themeDayXhsBusy = true;
+  themeDayManualReferenceBusy = true;
+  renderThemeDayEnabled();
+  var status = document.getElementById('eggThemeDayXhsStatus');
+  try {
+    var response = await fetch('/api/xiaohongshu/schedule-mode', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        schedule_date: scheduleDate,
+        clear_manual_reference: true
+      })
+    });
+    var data = await response.json().catch(function() { return {}; });
+    if (!response.ok || data.error) throw new Error(data.message || data.error || 'HTTP ' + response.status);
+    themeDayManualReferenceUrl = "";
+    themeDayXhsActiveNote = null;
+    themeDayXhsResults = [];
+    renderThemeDayManualReference();
+    renderThemeDayXhsResults();
+    var images = document.getElementById('eggThemeDayXhsImages');
+    if (images) images.innerHTML = '';
+    if (status) status.textContent = '已清除手动指定，之后将按主题自动搜索';
+  } catch (error) {
+    if (status) status.textContent = '清除失败：' + error.message;
+  } finally {
+    themeDayXhsBusy = false;
+    themeDayManualReferenceBusy = false;
+    renderThemeDayEnabled();
+  }
+}
+
+function selectThemeDayTarget(target) {
+  if (themeDayManualReferenceBusy) return;
+  selectedThemeDayTarget = target === 'tomorrow' ? 'tomorrow' : 'today';
+  document.querySelectorAll('[data-theme-target]').forEach(function(button) {
+    button.classList.toggle('active', button.dataset.themeTarget === selectedThemeDayTarget);
+  });
+  scheduleEggCache = { html: '', dateText: '', updatedAt: 0 };
+  loadScheduleEggData({force: true});
+  loadThemeDayManualReference();
+}
+
+async function generateThemeDay(randomize) {
+  var status = document.getElementById('eggThemeDayStatus');
+  if (!themeDayEnabled) {
+    if (status) {
+      status.classList.add('error');
+      status.textContent = '请先开启主题日开关，再生成主题日程。';
+    }
+    return;
+  }
+  if (themeDayManualReferenceBusy) {
+    if (status) {
+      status.classList.remove('error');
+      status.textContent = '手动穿搭仍在下载和保存，请等到出现“可以生成主题日了”再继续。';
+    }
+    return;
+  }
+  if (themeDayBusy) {
+    if (status) status.textContent = '主题日正在生成中，请稍候；小红书检索可能需要一两分钟…';
+    return;
+  }
+  var input = document.getElementById('eggThemeDayInput');
+  var theme = input ? String(input.value || '').trim() : '';
+  if (!randomize && !theme) randomize = true;
+  themeDayBusy = true;
+  renderThemeDayEnabled();
+  if (status) {
+    status.classList.remove('error');
+    status.textContent = randomize
+      ? '正在随机选择主题；如果开启小红书，会先搜索匹配穿搭…'
+      : '正在生成主题日程；如果开启小红书，会先搜索匹配穿搭…';
+  }
+  var progressMessages = [
+    '正在检查小红书状态并准备搜索词…',
+    '正在搜索匹配的真人穿搭（可能需要 2–8 分钟）…',
+    '正在读取候选图片并做穿搭质量检查…',
+    '小红书找不到合格图片时会自动回退到 LLM 生成，页面不会卡住…'
+  ];
+  var progressIndex = 0;
+  var serverPhase = '';
+  var progressStartedAt = Date.now();
+  var progressTimer = setInterval(function() {
+    if (!status) return;
+    if (serverPhase) {
+      var elapsedSeconds = Math.floor((Date.now() - progressStartedAt) / 1000);
+      status.textContent = serverPhase + '（已等待 ' + elapsedSeconds + ' 秒）';
+      return;
+    }
+    status.textContent = progressMessages[progressIndex % progressMessages.length];
+    progressIndex += 1;
+  }, 8000);
+  try {
+    var response = await fetch('/api/theme-day', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        theme: randomize ? '' : theme,
+        description: randomize ? '' : theme,
+        mode: randomize ? 'random' : 'custom',
+        target: selectedThemeDayTarget,
+        manual_reference_url: themeDayManualReferenceUrl,
+        async: true
+      })
+    });
+    var data = await response.json().catch(function() { return {}; });
+    if (!response.ok) throw new Error(data.message || data.error || ('HTTP ' + response.status));
+    if (data.status === 'running' && data.job_id) {
+      if (status) status.textContent = '任务已开始；正在保留完整的小红书检索流程，请稍候…';
+      data = await waitForThemeDayJob(data.job_id, function(phase) {
+        serverPhase = phase;
+        if (status) status.textContent = phase;
+      });
+    }
+    if (data.status === 'error') throw new Error(data.message || data.error || '主题日生成失败');
+    var entry = data.entry || {};
+    if (input && entry.theme_day) input.value = entry.theme_day;
+    if (status) status.textContent = (selectedThemeDayTarget === 'tomorrow' ? '第二天' : '当天') + '主题日已生成：' + (entry.theme_day || '随机主题');
+    scheduleEggCache = { html: '', dateText: '', updatedAt: 0 };
+    await loadScheduleEggData({force: true});
+    if (typeof loadGallery === 'function') loadGallery({skipTabSwitch: true});
+    showToast('主题日日程已生成');
+  } catch (error) {
+    if (status) {
+      status.classList.add('error');
+      status.textContent = '生成失败：' + (error && error.message ? error.message : '未知错误');
+    }
+    showToast('主题日生成失败：' + (error && error.message ? error.message : '未知错误'), 7000);
+  } finally {
+    clearInterval(progressTimer);
+    themeDayBusy = false;
+    renderThemeDayEnabled();
+  }
+}
+
+async function waitForThemeDayJob(jobId, onPhase) {
+  var deadline = Date.now() + 30 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await new Promise(function(resolve) { setTimeout(resolve, 1800); });
+    var response = await fetch('/api/theme-day/status?job_id=' + encodeURIComponent(jobId), {
+      cache: 'no-store'
+    });
+    var data = await response.json().catch(function() { return {}; });
+    if (!response.ok) throw new Error(data.message || data.error || ('HTTP ' + response.status));
+    if (data.phase && typeof onPhase === 'function') onPhase(String(data.phase));
+    if (data.status === 'ok' || data.status === 'error') return data;
+  }
+  throw new Error('主题日仍在后台生成，页面等待已超时；请稍后刷新查看结果。');
+}
+
 function loadScheduleEggData(options) {
   options = options || {};
   var body = document.getElementById('eggBody');
@@ -15957,15 +16439,27 @@ function loadScheduleEggData(options) {
     return scheduleEggRequest;
   }
 
-  // 并行拉取日程详情、今日照片和真实待执行生图任务
+  // 并行拉取目标日程详情、今日照片和真实待执行生图任务
+  var scheduleDetailUrl = '/api/schedule-detail';
+  if (selectedThemeDayTarget === 'tomorrow') {
+    var tomorrowDate = new Date();
+    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+    var yyyy = tomorrowDate.getFullYear();
+    var mm = String(tomorrowDate.getMonth() + 1).padStart(2, '0');
+    var dd = String(tomorrowDate.getDate()).padStart(2, '0');
+    scheduleDetailUrl += '?date=' + yyyy + '-' + mm + '-' + dd;
+  }
   scheduleEggRequest = Promise.all([
-    fetch('/api/schedule-detail').then(function(r){ return r.json(); }).catch(function(){ return null; }),
+    fetch(scheduleDetailUrl).then(function(r){ return r.json(); }).catch(function(){ return null; }),
     fetch('/api/today').then(function(r){ return r.json(); }).catch(function(){ return null; }),
     fetch('/api/photo-jobs').then(function(r){ return r.json(); }).catch(function(){ return null; }),
   ]).then(function(results) {
     var detail = results[0];
     var today  = results[1];
     var jobsData = results[2];
+    var isFutureSchedule = !!(detail && today && detail.date && detail.date !== today.date);
+    var eggTitle = document.querySelector('#eggOverlay .egg-header h2');
+    if (eggTitle) eggTitle.textContent = isFutureSchedule ? '✨ 第二天主题日日程' : '🌸 今日日程彩蛋';
     var maxDaily = Math.max(1, Math.min(6, parseInt((jobsData && jobsData.max_daily) || 6, 10) || 6));
     var minDaily = Math.max(1, parseInt((jobsData && jobsData.min) || 1, 10) || 1);
     var maxCap = Math.max(minDaily, Math.min(6, parseInt((jobsData && jobsData.max) || 6, 10) || 6));
@@ -15981,7 +16475,8 @@ function loadScheduleEggData(options) {
     }
 
     var currentOutfitStyle = (detail.outfit_style || (detail.outfit && detail.outfit['风格']) || '').trim();
-    var eggDateText = detail.date + (detail.outfit_style ? ' · ' + escapeHtml(detail.outfit_style) : '');
+    var themeDayText = String(detail.theme_day || '').trim();
+    var eggDateText = detail.date + (detail.outfit_style ? ' · ' + escapeHtml(detail.outfit_style) : '') + (themeDayText ? ' · ✨ ' + escapeHtml(themeDayText) : '');
     dateEl.textContent = eggDateText;
 
     function shortScheduleModelName(model) {
@@ -16030,6 +16525,10 @@ function loadScheduleEggData(options) {
     // ===== 生图 job 状态（来自真实 APScheduler jobs + 已完成照片记录）=====
     var photos = (today && today.photos) ? today.photos : [];
     var jobs = (jobsData && jobsData.jobs) ? jobsData.jobs : [];
+    if (isFutureSchedule) {
+      photos = [];
+      jobs = [];
+    }
     // 如果 /api/today 没给，fallback 到 detail.photos（万一以后加）
     if (photos.length === 0 && detail.photos) photos = detail.photos;
 
@@ -16086,8 +16585,8 @@ function loadScheduleEggData(options) {
         hasPhoto: !!photoTimeMap[normalizedTime],
         hasJob: !!jobTimeMap[normalizedTime],
       };
-      if (!normalizedItem.hasPhoto && !normalizedItem.hasJob) continue;
-      var itemPast = isPastOrNow(normalizedTime);
+      if (!normalizedItem.hasPhoto && !normalizedItem.hasJob && !isFutureSchedule) continue;
+      var itemPast = isFutureSchedule ? false : isPastOrNow(normalizedTime);
       normalizedItem.isPast = itemPast || normalizedItem.hasPhoto;
       normalizedItem.isNext = !normalizedItem.isPast;
       if (normalizedItem.isNext) {
@@ -16173,12 +16672,12 @@ function loadScheduleEggData(options) {
 
     // 显示今日真实生图计划
     html += '<div class="egg-photo-status">';
-    html += '<div class="egg-photo-status-title"><span class="egg-photo-status-title-main"><span class="icon">📸</span>今日生图计划</span><button class="egg-cloud-open-btn" type="button" data-action="open-keyword-cloud" aria-label="打开词云系统" title="打开词云系统">☁️</button></div>';
+    html += '<div class="egg-photo-status-title"><span class="egg-photo-status-title-main"><span class="icon">📸</span>' + (isFutureSchedule ? '第二天生图预告' : '今日生图计划') + '</span>' + (isFutureSchedule ? '' : '<button class="egg-cloud-open-btn" type="button" data-action="open-keyword-cloud" aria-label="打开词云系统" title="打开词云系统">☁️</button>') + '</div>';
     var retryableToday = Math.max(0, jobs.length - activeToday);
-    var usageText = '已创建 ' + plannedToday + '/' + maxDaily + ' · 已完成 ' + completedToday;
-    if (activeToday > 0) usageText += ' · 待执行 ' + activeToday;
-    if (retryableToday > 0) usageText += ' · 可重试 ' + retryableToday;
-    html += '<div class="egg-limit-control">';
+    var usageText = isFutureSchedule ? '将在当天按日程时间生成' : ('已创建 ' + plannedToday + '/' + maxDaily + ' · 已完成 ' + completedToday);
+    if (!isFutureSchedule && activeToday > 0) usageText += ' · 待执行 ' + activeToday;
+    if (!isFutureSchedule && retryableToday > 0) usageText += ' · 可重试 ' + retryableToday;
+    html += '<div class="egg-limit-control"' + (isFutureSchedule ? ' style="display:none"' : '') + '>';
     html += '<span>计划上限</span>';
     html += '<input class="egg-limit-input" id="eggPhotoLimit" type="number" min="' + minDaily + '" max="' + maxCap + '" step="1" value="' + maxDaily + '">';
     html += '<span>/ ' + maxCap + '</span>';
@@ -16229,7 +16728,7 @@ function loadScheduleEggData(options) {
     } else {
       html += '<div class="egg-photo-item egg-slot-empty">';
       html += '<span class="egg-photo-status-badge past">暂无</span>';
-      html += '<span class="egg-photo-activity">当前没有待执行生图 job，也没有已完成生图记录</span>';
+      html += '<span class="egg-photo-activity">' + (isFutureSchedule ? '第二天会按这份主题日日程安排生图' : '当前没有待执行生图 job，也没有已完成生图记录') + '</span>';
       html += '</div>';
     }
 
@@ -17452,6 +17951,7 @@ function openScheduleEgg() {
   }
   overlay.classList.add('show');
   loadScheduleEggData({ force: true });
+  loadThemeDayState();
 }
 
 function refreshScheduleEgg() {

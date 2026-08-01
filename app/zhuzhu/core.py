@@ -1108,6 +1108,14 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
                  time_constraint: str = "", allow_random_pool: bool = False,
                  photo_style_en: str = "") -> str:
     is_sexy = theme == "sexy"
+    has_theme_location_override = "IMMERSIVE THEME-DAY LOCATION OVERRIDE" in str(scene_keywords or "")
+    if has_theme_location_override and photo_style_en:
+        photo_style_en = re.sub(
+            r"\b(?:home|apartment|residential)\b",
+            "theme-environment",
+            str(photo_style_en),
+            flags=re.IGNORECASE,
+        )
     quality = _resolve_quality_prefix(theme, photo_style_en)
 
     # 读取 runtime persona 的 appearance（Web UI / Hermes / OpenClaw / config），覆盖内置常量。
@@ -1201,9 +1209,18 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
 
     activity_focus = ""
     if schedule_activity:
+        setting_instruction = (
+            "Use this schedule text as the source of truth for the action, props, mood, time of day, "
+            "outfit, and hairstyle. The setting must follow only the immersive theme-day location "
+            "override in Background; adapt and ignore any generic modern location embedded in the "
+            "schedule text. "
+            if has_theme_location_override else
+            "Use this schedule text as the source of truth for the action, props, setting, mood, time "
+            "of day, outfit, and hairstyle. "
+        )
         activity_focus = (
             f"Current scheduled scene from today's LLM plan: {schedule_activity}. "
-            "Use this schedule text as the source of truth for the action, props, setting, mood, time of day, outfit, and hairstyle. "
+            f"{setting_instruction}"
             "Do not replace it with a generic routine or another activity. "
             "If the plan mentions another person, judge for yourself how to keep the story while showing only this woman as the clear subject in the photo; "
             "prefer atmosphere and props over putting a second person in frame. "

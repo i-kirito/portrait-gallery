@@ -844,7 +844,8 @@ def _multi_reference_edit_instruction(
     """Build dual/multi-ref instructions.
 
     Convention:
-    - image 1 = base / pose / outfit / scene lock
+    - normal mode image 1 = base / pose / outfit / scene lock
+    - Xiaohongshu outfit mode image 1 = outfit styling only
     - image 2+ = face/identity (and optional hair color when requested in text)
     """
     refs = [str(x or "").strip() for x in (ref_images or []) if str(x or "").strip()]

@@ -44,6 +44,21 @@ SCHEDULE_TYPES = [
     "学习日", "社交日", "旅行日", "创作日", "放松日",
 ]
 
+# 主题日只提供“可随机抽取”的灵感池；用户也可以在 WebUI 中输入任意主题。
+# 这些主题刻意保留为中文短语，后续由日程模型将其扩展成穿搭、活动和场景。
+THEME_DAY_POOL = [
+    "霍格沃兹魔法体验日",
+    "巴黎左岸咖啡馆日",
+    "海边度假日",
+    "复古电影院日",
+    "森林野餐日",
+    "博物馆灵感日",
+    "日式夏祭日",
+    "雨天书店日",
+    "花园下午茶日",
+    "太空探索主题日",
+]
+
 BED_IDLE_TERMS = (
     "赖床",
     "床上",
@@ -1521,6 +1536,8 @@ class DailyScheduler:
         history: str,
         schedule_history: str,
         disliked_context: Optional[str] = None,
+        theme_day: str = "",
+        theme_description: str = "",
     ) -> str:
         """构建日程生成 prompt"""
         weekday = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"][today.weekday()]
@@ -1528,8 +1545,15 @@ class DailyScheduler:
         enabled_styles = load_enabled_outfit_styles(self.config, self.data_dir)
         style_list_text = ", ".join(enabled_styles)
         mood = random.choice(MOOD_COLORS)
-        sched_type = self._select_schedule_type(day_context)
+        theme_context = self._theme_context(theme_day, theme_description)
+        sched_type = "主题体验日" if theme_context else self._select_schedule_type(day_context)
         calendar_guidance = day_context.prompt_block(sched_type)
+        if self._is_immersive_theme(theme_day, theme_description):
+            calendar_guidance += (
+                "\n主题体验例外：上面的上班/上学禁项只约束现实工作与现实学校安排；"
+                "用户明确要求的沉浸式角色体验、主题课程、职业任务或世界观内活动可以安排，"
+                "但必须发生在主题设定对应的地点中。"
+            )
         persona = self._runtime_persona()
         character_name = persona.get("name") or "角色"
         user_name = persona.get("user_name") or "用户"
@@ -1712,6 +1736,8 @@ JSON 格式（字段名固定，value 替换为实际内容）：
         history: str,
         schedule_history: str,
         disliked_context: Optional[str] = None,
+        theme_day: str = "",
+        theme_description: str = "",
     ) -> str:
         """Build a shorter schedule prompt for providers that choke on the full context."""
         weekday = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"][today.weekday()]
@@ -1719,8 +1745,15 @@ JSON 格式（字段名固定，value 替换为实际内容）：
         enabled_styles = load_enabled_outfit_styles(self.config, self.data_dir)
         style_list_text = ", ".join(enabled_styles)
         mood = random.choice(MOOD_COLORS)
-        sched_type = self._select_schedule_type(day_context)
+        theme_context = self._theme_context(theme_day, theme_description)
+        sched_type = "主题体验日" if theme_context else self._select_schedule_type(day_context)
         calendar_guidance = day_context.prompt_block(sched_type)
+        if self._is_immersive_theme(theme_day, theme_description):
+            calendar_guidance += (
+                "\n主题体验例外：上面的上班/上学禁项只约束现实安排；"
+                "用户明确指定的角色体验、主题课程或世界观内任务可以安排，"
+                "且必须发生在主题设定对应的地点中。"
+            )
         persona = self._runtime_persona()
         character_name = persona.get("name") or "角色"
         user_name = persona.get("user_name") or "用户"
@@ -1805,13 +1838,21 @@ JSON 格式（字段名固定，value 替换为实际内容）：
         schedule_history: str = "",
         outfit_history: str = "",
         disliked_context: Optional[str] = None,
+        theme_day: str = "",
+        theme_description: str = "",
     ) -> str:
         """Smallest strict prompt used when an upstream model times out on rich context."""
         weekday = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"][today.weekday()]
         day_context = self._day_context(today)
         enabled_styles = load_enabled_outfit_styles(self.config, self.data_dir)
-        sched_type = self._select_schedule_type(day_context)
+        theme_context = self._theme_context(theme_day, theme_description)
+        sched_type = "主题体验日" if theme_context else self._select_schedule_type(day_context)
         calendar_guidance = day_context.prompt_block(sched_type)
+        if self._is_immersive_theme(theme_day, theme_description):
+            calendar_guidance += (
+                "\n主题体验例外：现实休息日禁项不阻止用户明确指定的沉浸式角色体验；"
+                "相关活动必须留在主题世界或主题场所中。"
+            )
         persona = self._runtime_persona()
         character_name = persona.get("name") or "角色"
         appearance = persona.get("appearance") or self._char.get("appearance", "")
@@ -2143,6 +2184,34 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             if not activity or self._contains_cjk(activity):
                 return display_items, prompt_items, f"schedule_prompt 第 {idx} 条活动必须是纯英文"
         return display_items, prompt_items, ""
+
+    def _salvage_schedule_prompt(self, data: dict, display_items: list[tuple[str, str]]) -> str:
+        """Rebuild a missing schedule_prompt from structured schedule_details.
+
+        The LLM occasionally returns a valid Chinese schedule and valid
+        schedule_details but drops the English schedule_prompt. Rebuild the
+        English prompt lines from the structured English fields instead of
+        discarding the whole candidate.
+        """
+        raw_details = data.get("schedule_details")
+        if not isinstance(raw_details, list) or len(raw_details) != len(display_items):
+            return ""
+        lines = []
+        for item in raw_details:
+            if not isinstance(item, dict):
+                return ""
+            time_text = self._normalize_hhmm(item.get("time"))
+            if not time_text:
+                return ""
+            activity_en = self._text_field(item.get("activity_en"))
+            if not activity_en:
+                action_en = self._text_field(item.get("action_en"))
+                scene_en = self._text_field(item.get("scene_en"))
+                activity_en = " ".join(part for part in (action_en, scene_en) if part)
+            if not activity_en or self._contains_cjk(activity_en):
+                return ""
+            lines.append(f"{time_text} {activity_en}")
+        return "\n".join(lines)
 
     def _normalize_schedule_details(
         self,
@@ -2484,6 +2553,106 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
         return "冬季"
 
     @staticmethod
+    def _normalize_theme_day(value: str) -> str:
+        """Normalize a user-facing theme while keeping prompts bounded."""
+        text = re.sub(r"\s+", " ", str(value or "")).strip(" `\"'“”‘’。，,；;：:")
+        text = re.sub(r"(?:主题日|主题)$", "", text).strip()
+        return text[:48]
+
+    @classmethod
+    def _theme_context(cls, theme_day: str = "", theme_description: str = "") -> str:
+        theme = cls._normalize_theme_day(theme_day)
+        return re.sub(r"\s+", " ", str(theme_description or "")).strip()[:160] or theme
+
+    @classmethod
+    def _is_immersive_theme(cls, theme_day: str = "", theme_description: str = "") -> bool:
+        """Return whether a theme explicitly asks to inhabit a role/world/experience."""
+        context = cls._theme_context(theme_day, theme_description).lower()
+        if not context:
+            return False
+        markers = (
+            "穿越", "体验", "扮演", "化身", "成为", "模拟", "沉浸", "探索", "巡游", "一日",
+            "experience", "roleplay", "role-play", "step into", "day as", "become", "immersive",
+        )
+        return any(marker in context for marker in markers)
+
+    @classmethod
+    def _theme_scene_drift_error(
+        cls,
+        theme_day: str,
+        theme_description: str,
+        schedule_details,
+    ) -> str:
+        """Reject themed schedules that collapse into an unrelated modern home."""
+        context = cls._theme_context(theme_day, theme_description)
+        if not context or not isinstance(schedule_details, list):
+            return ""
+        home_intent = (
+            "居家", "宅家", "家中", "家庭", "公寓", "住宅", "home", "apartment", "residential",
+        )
+        if any(marker in context.lower() for marker in home_intent):
+            return ""
+
+        home_scene_markers = (
+            "居家", "家中", "客厅", "卧室", "厨房", "阳台", "公寓", "住宅",
+            " home ", "home setting", "living room", "bedroom", "kitchen", "balcony", "apartment",
+            "residential",
+        )
+        decoration_markers = (
+            "模型", "海报", "主题装饰", "布景角", "model", "miniature", "poster", "themed decor",
+        )
+        scenes = []
+        drifted = []
+        for item in schedule_details:
+            if not isinstance(item, dict):
+                continue
+            scene = re.sub(r"\s+", " ", str(item.get("scene_en") or "")).strip()
+            if not scene:
+                continue
+            scenes.append(scene)
+            padded = f" {scene.lower()} "
+            is_home = any(marker in padded for marker in home_scene_markers)
+            is_decoration = any(marker in padded for marker in decoration_markers)
+            if is_home or is_decoration:
+                drifted.append(scene)
+
+        if not scenes:
+            return "主题日缺少可验证的场景明细，无法保证背景连续性"
+        threshold = max(2, (len(scenes) + 1) // 2)
+        if len(drifted) < threshold:
+            return ""
+        examples = "；".join(drifted[:2])
+        return (
+            f"主题场景出戏：{len(drifted)}/{len(scenes)} 个时段退回普通住宅或只把主题当装饰"
+            f"（{examples}）。请把活动迁入「{context}」实际对应的世界、场馆、时代或职业环境，"
+            "让建筑、家具、工具和道具共同建立主题，不要在现代住宅里摆主题模型。"
+        )
+
+    @classmethod
+    def random_theme_day(cls) -> str:
+        return random.choice(THEME_DAY_POOL)
+
+    @classmethod
+    def _theme_day_prompt_block(cls, theme_day: str, theme_description: str = "") -> str:
+        theme = cls._normalize_theme_day(theme_day)
+        context = cls._theme_context(theme, theme_description)
+        if not context:
+            return ""
+        return f"""
+【主题日｜最高优先级】
+今天是「{context}」。请把这个主题作为今天真实发生的世界、场馆、时代、职业或活动环境，贯穿整天的穿搭、发型、活动、场景、道具和小心思，生成一份有故事感的成年人沉浸式体验日。
+- 主题日不是一句标题：outfit、prompt、schedule、schedule_prompt、schedule_details 和 caption 都要体现主题，但不要机械重复主题名称。
+- 用户写“穿越、体验、扮演、化身、成为、探索”等主线时，按字面进入该世界/场所/角色，不得擅自改成在普通现代住宅里做同款活动，也不得只靠模型、海报、屏幕或小装饰暗示主题。
+- 每个 schedule_details.scene_en 都必须明确一个属于该主题的具体地点，并用建筑、家具、工具、标识、自然环境或时代细节让背景一眼可辨；普通客厅、卧室、厨房、阳台、公寓、办公室、咖啡馆、公园或街道只有在用户主题本身明确要求时才能使用。
+- 对影视/幻想主题（如霍格沃兹/魔法学院），按用户描述选择“主题园区一日游”或“学院学生的一天”的主线；如果用户明确要求学生/职业/角色体验，就必须采用对应角色主线，不能降级成居家换装或摆拍。
+- 这是对【真实日历约束】的明确限定：周末/节假日仍禁止无关的现实上班、上学与加班，但主题世界内的课程体验、训练、值勤、研究、探索或职业任务属于用户主动指定的沉浸式活动，可以正常安排，不能因为休息日把它们迁回家中。
+- 生成 photo_style_en 时应保持真实照片质感，但“真实”指摄影质感真实，不代表背景必须是现实中的现代居家环境。
+- 体验日不需要强调普通风格分类（如优雅风、复古风、休闲风）：outfit_style、base_style 直接贴合主题（如“魔法学院风”），或只写主题氛围不写风格标签。
+- 如果主题包含影视/幻想世界，只借用安全、日常、可穿戴的色彩、纹样、学院/旅行/阅读等氛围；不要生成角色扮演服、制服仿制品、武器、危险道具、未成年人或性化内容。
+- 全天服装核心组合保持一致，活动可以随时间变化；每条生图描述仍然只能清楚出现角色本人。
+""".strip()
+
+    @staticmethod
     def _normalize_xiaohongshu_search_query(value: str) -> str:
         text = re.sub(r"\s+", "", str(value or "")).strip("`'\"“”‘’。，,；;：: ")
         text = re.sub(r"^(?:关键词|搜索词|keyword)[：:]?", "", text, flags=re.IGNORECASE)
@@ -2493,25 +2662,50 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             text += "穿搭"
         return text[:28]
 
-    async def generate_xiaohongshu_search_query(self) -> str:
+    async def generate_xiaohongshu_search_query(
+        self,
+        theme_day: str = "",
+        theme_description: str = "",
+        target_date: Optional[date | str] = None,
+    ) -> str:
         """Choose one broad XHS keyword before any outfit or schedule is designed."""
-        today = self._configured_today()
+        if target_date is None:
+            today = self._configured_today()
+        elif isinstance(target_date, date):
+            today = target_date
+        else:
+            try:
+                today = date.fromisoformat(str(target_date).strip())
+            except (TypeError, ValueError):
+                today = self._configured_today()
         day_context = self._day_context(today)
         enabled_styles = load_enabled_outfit_styles(self.config, self.data_dir)
         styles = "、".join(enabled_styles) or "自然日常风"
         history = self._get_history(today)
+        theme_text = self._normalize_theme_day(theme_day)
+        theme_context = (
+            re.sub(r"\s+", " ", str(theme_description or "")).strip()
+            or theme_text
+        )
+        theme_block = (
+            f"主题日描述：{theme_context}\n"
+            "搜索词必须能找到与该主题描述匹配的真人日常穿搭（例如霍格沃兹/魔法学院主题可以用"
+            "“霍格沃兹穿搭”“魔法学院风穿搭”），但不要写角色扮演服、舞台服或危险道具。\n"
+            if theme_context else ""
+        )
+        style_line = "" if theme_context else f"可选审美方向：{styles}\n"
         prompt = f"""只输出一个 JSON 对象：{{"keyword":"搜索词"}}。
 为 {today.isoformat()} 选择一个适合去小红书搜索真人穿搭照片的中文关键词。
 季节：{self._season_label(today)}
 日期属性：{day_context.day_type_label}
-可选审美方向：{styles}
-近三天穿搭（今天尽量换一种方向）：{history[:900]}
+{style_line}{theme_block}近三天穿搭（今天尽量换一种方向）：{history[:900]}
 
 规则：
 1. 此时还没有生成今日日程，也不要设计具体衣服；只选宽泛的季节、风格或场合方向。
-2. 搜索词控制在 6-16 个汉字，必须包含“穿搭”，例如“夏季温柔居家穿搭”“夏日休闲通勤穿搭”。
-3. 不写具体上衣、裙裤、鞋履、首饰、颜色清单，不写人物长相、身材、动作、摄影参数。
-4. 只输出 JSON，不解释。"""
+2. 搜索词控制在 6-16 个汉字，必须包含“穿搭”。
+3. 有主题日时，搜索词必须直接保留主题词或其最贴切的通用说法，例如“霍格沃兹穿搭”“魔法学院风穿搭”“太空风穿搭”；可以加季节/场合修饰，但不能把主题稀释成“温柔/居家/休闲”这类泛化方向。
+4. 不写具体上衣、裙裤、鞋履、首饰、颜色清单，不写人物长相、身材、动作、摄影参数。
+5. 只输出 JSON，不解释。"""
         text = await self._call_llm(
             prompt,
             timeout=60,
@@ -2522,13 +2716,31 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
         keyword = self._normalize_xiaohongshu_search_query(
             data.get("keyword", "") if isinstance(data, dict) else ""
         )
-        if keyword:
-            logger.info("今日小红书穿搭搜索词已选择: %s", keyword)
-            return keyword
         style = random.choice(enabled_styles) if enabled_styles else "自然日常风"
-        fallback = self._normalize_xiaohongshu_search_query(
-            f"{self._season_label(today)}{style}穿搭"
-        )
+        theme_search_base = re.sub(
+            r"(?:体验日|主题日|主题|的一天)$", "", theme_text
+        ).strip()
+        fallback_base = theme_search_base or f"{self._season_label(today)}{style}"
+        fallback = self._normalize_xiaohongshu_search_query(f"{fallback_base}穿搭")
+        if keyword:
+            if theme_search_base and len(theme_search_base) >= 2:
+                theme_tokens = [
+                    theme_search_base[index:index + 2]
+                    for index in range(len(theme_search_base) - 1)
+                ]
+                thematic_hints = (
+                    "主题", "体验", "学院", "魔法", "童话", "幻想", "太空",
+                    "宇宙", "探险", "假日", "漫游", "巡游", "汉服", "国风",
+                    "赛博", "蒸汽", "森系", "复古", "旅行",
+                )
+                if not any(token in keyword for token in theme_tokens) and not any(
+                    hint in keyword for hint in thematic_hints
+                ):
+                    keyword = fallback
+                    logger.warning("小红书搜索词偏离主题，改用主题兜底词: %s", keyword)
+            if keyword:
+                logger.info("今日小红书穿搭搜索词已选择: %s", keyword)
+                return keyword
         logger.warning("小红书搜索词 LLM 返回无效，使用兜底词: %s", fallback)
         return fallback
 
@@ -2668,9 +2880,24 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
         *,
         outfit_reference_path: str = "",
         xiaohongshu_search_query: str = "",
+        target_date: Optional[date | str] = None,
+        theme_day: str = "",
+        theme_day_mode: str = "",
+        theme_description: str = "",
     ) -> Optional[DailyEntry]:
-        """生成今日日程"""
-        today = self._configured_today()
+        """生成指定日期日程；不传日期时保持原有的今日日程行为。"""
+        if target_date is None:
+            today = self._configured_today()
+        elif isinstance(target_date, date):
+            today = target_date
+        else:
+            try:
+                today = date.fromisoformat(str(target_date).strip())
+            except (TypeError, ValueError):
+                logger.warning("无效的日程目标日期，回退到今天: %s", target_date)
+                today = self._configured_today()
+        theme_day = self._normalize_theme_day(theme_day)
+        theme_day_mode = str(theme_day_mode or "").strip().lower()
         day_context = self._day_context(today)
         date_str = today.isoformat()
 
@@ -2688,19 +2915,26 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             history,
             schedule_history,
             disliked_context=disliked_context,
+            theme_day=theme_day,
+            theme_description=theme_description,
         )
         compact_prompt = self._build_compact_schedule_prompt(
             today,
             history,
             schedule_history,
             disliked_context=disliked_context,
+            theme_day=theme_day,
+            theme_description=theme_description,
         )
         emergency_prompt = self._build_emergency_schedule_prompt(
             today,
             schedule_history,
             history,
             disliked_context=disliked_context,
+            theme_day=theme_day,
+            theme_description=theme_description,
         )
+        theme_block = self._theme_day_prompt_block(theme_day, theme_description)
         visual_block = ""
         outfit_reference_path = str(outfit_reference_path or "").strip()
         xiaohongshu_search_query = self._normalize_xiaohongshu_search_query(
@@ -2711,20 +2945,38 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
                 xiaohongshu_search_query
             )
         prompt_sequence = [
-            current_prompt + visual_block
+            current_prompt + ("\n\n" + theme_block if theme_block else "") + visual_block
             for current_prompt in (prompt, compact_prompt, emergency_prompt)
         ]
+        attempt_count = 5 if theme_day else 3
+        if theme_day:
+            prompt_sequence.append(
+                emergency_prompt + ("\n\n" + theme_block if theme_block else "") + visual_block
+            )
         disliked_rejection_feedback = ""
+        theme_rejection_feedback = ""
+        forbidden_rejection_feedback = False
         self._last_llm_model = ""
 
-        # 最多重试 3 次
-        for attempt in range(3):
-            current_prompt = prompt_sequence[attempt]
+        for attempt in range(attempt_count):
+            current_prompt = prompt_sequence[min(attempt, len(prompt_sequence) - 1)]
             if disliked_rejection_feedback:
                 current_prompt += (
                     "\n\n【上一候选已被系统拒绝】\n"
                     + disliked_rejection_feedback
                     + "\n这次必须重新设计核心单品组合。"
+                )
+            if theme_rejection_feedback:
+                current_prompt += (
+                    "\n\n【上一候选主题场景出戏，已被系统拒绝】\n"
+                    + theme_rejection_feedback
+                    + "\n这次必须重写全天活动与每个 scene_en，让人物真实处于主题对应的世界、场馆、"
+                    "时代或职业环境；不能只换装，也不能在普通住宅里摆主题装饰。"
+                )
+            if forbidden_rejection_feedback:
+                current_prompt += (
+                    "\n\n【上一候选触发了禁词检查】\n"
+                    "这次必须逐字段重新检查日程禁词及其英文同义词；不要复述禁词，不要输出任何相关活动、道具、场景或配饰。"
                 )
             if attempt == 1:
                 logger.warning("完整日程 prompt 未生成可用 JSON，切换压缩日程 prompt 重试")
@@ -2754,6 +3006,18 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
                 if not data:
                     continue
 
+                data = self._parse_llm_response(text)
+                if not data:
+                    logger.warning(f"解析失败 (attempt {attempt+1})，尝试 JSON 修复")
+                    data = await self._repair_schedule_json(
+                        current_prompt,
+                        text,
+                        attempt + 1,
+                        image_path=outfit_reference_path,
+                    )
+                    if not data:
+                        continue
+
             # 提取关键词（LLM 输出优先，fallback 从 prompt 提取）
             outfit_kw = self._text_field(data.get("outfit_keywords", ""))
             scene_kw = self._text_field(data.get("scene_keywords", ""))
@@ -2768,6 +3032,10 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             schedule_prompt = self._schedule_text_field(data.get("schedule_prompt", "") or data.get("schedule_en", ""), english=True)
             outfit_display = self._outfit_text_field(data.get("outfit", ""), data.get("outfit_style", ""))
             base_style = self._normalize_base_style(data.get("base_style", ""))
+            if theme_day:
+                # Theme days carry their own aesthetic; generic legacy style
+                # buckets must not be injected into image generation.
+                base_style = ""
             reference_query = str(data.get("reference_query") or "").strip()
             if not reference_query:
                 reference_query = " | ".join(
@@ -2775,12 +3043,21 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
                     for part in (data.get("outfit_style", ""), outfit_display, llm_prompt)
                     if str(part or "").strip()
                 )[:600]
-            if not schedule_display or not schedule_prompt or not self._contains_cjk(schedule_display):
+            if not schedule_display or not self._contains_cjk(schedule_display):
                 logger.warning(f"日程字段不完整或展示日程非中文 (attempt {attempt+1})")
+                continue
+            if not schedule_prompt:
+                schedule_prompt = self._salvage_schedule_prompt(
+                    data,
+                    self._schedule_plan_items(schedule_display),
+                )
+            if not schedule_prompt:
+                logger.warning(f"日程缺少生图英文日程 (attempt {attempt+1})")
                 continue
             forbidden_error = self._schedule_forbidden_output_error(data)
             if forbidden_error:
                 logger.warning("日程触发禁词约束 (attempt %s): %s", attempt + 1, forbidden_error)
+                forbidden_rejection_feedback = True
                 continue
             display_items, prompt_items, alignment_error = self._validate_schedule_alignment(
                 schedule_display,
@@ -2833,6 +3110,15 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             if detail_error:
                 logger.warning(f"schedule_details 不合格 (attempt {attempt+1}): {detail_error}")
                 continue
+            theme_scene_error = self._theme_scene_drift_error(
+                theme_day,
+                theme_description,
+                schedule_details,
+            )
+            if theme_scene_error:
+                theme_rejection_feedback = theme_scene_error
+                logger.warning("主题日场景连续性不合格 (attempt %s): %s", attempt + 1, theme_scene_error)
+                continue
             candidate_outfit["schedule_details"] = schedule_details
             disliked_similarity_error = self._disliked_outfit_similarity_error(
                 candidate_outfit,
@@ -2853,12 +3139,14 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
                         disliked_similarity_error,
                     )
                     continue
-            calendar_conflicts = day_context.rest_day_conflicts(
-                schedule_display,
-                schedule_prompt,
-                schedule_details,
-                data.get("caption", ""),
-            )
+            calendar_conflicts = []
+            if not self._is_immersive_theme(theme_day, theme_description):
+                calendar_conflicts = day_context.rest_day_conflicts(
+                    schedule_display,
+                    schedule_prompt,
+                    schedule_details,
+                    data.get("caption", ""),
+                )
             calendar_error = self._calendar_conflict_message(day_context, calendar_conflicts)
             if calendar_error:
                 logger.warning("真实日期约束不合格 (attempt %s): %s", attempt + 1, calendar_error)
@@ -2888,6 +3176,9 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
                 photo_style_en=photo_style_en,
                 schedule_llm_model=schedule_model,
                 xiaohongshu_search_query=xiaohongshu_search_query,
+                theme_day=theme_day,
+                theme_day_mode=theme_day_mode,
+                theme_description=theme_description,
             )
             logger.info(
                 f"日程生成成功: model={schedule_model or '-'} | {entry.outfit_style} | "
@@ -2896,10 +3187,22 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             )
             return entry
 
-        logger.error(f"日程生成失败: 重试 {3} 次均未成功")
-        return self._build_fallback_entry(today)
+        logger.error(f"日程生成失败: 重试 {attempt_count} 次均未成功")
+        return self._build_fallback_entry(
+            today,
+            theme_day=theme_day,
+            theme_day_mode=theme_day_mode,
+            theme_description=theme_description,
+        )
 
-    def _build_fallback_entry(self, today: date) -> DailyEntry:
+    def _build_fallback_entry(
+        self,
+        today: date,
+        *,
+        theme_day: str = "",
+        theme_day_mode: str = "",
+        theme_description: str = "",
+    ) -> DailyEntry:
         date_str = today.isoformat()
         return DailyEntry(
             date=date_str,
@@ -2918,4 +3221,7 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             scene_keywords="",
             photo_style_en="",
             schedule_llm_model="fallback",
+            theme_day=self._normalize_theme_day(theme_day),
+            theme_day_mode=str(theme_day_mode or "").strip().lower(),
+            theme_description=str(theme_description or "").strip(),
         )
