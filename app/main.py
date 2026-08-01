@@ -354,6 +354,7 @@ class PortraitGalleryApp:
         self.web_server.on_generate_group = self.generate_group
         self.web_server.on_list_photo_jobs = self.list_photo_jobs
         self.web_server.on_refresh_schedule = self.refresh_schedule
+        self.web_server.on_theme_day = self.generate_theme_day
         self.web_server.on_rebuild_photo_jobs = self.rebuild_photo_jobs
         self.web_server.on_retry_photo_job = self.retry_photo_job
         self.web_server.on_photo_quota_snapshot = self._photo_quota_snapshot
@@ -448,6 +449,10 @@ class PortraitGalleryApp:
         schedule_date: str,
         *,
         force: bool = True,
+        theme_day: str = "",
+        theme_description: str = "",
+        manual_reference_url: str = "",
+        selection_timeout_seconds: Optional[float] = None,
     ) -> tuple[dict, str]:
         """Choose a broad keyword and download the real outfit before schedule generation."""
         web_server = getattr(self, "web_server", None)
@@ -456,12 +461,20 @@ class PortraitGalleryApp:
         existing_selector = getattr(web_server, "_xiaohongshu_schedule_reference", None)
         keyword_generator = getattr(self.scheduler_gen, "generate_xiaohongshu_search_query", None)
         if not callable(enabled) or not enabled():
-            return {}, ""
+            if not manual_reference_url:
+                return {}, ""
         if not asyncio.iscoroutinefunction(ensure) or not asyncio.iscoroutinefunction(keyword_generator):
             logger.warning("小红书日程前置选图接口不可用，回退原日程生成")
             return {}, ""
+        existing = dict(existing_selector(schedule_date) or {}) if callable(existing_selector) else {}
+        if (
+            existing.get("path")
+            and str(existing.get("selection_source") or "").strip() == "manual"
+            and (theme_day or theme_description)
+            and not manual_reference_url
+        ):
+            return existing, str(existing.get("query") or "").strip()
         if not force and callable(existing_selector):
-            existing = dict(existing_selector(schedule_date) or {})
             if existing.get("path"):
                 existing_query = str(existing.get("query") or "").strip()
                 reused = await ensure(
@@ -478,22 +491,49 @@ class PortraitGalleryApp:
         # a generic "穿搭" search.
         pending_query = ""
         schedule_store = getattr(web_server, "xiaohongshu_schedule_store", None)
-        if force and schedule_store is not None and callable(getattr(schedule_store, "load", None)):
+        if force and not theme_day and schedule_store is not None and callable(getattr(schedule_store, "load", None)):
             try:
                 pending_query = str(schedule_store.load().get("pending_query") or "").strip()
             except Exception:
                 pending_query = ""
-        keyword = pending_query or str(await keyword_generator() or "").strip()
+        if pending_query:
+            keyword = pending_query
+        else:
+            try:
+                keyword = str(
+                    await keyword_generator(
+                        theme_day=theme_day,
+                        theme_description=theme_description,
+                        target_date=schedule_date,
+                    )
+                    or ""
+                ).strip()
+            except TypeError:
+                try:
+                    keyword = str(
+                        await keyword_generator(theme_day=theme_day, target_date=schedule_date)
+                        or ""
+                    ).strip()
+                except TypeError:
+                    # Keep compatibility with third-party/test schedulers that still
+                    # expose the original no-argument helper.
+                    keyword = str(await keyword_generator() or "").strip()
         if not keyword:
             logger.warning("小红书日程搜索词为空，回退原日程生成")
             return {}, ""
+        ensure_kwargs = {"force": force}
+        if selection_timeout_seconds is not None:
+            ensure_kwargs["timeout_seconds"] = selection_timeout_seconds
         reference = await ensure(
             schedule_date,
             {
                 "date": schedule_date,
                 "xiaohongshu_search_query": keyword,
+                **({"theme_day": theme_day} if theme_day else {}),
+                **({"theme_description": theme_description} if theme_description else {}),
+                **({"manual_reference_url": manual_reference_url} if manual_reference_url else {}),
             },
-            force=force,
+            **ensure_kwargs,
         )
         if not reference:
             logger.warning("小红书真人穿搭未选中，回退原日程生成: query=%s", keyword)
@@ -946,6 +986,112 @@ class PortraitGalleryApp:
                     store.update(_update_reference)
                 except Exception as e:
                     logger.error("保存初始生图参考图信息失败: %s", e)
+        return entry
+
+    async def generate_theme_day(
+        self,
+        theme_day: str = "",
+        *,
+        target: str = "today",
+        target_date: str = "",
+        mode: str = "custom",
+        description: str = "",
+        manual_reference_url: str = "",
+        progress_callback=None,
+    ) -> Optional[DailyEntry]:
+        """Generate a themed schedule for today or tomorrow.
+
+        Theme-day generation intentionally saves the schedule first and lets the
+        existing dynamic photo scheduler handle today's future slots. This keeps
+        the operation predictable for a user who only wants to plan tomorrow,
+        while still making a same-day theme immediately usable by the gallery.
+        """
+        notify = progress_callback if callable(progress_callback) else (lambda _phase: None)
+        today = self._today()
+        target_key = str(target or "today").strip().lower()
+        if target_date:
+            try:
+                requested_date = datetime.strptime(str(target_date).strip(), "%Y-%m-%d").date()
+            except ValueError:
+                raise ValueError("target_date 必须是 YYYY-MM-DD")
+            if requested_date not in {today, today + timedelta(days=1)}:
+                raise ValueError("主题日目前只支持当天或第二天")
+            schedule_date = requested_date
+        elif target_key in {"tomorrow", "next", "next_day", "明天", "第二天"}:
+            schedule_date = today + timedelta(days=1)
+        elif target_key in {"today", "now", "今天", "当天"}:
+            schedule_date = today
+        else:
+            raise ValueError("target 只能是 today 或 tomorrow")
+
+        theme = self.scheduler_gen._normalize_theme_day(theme_day)
+        mode = str(mode or "custom").strip().lower()
+        if mode == "random" or not theme:
+            theme = self.scheduler_gen.random_theme_day()
+            mode = "random"
+        else:
+            mode = "custom"
+
+        theme_description = re.sub(r"\s+", " ", str(description or "")).strip()
+        if not theme_description and mode == "custom":
+            theme_description = re.sub(r"\s+", " ", str(theme_day or "")).strip()
+        if mode != "custom":
+            theme_description = ""
+
+        schedule_date_text = schedule_date.isoformat()
+        notify("正在检查小红书状态并准备搜索词…")
+        notify("正在搜索匹配的真人穿搭…")
+        prepared_reference, xiaohongshu_search_query = await self._prepare_xiaohongshu_schedule_reference(
+            schedule_date_text,
+            force=True,
+            theme_day=theme,
+            theme_description=theme_description,
+            manual_reference_url=manual_reference_url,
+            # Theme days run as a background job, so give XHS enough time for
+            # search, note details, downloads, and multiple vision batches.
+            selection_timeout_seconds=480,
+        )
+        if manual_reference_url and not prepared_reference.get("path"):
+            notify("手动指定的小红书穿搭读取失败，请重新指定后再生成。")
+            raise ValueError("手动指定的小红书穿搭读取失败，请重新指定后再生成。")
+        if prepared_reference.get("path"):
+            notify("已找到匹配的小红书穿搭，正在据此生成主题日日程…")
+        else:
+            xhs_enabled = getattr(self.web_server, "xiaohongshu_schedule_enabled", None)
+            if callable(xhs_enabled) and xhs_enabled():
+                notify("小红书暂未找到合格穿搭，正在回退 LLM 生成主题日日程…")
+            else:
+                notify("未开启小红书，正在由 LLM 生成主题日日程…")
+        schedule_kwargs = {
+            "target_date": schedule_date,
+            "theme_day": theme,
+            "theme_day_mode": mode,
+            "theme_description": theme_description,
+            "xiaohongshu_search_query": xiaohongshu_search_query,
+        }
+        if prepared_reference.get("path"):
+            schedule_kwargs["outfit_reference_path"] = prepared_reference["path"]
+
+        entry = await self.scheduler_gen.generate_today(**schedule_kwargs)
+        if not entry or entry.status != "ok" or entry.source == "fallback":
+            logger.error("主题日生成失败: date=%s theme=%s", schedule_date_text, theme)
+            return entry
+
+        entry.source = "theme_day"
+        entry.theme_day = theme
+        entry.theme_day_mode = mode
+        entry.theme_description = theme_description
+        save_schedule_entry(self.data_dir, entry)
+        notify("日程已保存，正在安排当天的生图任务…")
+        if schedule_date == today:
+            await self._schedule_dynamic_photos(entry.schedule)
+        logger.info(
+            "主题日日程生成成功: date=%s theme=%s mode=%s xhs_query=%s",
+            schedule_date_text,
+            theme,
+            mode,
+            xiaohongshu_search_query,
+        )
         return entry
 
     async def generate_custom(
@@ -2551,10 +2697,33 @@ class PortraitGalleryApp:
         ref_image = original_ref_image if is_precision_edit else (
             custom_ref_image if is_custom_source and custom_ref_image else ""
         )
+        reroll_ref_images = []
+        reroll_xiaohongshu_outfit_reference = False
         selected_reference = dict(original_selected_reference) if original_ref_image else {}
         if engine == "gptimage" and is_scheduled_reroll and original_ref_image:
             ref_image = original_ref_image
             reroll_no_auto_style = False
+            is_xiaohongshu_schedule_reference = (
+                str(selected_reference.get("selection_mode") or "").strip().lower()
+                == "xiaohongshu_schedule"
+                or str(selected_reference.get("selection_reason") or "").strip().lower().startswith(
+                    "xiaohongshu_schedule:"
+                )
+                or os.path.basename(original_ref_image).startswith("xhs_schedule_")
+            )
+            if is_xiaohongshu_schedule_reference:
+                prepared_reference = dict(selected_reference)
+                prepared_reference["path"] = original_ref_image
+                rebuilt_reference, reroll_ref_images = (
+                    await self._xiaohongshu_schedule_generation_reference(
+                        str(original_date),
+                        original,
+                        prepared_reference=prepared_reference,
+                    )
+                )
+                if rebuilt_reference:
+                    selected_reference = rebuilt_reference
+                reroll_xiaohongshu_outfit_reference = bool(reroll_ref_images)
             logger.info(
                 "重抽沿用原参考图: %s ref=%s",
                 image_filename,
@@ -2584,6 +2753,7 @@ class PortraitGalleryApp:
             engine=engine,
             timeout=image_process_timeout(self.config, with_reference_fallback=bool(ref_image)),
             ref_image=ref_image,
+            ref_images=reroll_ref_images or None,
             size=size,
             source=reroll_source,
             prompt_final=reroll_prompt_final,
@@ -2593,6 +2763,7 @@ class PortraitGalleryApp:
             caption=reroll_caption,
             image_model=raw_model_name if engine == "gptimage" else "",
             precise_edit=is_precision_edit,
+            xiaohongshu_outfit_reference=reroll_xiaohongshu_outfit_reference,
         )
         if not filename:
             logger.error("图片重抽失败: %s", image_filename)
@@ -2887,7 +3058,10 @@ class PortraitGalleryApp:
         logger.info("执行每日日程生成...")
         entry = None
         try:
-            entry = await self.refresh_schedule()
+            # A user may have deliberately planned tomorrow's theme day. When
+            # the clock rolls into that date, keep the explicit plan instead of
+            # replacing it with the generic automatic schedule.
+            entry = await self.refresh_schedule(preserve_theme_day=True)
         except Exception as e:
             logger.error("每日日程生成异常: %s", e, exc_info=True)
         finally:
@@ -2897,11 +3071,14 @@ class PortraitGalleryApp:
                 else:
                     self._schedule_retry_or_next_daily_job()
 
-    async def refresh_schedule(self):
+    async def refresh_schedule(self, *, preserve_theme_day: bool = False):
         """Share one schedule refresh across every app-level caller."""
         task = getattr(self, "_schedule_refresh_task", None)
         if task is None or task.done():
-            task = asyncio.create_task(self._refresh_schedule_impl())
+            if preserve_theme_day:
+                task = asyncio.create_task(self._refresh_schedule_impl(preserve_theme_day=True))
+            else:
+                task = asyncio.create_task(self._refresh_schedule_impl())
             self._schedule_refresh_task = task
         else:
             logger.info("日程刷新已在进行，复用当前任务")
@@ -2911,7 +3088,7 @@ class PortraitGalleryApp:
             if task.done() and getattr(self, "_schedule_refresh_task", None) is task:
                 self._schedule_refresh_task = None
 
-    async def _refresh_schedule_impl(self):
+    async def _refresh_schedule_impl(self, *, preserve_theme_day: bool = False):
         """Regenerate today's schedule and rebuild dynamic photo jobs."""
         # 小红书模式先选真人穿搭，再让视觉 LLM 依据图片重写日程。
         schedule_date = self._today().isoformat()

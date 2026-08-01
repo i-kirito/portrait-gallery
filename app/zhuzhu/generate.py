@@ -605,6 +605,25 @@ def _append_time_constraint(scene_kw: str, time_constraint: str) -> str:
     return f"{scene}. {constraint}"
 
 
+def _theme_experience_scene_guard(theme_day: str = "", theme_description: str = "") -> str:
+    """Keep every generated photo inside the user-selected theme experience."""
+    theme = re.sub(r"\s+", " ", str(theme_description or theme_day or "")).strip()[:180]
+    if not theme:
+        return ""
+    return (
+        "IMMERSIVE THEME-DAY LOCATION OVERRIDE: The scene must visibly and unmistakably take place "
+        f"inside the world, venue, historical period, profession, event, or experience described by "
+        f"today's user-selected theme ({theme}). Treat that theme as the actual lived setting, not as "
+        "a costume, poster, screen image, scale model, decorative corner, or props placed inside an "
+        "unrelated modern location. Architecture, furnishings, tools, signage, landscape, and ambience "
+        "must establish the theme. If generic wording elsewhere conflicts with this rule, relocate the "
+        "activity to the closest theme-native setting. Do not use a generic apartment, modern home, "
+        "ordinary bedroom, kitchen, living room, office, cafe, park, or street unless the user's theme "
+        "explicitly names that kind of place. This location override has higher priority than generic "
+        "schedule scenery and reference-image backgrounds."
+    )
+
+
 def _clean_schedule_detail_override(raw_value: str) -> dict:
     if not raw_value:
         return {}
@@ -671,6 +690,8 @@ def _get_schedule_context(
     outfit_kw = ""
     scene_kw = ""
     schedule_details = []
+    theme_day = ""
+    theme_description = ""
     daily = data.get(today_str)
     if _usable_daily_schedule(daily):
         schedule = daily["schedule"]
@@ -679,6 +700,8 @@ def _get_schedule_context(
         outfit_kw = daily.get("outfit_keywords", "")
         scene_kw = daily.get("scene_keywords", "")
         schedule_details = daily.get("schedule_details", []) if isinstance(daily.get("schedule_details"), list) else []
+        theme_day = daily.get("theme_day", "")
+        theme_description = daily.get("theme_description", "")
     
     # If date-keyed entry has no schedule, scan ALL entries for today
     if not schedule:
@@ -696,8 +719,11 @@ def _get_schedule_context(
                 outfit_kw = entry.get("outfit_keywords", "")
                 scene_kw = entry.get("scene_keywords", "")
                 schedule_details = entry.get("schedule_details", []) if isinstance(entry.get("schedule_details"), list) else []
+                theme_day = entry.get("theme_day", "")
+                theme_description = entry.get("theme_description", "")
                 break
 
+    theme_scene_guard = _theme_experience_scene_guard(theme_day, theme_description)
     detail_by_time = _schedule_detail_map(schedule_details)
 
     if schedule_time_override and not schedule and not schedule_detail_override:
@@ -718,6 +744,7 @@ def _get_schedule_context(
             prompt_activity = _schedule_detail_text(detail) or prompt_match or activity
             detail_outfit_kw, detail_scene_kw, detail_hair_kw = _schedule_detail_keywords(detail, outfit_kw)
             detail_scene_kw = _append_time_constraint(detail_scene_kw, time_constraint)
+            detail_scene_kw = _append_time_constraint(detail_scene_kw, theme_scene_guard)
             style_hint = _extract_style_hint(outfit_info)
             ctx = f"Today's plan: {prompt_activity}"
             if time_constraint:
@@ -740,6 +767,7 @@ def _get_schedule_context(
                 if best:
                     detail_outfit_kw, detail_scene_kw, detail_hair_kw = _schedule_detail_keywords(detail, outfit_kw)
                     detail_scene_kw = _append_time_constraint(detail_scene_kw, time_constraint)
+                    detail_scene_kw = _append_time_constraint(detail_scene_kw, theme_scene_guard)
                     ctx = f"Today's plan: {best}"
                     if time_constraint:
                         ctx += f". Time: {time_constraint}"
@@ -771,7 +799,7 @@ def _get_schedule_context(
                     if style_hint:
                         ctx += f". Style: {style_hint}"
                     print(f"📋 Schedule context: {ctx}", file=sys.stderr)
-                    return ctx, activity, outfit_kw, "", ""
+                    return ctx, activity, outfit_kw, theme_scene_guard, ""
     
     # Time-based matching: "HH:MM activity" format
     # Theme → hour ranges
@@ -823,6 +851,7 @@ def _get_schedule_context(
         prompt_activity = _schedule_detail_text(detail) or activity
         detail_outfit_kw, detail_scene_kw, detail_hair_kw = _schedule_detail_keywords(detail, outfit_kw)
         detail_scene_kw = _append_time_constraint(detail_scene_kw, time_constraint)
+        detail_scene_kw = _append_time_constraint(detail_scene_kw, theme_scene_guard)
         style_hint = _extract_style_hint(outfit_info)
         display_activity = activity
         for (dh, dm), d_activity in zip(display_times, display_parts[1:]):
