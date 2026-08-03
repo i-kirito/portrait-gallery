@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.3.10**
+当前版本：**v1.4.1**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -96,7 +96,7 @@ curl http://localhost:18889/api/health
 如果要使用已经发布到 Docker Hub/GHCR 的镜像，通过 `PORTRAIT_GALLERY_IMAGE` 指定：
 
 ```bash
-PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.3.10 docker compose up -d
+PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.4.1 docker compose up -d
 curl http://localhost:18889/api/health
 ```
 
@@ -147,7 +147,7 @@ docker compose up -d
    如使用已发布镜像而不是在服务器上构建源码，可指定与画廊版本相同的镜像标签：
 
    ```bash
-   SOCIAL_HUB_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery-social-hub:1.3.10 \
+   SOCIAL_HUB_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery-social-hub:1.4.1 \
      docker compose -f docker-compose.social-hub.yaml up -d
    ```
 
@@ -422,6 +422,14 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥、三级 LLM 模型链、Gitee 回退、日程风格和升级选项
 
 ## 🧾 Release Notes
+
+### v1.4.1
+
+- 新增共享动态流与独立 Social Hub 部署，支持受限的数据持久化与跨客户端安全归属。
+- 新增主题日、日程历史和小红书穿搭选择/收藏博主，提升日程与参考图稳定性。
+- 优化小红书登录探测、二维码倒计时刷新和设置页响应速度。
+- 优化生成配图交互：紧凑输入框、参考图删除确认卡片及画廊图标操作。
+- 发布脚本同时构建并推送主画廊和 Social Hub 的 linux/amd64、linux/arm64 镜像。
 
 ### v1.3.10
 
