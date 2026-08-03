@@ -5,7 +5,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
@@ -207,6 +207,45 @@ class ThemeDayTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(6, len(scheduler._schedule_plan_items(entry.schedule_prompt)))
             self.assertIn("07:23", entry.schedule_prompt)
 
+    async def test_theme_day_ignores_disliked_outfit_similarity_hard_block(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = DailyScheduler({"config": {"timezone": "Asia/Shanghai"}}, tmpdir)
+            scheduler._call_llm = AsyncMock(
+                return_value=json.dumps(self._valid_theme_day_data(), ensure_ascii=False)
+            )
+            scheduler._disliked_outfit_similarity_error = Mock(
+                return_value="与用户标记不喜欢的穿搭高度相似"
+            )
+
+            entry = await scheduler.generate_today(
+                target_date=date(2026, 8, 1),
+                theme_day="霍格沃兹体验日",
+            )
+
+            self.assertEqual("ok", entry.status)
+            self.assertEqual(1, scheduler._call_llm.await_count)
+            scheduler._disliked_outfit_similarity_error.assert_called_once()
+
+    async def test_regular_schedule_keeps_disliked_outfit_similarity_hard_block(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = DailyScheduler({"config": {"timezone": "Asia/Shanghai"}}, tmpdir)
+            scheduler._call_llm = AsyncMock(
+                return_value=json.dumps(self._valid_theme_day_data(), ensure_ascii=False)
+            )
+            scheduler._disliked_outfit_similarity_error = Mock(
+                return_value="与用户标记不喜欢的穿搭高度相似"
+            )
+
+            entry = await scheduler.generate_today(target_date=date(2026, 8, 3))
+
+            self.assertEqual("failed", entry.status)
+            self.assertEqual(3, scheduler._call_llm.await_count)
+            self.assertEqual(3, scheduler._disliked_outfit_similarity_error.call_count)
+            self.assertIn(
+                "上一候选已被系统拒绝",
+                scheduler._call_llm.await_args_list[1].args[0],
+            )
+
     async def test_theme_search_query_uses_theme_keyword_when_llm_drifts(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scheduler = DailyScheduler({"config": {"timezone": "Asia/Shanghai"}}, tmpdir)
@@ -235,6 +274,37 @@ class ThemeDayTests(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertEqual("魔法学院风穿搭", keyword)
+
+    async def test_theme_day_reference_prep_forwards_extended_xiaohongshu_timeout(self):
+        app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+        app.scheduler_gen = SimpleNamespace(
+            generate_xiaohongshu_search_query=AsyncMock(
+                return_value="霍格沃兹穿搭"
+            ),
+        )
+        app.web_server = SimpleNamespace(
+            xiaohongshu_schedule_enabled=lambda: True,
+            ensure_xiaohongshu_schedule_reference=AsyncMock(return_value={}),
+        )
+
+        selected, keyword = await app._prepare_xiaohongshu_schedule_reference(
+            "2026-08-01",
+            theme_day="霍格沃兹体验日",
+            selection_timeout_seconds=480,
+        )
+
+        self.assertEqual({}, selected)
+        self.assertEqual("霍格沃兹穿搭", keyword)
+        app.web_server.ensure_xiaohongshu_schedule_reference.assert_awaited_once_with(
+            "2026-08-01",
+            {
+                "date": "2026-08-01",
+                "xiaohongshu_search_query": "霍格沃兹穿搭",
+                "theme_day": "霍格沃兹体验日",
+            },
+            force=True,
+            timeout_seconds=480,
+        )
 
     async def test_manual_reference_failure_does_not_silently_fall_back(self):
         app = PortraitGalleryApp.__new__(PortraitGalleryApp)

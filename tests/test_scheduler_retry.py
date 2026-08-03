@@ -104,6 +104,7 @@ class SchedulerRetryTest(unittest.IsolatedAsyncioTestCase):
             payload = post.call_args.kwargs["json"]
             self.assertEqual("gemini-3.5-flash", payload["model"])
             self.assertEqual(0.8, payload["temperature"])
+            self.assertEqual(8192, payload["max_tokens"])
 
     async def test_streaming_chunks_are_reassembled_as_final_json(self):
         streamed = requests.Response()

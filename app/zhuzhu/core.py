@@ -711,7 +711,6 @@ def _personalized_caption_fallback(theme: str, persona: dict, schedule_time: str
     user_name = persona.get("user_name") or "你"
     activity = _caption_activity(schedule_time)
     if activity:
-        next_activity = _next_schedule_activity(schedule_time, schedule_date)
         activity_key = re.sub(r"\s+", "", activity)
         specific_templates = []
         if any(word in activity_key for word in ("歌会", "唱歌", "情歌", "练歌", "歌曲", "吉他曲", "曲目")):
@@ -776,12 +775,6 @@ def _personalized_caption_fallback(theme: str, persona: dict, schedule_time: str
             "眼前这一步做稳就好，不需要把自己催得太紧。",
         ]
         templates = specific_templates or generic_templates
-        if next_activity:
-            next_text = re.sub(r"^\d{1,2}:\d{2}\s*", "", next_activity).strip()
-            if next_text:
-                templates = list(templates) + [
-                    f"{character}先把眼前这件事做好，按日程再去{_trim_caption_piece(next_text, 20)}。"
-                ]
         return _shorten_caption(_caption_pick(templates, theme, schedule_time, character, user_name), 72)
     templates = {
         "morning": f"{character}想先把早餐和出门前的小事处理好，别一早就手忙脚乱。",
@@ -1817,7 +1810,6 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         "sexy": "带点坏坏氛围的性感美照",
     }
     activity = _caption_activity(schedule_time)
-    next_activity = _next_schedule_activity(schedule_time, schedule_date) if activity else ""
     slot = re.match(r"^(\d{1,2}:\d{2})", str(schedule_time or "").strip())
     scene = (
         f"{slot.group(1)} 的拍照计划：{activity}" if activity and slot
@@ -1828,7 +1820,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
     character = persona.get("name") or "角色"
     user_name = persona.get("user_name") or "用户"
     caption_voice = (
-        "自然、口语、具体，像自己在心里确认当前动作；只有存在真实下一项时才安排下一步，不撒娇、不营业、不对任何人说话"
+        "自然、口语、具体，像自己此刻心里的真实念头；只讲当下正在做的事，不安排、不预告下一步，不撒娇、不营业、不对任何人说话"
         if activity
         else _caption_voice_hint(persona)
     )
@@ -1837,11 +1829,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         if activity
         else f"读者称呼“{user_name}”，可以自然亲近但不要写成固定营业话术。"
     )
-    next_schedule_rule = (
-        f"唯一允许提到的后续安排是：{next_activity}。不得改写成其他会议、餐饮或任务。"
-        if next_activity
-        else "没有提供后续日程时，只写当前动作和当下念头，禁止自行编造下一项安排。"
-    )
+    next_schedule_rule = "只写当下正在做的事和此刻心里的想法，不要安排、预告或编造接下来的计划。"
     system_msg = (
         f"你正在以“{character}”的口吻，为刚拍的照片写一句自然的小心思。{address_rule}"
         f"下面的口吻只作为说话习惯参考，不要为了风格写得文艺或矫饰：{caption_voice}。"
@@ -1850,7 +1838,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         "但不要直接复述、罗列或解释 SOUL、人设、身份、关系定义或性格设定原文，只用它来决定说话的口吻。"
         "如果提供了具体日程，必须严格贴合该时间、地点和活动，不要写与日程冲突的起床、被窝、睡前等内容。"
         f"{next_schedule_rule}"
-        "内容优先聚焦当前动作和接下来的计划，不要只写景物、光线、心情或穿搭点评。"
+        "内容只聚焦当下正在做的动作和此刻心里的想法，不要安排下一步计划，也不要只写景物、光线、心情或穿搭点评。"
         "不要复述当前日程原句，不要写“刚刚X时拍下这一刻，想把穿搭和心情分享给Y”这类模板句。"
         "禁止使用“留了一张”“放进画廊”“收进画廊”“现场感”“不能不存”等记录/收藏话术。"
         "禁止文艺腔、散文腔和景物隐喻；不要写“水珠、叶尖、心情被擦亮、像被阳光揉、温柔照顾、书签、光落下来”等表达。"
@@ -1876,10 +1864,9 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
             print(f"[caption] image compress failed: {e}", file=sys.stderr)
             img_b64 = None
 
-    next_context = f"下一项真实日程：{next_activity}。" if next_activity else "没有提供下一项日程，不得虚构。"
     text_user_content = (
-        f"当前日程：{scene}。{next_context}请写一条短小心思，像当时心里真实想的一句话，"
-        "具体到正在做的事；只有给出真实下一项时才可以提到下一步，不要文艺比喻。只给最终中文正文，不要复述本条指令。"
+        f"当前日程：{scene}。请写一条短小心思，像当时心里真实想的一句话，"
+        "具体到正在做的事和此刻的感受；不要提下一步安排，不要文艺比喻。只给最终中文正文，不要复述本条指令。"
     )
     request_variants: list[tuple[str, object]] = []
     if img_b64 and not activity:

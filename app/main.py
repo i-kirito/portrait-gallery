@@ -95,6 +95,9 @@ from settings import (
     schedule_image_size,
 )
 
+# "web" images follow today's activity, but they are not slots owned by the
+# daily schedule and must not use up its photo-job quota.
+SCHEDULED_PHOTO_SOURCES = {"cron"}
 TODAY_PHOTO_SOURCES = {"cron", "web"}
 FAILED_SCHEDULE_TEXT = "生成失败"
 CAPTION_DELAY_SECONDS = 3
@@ -270,6 +273,11 @@ def save_schedule_entry(data_dir: str, entry: DailyEntry):
     - If entry has no image (schedule-only / failed), use the date as key.
     - Before writing, remove any existing entry that references the same
       image_filename under a different key (deduplication guard).
+    - When a successful date-keyed plan is replaced, preserve the previous
+      plan in schedule_history so later diversity prompts can still see it.
+      This archive is intentionally retained in full for auditability; prompt
+      readers bound how many snapshots they consume instead of deleting plans
+      the user has already seen.
     """
     store = ScheduleStore(data_dir)
     try:
@@ -302,6 +310,68 @@ def save_schedule_entry(data_dir: str, entry: DailyEntry):
             # If there's already an entry under new_key, merge rather than overwrite
             if new_key in all_data:
                 existing = all_data[new_key]
+                if not img_filename and isinstance(existing, dict):
+                    schedule_history = [
+                        item
+                        for item in (existing.get("schedule_history") or [])
+                        if isinstance(item, dict)
+                    ]
+                    old_schedule = str(existing.get("schedule") or "").strip()
+                    new_schedule = str(entry_dict.get("schedule") or "").strip()
+                    identity_fields = (
+                        "schedule",
+                        "outfit_style",
+                        "outfit",
+                        "photo_style_en",
+                    )
+                    old_identity = tuple(
+                        str(existing.get(field) or "").strip()
+                        for field in identity_fields
+                    )
+                    new_identity = tuple(
+                        str(entry_dict.get(field) or "").strip()
+                        for field in identity_fields
+                    )
+                    should_archive = (
+                        existing.get("status") == "ok"
+                        and entry_dict.get("status") == "ok"
+                        and old_schedule
+                        and new_schedule
+                        and old_identity != new_identity
+                    )
+                    if should_archive and not any(
+                        tuple(
+                            str(item.get(field) or "").strip()
+                            for field in identity_fields
+                        ) == old_identity
+                        for item in schedule_history
+                    ):
+                        snapshot_fields = (
+                            "date",
+                            "outfit_style",
+                            "outfit",
+                            "schedule",
+                            "photo_style_en",
+                            "outfit_keywords",
+                            "reference_query",
+                            "schedule_llm_model",
+                            "source",
+                            "status",
+                        )
+                        snapshot = {
+                            field: existing.get(field)
+                            for field in snapshot_fields
+                            if field in existing
+                        }
+                        snapshot["archived_at"] = datetime.now().astimezone().isoformat(
+                            timespec="seconds"
+                        )
+                        snapshot["archive_reason"] = "schedule_replaced"
+                        schedule_history.append(snapshot)
+                        logger.info("归档刷新前日程: date=%s", entry.date)
+                    if schedule_history:
+                        entry_dict["schedule_history"] = schedule_history
+
                 preserve_fields = ("favorite", "source", "time", "model_name", "base_style", "reference_query")
                 if not img_filename:
                     preserve_fields = preserve_fields + ("schedule_prompt", "schedule_details")
@@ -318,6 +388,7 @@ def save_schedule_entry(data_dir: str, entry: DailyEntry):
         logger.info(f"日程已保存: key={new_key}, date={entry.date}")
     except Exception as e:
         logger.error(f"保存日程失败: {e}")
+        raise
 
 
 class PortraitGalleryApp:
@@ -357,7 +428,6 @@ class PortraitGalleryApp:
         self.web_server.on_theme_day = self.generate_theme_day
         self.web_server.on_rebuild_photo_jobs = self.rebuild_photo_jobs
         self.web_server.on_retry_photo_job = self.retry_photo_job
-        self.web_server.on_photo_quota_snapshot = self._photo_quota_snapshot
         self.web_server.on_update_photo_plan = self.update_photo_plan
         self.web_server.on_update_outfit_plan = self.update_outfit_plan
         self.web_server.on_validate_xiaohongshu_outfit = (
@@ -374,6 +444,7 @@ class PortraitGalleryApp:
         # Backfill photo job controls
         self._photo_jobs_inflight: set[str] = set()
         self._photo_jobs_inflight_started: dict[str, float] = {}
+        self._photo_quota_full_log_date = ""
         self._photo_job_schedule_meta: dict[str, dict] = {}
         self._failed_photo_jobs: dict[str, dict] = self._load_failed_photo_jobs()
         self._inflight_lock = asyncio.Lock()
@@ -597,6 +668,8 @@ class PortraitGalleryApp:
             logger.error("读取今日日程参考图失败: %s", e)
             return {}
 
+        daily_entry = self._today_schedule_entry(today_str)
+        plan_style = str((daily_entry or {}).get("outfit_style") or "").strip()
         candidates: list[tuple[int, dict, dict, str]] = []
         for entry in all_data.values():
             if not isinstance(entry, dict):
@@ -605,6 +678,10 @@ class PortraitGalleryApp:
                 continue
             if str(entry.get("source") or "").strip() not in TODAY_PHOTO_SOURCES:
                 continue
+            if plan_style:
+                photo_style = str(entry.get("outfit_style") or "").strip()
+                if photo_style and photo_style != plan_style:
+                    continue
             selected = entry.get("selected_reference") if isinstance(entry.get("selected_reference"), dict) else {}
             path = self._resolve_selected_reference_path(selected)
             if not path:
@@ -1510,6 +1587,39 @@ class PortraitGalleryApp:
         return " ".join(parts).strip()
 
     @staticmethod
+    def _extract_outfit_clothing_text(outfit_raw: str) -> str:
+        """Extract 发型/穿搭 blocks from the stored daily outfit text."""
+        parts: list[str] = []
+        for marker in ("发型", "穿搭"):
+            match = re.search(rf"{marker}[：:]\s*([^\n]+)", str(outfit_raw or ""))
+            if match and match.group(1).strip():
+                parts.append(match.group(1).strip())
+        return "；".join(parts)[:400]
+
+    def _today_schedule_outfit_directive(self) -> str:
+        """Build an outfit-lock directive from today's daily plan for image prompts."""
+        daily_entry = self._today_schedule_entry()
+        if not daily_entry:
+            return ""
+        parts: list[str] = []
+        keywords = str(daily_entry.get("outfit_keywords") or "").strip()
+        if keywords:
+            parts.append(f"Today's planned outfit: {keywords}.")
+        else:
+            clothing = self._extract_outfit_clothing_text(str(daily_entry.get("outfit") or ""))
+            if clothing:
+                parts.append(f"Today's planned outfit: {clothing}.")
+        style = str(daily_entry.get("outfit_style") or "").strip()
+        if style:
+            parts.append(f"Today's style: {style}.")
+        if not parts:
+            return ""
+        return " ".join(parts) + (
+            " Wear exactly this planned outfit (clothing, hairstyle, and accessories) "
+            "for today's schedule; keep the character's face and identity."
+        )
+
+    @staticmethod
     def _today_schedule_reference_style_guard(has_reference: bool, style_hint: str = "") -> str:
         reference_line = (
             "Default visual style: use the attached img2img reference as the style, lighting, color, texture, and camera reference."
@@ -1575,6 +1685,9 @@ class PortraitGalleryApp:
                 [character],
                 "character",
             )
+            outfit_directive = self._today_schedule_outfit_directive()
+            if outfit_directive:
+                scene_request = f"{scene_request}. {outfit_directive}"
             if selected_reference.get("path"):
                 scene_request = (
                     f"{scene_request}. Use the attached reference image from today's schedule "
@@ -1849,6 +1962,9 @@ class PortraitGalleryApp:
                 characters,
                 "group_photo",
             )
+            outfit_directive = self._today_schedule_outfit_directive()
+            if outfit_directive:
+                safe_scene_prompt = f"{safe_scene_prompt}. {outfit_directive}"
             if selected_reference.get("path"):
                 safe_scene_prompt = (
                     f"{safe_scene_prompt}. Use the attached reference image from today's schedule "
@@ -3601,7 +3717,7 @@ class PortraitGalleryApp:
                     continue
                 if entry.get("date") != today_str or entry.get("status") != "ok":
                     continue
-                if str(entry.get("source") or "").strip() not in TODAY_PHOTO_SOURCES:
+                if str(entry.get("source") or "").strip() not in SCHEDULED_PHOTO_SOURCES:
                     continue
                 if entry.get("delivery_status") in {"sending", "failed"}:
                     continue
@@ -3645,7 +3761,7 @@ class PortraitGalleryApp:
                     continue
                 if entry.get("date") != today_str or entry.get("status") != "ok":
                     continue
-                if str(entry.get("source") or "").strip() not in TODAY_PHOTO_SOURCES:
+                if str(entry.get("source") or "").strip() not in SCHEDULED_PHOTO_SOURCES:
                     continue
                 img_file = entry.get("image_filename", "")
                 if not img_file or not self._photo_image_exists(img_file):
@@ -3834,7 +3950,7 @@ class PortraitGalleryApp:
                     continue
                 if entry.get("date") != today_str or entry.get("status") != "ok":
                     continue
-                if entry.get("source", "") not in TODAY_PHOTO_SOURCES:
+                if entry.get("source", "") not in SCHEDULED_PHOTO_SOURCES:
                     continue
                 raw_time = entry.get("schedule_time") or entry.get("time") or ""
                 match = re.match(r'\s*(\d{1,2}):(\d{2})', raw_time)
@@ -3867,7 +3983,7 @@ class PortraitGalleryApp:
                     continue
                 if entry.get("status") != "ok":
                     continue
-                if entry.get("source", "") not in TODAY_PHOTO_SOURCES:
+                if entry.get("source", "") not in SCHEDULED_PHOTO_SOURCES:
                     continue
 
                 image_filename = entry.get("image_filename", "")
@@ -4194,9 +4310,16 @@ class PortraitGalleryApp:
         planned_count = len(planned_times)
         remaining_slots = max(0, max_daily - planned_count)
         if remaining_slots <= 0:
-            logger.info(
-                f"今日生图计划已达上限: planned={planned_count}, max={max_daily}"
-            )
+            if self._photo_quota_full_log_date != today_str:
+                self._photo_quota_full_log_date = today_str
+                logger.info(
+                    f"今日生图计划已满 {planned_count}/{max_daily}，不再新增动态生图槽位"
+                    "（手动/推文补图不受此限制）"
+                )
+            else:
+                logger.debug(
+                    f"今日生图计划已满 {planned_count}/{max_daily}，跳过动态生图调度"
+                )
             return
 
         candidates = []

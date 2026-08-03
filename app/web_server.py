@@ -27,6 +27,7 @@ import shutil
 import sys
 import subprocess
 import tempfile
+from io import BytesIO
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import time
@@ -34,6 +35,7 @@ import re
 from typing import Optional
 from urllib.parse import parse_qs, quote, unquote, urlparse
 import uuid
+import urllib.request
 
 import aiohttp
 from aiohttp import web
@@ -46,6 +48,12 @@ from characters import (
     upsert_manual_character,
 )
 from group_chat import GroupChatStore
+from social import REACTION_KINDS, SocialStore
+from social_hub import (
+    SocialHubSettingsStore,
+    normalize_client_token,
+    normalize_instance_id,
+)
 from keyword_cloud import build_keyword_cloud_payload
 from image_editing import (
     MAX_IMAGE_EDIT_INSTRUCTION_LENGTH,
@@ -236,7 +244,7 @@ SEND_CONTEXT_ERROR_MARKERS = (
 )
 DEFAULT_PHOTO_JOB_LIMIT = 6
 MIN_PHOTO_JOB_LIMIT = 3
-MAX_PHOTO_JOB_LIMIT = 6
+MAX_PHOTO_JOB_LIMIT = 9
 MAX_GROUP_CHAT_PARTICIPANTS = 12
 MAX_GROUP_CHAT_MESSAGE_CHARS = 6000
 MAX_GROUP_CHAT_METADATA_BYTES = 8192
@@ -259,6 +267,9 @@ GROUP_CHAT_INTERNAL_REASONING_SOFT_PATTERNS = (
     r"\b(?:i need to|let'?s)\s+(?:analy[sz]e|craft|respond|output)\b",
     r"\bthe user (?:asks|input|said|wants)\b",
 )
+# On-demand "web" images are shown as today's photos but are not part of the
+# bounded daily schedule plan.
+SCHEDULED_PHOTO_SOURCES = {"cron"}
 TODAY_PHOTO_SOURCES = {"cron", "web"}
 FAILED_SCHEDULE_TEXT = "生成失败"
 REFERENCE_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
@@ -278,6 +289,26 @@ MAX_REFERENCE_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_REFERENCE_MULTIPART_OVERHEAD_BYTES = 64 * 1024
 MAX_REFERENCE_STYLE_BYTES = 128
 MAX_REFERENCE_IMAGE_PIXELS = 40_000_000
+DEFAULT_XIAOHONGSHU_SCHEDULE_SELECTION_TIMEOUT_SECONDS = 240
+MAX_XIAOHONGSHU_SCHEDULE_SELECTION_TIMEOUT_SECONDS = 480
+MAX_SOCIAL_MEDIA_BYTES = 32 * 1024 * 1024
+MAX_SOCIAL_UPLOAD_BYTES = 64 * 1024 * 1024
+MAX_SOCIAL_AVATAR_BYTES = 2 * 1024 * 1024
+MAX_SOCIAL_AVATAR_SOURCE_BYTES = 20 * 1024 * 1024
+SOCIAL_AVATAR_SIZE = 256
+MAX_SOCIAL_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_SOCIAL_MULTIPART_BYTES = (
+    MAX_SOCIAL_UPLOAD_BYTES
+    + MAX_SOCIAL_AVATAR_BYTES
+    + MAX_GROUP_CHAT_METADATA_BYTES * 2
+    + MAX_REFERENCE_MULTIPART_OVERHEAD_BYTES
+)
+SOCIAL_MEDIA_FORMAT_EXTENSIONS = {
+    "JPEG": ".jpg",
+    "PNG": ".png",
+    "WEBP": ".webp",
+    "GIF": ".gif",
+}
 BUILTIN_REFERENCE_MAP = builtin_reference_map()
 UPDATE_PROTECTED_EXACT = (
     ".env",
@@ -318,17 +349,52 @@ DOCKER_MANUAL_UPDATE_COMMAND = (
 )
 
 
+class SocialHubRequestError(RuntimeError):
+    def __init__(self, status: int, payload: dict):
+        self.status = int(status or 502)
+        self.payload = payload if isinstance(payload, dict) else {"error": "social_hub_error"}
+        super().__init__(str(self.payload.get("message") or self.payload.get("error") or "social_hub_error"))
+
+
 class GalleryServer:
     """Portrait gallery Web server."""
 
-    def __init__(self, config: dict, data_dir: str, config_path: str = ""):
+    def __init__(
+        self,
+        config: dict,
+        data_dir: str,
+        config_path: str = "",
+        *,
+        social_hub_only: bool = False,
+    ):
         self.config = config
         self.data_dir = data_dir
         self.config_path = config_path
+        self.social_hub_only = bool(social_hub_only)
         self.gallery_config = config.get("gallery", {})
         self.host = self.gallery_config.get("host", "0.0.0.0")
         self.port = self.gallery_config.get("port", 18888)
         self.auth_store_path = os.path.join(self.data_dir, "gallery_auth.json")
+        self.social_store = SocialStore(data_dir)
+        self.social_hub_settings = SocialHubSettingsStore(
+            config,
+            data_dir,
+            hub_only=self.social_hub_only,
+        )
+        self.social_media_dir = os.path.join(data_dir, "social-media")
+        os.makedirs(self.social_media_dir, exist_ok=True)
+        self._prune_orphan_social_media()
+
+        if self.social_hub_only:
+            self.app = web.Application()
+            self._setup_social_hub_routes()
+            self.app.router.add_get("/api/health", self.handle_health)
+            return
+
+        self.theme_day_state_store = LockedJsonDictStore(
+            os.path.join(self.data_dir, "theme_day_state.json"),
+            os.path.join(self.data_dir, ".theme_day_state.lock"),
+        )
         self.default_image_dir = default_image_dir(data_dir)
         self.image_dir = self._resolve_image_dir()
         self.app_reference_dir = resolve_builtin_reference_dir(config, config_path)
@@ -397,7 +463,6 @@ class GalleryServer:
         self.on_theme_day = None
         self.on_rebuild_photo_jobs = None
         self.on_retry_photo_job = None
-        self.on_photo_quota_snapshot = None
         self.on_update_photo_plan = None
         self.on_update_outfit_plan = None
         self.on_validate_xiaohongshu_outfit = None
@@ -633,7 +698,11 @@ class GalleryServer:
         """Require the gallery password for non-local gallery data access."""
         path = request.path
         protected_path = (
-            (path.startswith("/api/") and path not in GALLERY_AUTH_PUBLIC_PATHS)
+            (
+                path.startswith("/api/")
+                and path not in GALLERY_AUTH_PUBLIC_PATHS
+                and not path.startswith("/api/social/hub/")
+            )
             or path.startswith("/images/")
             or path.startswith("/local-refs/")
         )
@@ -720,6 +789,20 @@ class GalleryServer:
         self.app.router.add_delete("/api/group-chat/rooms/{room_id}/messages/{message_id}", self.handle_group_chat_message)
         self.app.router.add_post("/api/group-chat/rooms/{room_id}/reply", self.handle_group_chat_reply)
         self.app.router.add_post("/api/group-chat/rooms/{room_id}/bind-agent", self.handle_group_chat_bind_agent)
+        self.app.router.add_get("/api/social/posts", self.handle_social_posts)
+        self.app.router.add_post("/api/social/posts", self.handle_social_posts)
+        self.app.router.add_delete("/api/social/posts/{post_id}", self.handle_social_post)
+        self.app.router.add_post("/api/social/posts/{post_id}/comments", self.handle_social_comments)
+        self.app.router.add_delete(
+            "/api/social/posts/{post_id}/comments/{comment_id}",
+            self.handle_social_comment,
+        )
+        self.app.router.add_post("/api/social/posts/{post_id}/reactions", self.handle_social_reaction)
+        self.app.router.add_get("/api/social/config", self.handle_social_config)
+        self.app.router.add_post("/api/social/config", self.handle_social_config)
+        self.app.router.add_post("/api/social/schedule-tweet", self.handle_social_schedule_tweet)
+        self.app.router.add_get("/api/social/media/{filename}", self.handle_social_media)
+        self._setup_social_hub_routes()
         self.app.router.add_post("/api/images/cleanup", self.handle_cleanup_images)
         self.app.router.add_get("/api/images/{img_id}/versions", self.handle_image_versions)
         self.app.router.add_get(
@@ -789,6 +872,33 @@ class GalleryServer:
         # 图片服务
         self.app.router.add_get("/images/{filename:.*}", self.handle_image_file)
 
+    def _setup_social_hub_routes(self):
+        """Register only the API surface needed by a shared social hub."""
+        self.app.router.add_get("/api/social/hub/status", self.handle_social_hub_status)
+        self.app.router.add_get("/api/social/hub/posts", self.handle_social_hub_posts)
+        self.app.router.add_post("/api/social/hub/posts", self.handle_social_hub_posts)
+        self.app.router.add_delete("/api/social/hub/posts/{post_id}", self.handle_social_hub_post)
+        self.app.router.add_post(
+            "/api/social/hub/posts/{post_id}/media-urls",
+            self.handle_social_hub_post_media_urls,
+        )
+        self.app.router.add_post(
+            "/api/social/hub/posts/{post_id}/comments",
+            self.handle_social_hub_comments,
+        )
+        self.app.router.add_delete(
+            "/api/social/hub/posts/{post_id}/comments/{comment_id}",
+            self.handle_social_hub_comment,
+        )
+        self.app.router.add_post(
+            "/api/social/hub/posts/{post_id}/reactions",
+            self.handle_social_hub_reaction,
+        )
+        self.app.router.add_get(
+            "/api/social/hub/media/{filename}",
+            self.handle_social_hub_media,
+        )
+
     async def handle_index(self, request: web.Request):
         """返回画廊页面"""
         html_path = os.path.join(os.path.dirname(__file__), "web", "index.html")
@@ -797,7 +907,10 @@ class GalleryServer:
         return web.FileResponse(html_path)
 
     async def handle_health(self, request: web.Request):
-        return web.json_response({"status": "ok"})
+        payload = {"status": "ok"}
+        if self.social_hub_only:
+            payload["service"] = "social-hub"
+        return web.json_response(payload)
 
     async def _read_json_body(self, request: web.Request) -> dict:
         try:
@@ -826,6 +939,11 @@ class GalleryServer:
         return web.json_response(self._auth_status_payload(request))
 
     async def handle_auth_setup(self, request: web.Request):
+        if not self._same_origin_write(request):
+            return web.json_response(
+                {"error": "origin_not_allowed", "message": "请求来源与画廊地址不一致。"},
+                status=403,
+            )
         if self._gallery_password_configured():
             return web.json_response(
                 {
@@ -1708,15 +1826,7 @@ class GalleryServer:
                     ):
                         hidden_access_count += 1
                         continue
-                    if (
-                        access["status"] == 409
-                        and access["method"] == "POST"
-                        and access["path"] == "/api/generate-now"
-                    ):
-                        message_text = "现在在干嘛未执行：今日生图计划已达上限"
-                        display_level = "INFO"
-                    else:
-                        message_text = f"接口异常：{access['method']} {access['path']} -> {access['status']}"
+                    message_text = f"接口异常：{access['method']} {access['path']} -> {access['status']}"
                     if access["status"] >= 500:
                         display_level = "ERROR"
                     elif access["status"] >= 400 and display_level != "INFO":
@@ -4610,7 +4720,7 @@ class GalleryServer:
                     continue
                 if entry.get("date") != today_str or entry.get("status") != "ok":
                     continue
-                if str(entry.get("source") or "").strip() not in TODAY_PHOTO_SOURCES:
+                if str(entry.get("source") or "").strip() not in SCHEDULED_PHOTO_SOURCES:
                     continue
                 if entry.get("delivery_status") in {"sending", "failed"}:
                     continue
@@ -6067,6 +6177,20 @@ class GalleryServer:
             "metadata_only": True,
         }
 
+    @staticmethod
+    def _photo_style_matches_plan(plan_style: str, photo_style: str) -> bool:
+        """Photo-derived schedule items only merge when they belong to the current plan.
+
+        Photos generated under an earlier re-rolled day plan carry that plan's
+        outfit_style; merging them would leak stale schedule slots (e.g. an old
+        魔法主题 14:50 回廊长凳 item) into today's real schedule.
+        """
+        plan_style = str(plan_style or "").strip()
+        photo_style = str(photo_style or "").strip()
+        if not plan_style or not photo_style:
+            return True
+        return photo_style == plan_style
+
     def _photo_schedule_item(self, entry: dict) -> dict:
         """Build a schedule item from a generated photo entry."""
         if not isinstance(entry, dict):
@@ -6876,9 +7000,12 @@ class GalleryServer:
             ]
             if today_photos:
                 seen_times = {item.get("time") for item in schedule_items}
+                plan_style = str(schedule_entry.get("outfit_style") or "").strip()
                 for p in sorted(today_photos, key=lambda x: self._time_sort_value(x.get("schedule_time") or x.get("time", ""))):
                     item = self._photo_schedule_item(p)
                     if not item or item["time"] in seen_times:
+                        continue
+                    if not self._photo_style_matches_plan(plan_style, p.get("outfit_style", "")):
                         continue
                     schedule_items.append(item)
                     seen_times.add(item["time"])
@@ -7388,8 +7515,14 @@ class GalleryServer:
 
     async def handle_xiaohongshu_status(self, request: web.Request):
         """Return local MCP process and account login state."""
+        probe = str(request.query.get("probe") or "").strip().lower() in {"1", "true", "yes"}
         start_service = str(request.query.get("start") or "1").strip().lower() not in {"0", "false", "no"}
-        return web.json_response(await self.xiaohongshu_client.status(start_service=start_service))
+        if probe:
+            start_service = False
+        return web.json_response(await self.xiaohongshu_client.status(
+            start_service=start_service,
+            check_login=not probe,
+        ))
 
     async def handle_xiaohongshu_login_qrcode(self, request: web.Request):
         """Return a QR image from the read-only local MCP bridge."""
@@ -7789,6 +7922,7 @@ class GalleryServer:
         daily: dict,
         *,
         force: bool = False,
+        timeout_seconds: Optional[float] = None,
     ) -> dict:
         """Return today's XHS outfit reference, falling back silently on every failure."""
         if not self.xiaohongshu_schedule_enabled():
@@ -7818,7 +7952,18 @@ class GalleryServer:
                 "pending_query": query,
                 "updated_at": query_saved_at,
             })
-            selection_deadline = time.monotonic() + 240
+            selection_timeout_seconds = DEFAULT_XIAOHONGSHU_SCHEDULE_SELECTION_TIMEOUT_SECONDS
+            if timeout_seconds is not None:
+                try:
+                    requested_timeout_seconds = float(timeout_seconds)
+                except (TypeError, ValueError):
+                    requested_timeout_seconds = 0
+                if requested_timeout_seconds > 0:
+                    selection_timeout_seconds = min(
+                        requested_timeout_seconds,
+                        MAX_XIAOHONGSHU_SCHEDULE_SELECTION_TIMEOUT_SECONDS,
+                    )
+            selection_deadline = time.monotonic() + selection_timeout_seconds
             cleanup_paths: list[str] = []
             new_schedule_filename = ""
             schedule_state_saved = False
@@ -8275,7 +8420,10 @@ class GalleryServer:
                 logger.info("小红书今日穿搭已选择: date=%s title=%s query=%s", schedule_date, title, query)
                 return result
             except asyncio.TimeoutError:
-                message = "小红书选图超过 240 秒，已停止并回退原参考图"
+                message = (
+                    "小红书选图超过 "
+                    f"{selection_timeout_seconds:g} 秒，已停止并回退原参考图"
+                )
                 logger.warning("小红书日程穿搭选择超时: stage=%s", stage)
                 self._save_xiaohongshu_schedule_error(message)
             except XiaohongshuError as exc:
@@ -8606,6 +8754,12 @@ class GalleryServer:
         content_type = ""
         style = ""
         try:
+            request = request.clone(
+                client_max_size=(
+                    MAX_REFERENCE_UPLOAD_BYTES
+                    + MAX_REFERENCE_MULTIPART_OVERHEAD_BYTES
+                )
+            )
             if (
                 request.content_length is not None
                 and request.content_length
@@ -9685,6 +9839,8 @@ class GalleryServer:
                 return model_error
             style_hint = str(body.get("style") or body.get("style_hint") or "").strip()
             reference_mode = self._optional_character_reference_mode(body)
+            raw_tags = body.get("tags") if isinstance(body.get("tags"), list) else []
+            tags = [str(tag).strip()[:20] for tag in raw_tags if str(tag).strip()]
 
             entry = await self.on_generate_character(
                 character.get("id", ""),
@@ -9701,6 +9857,29 @@ class GalleryServer:
                     payload = self._normalize_entry_display(payload, self._load_image_metadata())
                 except Exception as e:
                     logger.warning("Normalize character generate response failed: %s", e)
+                if tags:
+                    filename = self._entry_image_filename(payload)
+                    if filename:
+                        def _update_entry_tags(all_data):
+                            targets = []
+                            if isinstance(all_data.get(filename), dict):
+                                targets.append(all_data[filename])
+                            for item in all_data.values():
+                                if isinstance(item, dict) and item.get("image_filename") == filename and item not in targets:
+                                    targets.append(item)
+                            for item in targets:
+                                item["tags"] = tags
+                            return all_data
+
+                        try:
+                            ScheduleStore(self.data_dir).update(_update_entry_tags)
+                        except Exception as exc:
+                            logger.warning("Save generation tags failed for %s: %s", filename, exc)
+                        try:
+                            self._update_image_metadata_entry(filename, {"tags": tags})
+                        except Exception as exc:
+                            logger.warning("Save generation tags metadata failed for %s: %s", filename, exc)
+                    payload["tags"] = tags
                 return web.json_response(payload)
             return web.json_response({"error": "generate_failed"}, status=500)
         except Exception as e:
@@ -9811,6 +9990,1643 @@ class GalleryServer:
         except Exception as e:
             logger.error("Group generate error: %s", e)
             return web.json_response({"error": str(e)}, status=500)
+
+    def _social_settings(self) -> dict:
+        return self.social_hub_settings.effective()
+
+    @staticmethod
+    def _social_viewer_key(settings: dict) -> str:
+        return f"instance:{settings['instance_id']}"
+
+    def _social_hub_headers(self, settings: dict) -> dict:
+        return {
+            "Accept": "application/json",
+            "X-Social-Hub-Token": str(settings.get("hub_token") or ""),
+            "X-Social-Instance-ID": str(settings.get("instance_id") or ""),
+            "X-Social-Client-Token": str(settings.get("client_token") or ""),
+        }
+
+    @staticmethod
+    def _social_hub_url(settings: dict, path: str) -> str:
+        if not path.startswith("/api/social/hub/"):
+            raise ValueError("invalid_social_hub_path")
+        hub_url = str(settings.get("hub_url") or "").rstrip("/")
+        if not hub_url:
+            raise ValueError("social_hub_not_configured")
+        return f"{hub_url}{path}"
+
+    def _social_hub_authorized(self, request: web.Request) -> bool:
+        expected = str(self._social_settings().get("server_token") or "")
+        supplied = str(request.headers.get("X-Social-Hub-Token") or "")
+        return bool(
+            expected
+            and supplied
+            and hmac.compare_digest(
+                supplied.encode("utf-8"),
+                expected.encode("utf-8"),
+            )
+        )
+
+    def _social_hub_instance_id(self, request: web.Request) -> str:
+        if not self._social_hub_authorized(request):
+            raise PermissionError("social_hub_unauthorized")
+        try:
+            instance_id = normalize_instance_id(
+                request.headers.get("X-Social-Instance-ID") or ""
+            )
+            client_token = normalize_client_token(
+                request.headers.get("X-Social-Client-Token") or ""
+            )
+        except ValueError as exc:
+            raise PermissionError("social_hub_unauthorized") from exc
+        if not self.social_hub_settings.verify_or_register_hub_client(
+            instance_id,
+            client_token,
+        ):
+            raise PermissionError("social_hub_unauthorized")
+        return instance_id
+
+    @staticmethod
+    async def _read_limited_social_response(
+        response,
+        maximum_bytes: int,
+        *,
+        error: str,
+        message: str,
+    ) -> bytes:
+        if (
+            response.content_length is not None
+            and response.content_length > maximum_bytes
+        ):
+            raise SocialHubRequestError(502, {
+                "error": error,
+                "message": message,
+            })
+        chunks = []
+        received_bytes = 0
+        async for chunk in response.content.iter_chunked(64 * 1024):
+            received_bytes += len(chunk)
+            if received_bytes > maximum_bytes:
+                raise SocialHubRequestError(502, {
+                    "error": error,
+                    "message": message,
+                })
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+    async def _social_remote_request(
+        self,
+        settings: dict,
+        method: str,
+        path: str,
+        *,
+        json_body: dict | None = None,
+        form_data=None,
+    ) -> dict:
+        timeout = aiohttp.ClientTimeout(total=int(settings.get("timeout_seconds") or 45))
+        try:
+            async with aiohttp.ClientSession(
+                trust_env=True,
+                timeout=timeout,
+                headers=self._social_hub_headers(settings),
+            ) as session:
+                async with session.request(
+                    method,
+                    self._social_hub_url(settings, path),
+                    json=json_body,
+                    data=form_data,
+                    allow_redirects=False,
+                ) as response:
+                    raw = await self._read_limited_social_response(
+                        response,
+                        MAX_SOCIAL_RESPONSE_BYTES,
+                        error="social_hub_response_too_large",
+                        message="中心节点响应超过本地代理上限。",
+                    )
+                    try:
+                        payload = json.loads(raw.decode("utf-8")) if raw else {}
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        payload = {}
+                    if not isinstance(payload, dict):
+                        payload = {}
+                    if not 200 <= response.status < 300:
+                        payload.setdefault("error", "social_hub_request_failed")
+                        payload.setdefault("message", f"中心节点返回 HTTP {response.status}")
+                        if 300 <= response.status < 400:
+                            payload["error"] = "social_hub_redirect_rejected"
+                            payload["message"] = "中心节点返回了未允许的重定向。"
+                            raise SocialHubRequestError(502, payload)
+                        raise SocialHubRequestError(response.status, payload)
+                    return payload
+        except SocialHubRequestError:
+            raise
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+            raise SocialHubRequestError(502, {
+                "error": "social_hub_unavailable",
+                "message": f"无法连接中心节点：{exc}",
+            }) from exc
+
+    async def _social_remote_publish(
+        self,
+        settings: dict,
+        payload: dict,
+        sources: list[dict],
+        avatar: bytes = b"",
+    ) -> dict:
+        if not sources and not avatar:
+            return await self._social_remote_request(
+                settings,
+                "POST",
+                "/api/social/hub/posts",
+                json_body=payload,
+            )
+        form = aiohttp.FormData()
+        form.add_field(
+            "payload",
+            json.dumps(payload, ensure_ascii=False),
+            content_type="application/json",
+        )
+        if avatar:
+            form.add_field(
+                "avatar",
+                avatar,
+                filename="avatar.jpg",
+                content_type="image/jpeg",
+            )
+        for index, source in enumerate(sources):
+            form.add_field(
+                f"media_{index}",
+                source["bytes"],
+                filename=source["filename"],
+                content_type="application/octet-stream",
+            )
+        return await self._social_remote_request(
+            settings,
+            "POST",
+            "/api/social/hub/posts",
+            form_data=form,
+        )
+
+    async def _social_remote_comment(
+        self,
+        settings: dict,
+        post_id: str,
+        payload: dict,
+        avatar: bytes = b"",
+    ) -> dict:
+        path = f"/api/social/hub/posts/{quote(post_id, safe='')}/comments"
+        if not avatar:
+            return await self._social_remote_request(
+                settings,
+                "POST",
+                path,
+                json_body=payload,
+            )
+        form = aiohttp.FormData()
+        form.add_field(
+            "payload",
+            json.dumps(payload, ensure_ascii=False),
+            content_type="application/json",
+        )
+        form.add_field(
+            "avatar",
+            avatar,
+            filename="avatar.jpg",
+            content_type="image/jpeg",
+        )
+        return await self._social_remote_request(
+            settings,
+            "POST",
+            path,
+            form_data=form,
+        )
+
+    async def _social_remote_media(self, settings: dict, filename: str) -> tuple[bytes, str]:
+        timeout = aiohttp.ClientTimeout(total=int(settings.get("timeout_seconds") or 45))
+        try:
+            async with aiohttp.ClientSession(
+                trust_env=True,
+                timeout=timeout,
+                headers=self._social_hub_headers(settings),
+            ) as session:
+                async with session.get(
+                    self._social_hub_url(settings, f"/api/social/hub/media/{quote(filename)}"),
+                    allow_redirects=False,
+                ) as response:
+                    error_response = not 200 <= response.status < 300
+                    maximum_bytes = (
+                        MAX_GROUP_CHAT_METADATA_BYTES * 2
+                        if error_response
+                        else MAX_SOCIAL_MEDIA_BYTES
+                    )
+                    if not error_response:
+                        content_type = str(
+                            response.headers.get("Content-Type") or ""
+                        ).split(";", 1)[0].lower()
+                        if content_type not in REFERENCE_MIME_EXTENSIONS:
+                            raise SocialHubRequestError(502, {
+                                "error": "invalid_social_media_type",
+                                "message": "中心节点返回了无效图片类型。",
+                            })
+                    body = await self._read_limited_social_response(
+                        response,
+                        maximum_bytes,
+                        error="social_media_too_large",
+                        message="中心节点响应超过本地代理上限。",
+                    )
+                    if error_response:
+                        try:
+                            payload = json.loads(body.decode("utf-8"))
+                        except (UnicodeDecodeError, json.JSONDecodeError):
+                            payload = {}
+                        if not isinstance(payload, dict):
+                            payload = {}
+                        payload.setdefault("error", "social_hub_request_failed")
+                        payload.setdefault("message", f"中心节点返回 HTTP {response.status}")
+                        if 300 <= response.status < 400:
+                            payload["error"] = "social_hub_redirect_rejected"
+                            payload["message"] = "中心节点图片返回了未允许的重定向。"
+                            raise SocialHubRequestError(502, payload)
+                        raise SocialHubRequestError(response.status, payload)
+                    return body, content_type
+        except SocialHubRequestError:
+            raise
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+            raise SocialHubRequestError(502, {
+                "error": "social_hub_unavailable",
+                "message": f"无法读取中心节点图片：{exc}",
+            }) from exc
+
+    def _social_character_avatar_bytes(self, character: dict) -> bytes:
+        reference_image = str(character.get("reference_image") or "").strip()
+        path = self._resolve_reference_image(reference_image, allow_any_path=True)
+        if not path or not os.path.isfile(path):
+            return b""
+        try:
+            if os.path.getsize(path) > MAX_SOCIAL_AVATAR_SOURCE_BYTES:
+                return b""
+            with Image.open(path) as source:
+                source.seek(0)
+                if source.width * source.height > MAX_REFERENCE_IMAGE_PIXELS:
+                    return b""
+                image = ImageOps.exif_transpose(source)
+                avatar = ImageOps.fit(
+                    image.convert("RGB"),
+                    (SOCIAL_AVATAR_SIZE, SOCIAL_AVATAR_SIZE),
+                    method=Image.Resampling.LANCZOS,
+                    centering=(0.5, 0.28),
+                )
+                avatar = self._metadata_free_image(avatar, "RGB")
+                buffer = BytesIO()
+                avatar.save(buffer, format="JPEG", quality=88, optimize=True)
+                result = buffer.getvalue()
+                return result if len(result) <= MAX_SOCIAL_AVATAR_BYTES else b""
+        except (
+            OSError,
+            UnidentifiedImageError,
+            Image.DecompressionBombError,
+            ValueError,
+        ):
+            return b""
+
+    def _social_actor(
+        self,
+        body: dict,
+        *,
+        user_display_name: str = "",
+    ) -> tuple[str, str, dict, bytes]:
+        author_type = str(body.get("author_type") or "character").strip().lower()
+        author_id = str(body.get("author_id") or "").strip()
+        if author_type == "user":
+            display_name = str(
+                user_display_name or body.get("author_name") or "我"
+            ).strip()[:80] or "我"
+            return "user", author_id or "user", {
+                "display_name": display_name,
+                "avatar": "",
+            }, b""
+        if author_type != "character" or not author_id:
+            raise ValueError("invalid_author")
+        registry = self._character_registry()
+        character = next(
+            (item for item in registry.characters if str(item.get("id") or "") == author_id),
+            None,
+        )
+        if not character:
+            raise ValueError("character_not_found")
+        return "character", author_id, {
+            "display_name": str(character.get("name") or author_id).strip()[:80],
+            "avatar": "",
+        }, self._social_character_avatar_bytes(character)
+
+    def _social_local_media_sources(self, body: dict) -> list[dict]:
+        raw_items = body.get("media") if isinstance(body.get("media"), list) else []
+        registered = self._registered_image_filenames()
+        result = []
+        total_bytes = 0
+        for item in raw_items[:9]:
+            if not isinstance(item, dict):
+                continue
+            raw_filename = item.get("image_filename") or item.get("filename")
+            if not raw_filename:
+                raw_url = str(item.get("image_url") or item.get("url") or "").strip()
+                parsed_url = urlparse(raw_url)
+                if parsed_url.scheme or parsed_url.netloc or not parsed_url.path.startswith("/images/"):
+                    raise ValueError("invalid_media_url")
+                raw_filename = unquote(parsed_url.path.removeprefix("/images/"))
+            filename = self._normalize_gallery_image_filename(raw_filename)
+            if filename not in registered:
+                raise ValueError("image_not_found")
+            path = self._image_file_path(filename)
+            if not path:
+                raise ValueError("image_file_missing")
+            try:
+                size = os.path.getsize(path)
+            except OSError as exc:
+                raise ValueError("image_file_missing") from exc
+            if size <= 0 or size > MAX_SOCIAL_MEDIA_BYTES:
+                raise ValueError("social_media_too_large")
+            total_bytes += size
+            if total_bytes > MAX_SOCIAL_UPLOAD_BYTES:
+                raise ValueError("social_upload_too_large")
+            try:
+                with open(path, "rb") as image_file:
+                    content = image_file.read()
+            except OSError as exc:
+                raise ValueError("image_file_missing") from exc
+            content, _extension = self._encode_social_image(content)
+            result.append({
+                "filename": filename,
+                "bytes": content,
+            })
+        return result
+
+    def _social_publish_payload(
+        self,
+        body: dict,
+        settings: dict,
+    ) -> tuple[dict, list[dict], bytes]:
+        _author_type, author_id, snapshot, avatar = self._social_actor(
+            body,
+            user_display_name=str(settings.get("display_name") or ""),
+        )
+        text = str(body.get("text") or body.get("content") or "").strip()[:1200]
+        sources = self._social_local_media_sources(body)
+        if not text and not sources:
+            raise ValueError("content_required")
+        payload = {
+            "author_snapshot": {
+                "display_name": str(snapshot.get("display_name") or author_id).strip()[:80],
+                "avatar": "",
+            },
+            "text": text,
+            "media": [
+                {"upload_key": f"media_{index}"} for index, _source in enumerate(sources)
+            ],
+        }
+        return payload, sources, avatar
+
+    @staticmethod
+    def _social_media_filename(value: str) -> str:
+        filename = str(value or "").strip()
+        if not re.fullmatch(
+            r"(?:social|avatar)_[0-9a-f]{32}\.(?:jpg|png|webp|gif)",
+            filename,
+        ):
+            raise ValueError("invalid_social_media_filename")
+        return filename
+
+    def _social_media_path(self, filename: str) -> str:
+        try:
+            clean = self._social_media_filename(filename)
+        except ValueError:
+            return ""
+        return os.path.join(self.social_media_dir, clean)
+
+    @staticmethod
+    def _metadata_free_image(image: Image.Image, mode: str) -> Image.Image:
+        """Copy only decoded pixels into a fresh image with an empty info map."""
+        converted = image.convert(mode)
+        clean = Image.new(mode, converted.size)
+        clean.paste(converted)
+        return clean
+
+    @staticmethod
+    def _encode_social_image(content: bytes) -> tuple[bytes, str]:
+        if not content or len(content) > MAX_SOCIAL_MEDIA_BYTES:
+            raise ValueError("social_media_too_large")
+        try:
+            with Image.open(BytesIO(content)) as source:
+                source.seek(0)
+                image_format = str(source.format or "").upper()
+                extension = SOCIAL_MEDIA_FORMAT_EXTENSIONS.get(image_format)
+                if not extension:
+                    raise ValueError("unsupported_social_media")
+                if source.width * source.height > MAX_REFERENCE_IMAGE_PIXELS:
+                    raise ValueError("social_media_too_large")
+                image = ImageOps.exif_transpose(source)
+                output = BytesIO()
+                if image_format == "JPEG":
+                    GalleryServer._metadata_free_image(image, "RGB").save(
+                        output,
+                        format="JPEG",
+                        quality=92,
+                        optimize=True,
+                    )
+                elif image_format == "PNG" and "A" not in image.getbands():
+                    # Opaque photos are far smaller as JPEG; keeps social
+                    # uploads light over low-bandwidth links to the hub.
+                    GalleryServer._metadata_free_image(image, "RGB").save(
+                        output,
+                        format="JPEG",
+                        quality=88,
+                        optimize=True,
+                    )
+                    extension = ".jpg"
+                elif image_format == "WEBP" and "A" not in image.getbands():
+                    GalleryServer._metadata_free_image(image, "RGB").save(
+                        output,
+                        format="JPEG",
+                        quality=88,
+                        optimize=True,
+                    )
+                    extension = ".jpg"
+                elif image_format == "PNG":
+                    normalized = GalleryServer._metadata_free_image(
+                        image,
+                        "RGBA" if "A" in image.getbands() else "RGB",
+                    )
+                    normalized.save(output, format="PNG", optimize=True)
+                elif image_format == "WEBP":
+                    normalized = GalleryServer._metadata_free_image(
+                        image,
+                        "RGBA" if "A" in image.getbands() else "RGB",
+                    )
+                    normalized.save(output, format="WEBP", quality=92, method=6)
+                else:
+                    GalleryServer._metadata_free_image(image, "RGBA").save(
+                        output,
+                        format="GIF",
+                    )
+                sanitized = output.getvalue()
+        except (
+            OSError,
+            UnidentifiedImageError,
+            Image.DecompressionBombError,
+            ValueError,
+        ) as exc:
+            if isinstance(exc, ValueError) and str(exc) in {
+                "social_media_too_large",
+                "unsupported_social_media",
+            }:
+                raise
+            raise ValueError("invalid_social_media") from exc
+        if not sanitized or len(sanitized) > MAX_SOCIAL_MEDIA_BYTES:
+            raise ValueError("social_media_too_large")
+        return sanitized, extension
+
+    def _save_social_media_bytes(self, content: bytes) -> dict:
+        sanitized, extension = self._encode_social_image(content)
+        filename = f"social_{uuid.uuid4().hex}{extension}"
+        target_path = self._social_media_path(filename)
+        fd, temp_path = tempfile.mkstemp(
+            dir=self.social_media_dir,
+            prefix=".social_media_",
+            suffix=".tmp",
+        )
+        try:
+            with os.fdopen(fd, "wb") as temp_file:
+                temp_file.write(sanitized)
+            os.replace(temp_path, target_path)
+        except Exception:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+            raise
+        return {
+            "type": "image",
+            "image_filename": filename,
+            "image_url": f"/api/social/media/{quote(filename)}",
+        }
+
+    def _save_social_avatar_bytes(self, content: bytes) -> tuple[str, str]:
+        if not content or len(content) > MAX_SOCIAL_AVATAR_BYTES:
+            return "", ""
+        try:
+            with Image.open(BytesIO(content)) as source:
+                source.seek(0)
+                if source.width * source.height > MAX_REFERENCE_IMAGE_PIXELS:
+                    raise ValueError("social_avatar_too_large")
+                image = ImageOps.exif_transpose(source)
+                avatar = ImageOps.fit(
+                    image.convert("RGB"),
+                    (SOCIAL_AVATAR_SIZE, SOCIAL_AVATAR_SIZE),
+                    method=Image.Resampling.LANCZOS,
+                    centering=(0.5, 0.28),
+                )
+                avatar = self._metadata_free_image(avatar, "RGB")
+                buffer = BytesIO()
+                avatar.save(buffer, format="JPEG", quality=88, optimize=True)
+                sanitized = buffer.getvalue()
+        except (
+            OSError,
+            UnidentifiedImageError,
+            Image.DecompressionBombError,
+            ValueError,
+        ) as exc:
+            raise ValueError("invalid_social_avatar") from exc
+        digest = hashlib.sha256(sanitized).hexdigest()[:32]
+        filename = f"avatar_{digest}.jpg"
+        target_path = self._social_media_path(filename)
+        if os.path.isfile(target_path):
+            return f"/api/social/media/{quote(filename)}", ""
+        fd, temp_path = tempfile.mkstemp(
+            dir=self.social_media_dir,
+            prefix=".social_avatar_",
+            suffix=".tmp",
+        )
+        try:
+            with os.fdopen(fd, "wb") as temp_file:
+                temp_file.write(sanitized)
+            os.replace(temp_path, target_path)
+        except Exception:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+            raise
+        return f"/api/social/media/{quote(filename)}", filename
+
+    def _remove_social_files(self, filenames) -> None:
+        for filename in dict.fromkeys(str(item or "") for item in filenames):
+            path = self._social_media_path(filename)
+            if not path:
+                continue
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                logger.warning("Unable to remove social media %s: %s", path, exc)
+
+    def _social_record_avatar_filenames(self, value: dict) -> set[str]:
+        records = [value]
+        if isinstance(value, dict) and isinstance(value.get("comments"), list):
+            records.extend(item for item in value["comments"] if isinstance(item, dict))
+        filenames = set()
+        for record in records:
+            snapshot = record.get("author_snapshot")
+            if not isinstance(snapshot, dict):
+                continue
+            avatar_url = str(snapshot.get("avatar") or "").strip()
+            prefix = "/api/social/media/"
+            if not avatar_url.startswith(prefix):
+                continue
+            try:
+                filenames.add(self._social_media_filename(unquote(avatar_url[len(prefix):])))
+            except ValueError:
+                continue
+        return filenames
+
+    def _referenced_social_media_filenames(self) -> set[str]:
+        referenced = set()
+        try:
+            posts = self.social_store.load().get("posts", [])
+        except Exception as exc:
+            logger.warning("Unable to inspect social media references: %s", exc)
+            return referenced
+        for post in posts if isinstance(posts, list) else []:
+            if not isinstance(post, dict):
+                continue
+            referenced.update(self._social_record_avatar_filenames(post))
+            media = post.get("media") if isinstance(post.get("media"), list) else []
+            for item in media:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    referenced.add(self._social_media_filename(item.get("image_filename")))
+                except ValueError:
+                    continue
+        return referenced
+
+    def _prune_orphan_social_media(self) -> None:
+        referenced = self._referenced_social_media_filenames()
+        try:
+            filenames = os.listdir(self.social_media_dir)
+        except OSError as exc:
+            logger.warning("Unable to inspect social media directory: %s", exc)
+            return
+        orphans = []
+        for filename in filenames:
+            if (
+                filename.endswith(".tmp")
+                and filename.startswith((".social_media_", ".social_avatar_"))
+            ):
+                try:
+                    path = os.path.join(self.social_media_dir, filename)
+                    if os.path.isfile(path) or os.path.islink(path):
+                        os.unlink(path)
+                except OSError as exc:
+                    logger.warning("Unable to remove stale social temp %s: %s", filename, exc)
+                continue
+            try:
+                clean = self._social_media_filename(filename)
+            except ValueError:
+                continue
+            if clean not in referenced:
+                orphans.append(clean)
+        self._remove_social_files(orphans)
+
+    def _delete_social_media_for_post(self, post: dict) -> None:
+        media = post.get("media") if isinstance(post, dict) else []
+        media_filenames = [
+            str(item.get("image_filename") or "")
+            for item in media if isinstance(item, dict)
+        ] if isinstance(media, list) else []
+        self._remove_social_files(media_filenames)
+        referenced = self._referenced_social_media_filenames()
+        self._remove_social_files(
+            filename
+            for filename in self._social_record_avatar_filenames(post)
+            if filename not in referenced
+        )
+
+    def _delete_unused_social_avatars(self, value: dict) -> None:
+        referenced = self._referenced_social_media_filenames()
+        self._remove_social_files(
+            filename
+            for filename in self._social_record_avatar_filenames(value)
+            if filename not in referenced
+        )
+
+    def _social_hub_author(
+        self,
+        payload: dict,
+        uploads: dict[str, bytes],
+    ) -> tuple[dict, str]:
+        snapshot = payload.get("author_snapshot") if isinstance(payload.get("author_snapshot"), dict) else {}
+        display_name = str(snapshot.get("display_name") or "").strip()[:80]
+        if not display_name:
+            raise ValueError("invalid_author")
+        avatar_url, created_avatar = self._save_social_avatar_bytes(
+            uploads.get("avatar") or b""
+        )
+        return {
+            "display_name": display_name,
+            "avatar": avatar_url,
+        }, created_avatar
+
+    def _social_hub_create_post(
+        self,
+        payload: dict,
+        uploads: dict[str, bytes],
+        instance_id: str,
+    ) -> dict:
+        if not isinstance(payload, dict):
+            raise ValueError("invalid_payload")
+        created_files = []
+        try:
+            snapshot, created_avatar = self._social_hub_author(payload, uploads)
+            if created_avatar:
+                created_files.append(created_avatar)
+            text = str(payload.get("text") or payload.get("content") or "").strip()[:1200]
+            raw_media = payload.get("media") if isinstance(payload.get("media"), list) else []
+            media = []
+            for index, item in enumerate(raw_media[:9]):
+                if not isinstance(item, dict):
+                    continue
+                upload_key = str(item.get("upload_key") or f"media_{index}").strip()
+                content = uploads.get(upload_key)
+                if content is None:
+                    raise ValueError("social_media_missing")
+                saved_media = self._save_social_media_bytes(content)
+                media.append(saved_media)
+                created_files.append(saved_media["image_filename"])
+            if not text and not media:
+                raise ValueError("content_required")
+            return self.social_store.create_post(
+                {
+                    "author_snapshot": snapshot,
+                    "text": text,
+                    "media": media,
+                },
+                viewer_key=f"instance:{instance_id}",
+                viewer_instance_id=instance_id,
+            )
+        except Exception:
+            self._remove_social_files(created_files)
+            raise
+
+    def _social_hub_add_comment(
+        self,
+        post_id: str,
+        payload: dict,
+        uploads: dict[str, bytes],
+        instance_id: str,
+    ) -> dict:
+        if not isinstance(payload, dict):
+            raise ValueError("invalid_payload")
+        created_files = []
+        try:
+            snapshot, created_avatar = self._social_hub_author(payload, uploads)
+            if created_avatar:
+                created_files.append(created_avatar)
+            text = str(payload.get("text") or payload.get("content") or "").strip()[:1200]
+            if not text:
+                raise ValueError("content_required")
+            return self.social_store.add_comment(
+                post_id,
+                {
+                    "author_snapshot": snapshot,
+                    "text": text,
+                },
+                viewer_key=f"instance:{instance_id}",
+                viewer_instance_id=instance_id,
+            )
+        except Exception:
+            self._remove_social_files(created_files)
+            raise
+
+    async def _read_social_hub_payload(self, request: web.Request) -> tuple[dict, dict[str, bytes]]:
+        if request.content_type.startswith("multipart/"):
+            reader = await request.multipart()
+            payload_text = ""
+            uploads: dict[str, bytes] = {}
+            total_bytes = 0
+            seen_fields = set()
+            while True:
+                field = await reader.next()
+                if field is None:
+                    break
+                name = str(field.name or "")
+                if name not in {"payload", "avatar"} and not re.fullmatch(r"media_[0-8]", name):
+                    raise ValueError("invalid_social_field")
+                if name in seen_fields:
+                    raise ValueError("duplicate_social_field")
+                seen_fields.add(name)
+                chunks = []
+                size = 0
+                field_limit = (
+                    MAX_GROUP_CHAT_METADATA_BYTES * 2
+                    if name == "payload"
+                    else (
+                        MAX_SOCIAL_AVATAR_BYTES
+                        if name == "avatar"
+                        else MAX_SOCIAL_MEDIA_BYTES
+                    )
+                )
+                while True:
+                    chunk = await field.read_chunk()
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    total_bytes += len(chunk)
+                    if total_bytes > (
+                        MAX_SOCIAL_UPLOAD_BYTES
+                        + MAX_SOCIAL_AVATAR_BYTES
+                        + MAX_GROUP_CHAT_METADATA_BYTES * 2
+                    ):
+                        raise ValueError("social_upload_too_large")
+                    if size > field_limit:
+                        raise ValueError(
+                            "payload_too_large"
+                            if name == "payload"
+                            else (
+                                "social_avatar_too_large"
+                                if name == "avatar"
+                                else "social_media_too_large"
+                            )
+                        )
+                    chunks.append(chunk)
+                content = b"".join(chunks)
+                if name == "payload":
+                    if payload_text:
+                        raise ValueError("invalid_payload")
+                    try:
+                        payload_text = content.decode("utf-8")
+                    except UnicodeDecodeError as exc:
+                        raise ValueError("invalid_payload") from exc
+                else:
+                    uploads[name] = content
+            try:
+                payload = json.loads(payload_text)
+            except json.JSONDecodeError as exc:
+                raise ValueError("invalid_json") from exc
+            if not isinstance(payload, dict):
+                raise ValueError("invalid_payload")
+            return payload, uploads
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            raise ValueError("invalid_json") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("invalid_payload")
+        if self._json_payload_size(payload) > MAX_GROUP_CHAT_METADATA_BYTES * 2:
+            raise ValueError("payload_too_large")
+        return payload, {}
+
+    async def _social_connection_payload(self, settings: dict, *, test: bool) -> dict:
+        if not settings.get("remote"):
+            return {"ok": True, "message": "当前画廊就是中心节点。"}
+        if not test:
+            return {"ok": None, "message": "尚未测试中心节点连接。"}
+        try:
+            result = await self._social_remote_request(
+                settings,
+                "GET",
+                "/api/social/hub/status",
+            )
+            return {"ok": bool(result.get("ok")), "message": "中心节点已连接。"}
+        except SocialHubRequestError as exc:
+            return {
+                "ok": False,
+                "message": str(exc.payload.get("message") or exc.payload.get("error") or "中心节点不可用"),
+            }
+
+    async def handle_social_config(self, request: web.Request):
+        try:
+            if request.method.upper() == "GET":
+                settings = self._social_settings()
+                picgo = self._social_picgo_settings()
+                return web.json_response({
+                    **self.social_hub_settings.public_payload(include_server_token=True),
+                    "github_repo": str(picgo.get("repo") or ""),
+                    "github_branch": str(picgo.get("branch") or "master"),
+                    "github_image_path": str(picgo.get("path") or "img"),
+                    "github_token_configured": bool(picgo.get("token")),
+                    "connection": await self._social_connection_payload(
+                        settings,
+                        test=str(request.query.get("test") or "") in {"1", "true"},
+                    ),
+                })
+            try:
+                body = await request.json()
+            except Exception:
+                return web.json_response({"error": "invalid_json"}, status=400)
+            if not isinstance(body, dict):
+                return web.json_response({"error": "invalid_payload"}, status=400)
+            hub_token = body["hub_token"] if "hub_token" in body else None
+            settings = self.social_hub_settings.update_client(
+                hub_url=str(body.get("hub_url") or ""),
+                display_name=str(body.get("display_name") or ""),
+                hub_token=hub_token,
+                github_repo=body["github_repo"] if "github_repo" in body else None,
+                github_branch=body["github_branch"] if "github_branch" in body else None,
+                github_image_path=(
+                    body["github_image_path"] if "github_image_path" in body else None
+                ),
+                github_token=body["github_token"] if "github_token" in body else None,
+            )
+            picgo = self._social_picgo_settings()
+            return web.json_response({
+                "saved": True,
+                **self.social_hub_settings.public_payload(include_server_token=True),
+                "github_repo": str(picgo.get("repo") or ""),
+                "github_branch": str(picgo.get("branch") or "master"),
+                "github_image_path": str(picgo.get("path") or "img"),
+                "github_token_configured": bool(picgo.get("token")),
+                "connection": await self._social_connection_payload(settings, test=True),
+            })
+        except ValueError as exc:
+            return web.json_response({"error": str(exc) or "invalid_social_config"}, status=400)
+        except Exception as exc:
+            logger.error("Social config API error: %s", exc)
+            return web.json_response({"error": "social_config_failed", "message": str(exc)}, status=500)
+
+    async def handle_social_schedule_tweet(self, request: web.Request):
+        """LLM 把今日日程整理成自然推文（失败时由前端回退到模板）。"""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid_json"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "invalid_payload"}, status=400)
+        theme_day = str(body.get("theme_day") or "").strip()[:80]
+        outfit_style = str(body.get("outfit_style") or "").strip()[:80]
+        caption = str(body.get("caption") or "").strip()[:600]
+        raw_schedule = body.get("schedule") if isinstance(body.get("schedule"), list) else []
+        schedule_lines = []
+        for item in raw_schedule[:12]:
+            if not isinstance(item, dict):
+                continue
+            line = (
+                f"{str(item.get('time') or '').strip()} "
+                f"{str(item.get('activity') or '').strip()}"
+            ).strip()
+            if line:
+                schedule_lines.append(line[:120])
+        try:
+            image_count = int(body.get("image_count") or 0)
+        except (TypeError, ValueError):
+            image_count = 0
+        image_count = max(1, min(image_count, 9))
+
+        prompt_lines = ["请把今天的生活日程写成一个自然、有生活气息的推文文案。"]
+        if theme_day:
+            prompt_lines.append(f"主题：{theme_day}")
+        if outfit_style:
+            prompt_lines.append(f"今日穿搭风格：{outfit_style}")
+        if caption:
+            prompt_lines.append(f"今日概况：{caption}")
+        if schedule_lines:
+            prompt_lines.append("日程：" + "；".join(schedule_lines))
+        prompt_lines.append(f"这条动态会配 {image_count} 张图片。")
+        prompt_lines.append("文案请控制在 150-200 字以内，简洁自然，不要逐条罗列日程。")
+        try:
+            text, model = await self._call_schedule_tweet_llm("\n".join(prompt_lines))
+        except Exception as exc:
+            logger.warning("Schedule tweet LLM failed: %s", exc)
+            return web.json_response({
+                "error": "schedule_tweet_llm_failed",
+                "message": str(exc),
+            }, status=502)
+        cleaned = str(text or "").strip()
+        while len(cleaned) > 1 and cleaned[0] in {'"', "'", "“", "”"} and cleaned[-1] in {'"', "'", "“", "”"}:
+            cleaned = cleaned[1:-1].strip()
+        if not cleaned:
+            return web.json_response({"error": "schedule_tweet_empty"}, status=502)
+        return web.json_response({"text": self._trim_schedule_tweet_text(cleaned), "model": str(model or "")})
+
+    @staticmethod
+    def _trim_schedule_tweet_text(text: str, limit: int = 200) -> str:
+        """Keep generated tweet copy concise (150-200 chars) without breaking sentences."""
+        cleaned = str(text or "").strip()
+        if len(cleaned) <= limit:
+            return cleaned
+        cut = cleaned[:limit]
+        boundary = max(
+            cut.rfind("。"), cut.rfind("！"), cut.rfind("？"),
+            cut.rfind("…"), cut.rfind("."), cut.rfind("!"), cut.rfind("?"),
+        )
+        if boundary >= max(20, limit // 2):
+            cut = cut[:boundary + 1]
+        return cut.rstrip() + "…"
+
+    # ---- GitHub + PicGo 图床同步 ----
+    @staticmethod
+    def _picgo_config_path() -> str:
+        return os.path.join(os.path.expanduser("~"), ".picgo", "config.json")
+
+    def _social_picgo_settings(self) -> dict:
+        """Resolve the active GitHub uploader settings from PicGo (env overrides)."""
+        defaults = {"repo": "", "branch": "master", "path": "img", "token": ""}
+        settings = dict(defaults)
+        try:
+            with open(self._picgo_config_path(), "r", encoding="utf-8") as handle:
+                config = json.load(handle)
+            github_plus = (config.get("uploader") or {}).get("githubPlus") or {}
+            config_list = github_plus.get("configList") if isinstance(github_plus.get("configList"), list) else []
+            default_id = str(github_plus.get("defaultId") or "")
+            active = next((item for item in config_list if str(item.get("_id") or "") == default_id), None)
+            if active is None and config_list:
+                active = config_list[0]
+            if active is None:
+                active = (config.get("picBed") or {}).get("githubPlus") or {}
+            if isinstance(active, dict):
+                settings["repo"] = str(active.get("repo") or "").strip()
+                settings["branch"] = str(active.get("branch") or "master").strip() or "master"
+                settings["path"] = str(active.get("path") or "img").strip().strip("/") or "img"
+                settings["token"] = str(active.get("token") or "").strip()
+        except (OSError, ValueError, TypeError):
+            settings = dict(defaults)
+        resolved = self.social_hub_settings.effective()
+        if resolved.get("github_repo"):
+            settings["repo"] = str(resolved["github_repo"])
+        if resolved.get("github_branch"):
+            settings["branch"] = str(resolved["github_branch"])
+        if resolved.get("github_image_path"):
+            settings["path"] = str(resolved["github_image_path"]).strip("/")
+        if resolved.get("github_token"):
+            settings["token"] = str(resolved["github_token"])
+        settings["repo"] = (os.environ.get("GALLERY_GITHUB_REPO") or settings["repo"]).strip()
+        settings["branch"] = (os.environ.get("GALLERY_GITHUB_BRANCH") or settings["branch"]).strip() or "master"
+        settings["path"] = (os.environ.get("GALLERY_GITHUB_IMAGE_PATH") or settings["path"]).strip().strip("/") or "img"
+        settings["token"] = (os.environ.get("GALLERY_GITHUB_TOKEN") or settings["token"]).strip()
+        return settings
+
+    @staticmethod
+    def _github_raw_media_url(settings: dict, filename: str) -> str:
+        repo = str(settings.get("repo") or "").strip("/")
+        branch = quote(str(settings.get("branch") or "master"), safe="")
+        path = quote(str(settings.get("path") or "img").strip("/"), safe="/")
+        return f"https://raw.githubusercontent.com/{repo}/{branch}/{path}/{quote(filename, safe='')}"
+
+    def _picgo_upload_file(self, settings: dict, file_path: str, filename: str) -> str:
+        """Upload one image through the PicGo CLI (GitHub uploader)."""
+        if not settings.get("repo"):
+            return ""
+        try:
+            result = subprocess.run(
+                ["picgo", "upload", file_path],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            output = f"{result.stdout}\n{result.stderr}"
+            if "[PicGo ERROR]" in output or "[PicGo SUCCESS]" not in output:
+                logger.warning("PicGo upload failed for %s", filename)
+                return ""
+        except Exception as exc:
+            logger.warning("PicGo upload error for %s: %s", filename, exc)
+            return ""
+        return self._github_raw_media_url(settings, filename)
+
+    def _github_api_upload_file(self, settings: dict, file_path: str, filename: str) -> str:
+        """Fallback: upload through the GitHub contents API directly."""
+        repo = str(settings.get("repo") or "").strip()
+        token = str(settings.get("token") or "").strip()
+        if not repo or not token:
+            return ""
+        api_base = (
+            f"https://api.github.com/repos/{repo}/contents/"
+            f"{quote(str(settings.get('path') or 'img').strip('/'), safe='/')}/{quote(filename, safe='')}"
+        )
+        sha = ""
+        try:
+            with urllib.request.urlopen(
+                urllib.request.Request(
+                    api_base,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Accept": "application/vnd.github+json",
+                        "User-Agent": "hermes-portrait-gallery",
+                    },
+                ),
+                timeout=30,
+            ) as resp:
+                existing = json.loads(resp.read())
+            sha = str(existing.get("sha") or "")
+        except Exception:
+            sha = ""
+        try:
+            with open(file_path, "rb") as handle:
+                content = handle.read()
+        except OSError:
+            return ""
+        body = {
+            "message": f"chore: gallery social image {filename}",
+            "content": base64.b64encode(content).decode(),
+            "branch": str(settings.get("branch") or "master"),
+        }
+        if sha:
+            body["sha"] = sha
+        try:
+            with urllib.request.urlopen(
+                urllib.request.Request(
+                    api_base,
+                    data=json.dumps(body).encode(),
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Accept": "application/vnd.github+json",
+                        "User-Agent": "hermes-portrait-gallery",
+                        "Content-Type": "application/json",
+                    },
+                    method="PUT",
+                ),
+                timeout=60,
+            ) as resp:
+                resp.read()
+        except Exception as exc:
+            logger.warning("GitHub API upload failed for %s: %s", filename, exc)
+            return ""
+        return self._github_raw_media_url(settings, filename)
+
+    def _social_media_path_for_post(self, filename: str) -> str:
+        try:
+            clean = self._social_media_filename(filename)
+        except ValueError:
+            return ""
+        return os.path.join(self.social_media_dir, clean)
+
+    async def _attach_picgo_media(self, post: dict) -> None:
+        """Best-effort mirror of post media to the GitHub image repo (PicGo)."""
+        if not isinstance(post, dict) or not post.get("id"):
+            return
+        media = [
+            item for item in post.get("media", [])
+            if isinstance(item, dict) and item.get("image_filename")
+        ]
+        if not media:
+            return
+        settings = self._social_picgo_settings()
+        if not settings.get("repo"):
+            return
+        urls_by_filename: dict[str, str] = {}
+        for item in media:
+            filename = str(item.get("image_filename") or "")
+            file_path = self._social_media_path_for_post(filename)
+            if not file_path or not os.path.exists(file_path):
+                continue
+            url = await asyncio.to_thread(self._github_api_upload_file, settings, file_path, filename)
+            if not url:
+                url = await asyncio.to_thread(self._picgo_upload_file, settings, file_path, filename)
+            if url:
+                urls_by_filename[filename] = url
+        if urls_by_filename:
+            try:
+                self.social_store.attach_media_urls(post["id"], urls_by_filename)
+            except Exception as exc:
+                logger.warning("Attach PicGo media URLs failed: %s", exc)
+
+    async def _attach_remote_picgo_media(
+        self,
+        settings: dict,
+        post: dict,
+        sources: list[dict],
+    ) -> dict | None:
+        """Upload published media to GitHub via PicGo, then persist URLs on the hub."""
+        if not isinstance(post, dict) or not post.get("id"):
+            return None
+        media = [
+            item for item in post.get("media", [])
+            if isinstance(item, dict) and item.get("image_filename")
+        ]
+        if not media or len(media) != len(sources):
+            return None
+        picgo_settings = self._social_picgo_settings()
+        if not picgo_settings.get("repo"):
+            return None
+        urls_by_filename: dict[str, str] = {}
+        for item, source in zip(media, sources):
+            filename = str(item.get("image_filename") or "")
+            content = source.get("bytes") if isinstance(source, dict) else b""
+            if not filename or not content:
+                continue
+            temp_path = os.path.join(tempfile.gettempdir(), filename)
+            try:
+                with open(temp_path, "wb") as temp_file:
+                    temp_file.write(content)
+                url = await asyncio.to_thread(
+                    self._github_api_upload_file,
+                    picgo_settings,
+                    temp_path,
+                    filename,
+                )
+                if not url:
+                    url = await asyncio.to_thread(
+                        self._picgo_upload_file,
+                        picgo_settings,
+                        temp_path,
+                        filename,
+                    )
+            except OSError as exc:
+                logger.warning("PicGo temp file failed for %s: %s", filename, exc)
+                url = ""
+            finally:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+            if url:
+                urls_by_filename[filename] = url
+        if not urls_by_filename:
+            return None
+        try:
+            result = await self._social_remote_request(
+                settings,
+                "POST",
+                f"/api/social/hub/posts/{quote(post['id'], safe='')}/media-urls",
+                json_body={"media_urls": urls_by_filename},
+            )
+        except SocialHubRequestError as exc:
+            logger.warning("Attach remote PicGo media URLs failed: %s", exc)
+            return None
+        refreshed = result.get("post") if isinstance(result, dict) else None
+        return refreshed if isinstance(refreshed, dict) else None
+
+    async def handle_social_posts(self, request: web.Request):
+        """Serve the local browser while using a configured hub behind the scenes."""
+        try:
+            settings = self._social_settings()
+            if request.method.upper() == "GET":
+                limit = self._limit_from_query(request, default=40, maximum=100)
+                before = str(request.query.get("before") or "").strip()
+                if settings.get("remote"):
+                    path = f"/api/social/hub/posts?limit={limit}"
+                    if before:
+                        path += f"&before={quote(before, safe='')}"
+                    return web.json_response(await self._social_remote_request(settings, "GET", path))
+                return web.json_response(self.social_store.list_posts(
+                    limit=limit,
+                    before=before,
+                    viewer_key=self._social_viewer_key(settings),
+                    viewer_instance_id=settings["instance_id"],
+                ))
+            try:
+                body = await request.json()
+            except Exception:
+                return web.json_response({"error": "invalid_json"}, status=400)
+            if not isinstance(body, dict):
+                return web.json_response({"error": "invalid_payload"}, status=400)
+            if self._json_payload_size(body) > MAX_GROUP_CHAT_METADATA_BYTES * 2:
+                return web.json_response({"error": "payload_too_large"}, status=400)
+            payload, sources, avatar = self._social_publish_payload(body, settings)
+            if settings.get("remote"):
+                result = await self._social_remote_publish(
+                    settings,
+                    payload,
+                    sources,
+                    avatar,
+                )
+                remote_post = result.get("post") if isinstance(result, dict) else None
+                if isinstance(remote_post, dict) and remote_post.get("id") and sources:
+                    refreshed = await self._attach_remote_picgo_media(
+                        settings,
+                        remote_post,
+                        sources,
+                    )
+                    if refreshed:
+                        result = {"post": refreshed}
+            else:
+                uploads = {
+                    f"media_{index}": source["bytes"]
+                    for index, source in enumerate(sources)
+                }
+                if avatar:
+                    uploads["avatar"] = avatar
+                result = {"post": self._social_hub_create_post(
+                    payload,
+                    uploads,
+                    settings["instance_id"],
+                )}
+                await self._attach_picgo_media(result["post"])
+                refreshed = self.social_store.get_post(
+                    result["post"]["id"],
+                    viewer_key=self._social_viewer_key(settings),
+                    viewer_instance_id=settings["instance_id"],
+                )
+                if refreshed:
+                    result = {"post": refreshed}
+            post = result.get("post") if isinstance(result, dict) else None
+            if not isinstance(post, dict) or not str(post.get("id") or "").strip():
+                raise SocialHubRequestError(502, {
+                    "error": "invalid_social_hub_response",
+                    "message": "中心节点未返回有效动态。",
+                })
+            return web.json_response(result, status=201)
+        except SocialHubRequestError as exc:
+            return web.json_response(exc.payload, status=exc.status)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc) or "invalid_payload"}, status=400)
+        except Exception as exc:
+            logger.error("Social posts API error: %s", exc)
+            return web.json_response({"error": "social_posts_failed", "message": str(exc)}, status=500)
+
+    async def handle_social_post(self, request: web.Request):
+        try:
+            settings = self._social_settings()
+            post_id = request.match_info.get("post_id", "")
+            if settings.get("remote"):
+                result = await self._social_remote_request(
+                    settings,
+                    "DELETE",
+                    f"/api/social/hub/posts/{quote(post_id, safe='')}",
+                )
+            else:
+                result = self.social_store.delete_post(
+                    post_id,
+                    viewer_key=self._social_viewer_key(settings),
+                    viewer_instance_id=settings["instance_id"],
+                )
+                self._delete_social_media_for_post(result.get("post") or {})
+            return web.json_response(result)
+        except SocialHubRequestError as exc:
+            return web.json_response(exc.payload, status=exc.status)
+        except PermissionError:
+            return web.json_response({"error": "social_owner_required"}, status=403)
+        except KeyError:
+            return web.json_response({"error": "post_not_found"}, status=404)
+        except Exception as exc:
+            logger.error("Social post delete error: %s", exc)
+            return web.json_response({"error": "social_post_delete_failed", "message": str(exc)}, status=500)
+
+    async def handle_social_comments(self, request: web.Request):
+        post_id = request.match_info.get("post_id", "")
+        try:
+            settings = self._social_settings()
+            try:
+                body = await request.json()
+            except Exception:
+                return web.json_response({"error": "invalid_json"}, status=400)
+            if not isinstance(body, dict):
+                return web.json_response({"error": "invalid_payload"}, status=400)
+            _author_type, author_id, snapshot, avatar = self._social_actor(
+                body,
+                user_display_name=str(settings.get("display_name") or ""),
+            )
+            payload = {
+                "author_snapshot": {"display_name": snapshot.get("display_name") or author_id, "avatar": ""},
+                "text": str(body.get("text") or body.get("content") or "").strip()[:1200],
+            }
+            if settings.get("remote"):
+                result = await self._social_remote_comment(
+                    settings,
+                    post_id,
+                    payload,
+                    avatar,
+                )
+            else:
+                result = self._social_hub_add_comment(
+                    post_id,
+                    payload,
+                    {"avatar": avatar} if avatar else {},
+                    settings["instance_id"],
+                )
+            returned_post = result.get("post") if isinstance(result, dict) else None
+            if not isinstance(returned_post, dict) or not str(returned_post.get("id") or "").strip():
+                raise SocialHubRequestError(502, {
+                    "error": "invalid_social_hub_response",
+                    "message": "中心节点未返回有效回复动态。",
+                })
+            return web.json_response(result, status=201)
+        except SocialHubRequestError as exc:
+            return web.json_response(exc.payload, status=exc.status)
+        except KeyError:
+            return web.json_response({"error": "post_not_found"}, status=404)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc) or "invalid_payload"}, status=400)
+        except Exception as exc:
+            logger.error("Social comment API error: %s", exc)
+            return web.json_response({"error": "social_comment_failed", "message": str(exc)}, status=500)
+
+    async def handle_social_comment(self, request: web.Request):
+        try:
+            settings = self._social_settings()
+            post_id = request.match_info.get("post_id", "")
+            comment_id = request.match_info.get("comment_id", "")
+            if settings.get("remote"):
+                result = await self._social_remote_request(
+                    settings,
+                    "DELETE",
+                    f"/api/social/hub/posts/{quote(post_id, safe='')}/comments/{quote(comment_id, safe='')}",
+                )
+            else:
+                result = self.social_store.delete_comment(
+                    post_id,
+                    comment_id,
+                    viewer_key=self._social_viewer_key(settings),
+                    viewer_instance_id=settings["instance_id"],
+                )
+                self._delete_unused_social_avatars(result.get("comment") or {})
+            return web.json_response(result)
+        except SocialHubRequestError as exc:
+            return web.json_response(exc.payload, status=exc.status)
+        except PermissionError:
+            return web.json_response({"error": "social_owner_required"}, status=403)
+        except KeyError:
+            return web.json_response({"error": "post_not_found"}, status=404)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc) or "comment_not_found"}, status=404)
+        except Exception as exc:
+            logger.error("Social comment delete error: %s", exc)
+            return web.json_response({"error": "social_comment_delete_failed", "message": str(exc)}, status=500)
+
+    async def handle_social_reaction(self, request: web.Request):
+        try:
+            settings = self._social_settings()
+            try:
+                body = await request.json()
+            except Exception:
+                return web.json_response({"error": "invalid_json"}, status=400)
+            if not isinstance(body, dict):
+                return web.json_response({"error": "invalid_payload"}, status=400)
+            kind = str(body.get("kind") or "").strip().lower()
+            if kind not in REACTION_KINDS:
+                return web.json_response({"error": "invalid_reaction"}, status=400)
+            post_id = request.match_info.get("post_id", "")
+            if settings.get("remote"):
+                result = await self._social_remote_request(
+                    settings,
+                    "POST",
+                    f"/api/social/hub/posts/{quote(post_id, safe='')}/reactions",
+                    json_body={"kind": kind},
+                )
+            else:
+                result = self.social_store.toggle_reaction(
+                    post_id,
+                    kind,
+                    self._social_viewer_key(settings),
+                )
+            return web.json_response(result)
+        except SocialHubRequestError as exc:
+            return web.json_response(exc.payload, status=exc.status)
+        except KeyError:
+            return web.json_response({"error": "post_not_found"}, status=404)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc) or "invalid_reaction"}, status=400)
+        except Exception as exc:
+            logger.error("Social reaction API error: %s", exc)
+            return web.json_response({"error": "social_reaction_failed", "message": str(exc)}, status=500)
+
+    async def handle_social_media(self, request: web.Request):
+        filename = request.match_info.get("filename", "")
+        try:
+            path = self._social_media_path(filename)
+            if not path:
+                raise ValueError("invalid_social_media_filename")
+            settings = self._social_settings()
+            if settings.get("remote"):
+                content, content_type = await self._social_remote_media(settings, filename)
+                return web.Response(body=content, content_type=content_type)
+            if not os.path.isfile(path):
+                raise web.HTTPNotFound()
+            return web.FileResponse(path)
+        except SocialHubRequestError as exc:
+            return web.json_response(exc.payload, status=exc.status)
+        except ValueError:
+            raise web.HTTPNotFound()
+
+    async def handle_social_hub_status(self, request: web.Request):
+        try:
+            self._social_hub_instance_id(request)
+            return web.json_response({"ok": True, "hub": True})
+        except PermissionError:
+            return web.json_response({"error": "social_hub_unauthorized"}, status=401)
+        except ValueError:
+            return web.json_response({"error": "invalid_instance_id"}, status=400)
+
+    async def handle_social_hub_posts(self, request: web.Request):
+        try:
+            instance_id = self._social_hub_instance_id(request)
+            if request.method.upper() == "GET":
+                return web.json_response(self.social_store.list_posts(
+                    limit=self._limit_from_query(request, default=40, maximum=100),
+                    before=str(request.query.get("before") or "").strip(),
+                    viewer_key=f"instance:{instance_id}",
+                    viewer_instance_id=instance_id,
+                ))
+            social_request = request.clone(client_max_size=MAX_SOCIAL_MULTIPART_BYTES)
+            payload, uploads = await self._read_social_hub_payload(social_request)
+            post = self._social_hub_create_post(payload, uploads, instance_id)
+            refreshed = self.social_store.get_post(
+                post["id"],
+                viewer_key=f"instance:{instance_id}",
+                viewer_instance_id=instance_id,
+            )
+            if refreshed:
+                post = refreshed
+            return web.json_response({"post": post}, status=201)
+        except PermissionError:
+            return web.json_response({"error": "social_hub_unauthorized"}, status=401)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc) or "invalid_payload"}, status=400)
+        except Exception as exc:
+            logger.error("Social hub posts API error: %s", exc)
+            return web.json_response({"error": "social_hub_posts_failed", "message": str(exc)}, status=500)
+
+    async def handle_social_hub_post(self, request: web.Request):
+        try:
+            instance_id = self._social_hub_instance_id(request)
+            result = self.social_store.delete_post(
+                request.match_info.get("post_id", ""),
+                viewer_key=f"instance:{instance_id}",
+                viewer_instance_id=instance_id,
+            )
+            self._delete_social_media_for_post(result.get("post") or {})
+            return web.json_response(result)
+        except PermissionError as exc:
+            if str(exc) == "social_owner_required":
+                return web.json_response({"error": "social_owner_required"}, status=403)
+            return web.json_response({"error": "social_hub_unauthorized"}, status=401)
+        except KeyError:
+            return web.json_response({"error": "post_not_found"}, status=404)
+        except ValueError:
+            return web.json_response({"error": "invalid_instance_id"}, status=400)
+        except Exception as exc:
+            logger.error("Social hub post delete error: %s", exc)
+            return web.json_response({"error": "social_hub_post_delete_failed", "message": str(exc)}, status=500)
+
+    async def handle_social_hub_post_media_urls(self, request: web.Request):
+        """Attach GitHub-hosted media URLs to a post created on the hub."""
+        try:
+            instance_id = self._social_hub_instance_id(request)
+            post_id = request.match_info.get("post_id", "")
+            try:
+                body = await request.json()
+            except Exception:
+                return web.json_response({"error": "invalid_json"}, status=400)
+            raw_urls = body.get("media_urls") if isinstance(body, dict) else None
+            if not isinstance(raw_urls, dict) or not raw_urls:
+                return web.json_response({"error": "invalid_payload"}, status=400)
+            cleaned: dict[str, str] = {}
+            for filename, url in raw_urls.items():
+                try:
+                    if self._social_media_filename(filename) != filename:
+                        continue
+                except ValueError:
+                    continue
+                url_text = str(url or "").strip()
+                if not re.fullmatch(r"https?://[^\s]+", url_text):
+                    continue
+                cleaned[filename] = url_text
+            if not cleaned:
+                return web.json_response({"error": "invalid_payload"}, status=400)
+            self.social_store.attach_media_urls(
+                post_id,
+                cleaned,
+                viewer_instance_id=instance_id,
+            )
+            post = self.social_store.get_post(
+                post_id,
+                viewer_key=f"instance:{instance_id}",
+                viewer_instance_id=instance_id,
+            )
+            if not post:
+                return web.json_response({"error": "post_not_found"}, status=404)
+            return web.json_response({"post": post})
+        except PermissionError as exc:
+            if str(exc) == "social_owner_required":
+                return web.json_response({"error": "social_owner_required"}, status=403)
+            return web.json_response({"error": "social_hub_unauthorized"}, status=401)
+        except (KeyError, AttributeError):
+            return web.json_response({"error": "post_not_found"}, status=404)
+        except Exception as exc:
+            logger.error("Social hub media URLs API error: %s", exc)
+            return web.json_response({"error": "social_hub_media_urls_failed", "message": str(exc)}, status=500)
+
+    async def handle_social_hub_comments(self, request: web.Request):
+        try:
+            instance_id = self._social_hub_instance_id(request)
+            social_request = request.clone(client_max_size=MAX_SOCIAL_MULTIPART_BYTES)
+            payload, uploads = await self._read_social_hub_payload(social_request)
+            result = self._social_hub_add_comment(
+                request.match_info.get("post_id", ""),
+                payload,
+                uploads,
+                instance_id,
+            )
+            return web.json_response(result, status=201)
+        except PermissionError:
+            return web.json_response({"error": "social_hub_unauthorized"}, status=401)
+        except KeyError:
+            return web.json_response({"error": "post_not_found"}, status=404)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc) or "invalid_payload"}, status=400)
+        except Exception as exc:
+            logger.error("Social hub comments API error: %s", exc)
+            return web.json_response({"error": "social_hub_comment_failed", "message": str(exc)}, status=500)
+
+    async def handle_social_hub_comment(self, request: web.Request):
+        try:
+            instance_id = self._social_hub_instance_id(request)
+            result = self.social_store.delete_comment(
+                request.match_info.get("post_id", ""),
+                request.match_info.get("comment_id", ""),
+                viewer_key=f"instance:{instance_id}",
+                viewer_instance_id=instance_id,
+            )
+            self._delete_unused_social_avatars(result.get("comment") or {})
+            return web.json_response(result)
+        except PermissionError as exc:
+            if str(exc) == "social_owner_required":
+                return web.json_response({"error": "social_owner_required"}, status=403)
+            return web.json_response({"error": "social_hub_unauthorized"}, status=401)
+        except KeyError:
+            return web.json_response({"error": "post_not_found"}, status=404)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc) or "comment_not_found"}, status=404)
+        except Exception as exc:
+            logger.error("Social hub comment delete error: %s", exc)
+            return web.json_response({"error": "social_hub_comment_delete_failed", "message": str(exc)}, status=500)
+
+    async def handle_social_hub_reaction(self, request: web.Request):
+        try:
+            instance_id = self._social_hub_instance_id(request)
+            try:
+                body = await request.json()
+            except Exception:
+                return web.json_response({"error": "invalid_json"}, status=400)
+            if not isinstance(body, dict):
+                return web.json_response({"error": "invalid_payload"}, status=400)
+            kind = str(body.get("kind") or "").strip().lower()
+            if kind not in REACTION_KINDS:
+                return web.json_response({"error": "invalid_reaction"}, status=400)
+            result = self.social_store.toggle_reaction(
+                request.match_info.get("post_id", ""),
+                kind,
+                f"instance:{instance_id}",
+            )
+            return web.json_response(result)
+        except PermissionError as exc:
+            if str(exc) == "social_owner_required":
+                return web.json_response({"error": "social_owner_required"}, status=403)
+            return web.json_response({"error": "social_hub_unauthorized"}, status=401)
+        except KeyError:
+            return web.json_response({"error": "post_not_found"}, status=404)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc) or "invalid_reaction"}, status=400)
+        except Exception as exc:
+            logger.error("Social hub reaction API error: %s", exc)
+            return web.json_response({"error": "social_hub_reaction_failed", "message": str(exc)}, status=500)
+
+    async def handle_social_hub_media(self, request: web.Request):
+        try:
+            self._social_hub_instance_id(request)
+            path = self._social_media_path(request.match_info.get("filename", ""))
+            if not path or not os.path.isfile(path):
+                raise web.HTTPNotFound()
+            return web.FileResponse(path)
+        except PermissionError:
+            return web.json_response({"error": "social_hub_unauthorized"}, status=401)
+        except ValueError:
+            return web.json_response({"error": "invalid_instance_id"}, status=400)
 
     @staticmethod
     def _limit_from_query(request: web.Request, default: int = 50, maximum: int = 200) -> int:
@@ -10642,6 +12458,117 @@ class GalleryServer:
                         last_error = str(e)
                         logger.warning(
                             "Group chat LLM reply error: model=%s attempt=%s err=%s",
+                            model,
+                            attempt,
+                            e,
+                        )
+                        if attempt < 2:
+                            await asyncio.sleep(0.8)
+                            continue
+                        break
+
+        raise RuntimeError(last_error or "llm_empty_response")
+
+    async def _call_schedule_tweet_llm(
+        self,
+        prompt: str,
+        preferred_model: str = "",
+        timeout_seconds: int = 45,
+    ) -> tuple[str, str]:
+        """Ask the configured LLM to rewrite a day's schedule as a natural tweet."""
+        request_config = llm_request_config(self.config, self.data_dir)
+        chat_url = request_config.get("chat_url", "")
+        api_key = request_config.get("api_key", "")
+        models = normalize_llm_models(preferred_model, request_config.get("models") or [])
+        if not chat_url or not models:
+            raise RuntimeError("llm_config_missing")
+
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        retryable_statuses = {429, 500, 502, 503, 504}
+        direct_fallback_statuses = {401, 403}
+        last_error = ""
+
+        async def post_payload(session: aiohttp.ClientSession, payload: dict) -> tuple[int, object]:
+            async with session.post(chat_url, headers=headers, json=payload) as resp:
+                try:
+                    data = await resp.json()
+                except Exception:
+                    data = await resp.text()
+                return resp.status, data
+
+        timeout = aiohttp.ClientTimeout(total=max(8, min(int(timeout_seconds or 45), 90)))
+        async with aiohttp.ClientSession(trust_env=True, timeout=timeout) as session:
+            for model in models:
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "你是温柔可爱的穿搭生活博主角色，正在发布一条今日生活动态推文。"
+                                "要求：口吻自然、口语化、有生活气息，可以把日程融入叙事；"
+                                "不要逐条罗列日程，不要机械地按“早上/中午/晚上”复述；"
+                                "突出今天最想分享的一两个亮点即可；可以带少量 emoji；"
+                                "180-320 字；结尾自然收尾，不要省略号断句。"
+                                "只输出推文正文，禁止输出标题、Markdown、JSON 或任何解释。"
+                            ),
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    "max_tokens": 700,
+                    "temperature": 0.85,
+                    "stream": False,
+                }
+                if self._should_disable_llm_thinking(model):
+                    payload["thinking"] = {"type": "disabled"}
+
+                for attempt in range(1, 3):
+                    try:
+                        status, data = await post_payload(session, payload)
+                        if status == 400:
+                            retry_payload = dict(payload)
+                            changed = False
+                            if "temperature" in retry_payload and llm_temperature_param_error(data):
+                                retry_payload.pop("temperature", None)
+                                changed = True
+                            if "thinking" in retry_payload and "thinking" in llm_response_excerpt(data, 500).lower():
+                                retry_payload.pop("thinking", None)
+                                changed = True
+                            if changed:
+                                status, data = await post_payload(session, retry_payload)
+                                payload = retry_payload
+
+                        if status == 200:
+                            choices = data.get("choices") if isinstance(data, dict) else None
+                            if choices:
+                                content = llm_choice_text(choices[0]).strip()
+                                if content:
+                                    return content, model
+                            last_error = self._group_chat_llm_error_detail(data)
+                            break
+
+                        detail = self._group_chat_llm_error_detail(data)
+                        last_error = f"HTTP {status}: {detail}"
+                        logger.warning(
+                            "Schedule tweet LLM failed: model=%s status=%s attempt=%s detail=%s",
+                            model,
+                            status,
+                            attempt,
+                            detail,
+                        )
+                        if status in direct_fallback_statuses or self._group_chat_model_unavailable(detail):
+                            break
+                        if attempt < 2 and status in retryable_statuses:
+                            await asyncio.sleep(0.8)
+                            continue
+                        break
+                    except Exception as e:
+                        last_error = str(e)
+                        logger.warning(
+                            "Schedule tweet LLM error: model=%s attempt=%s err=%s",
                             model,
                             attempt,
                             e,
@@ -12036,58 +13963,6 @@ JSON 格式：
                     "error": "schedule_time_not_found",
                     "message": "今日日程里没有可用于生图的时间点。",
                 }, status=400)
-
-            # 「现在在干嘛」占用今日生图计划额度，与定时/补拍共用上限。
-            max_daily = self.get_photo_job_limit()
-            planned_total = 0
-            remaining = max_daily
-            completed = failed = inflight = scheduled = 0
-            if callable(self.on_photo_quota_snapshot):
-                try:
-                    snapshot = self.on_photo_quota_snapshot(
-                        today_str,
-                        include_scheduled=True,
-                    )
-                    (
-                        max_daily,
-                        completed,
-                        failed,
-                        inflight,
-                        scheduled,
-                        planned_total,
-                        remaining,
-                    ) = snapshot
-                except Exception as quota_error:
-                    logger.error("Generate now quota snapshot failed: %s", quota_error)
-                    planned_total = self._today_completed_photo_count()
-                    remaining = max(0, max_daily - planned_total)
-            else:
-                planned_total = self._today_completed_photo_count()
-                remaining = max(0, max_daily - planned_total)
-            if remaining <= 0:
-                logger.info(
-                    "Generate now blocked by daily photo plan limit: planned=%s max=%s",
-                    planned_total,
-                    max_daily,
-                )
-                return web.json_response(
-                    {
-                        "error": "limit_reached",
-                        "status": "limit_reached",
-                        "message": (
-                            f"今日生图计划已达上限 {planned_total}/{max_daily}"
-                            f"（已完成 {completed}、失败 {failed}、进行中 {inflight}、待执行 {scheduled}）"
-                        ),
-                        "max_daily": max_daily,
-                        "completed_today": completed,
-                        "failed_today": failed,
-                        "running_today": inflight,
-                        "scheduled_today": scheduled,
-                        "planned_today": planned_total,
-                        "remaining_today": 0,
-                    },
-                    status=409,
-                )
 
             now_detail = await self._infer_generate_now_detail(now, daily)
             now_activity = self._clean_activity_text(now_detail.get("activity_zh", ""), max_len=72)

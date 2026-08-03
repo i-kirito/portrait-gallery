@@ -1,9 +1,11 @@
 # Data & secrets
 data/
 app/data/
+social-hub-data/
 logs/
 *.log
 .env
+secrets/
 config/local.yaml
 
 # Backups

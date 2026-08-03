@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from aiohttp import FormData, web
 from aiohttp.test_utils import TestClient, TestServer
@@ -122,6 +122,48 @@ class WebServerPasswordAuthTest(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(401, response.status)
             self.assertIn("password_setup_required", response.text)
+
+    async def test_local_password_setup_rejects_cross_origin(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server = self._make_server(Path(tmpdir))
+            server._read_json_body = AsyncMock(return_value={"password": "secret123"})
+            request = DummyRequest(
+                "localhost:18889",
+                "127.0.0.1",
+                path="/api/auth/setup",
+                method="POST",
+                headers={"Origin": "https://evil.example"},
+            )
+
+            with patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+                response = await server.handle_auth_setup(request)
+
+            payload = json.loads(response.text)
+            self.assertEqual(403, response.status)
+            self.assertEqual("origin_not_allowed", payload.get("error"))
+            self.assertFalse(Path(server.auth_store_path).exists())
+            server._read_json_body.assert_not_awaited()
+
+    async def test_local_password_setup_accepts_matching_origin(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server = self._make_server(Path(tmpdir))
+            server._read_json_body = AsyncMock(return_value={"password": "secret123"})
+            request = DummyRequest(
+                "localhost:18889",
+                "127.0.0.1",
+                path="/api/auth/setup",
+                method="POST",
+                headers={"Origin": "http://localhost:18889"},
+            )
+
+            with patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+                response = await server.handle_auth_setup(request)
+
+            payload = json.loads(response.text)
+            self.assertEqual(200, response.status)
+            self.assertEqual("ok", payload.get("status"))
+            self.assertTrue(server._verify_gallery_password("secret123"))
+            server._read_json_body.assert_awaited_once_with(request)
 
     async def test_spoofed_localhost_cannot_read_private_config(self):
         with tempfile.TemporaryDirectory() as tmpdir:

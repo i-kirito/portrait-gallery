@@ -316,6 +316,17 @@ OUTFIT_HAIR_ALIASES = {
     "straight_down": ("中分直发", "顺直长发", "straight hair"),
     "loose_down": ("自然披散", "披肩长发", "披散", "hair worn down", "loose hair"),
 }
+OUTFIT_HAIR_LABELS = {
+    "high_ponytail": "高马尾",
+    "low_ponytail": "低马尾",
+    "twin_ponytails": "双马尾",
+    "bun": "丸子头/发髻",
+    "twin_buns": "双丸子头",
+    "half_up": "半扎发",
+    "braided": "编发",
+    "straight_down": "顺直披发",
+    "loose_down": "自然披发",
+}
 
 SCHEDULE_DIVERSITY_DOMAINS = (
     "参与体验：课程、工作坊、排练、志愿活动、现场实践或需要亲手完成的任务。",
@@ -349,6 +360,84 @@ SCHEDULE_BROAD_ACTIVITY_FAMILIES = {
         "阅读", "看书", "读书", "小说", "杂志", "书架", "书籍", "文档", "笔记",
         "记录", "总结", "提纲", "计划", "手账", "日记", "便签", "明信片",
     ),
+    "gardening": (
+        "浇水", "修剪", "绿植", "花盆", "盆栽", "薄荷", "罗勒", "园艺", "插花",
+        "花艺", "种植", "换盆", "松土", "枯叶",
+    ),
+    "food_meal": (
+        "早餐", "早午餐", "午餐", "晚餐", "轻食", "沙拉", "意面", "冷面", "汤面",
+        "定食", "燕麦粥", "吐司", "便当", "煮一", "摆盘", "下厨", "厨房做",
+        "厨房煮", "共进", "用餐", "就餐", "点餐", "餐食", "火锅", "寿司", "盖饭",
+        "烤鸡", "牛排",
+        "披萨", "汉堡", "饺子", "馄饨", "甜点", "蛋糕", "烧烤",
+    ),
+    "drinks": (
+        "拿铁", "冰美式", "手冲", "柠檬水", "气泡水", "花草茶", "伯爵茶",
+        "饮品", "果汁", "茶饮", "饮用", "冲泡", "豆浆", "奶茶", "酸奶", "热饮",
+        "特调",
+    ),
+    "self_care": (
+        "护肤", "化妆", "梳妆", "泡澡", "洗澡", "热水澡", "护理", "按摩", "美甲",
+    ),
+    "culture_learning": (
+        "展览", "联展", "画廊", "博物馆", "剧场", "演出", "音乐会", "工作坊",
+        "课程", "讲座", "开放日", "排练", "体验课", "学习", "教程",
+    ),
+    "making": (
+        "制作", "手作", "陶土", "绘制", "画画", "插画", "创作", "拼装", "修复",
+        "编织", "烘焙", "拍摄", "剪辑", "完成作品",
+    ),
+}
+
+# Generic verbs are useful for open-ended dishes, but only when paired with a
+# nearby food or drink object. Bare aliases such as 吃/饭/汤/喝 also match
+# unrelated phrases including 喝彩 and 吃力, polluting the prompt ledger.
+SCHEDULE_BROAD_ACTIVITY_PATTERNS = {
+    "food_meal": (
+        r"(?:吃(?!力|惊|亏|苦|醋)|享用|品尝|点(?:了|上)?)"
+        r"[^，。；;！？!?\n]{0,14}"
+        r"(?:早餐|早午餐|午餐|晚餐|夜宵|餐食|套餐|定食|便当|米饭|炒饭|盖饭|"
+        r"面|粉|粥|汤|火锅|寿司|肉|牛排|羊排|鸡|鸭|鹅|鱼|虾|蟹|蛋|菜|"
+        r"饼|卷|包|糕|甜品|点心|烧烤|披萨|汉堡|饺子|馄饨)",
+        r"(?:煮|炖|烤|炒|煎|蒸|焖|熬)"
+        r"[^，。；;！？!?\n]{0,14}"
+        r"(?:早餐|早午餐|午餐|晚餐|夜宵|餐食|套餐|便当|米饭|炒饭|盖饭|"
+        r"面|粉|粥|汤|火锅|寿司|肉|牛排|羊排|鸡|鸭|鹅|鱼|虾|蟹|蛋|菜|"
+        r"饼|卷|包|糕|甜品|点心|烧烤|披萨|汉堡|饺子|馄饨)",
+        r"(?:做|准备)(?:一份|一盘|一碗|一锅|一顿|早餐|早午餐|午餐|晚餐|夜宵)"
+        r"[^，。；;！？!?\n]{0,14}"
+        r"(?:餐食|套餐|便当|米饭|炒饭|盖饭|面|粉|粥|汤|火锅|寿司|肉|"
+        r"牛排|羊排|鸡|鸭|鹅|鱼|虾|蟹|蛋|菜|饼|卷|包|糕|甜品|点心|"
+        r"烧烤|披萨|汉堡|饺子|馄饨)",
+    ),
+    "drinks": (
+        r"(?:喝(?!彩|倒彩|西北风)|饮用|冲泡|制作|准备|点(?:了|上)?)"
+        r"[^，。；;！？!?\n]{0,12}"
+        r"(?:水|茶|咖啡|拿铁|美式|果汁|豆浆|奶茶|酸奶|饮品|热饮)",
+    ),
+}
+
+# These are observational meal families for prompt summaries, not a generation
+# pool. They turn raw history into a short high-signal list of recently
+# overused meal bases while the LLM remains free to invent alternatives.
+SCHEDULE_FOOD_DISH_FAMILIES = {
+    "noodles": (
+        "意面", "冷面", "汤面", "拉面", "乌冬", "荞麦面", "面条", "面馆",
+        "米线", "河粉", "拌面", "炒面", "云吞面", "馄饨面", "担担面", "炸酱面",
+    ),
+    "salad_light": ("沙拉", "轻食", "轻食碗", "冷盘"),
+    "porridge_oats": ("燕麦", "麦片", "粥"),
+    "bread_fast_food": ("吐司", "三明治", "汉堡", "披萨", "面包"),
+    "rice_meals": ("米饭", "炒饭", "盖饭", "饭团", "饭碗", "定食"),
+    "dumplings": ("饺子", "馄饨", "云吞", "烧卖", "包子"),
+}
+SCHEDULE_FOOD_DISH_FAMILY_LABELS = {
+    "noodles": "面食",
+    "salad_light": "沙拉/轻食",
+    "porridge_oats": "燕麦/粥",
+    "bread_fast_food": "面包/快餐主食",
+    "rice_meals": "米饭/定食",
+    "dumplings": "饺子/馄饨类",
 }
 
 SCHEDULE_BROAD_ACTIVITY_FAMILY_LABELS = {
@@ -357,7 +446,84 @@ SCHEDULE_BROAD_ACTIVITY_FAMILY_LABELS = {
     "passive_media": "被动影音消遣",
     "exercise": "运动训练",
     "reading_writing": "阅读/记录/规划",
+    "gardening": "植物养护/花艺",
+    "food_meal": "备餐/用餐",
+    "drinks": "咖啡/茶饮",
+    "self_care": "洗护/梳妆",
+    "culture_learning": "文化体验/课程",
+    "making": "创作/手作",
 }
+
+SCHEDULE_SCENE_FAMILIES = {
+    "home_balcony": ("阳台", "露台花盆", "窗台"),
+    "home_living": ("客厅", "沙发", "地毯", "投影仪"),
+    "home_kitchen": ("厨房", "餐桌", "饭厅", "家中摆盘"),
+    "home_study": ("书房", "书桌", "工作台", "电脑桌"),
+    "home_bedroom": ("卧室", "床头", "床边", "床上", "梳妆台"),
+    "home_bathroom": ("浴室", "泡澡", "洗澡", "热水澡"),
+    "park_nature": (
+        "公园", "绿道", "植物园", "花园", "山径", "森林", "草坪", "树荫", "户外",
+    ),
+    "waterfront": ("海边", "海岸", "河边", "湖边", "码头", "木栈道", "湿地"),
+    "culture_venue": (
+        "博物馆", "画廊", "展览", "剧场", "音乐厅", "影院", "图书馆", "书店",
+    ),
+    "workshop_learning": (
+        "工作坊", "活动室", "创客空间", "教室", "工作室", "共享厨房", "体验课",
+    ),
+    "sports_venue": (
+        "体育公园", "跑道", "健身房", "运动场", "泳池", "瑜伽馆", "球馆",
+    ),
+    "food_venue": (
+        "咖啡馆", "餐厅", "面馆", "早餐铺", "美食区", "茶室", "甜品店", "酒馆",
+    ),
+    "retail_venue": (
+        "商场", "购物中心", "市集", "专柜", "便利店", "超市", "花店", "文具店",
+        "香氛小店", "潮流女装店", "家居生活区",
+    ),
+    "work_venue": ("办公室", "写字楼", "商务中心", "会议室", "公司"),
+    "street_transit": (
+        "街区", "街道", "小巷", "地铁", "车站", "公交", "骑行", "步行前往",
+    ),
+}
+SCHEDULE_AMBIGUOUS_HOME_SCENE_TERMS = {
+    "home_living": frozenset({"沙发", "地毯", "投影仪"}),
+    "home_kitchen": frozenset({"餐桌"}),
+    "home_study": frozenset({"书桌", "工作台", "电脑桌"}),
+}
+SCHEDULE_SCENE_FAMILY_LABELS = {
+    "home_balcony": "居家阳台/窗台",
+    "home_living": "居家客厅",
+    "home_kitchen": "居家厨房/餐桌",
+    "home_study": "居家书房/书桌",
+    "home_bedroom": "居家卧室",
+    "home_bathroom": "居家浴室",
+    "park_nature": "公园/自然户外",
+    "waterfront": "河海湖滨",
+    "culture_venue": "文化场馆",
+    "workshop_learning": "工作坊/学习空间",
+    "sports_venue": "运动场馆",
+    "food_venue": "餐饮空间",
+    "retail_venue": "商业零售空间",
+    "work_venue": "办公空间",
+    "street_transit": "城市街区/交通",
+}
+HOME_SCENE_FAMILIES = frozenset({
+    "home_balcony",
+    "home_living",
+    "home_kitchen",
+    "home_study",
+    "home_bedroom",
+    "home_bathroom",
+})
+NATURAL_TRANSITION_ACTIVITY_FAMILIES = frozenset({
+    "food_meal",
+    "drinks",
+    "self_care",
+})
+MAX_VISIBLE_SCHEDULE_SNAPSHOTS_PER_DAY = 6
+SCHEDULE_FOOD_HISTORY_DAYS = 14
+MAX_VISIBLE_FOOD_HISTORY_ITEMS = 32
 
 BASE_STYLE_OPTIONS = {"cool", "girly", "sweet"}
 SCHEDULE_PHOTO_STYLE_RULES = """【摄影风格判断 photo_style_en — 由你根据今日整体日程自行判断，不要固定套模板】
@@ -581,21 +747,352 @@ class DailyScheduler:
     @staticmethod
     def _broad_activity_families(activity: str) -> set[str]:
         compact = re.sub(r"\s+", "", str(activity or ""))
-        return {
+        families = {
             family
             for family, terms in SCHEDULE_BROAD_ACTIVITY_FAMILIES.items()
             if any(term in compact for term in terms)
         }
+        families.update(
+            family
+            for family, patterns in SCHEDULE_BROAD_ACTIVITY_PATTERNS.items()
+            if any(re.search(pattern, compact) for pattern in patterns)
+        )
+        return families
+
+    @staticmethod
+    def _activity_scene_families(activity: str) -> set[str]:
+        compact = re.sub(r"\s+", "", str(activity or ""))
+        families = {
+            family
+            for family, terms in SCHEDULE_SCENE_FAMILIES.items()
+            if any(term in compact for term in terms)
+        }
+        if families - HOME_SCENE_FAMILIES:
+            for family, ambiguous_terms in SCHEDULE_AMBIGUOUS_HOME_SCENE_TERMS.items():
+                if family not in families:
+                    continue
+                explicit_terms = (
+                    term
+                    for term in SCHEDULE_SCENE_FAMILIES[family]
+                    if term not in ambiguous_terms
+                )
+                if not any(term in compact for term in explicit_terms):
+                    families.discard(family)
+        return families
+
+    @staticmethod
+    def _food_dish_families(activity: str) -> set[str]:
+        compact = re.sub(r"\s+", "", str(activity or ""))
+        return {
+            family
+            for family, terms in SCHEDULE_FOOD_DISH_FAMILIES.items()
+            if any(term in compact for term in terms)
+        }
+
+    def _recent_diversity_profile(
+        self,
+        today: date,
+        days: int = 3,
+        food_days: int = SCHEDULE_FOOD_HISTORY_DAYS,
+    ) -> dict:
+        """Summarize recent schedule, scene, style, and outfit usage for prompting."""
+        profile = {
+            "dates": [],
+            "styles": [],
+            "photo_styles": [],
+            "food_actions": [],
+            "food_dish_families": {},
+            "families": {},
+            "scenes": {},
+            "garments": set(),
+            "colors": set(),
+            "materials": set(),
+            "silhouettes": set(),
+            "hair": set(),
+            "accessories": set(),
+        }
+        seen_photo_styles = set()
+        general_start = (today - timedelta(days=days)).isoformat()
+        food_start = (today - timedelta(days=food_days)).isoformat()
+        for day in self._recent_visible_history_days(today, days=max(days, food_days)):
+            date_str = day["date"]
+            within_general_window = date_str >= general_start
+            if within_general_window:
+                profile["dates"].append(date_str)
+
+            for source in day["entries"] if within_general_window else []:
+                entry = source["entry"]
+                style = str(entry.get("outfit_style") or "").strip()
+                if not style:
+                    outfit_text = str(entry.get("outfit") or "")
+                    match = re.search(r"风格[：:]\s*([^\n，,；;]+)", outfit_text)
+                    style = match.group(1).strip() if match else ""
+                if style and style not in profile["styles"]:
+                    profile["styles"].append(style)
+
+                photo_style = re.sub(
+                    r"\s+",
+                    " ",
+                    str(entry.get("photo_style_en") or entry.get("photo_style") or ""),
+                ).strip()
+                photo_style_key = (date_str, photo_style)
+                if photo_style and photo_style_key not in seen_photo_styles:
+                    seen_photo_styles.add(photo_style_key)
+                    profile["photo_styles"].append({
+                        "date": date_str,
+                        "text": photo_style[:320],
+                    })
+
+                features = self._outfit_similarity_features(entry)
+                for key in ("garments", "colors", "materials", "silhouettes", "hair"):
+                    profile[key].update(features.get(key) or set())
+                profile["accessories"].update(
+                    self._accessory_features(self._entry_outfit_text(entry)).values()
+                )
+
+            for action in day["actions"]:
+                activity = action["activity"]
+                families = self._broad_activity_families(activity)
+                if date_str >= food_start and families & {"food_meal", "drinks"}:
+                    profile["food_actions"].append(action)
+                    for dish_family in self._food_dish_families(activity):
+                        item = profile["food_dish_families"].setdefault(
+                            dish_family,
+                            {"count": 0, "dates": [], "examples": []},
+                        )
+                        item["count"] += 1
+                        if date_str not in item["dates"]:
+                            item["dates"].append(date_str)
+                        if len(item["examples"]) < 2:
+                            item["examples"].append(activity)
+                if not within_general_window:
+                    continue
+                for family in families:
+                    item = profile["families"].setdefault(
+                        family,
+                        {"count": 0, "dates": [], "date_counts": {}, "examples": []},
+                    )
+                    item["count"] += 1
+                    item["date_counts"][date_str] = (
+                        item["date_counts"].get(date_str, 0) + 1
+                    )
+                    if date_str not in item["dates"]:
+                        item["dates"].append(date_str)
+                    if len(item["examples"]) < 2:
+                        item["examples"].append(activity)
+                for scene in self._activity_scene_families(activity):
+                    item = profile["scenes"].setdefault(
+                        scene,
+                        {"count": 0, "dates": []},
+                    )
+                    item["count"] += 1
+                    if date_str not in item["dates"]:
+                        item["dates"].append(date_str)
+        return profile
+
+    @staticmethod
+    def _labeled_features(features: set[str], labels: dict[str, str], limit: int = 8) -> str:
+        values = [labels.get(item, item) for item in sorted(features)]
+        return "、".join(values[:limit]) if values else "无"
+
+    @staticmethod
+    def _balanced_history_items(items: list[dict], limit: int) -> list[dict]:
+        """Keep prompt ledgers bounded while representing every recent date."""
+        grouped = {}
+        for item in items:
+            grouped.setdefault(str(item.get("date") or ""), []).append(item)
+        groups = list(grouped.values())
+        selected = []
+        item_index = 0
+        while len(selected) < limit:
+            added = False
+            for group in groups:
+                if item_index >= len(group):
+                    continue
+                selected.append(group[item_index])
+                added = True
+                if len(selected) >= limit:
+                    break
+            if not added:
+                break
+            item_index += 1
+        return selected
+
+    def _diversity_execution_brief(
+        self,
+        today: date,
+        enabled_styles: Optional[list[str]] = None,
+        days: int = 3,
+    ) -> str:
+        """Build a compact, explicit anti-homogeneity ledger for every prompt tier."""
+        enabled_styles = enabled_styles or load_enabled_outfit_styles(self.config, self.data_dir)
+        profile = self._recent_diversity_profile(today, days=days)
+        recent_styles = profile["styles"]
+        fresh_styles = [style for style in enabled_styles if style not in recent_styles]
+
+        family_bits = []
+        for family, item in sorted(
+            profile["families"].items(),
+            key=lambda pair: (-pair[1]["count"], pair[0]),
+        ):
+            label = SCHEDULE_BROAD_ACTIVITY_FAMILY_LABELS.get(family, family)
+            family_bits.append(f"{label}({item['count']}条)")
+        scene_bits = []
+        for scene, item in sorted(
+            profile["scenes"].items(),
+            key=lambda pair: (-pair[1]["count"], pair[0]),
+        ):
+            label = SCHEDULE_SCENE_FAMILY_LABELS.get(scene, scene)
+            scene_bits.append(f"{label}({item['count']}条)")
+
+        garment_text = self._labeled_features(
+            profile["garments"],
+            OUTFIT_GARMENT_LABELS,
+        )
+        color_text = self._labeled_features(profile["colors"], OUTFIT_COLOR_LABELS)
+        material_text = self._labeled_features(
+            profile["materials"],
+            OUTFIT_MATERIAL_LABELS,
+        )
+        silhouette_text = self._labeled_features(
+            profile["silhouettes"],
+            OUTFIT_SILHOUETTE_LABELS,
+        )
+        hair_text = self._labeled_features(profile["hair"], OUTFIT_HAIR_LABELS)
+        accessory_text = "、".join(sorted(profile["accessories"])[:8]) or "无"
+
+        domain_list = list(SCHEDULE_DIVERSITY_DOMAINS)
+        offset = today.toordinal() % len(domain_list)
+        rotated_domains = domain_list[offset:] + domain_list[:offset]
+        inspiration = "\n".join(f"- {item}" for item in rotated_domains[:3])
+        recent_dates = "、".join(
+            date_text + ("（本次刷新前今日计划）" if date_text == today.isoformat() else "")
+            for date_text in profile["dates"]
+        ) or "无有效历史"
+        recent_style_text = "、".join(recent_styles) or "无"
+        fresh_style_text = "、".join(fresh_styles) or "近期风格池已覆盖，请改用全新核心单品与轮廓"
+        photo_style_items = self._balanced_history_items(profile["photo_styles"], limit=8)
+        photo_style_text = "\n".join(
+            f"  - {item['date']}: {item['text']}"
+            for item in photo_style_items
+        ) or "  - 无"
+        food_action_items = self._balanced_history_items(
+            profile["food_actions"],
+            limit=MAX_VISIBLE_FOOD_HISTORY_ITEMS,
+        )
+        food_action_text = "\n".join(
+            f"  - {item['date']} {item['time']} {item['activity']}"
+            for item in food_action_items
+        ) or "  - 无"
+        dish_family_items = sorted(
+            profile["food_dish_families"].items(),
+            key=lambda pair: (-pair[1]["count"], pair[0]),
+        )
+        food_dish_family_text = "、".join(
+            f"{SCHEDULE_FOOD_DISH_FAMILY_LABELS.get(family, family)}({item['count']}条)"
+            for family, item in dish_family_items[:8]
+        ) or "无"
+        overused_action_labels, overused_food_labels = self._overused_diversity_labels(profile)
+        overused_food_families = "、".join(overused_food_labels) or "无"
+        family_text = "、".join(family_bits[:10]) or "无"
+        overused_action_families = "、".join(overused_action_labels) or "无"
+        scene_text = "、".join(scene_bits[:10]) or "无"
+
+        return f"""【三日反同质化执行简报｜含本次刷新前今日计划与用户可见历史】
+统计日期：{recent_dates}
+- 近三日已用穿搭风格：{recent_style_text}
+- 今日优先选择的未用风格：{fresh_style_text}
+- 近三日已占用动作族：{family_text}
+- 今日主题/主线优先避开的近期高频动作族：{overused_action_families}
+- 近三日已占用空间类型：{scene_text}
+- 近期服饰账本：单品={garment_text}；主色={color_text}；材质={material_text}；轮廓={silhouette_text}；发型={hair_text}；配饰={accessory_text}
+- 近期餐食/饮品原文账本（回看前 {SCHEDULE_FOOD_HISTORY_DAYS} 天，逐项比较，不要换配料或店名后复刻同一餐型）：
+{food_action_text}
+- 近期餐型/主食族统计：{food_dish_family_text}
+- 今日餐食优先避开的高频族（近两周出现至少 2 次）：{overused_food_families}
+- 近三日摄影风格原文（不可整句复用）：
+{photo_style_text}
+
+今日生成质量目标：
+1. 先确定一个近三日没有出现的“今日主题/任务主线”，并优先避开上面列出的近期高频动作族，再围绕新主线安排自然推进；至少有一个需要真实参与、会产生成果或记忆点的精彩锚点。
+2. 不要把全天困在家中或同一类空间。真实日历和安全允许时，6-8 条里优先安排至少 3 条非居家核心活动，并覆盖至少 4 类实质不同的空间；只在阳台、客厅、厨房、书房之间移动不算充分多样。
+3. 每条日程应有不同的身体动作、参与方式、道具和环境变化。不要把看书、整理、购物、做饭等一件事拆成多条，也不要用更换房间、店名、菜名或同义词伪装成新活动。
+4. 用餐时段可以自然重复，但餐食/饮品不是去重豁免。必须逐项对照上面的原文账本，同时改变主食或菜式基底、核心食材、烹调方式和用餐场景；只替换配料、酱汁、摆盘、店名或冷热版本，仍算同类延续。本次候选优先完全避开上面列出的高频族，不要在同一族内换名字。不要从规则说明里寻找菜名，候选必须以账本里的真实历史为准。
+5. 穿搭优先从未用风格中选择，并同时改变核心单品组合、上下装/裙装结构、鞋履、主色、材质轮廓、发型和配饰；只换风格名或颜色不算新穿搭。
+6. photo_style_en 也要避免近三日的惯用套话和同一镜头配方。结合今日事件自主选择摄影语言，优先同时改变取景距离/视角、构图方式、主要光源、色彩处理或画面质感中的至少两项；不要连续复用 candid smartphone + natural light + imperfect framing 这一固定组合。
+7. 下面只是今日轮换后的启发方向，不是固定动作池。可以组合、扩展或完全自主创造这些方向以外的合理事件：
+{inspiration}
+
+这些是生成阶段必须认真执行的质量目标，但不是生成后的硬拒绝条件；若某项受真实日历或安全约束影响，优先保持合理，再用其他维度补足差异。"""
+
+    @staticmethod
+    def _overused_diversity_labels(profile: dict) -> tuple[list[str], list[str]]:
+        action_labels = [
+            SCHEDULE_BROAD_ACTIVITY_FAMILY_LABELS.get(family, family)
+            for family, item in sorted(
+                profile["families"].items(),
+                key=lambda pair: (-pair[1]["count"], pair[0]),
+            )
+            if family not in NATURAL_TRANSITION_ACTIVITY_FAMILIES
+            and item["count"] >= 2
+        ]
+        food_labels = [
+            SCHEDULE_FOOD_DISH_FAMILY_LABELS.get(family, family)
+            for family, item in sorted(
+                profile["food_dish_families"].items(),
+                key=lambda pair: (-pair[1]["count"], pair[0]),
+            )
+            if item["count"] >= 2
+        ]
+        return action_labels, food_labels
+
+    def _diversity_avoidance_summary(self, today: date, days: int = 3) -> str:
+        """Repeat the highest-signal diversity rules next to the JSON output contract."""
+        profile = self._recent_diversity_profile(today, days=days)
+        action_labels, food_labels = self._overused_diversity_labels(profile)
+        action_text = "、".join(action_labels) or "无明确高频族"
+        food_text = "、".join(food_labels) or "无明确高频族"
+        return f"""【本次去重首要要求｜输出 JSON 前最后自检】
+- 今日主题或任务主线不得继续使用这些近期高频动作族：{action_text}。
+- 今日所有餐食不得落入这些近两周高频餐型/主食族：{food_text}。
+- 草稿命中上述高频族时，必须在输出 JSON 前自行替换；不能只换名称、配料、地点或同族菜式。
+这只是生成阶段的最后自检，不是生成后的拒绝器。"""
+
+    def _food_diversity_revision_note(
+        self,
+        today: date,
+        display_items: list[tuple[str, str]],
+        days: int = 3,
+    ) -> str:
+        """Describe draft meals that still use overrepresented recent food families."""
+        profile = self._recent_diversity_profile(today, days=days)
+        overused_families = {
+            family
+            for family, item in profile["food_dish_families"].items()
+            if item["count"] >= 2
+        }
+        hits = []
+        for time_text, activity in display_items:
+            for family in sorted(self._food_dish_families(activity) & overused_families):
+                label = SCHEDULE_FOOD_DISH_FAMILY_LABELS.get(family, family)
+                hits.append(f"{time_text}「{activity[:32]}」命中「{label}」")
+        if not hits:
+            return ""
+        return (
+            "草稿餐食仍落入近两周高频餐型/主食族："
+            + "；".join(hits)
+            + "。必须把这些餐食换到已列高频族之外；不能只换配料、汤底、店名或同族菜式。"
+        )
 
     def _schedule_diversity_prompt_block(self, schedule_history: str) -> str:
         domains = "\n".join(f"- {item}" for item in SCHEDULE_DIVERSITY_DOMAINS)
         history_text = schedule_history or "（无近期日程）"
-        return f"""【近 3 天完整日程动作｜多样性参考】
+        return f"""【近 3 天完整日程动作 + 本次刷新前今日计划｜多样性参考】
 {history_text}
 
 输出 JSON 前，请在内部参考下面的多样性目标；判断过程不要输出：
 1. 先把近 3 天每条日程归纳成「人在做什么」的动作族和当天任务主线，而不是只看地点、道具或名词。
-2. 尽量避开与近 3 天相同、同义或属于同一任务主线的候选；只换说法、时间、地点、店铺或道具不算真正的新活动。必要的吃饭、休息等生活过渡可以自然重复。
+2. 尽量避开与近 3 天及本次刷新前今日计划相同、同义或属于同一任务主线的候选；只换说法、时间、地点、店铺或道具不算真正的新活动。吃饭和休息的时间段可以自然重复，但餐型、核心食材、烹调方式、用餐场景以及休息方式仍要逐项避重，不能把它们当成去重豁免。
 3. 优先选择近 3 天没有出现的新主题，并尽量设计一个“精彩锚点”：今天最值得记住、需要角色真实参与且会推动一天进展的具体事件。
 4. 尽量让 6-8 条日程覆盖多种实质不同的动作族和场景，避免购物、整理、阅读或运动等单一活动占据大半天。逛多个商店仍然只算“购物”，在不同房间连续整理仍然只算“整理”。
 5. 保持自然转场和前后推进，避免把一次活动拆成多条凑数；尽量让每条活动都有不同的行动变化。
@@ -627,6 +1124,130 @@ class DailyScheduler:
             ):
                 return entry
         return {}
+
+    def _load_photo_job_failures(self) -> dict:
+        path = os.path.join(self.data_dir, "photo_job_failures.json")
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _history_activity_key(date_str: str, time_text: str, activity: str) -> tuple[str, str, str]:
+        """Deduplicate the same stored event without merging semantic neighbors."""
+        normalized = re.sub(
+            r"[\s，,。.!！?？；;、：:（）()《》“”\"'‘’\[\]【】]",
+            "",
+            str(activity or "").casefold(),
+        )
+        return str(date_str or ""), str(time_text or "").strip(), normalized
+
+    def _recent_visible_history_days(self, today: date, days: int = 3) -> list[dict]:
+        """Collect plans and user-visible photo history from one shared source.
+
+        A manual refresh replaces the date-keyed plan, while generated photo
+        entries and retryable failures remain separate records. Include all of
+        them, plus archived replacement snapshots, so later prompts reflect
+        what the user actually saw. Today's existing plan is included only when
+        present, which lets a refresh avoid recreating the plan it replaces.
+        """
+        all_data = self._load_schedule_data()
+        failed_jobs = self._load_photo_job_failures()
+        history_days = []
+
+        for offset in range(0, days + 1):
+            target_date = today - timedelta(days=offset)
+            date_str = target_date.isoformat()
+            is_current = offset == 0
+            entries = []
+
+            primary = self._daily_schedule_entry(all_data, date_str)
+            if primary:
+                entries.append({
+                    "kind": "current_schedule" if is_current else "date_schedule",
+                    "entry": primary,
+                })
+                snapshots = primary.get("schedule_history")
+                if isinstance(snapshots, list):
+                    valid_snapshots = [
+                        snapshot
+                        for snapshot in snapshots
+                        if isinstance(snapshot, dict)
+                        and str(snapshot.get("schedule") or "").strip()
+                    ]
+                    for snapshot in reversed(
+                        valid_snapshots[-MAX_VISIBLE_SCHEDULE_SNAPSHOTS_PER_DAY:]
+                    ):
+                        entries.append({"kind": "archived_schedule", "entry": snapshot})
+
+            image_entries = []
+            for key, entry in all_data.items():
+                if not isinstance(entry, dict) or entry is primary:
+                    continue
+                if entry.get("status") != "ok" or str(entry.get("date") or "") != date_str:
+                    continue
+                if not str(entry.get("schedule_time") or "").strip():
+                    continue
+                image_entries.append((str(entry.get("schedule_time") or ""), str(key), entry))
+            for _schedule_time, _key, entry in sorted(image_entries):
+                entries.append({"kind": "generated_photo", "entry": entry})
+
+            actions = []
+            seen_actions = set()
+
+            def _append_actions(schedule_text: str, kind: str):
+                for time_text, activity in self._schedule_plan_items(schedule_text):
+                    activity = str(activity or "").strip()
+                    if not activity:
+                        continue
+                    dedupe_key = self._history_activity_key(date_str, time_text, activity)
+                    if dedupe_key in seen_actions:
+                        continue
+                    seen_actions.add(dedupe_key)
+                    actions.append({
+                        "date": date_str,
+                        "time": time_text,
+                        "activity": activity,
+                        "source": kind,
+                    })
+
+            for source in entries:
+                entry = source["entry"]
+                _append_actions(str(entry.get("schedule") or ""), source["kind"])
+                _append_actions(str(entry.get("schedule_time") or ""), source["kind"])
+
+            for slot_key, failed in failed_jobs.items():
+                if not isinstance(failed, dict):
+                    continue
+                match = re.match(r"^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})$", str(slot_key))
+                if not match or match.group(1) != date_str:
+                    continue
+                time_text = str(failed.get("time") or match.group(2)).strip()
+                activity = str(failed.get("activity") or "").strip()
+                if not activity:
+                    continue
+                dedupe_key = self._history_activity_key(date_str, time_text, activity)
+                if dedupe_key in seen_actions:
+                    continue
+                seen_actions.add(dedupe_key)
+                actions.append({
+                    "date": date_str,
+                    "time": time_text,
+                    "activity": activity,
+                    "source": "failed_photo_job",
+                })
+
+            if entries or actions:
+                history_days.append({
+                    "date": date_str,
+                    "is_current": is_current,
+                    "entries": entries,
+                    "actions": actions,
+                })
+
+        return history_days
 
     @staticmethod
     def _entry_outfit_text(entry: dict) -> str:
@@ -892,14 +1513,15 @@ class DailyScheduler:
         )
 
     def _recent_outfit_accessories(self, today: date, days: int = 3) -> dict[str, dict]:
-        all_data = self._load_schedule_data()
         recent = {}
-        for i in range(1, days + 1):
-            date_str = (today - timedelta(days=i)).isoformat()
-            entry = self._daily_schedule_entry(all_data, date_str)
-            for key, label in self._accessory_features(self._entry_outfit_text(entry)).items():
-                item = recent.setdefault(key, {"label": label, "dates": []})
-                item["dates"].append(date_str)
+        for day in self._recent_visible_history_days(today, days=days):
+            date_str = day["date"]
+            for source in day["entries"]:
+                entry = source["entry"]
+                for key, label in self._accessory_features(self._entry_outfit_text(entry)).items():
+                    item = recent.setdefault(key, {"label": label, "dates": []})
+                    if date_str not in item["dates"]:
+                        item["dates"].append(date_str)
         return recent
 
     def _outfit_accessory_repeat_error(self, candidate: dict, recent: dict[str, dict]) -> str:
@@ -920,41 +1542,99 @@ class DailyScheduler:
         )
 
     def _get_schedule_history(self, today: date, days: int = 3) -> str:
-        """Return recent full schedule actions for LLM-led anti-repeat judgment."""
-        all_data = self._load_schedule_data()
+        """Return plans and visible photo actions for LLM-led anti-repeat judgment."""
+        source_labels = {
+            "archived_schedule": "（刷新前旧计划）",
+            "generated_photo": "（已生成图片可见历史）",
+            "failed_photo_job": "（失败或可重试计划）",
+        }
         lines = []
-        for i in range(1, days + 1):
-            date_str = (today - timedelta(days=i)).isoformat()
-            entry = self._daily_schedule_entry(all_data, date_str)
-            if not entry:
+        for day in self._recent_visible_history_days(today, days=days):
+            if not day["actions"]:
                 continue
-            items = self._schedule_plan_items(entry.get("schedule", ""))
-            if not items:
-                continue
-            day_lines = [f"{time_text} {activity}" for time_text, activity in items]
+            date_str = day["date"]
+            day_lines = [
+                f"{item['time']} {item['activity']}{source_labels.get(item['source'], '')}"
+                for item in day["actions"]
+            ]
             # Keep full action text so the model can judge sameness itself.
-            lines.append(f"[{date_str}]\n" + "\n".join(day_lines))
+            current_note = "（本次刷新前今日计划，也必须避重）" if day["is_current"] else ""
+            lines.append(f"[{date_str}]{current_note}\n" + "\n".join(day_lines))
         return "\n".join(lines) if lines else "（无近期日程）"
 
-    def _recent_schedule_actions(self, today: date, days: int = 3) -> list[dict]:
-        """Collect recent schedule actions with date for post-check against LLM output."""
-        all_data = self._load_schedule_data()
-        actions = []
-        for i in range(1, days + 1):
-            date_str = (today - timedelta(days=i)).isoformat()
-            entry = self._daily_schedule_entry(all_data, date_str)
-            if not entry:
-                continue
-            for time_text, activity in self._schedule_plan_items(entry.get("schedule", "")):
-                activity = str(activity or "").strip()
-                if not activity:
+    @staticmethod
+    def _balanced_schedule_history_excerpt(schedule_history: str, max_chars: int) -> str:
+        """Bound fallback history without dropping entire older dates."""
+        text = str(schedule_history or "").strip()
+        if not text or len(text) <= max_chars:
+            return text
+
+        header_matches = list(
+            re.finditer(r"(?m)^\[\d{4}-\d{2}-\d{2}\][^\n]*$", text)
+        )
+        if not header_matches:
+            return text[:max_chars]
+
+        sections = []
+        for index, match in enumerate(header_matches):
+            body_start = match.end()
+            body_end = (
+                header_matches[index + 1].start()
+                if index + 1 < len(header_matches)
+                else len(text)
+            )
+            body_lines = [
+                line.strip()
+                for line in text[body_start:body_end].splitlines()
+                if line.strip()
+            ]
+            sections.append({"header": match.group(0).strip(), "lines": body_lines})
+
+        selected = [[] for _section in sections]
+
+        def _render() -> str:
+            blocks = []
+            for section, lines in zip(sections, selected):
+                block = section["header"]
+                if lines:
+                    block += "\n" + "\n".join(lines)
+                blocks.append(block)
+            return "\n".join(blocks)
+
+        indexes = [0] * len(sections)
+        while True:
+            added = False
+            available = False
+            for section_index, section in enumerate(sections):
+                line_index = indexes[section_index]
+                if line_index >= len(section["lines"]):
                     continue
+                available = True
+                indexes[section_index] += 1
+                selected[section_index].append(section["lines"][line_index])
+                if len(_render()) <= max_chars:
+                    added = True
+                else:
+                    selected[section_index].pop()
+            if not available or not added:
+                break
+
+        rendered = _render()
+        return rendered if len(rendered) <= max_chars else rendered[:max_chars]
+
+    def _recent_schedule_actions(self, today: date, days: int = 3) -> list[dict]:
+        """Collect recent visible actions for post-generation diagnostics."""
+        actions = []
+        for day in self._recent_visible_history_days(today, days=days):
+            for item in day["actions"]:
+                activity = item["activity"]
                 actions.append({
-                    "date": date_str,
-                    "time": time_text,
+                    "date": day["date"],
+                    "time": item["time"],
                     "activity": activity,
                     "signature": self._activity_signature(activity),
                     "core": self._activity_action_core(activity),
+                    "source": item["source"],
                 })
         return actions
 
@@ -996,20 +1676,17 @@ class DailyScheduler:
         return False
 
     def _recent_schedule_category_counts(self, today: date, days: int = 3) -> dict[str, int]:
-        all_data = self._load_schedule_data()
         counts = {
             "cooking_days": 0,
             "low_energy_home_days": 0,
             "category_days": [],
             "family_days": [],
         }
-        for i in range(1, days + 1):
-            date_str = (today - timedelta(days=i)).isoformat()
-            entry = all_data.get(date_str)
-            if not isinstance(entry, dict) or entry.get("status") != "ok":
+        for day in self._recent_visible_history_days(today, days=days):
+            date_str = day["date"]
+            activities = [item["activity"] for item in day["actions"]]
+            if not activities:
                 continue
-            items = self._schedule_plan_items(entry.get("schedule", ""))
-            activities = [activity for _time_text, activity in items]
             if any(self._activity_has(activity, COOKING_TERMS) for activity in activities):
                 counts["cooking_days"] += 1
             if any(self._activity_has(activity, LOW_ENERGY_HOME_TERMS) for activity in activities):
@@ -1039,6 +1716,7 @@ class DailyScheduler:
         recent_counts = recent_counts or {}
         recent_actions = recent_actions or []
 
+        notes = []
         repeated = []
         for time_text, activity in display_items:
             for recent in recent_actions:
@@ -1050,7 +1728,7 @@ class DailyScheduler:
                 )
                 break
         if repeated:
-            return (
+            notes.append(
                 "近 3 天已出现相同或高度相似的日程动作，请重新设计全新动作/任务主线，不要同义改写："
                 + "；".join(repeated[:4])
             )
@@ -1058,7 +1736,7 @@ class DailyScheduler:
         signatures = [self._activity_signature(activity) for _time_text, activity in display_items]
         duplicates = sorted({item for item in signatures if item and signatures.count(item) > 1})
         if duplicates:
-            return "schedule 内部活动过于重复: " + "、".join(duplicates[:3])
+            notes.append("schedule 内部活动过于重复: " + "、".join(duplicates[:3]))
 
         family_counts: dict[str, int] = {}
         for _time_text, activity in display_items:
@@ -1086,7 +1764,7 @@ class DailyScheduler:
                 if recent_dates
                 else ""
             )
-            return (
+            notes.append(
                 f"全天主线过于单一：{len(display_items)} 条中有 {count} 条属于「{label}」"
                 f"{recent_note}。不要把同一活动拆成多个地点/物品凑数；请保留自然转场，"
                 "改成更多实质不同的动作族，并加入一个需要真实参与的精彩锚点。"
@@ -1094,29 +1772,67 @@ class DailyScheduler:
 
         repeated_families = []
         for family, count in family_counts.items():
-            if count < 2:
-                continue
             recent_dates = [
                 str(day.get("date") or "")
                 for day in recent_counts.get("family_days", [])
                 if family in set(day.get("families") or [])
             ]
-            if recent_dates:
+            if not recent_dates:
+                continue
+            if family not in NATURAL_TRANSITION_ACTIVITY_FAMILIES:
                 repeated_families.append((family, count, recent_dates))
         if repeated_families:
-            family, count, recent_dates = sorted(
+            repeated_bits = []
+            for family, count, recent_dates in sorted(
                 repeated_families,
                 key=lambda item: item[1],
                 reverse=True,
-            )[0]
-            label = SCHEDULE_BROAD_ACTIVITY_FAMILY_LABELS.get(family, family)
-            return (
-                f"近 3 天任务主线重复：今天有 {count} 条属于「{label}」，"
-                f"而 {', '.join(recent_dates[:3])} 已出现该动作族。"
-                "单条必要生活过渡可以保留，但不要让旧动作族再次成为今天的主线或连续次主线；"
-                "请换成不同的参与方式，并重新设计精彩锚点。"
+            )[:4]:
+                label = SCHEDULE_BROAD_ACTIVITY_FAMILY_LABELS.get(family, family)
+                repeated_bits.append(
+                    f"「{label}」今天 {count} 条，近三日见于 {', '.join(recent_dates[:3])}"
+                )
+            notes.append(
+                "近 3 天动作族再次出现：" + "；".join(repeated_bits)
+                + "。必要生活过渡可以保留，但旧动作族不要再次成为主线；"
+                "请换参与方式、空间与成果，并重新设计精彩锚点。"
             )
-        return ""
+
+        scene_counts: dict[str, int] = {}
+        home_slots = 0
+        non_home_slots = 0
+        for _time_text, activity in display_items:
+            scenes = self._activity_scene_families(activity)
+            for scene in scenes:
+                scene_counts[scene] = scene_counts.get(scene, 0) + 1
+            if scenes & HOME_SCENE_FAMILIES:
+                home_slots += 1
+            if scenes - HOME_SCENE_FAMILIES:
+                non_home_slots += 1
+        if len(display_items) >= 6 and home_slots > len(display_items) / 2:
+            notes.append(
+                f"空间过度居家：{len(display_items)} 条中至少 {home_slots} 条发生在阳台、客厅、"
+                "厨房、书房、卧室或浴室；请增加需要真实参与的公共空间、户外或文化体验。"
+            )
+        identified_slots = sum(
+            1
+            for _time_text, activity in display_items
+            if self._activity_scene_families(activity)
+        )
+        if (
+            len(display_items) >= 6
+            and identified_slots >= 4
+            and len(scene_counts) < 4
+        ):
+            labels = [
+                SCHEDULE_SCENE_FAMILY_LABELS.get(scene, scene)
+                for scene in scene_counts
+            ]
+            notes.append(
+                f"空间类型不足：当前只识别到 {len(scene_counts)} 类（{'、'.join(labels)}），"
+                "建议覆盖至少 4 类实质不同空间。"
+            )
+        return " | ".join(notes)
 
     def _runtime_persona(self) -> dict:
         return load_runtime_persona(self.config, self.data_dir)
@@ -1413,7 +2129,7 @@ class DailyScheduler:
             base_payload = {
                 "model": model,
                 "messages": messages,
-                "max_tokens": 8192 if json_mode and self._should_disable_thinking(model) else 4096,
+                "max_tokens": 8192 if json_mode else 4096,
                 "stream": stream_enabled,
             }
             if temperature is not None:
@@ -1544,6 +2260,7 @@ class DailyScheduler:
         day_context = self._day_context(today)
         enabled_styles = load_enabled_outfit_styles(self.config, self.data_dir)
         style_list_text = ", ".join(enabled_styles)
+        diversity_brief = self._diversity_execution_brief(today, enabled_styles)
         mood = random.choice(MOOD_COLORS)
         theme_context = self._theme_context(theme_day, theme_description)
         sched_type = "主题体验日" if theme_context else self._select_schedule_type(day_context)
@@ -1599,6 +2316,8 @@ class DailyScheduler:
 
 【日程避重与多样化要求】
 {self._schedule_diversity_prompt_block(schedule_history)}
+
+{diversity_brief}
 
 【历史生图词云参考（软偏好，不是硬约束）】
 {self._schedule_keyword_cloud_prompt_block(limit=3, selection_key=today.isoformat())}
@@ -1703,6 +2422,8 @@ class DailyScheduler:
 ⚠️ outfit_keywords 字段：从 prompt 中提取穿搭相关英文关键词（服装+鞋子+配饰），逗号分隔，5-10个词。必须和 prompt 中的穿搭描述完全一致。
 ⚠️ scene_keywords 字段：从 prompt 中提取场景相关英文关键词（环境+道具+光线），逗号分隔，3-6个词。必须和 prompt 中的场景描述完全一致。
 
+{self._diversity_avoidance_summary(today)}
+
 JSON 格式（字段名固定，value 替换为实际内容）：
 {{
     "outfit_style": "风格名",
@@ -1744,6 +2465,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
         day_context = self._day_context(today)
         enabled_styles = load_enabled_outfit_styles(self.config, self.data_dir)
         style_list_text = ", ".join(enabled_styles)
+        diversity_brief = self._diversity_execution_brief(today, enabled_styles)
         mood = random.choice(MOOD_COLORS)
         theme_context = self._theme_context(theme_day, theme_description)
         sched_type = "主题体验日" if theme_context else self._select_schedule_type(day_context)
@@ -1781,7 +2503,8 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 小心思口吻：{str(caption_voice)[:220]}
 近 3 天穿搭参考（服装、发型、鞋包和首饰尽量生成不同组合）：{str(history)[:1200]}
 具体配饰优先换颜色、图案或类别；不要只靠同义改写制造差异，例如银色十字星锁骨链与银色星形项链仍是相近搭配。
-{self._schedule_diversity_prompt_block(str(schedule_history)[:1800])}
+        {self._schedule_diversity_prompt_block(self._balanced_schedule_history_excerpt(schedule_history, 1800))}
+{diversity_brief}
 历史生图词云（低权重软参考）：{self._schedule_keyword_cloud_prompt_block(limit=2, selection_key=today.isoformat())[:700]}
 收藏偏好（只参考穿搭/发型气质）：{self._favorite_outfit_context(limit=2)[:700]}
 禁止复现的不喜欢穿搭（硬约束）：{disliked_outfits[:1800]}
@@ -1804,6 +2527,8 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 7. prompt 必须是纯英文生图提示词，包含发型、穿搭、动作、场景、光影。
 8. caption 是今日计划的小心思，中文 40-90 字，口语自然，轻轻带到 2-4 个安排；不要文艺隐喻，不要自拍/美照/外貌点评。
 9. photo_style_en 必须是纯英文 1-3 句，由你根据今天日程整体氛围自行判断摄影/镜头语言；只写镜头光线取景质感，不要写外貌服装，不要 Masterpiece/cinematic lighting/HDR。
+
+{self._diversity_avoidance_summary(today)}
 
 只输出这个 JSON 对象：
 {{
@@ -1845,6 +2570,7 @@ JSON 格式（字段名固定，value 替换为实际内容）：
         weekday = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"][today.weekday()]
         day_context = self._day_context(today)
         enabled_styles = load_enabled_outfit_styles(self.config, self.data_dir)
+        diversity_brief = self._diversity_execution_brief(today, enabled_styles)
         theme_context = self._theme_context(theme_day, theme_description)
         sched_type = "主题体验日" if theme_context else self._select_schedule_type(day_context)
         calendar_guidance = day_context.prompt_block(sched_type)
@@ -1876,7 +2602,8 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 近 3 天穿搭多样性参考：{str(outfit_history)[:800]}
 配饰优先选择与近 3 天不同的颜色、图案或类别，不要只做同义改写。
 禁止复现的不喜欢穿搭：{disliked_outfits[:1200]}
-{self._schedule_diversity_prompt_block(str(schedule_history)[:1200])}
+        {self._schedule_diversity_prompt_block(self._balanced_schedule_history_excerpt(schedule_history, 1200))}
+{diversity_brief}
 词云低权重软参考：{self._schedule_keyword_cloud_prompt_block(limit=1, selection_key=today.isoformat())[:500]}
 
 {SCHEDULE_SOLO_CAMERA_RULES}
@@ -1897,6 +2624,8 @@ JSON 格式（字段名固定，value 替换为实际内容）：
 - photo_style_en 纯英文 1-3 句，按今天日程氛围判断摄影语言（镜头/光线/取景/质感），不要写外貌服装，不要 Masterpiece/cinematic lighting。
 - caption 中文 40-90 字，是今天计划的小心思。
 - 白天不要写 night/evening/sunset/neon/street lamps；发色跟外貌约束。
+
+{self._diversity_avoidance_summary(today)}
 
 JSON keys:
 outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_details, prompt, caption, photo_style_en, outfit_keywords, scene_keywords."""
@@ -2377,21 +3106,38 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
         return any(marker in text for marker in intent_markers) and any(marker in text for marker in time_markers)
 
     def _get_history(self, today: date, days: int = 3) -> str:
-        """获取近几天的完整穿搭历史，保留鞋包和配饰信息。"""
-        all_data = self._load_schedule_data()
+        """获取近期已计划或已展示的穿搭历史，保留鞋包和配饰信息。"""
         items = []
-        for i in range(1, days + 1):
-            d = today - timedelta(days=i)
-            date_str = d.isoformat()
-            entry = self._daily_schedule_entry(all_data, date_str)
-            if not entry:
-                continue
-            outfit = re.sub(r"\s+", " ", str(entry.get("outfit") or "")).strip()
-            accessories = "、".join(self._accessory_features(self._entry_outfit_text(entry)).values())
-            line = f"[{date_str}] 风格：{entry.get('outfit_style', '')}；穿搭：{outfit[:520]}"
-            if accessories:
-                line += f"；配饰特征：{accessories}"
-            items.append(line)
+        seen = set()
+        source_labels = {
+            "current_schedule": "本次刷新前今日计划",
+            "archived_schedule": "刷新前旧计划",
+            "generated_photo": "已生成图片",
+        }
+        for day in self._recent_visible_history_days(today, days=days):
+            date_str = day["date"]
+            for source in day["entries"]:
+                entry = source["entry"]
+                outfit_style = str(entry.get("outfit_style") or "").strip()
+                outfit = re.sub(r"\s+", " ", str(entry.get("outfit") or "")).strip()
+                if not outfit_style and not outfit:
+                    continue
+                fingerprint = re.sub(r"\s+", "", f"{outfit_style}|{outfit}").casefold()
+                dedupe_key = (date_str, fingerprint)
+                if dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                accessories = "、".join(
+                    self._accessory_features(self._entry_outfit_text(entry)).values()
+                )
+                source_text = source_labels.get(source["kind"], "日期计划")
+                line = (
+                    f"[{date_str}｜{source_text}] 风格：{outfit_style}；"
+                    f"穿搭：{outfit[:520]}"
+                )
+                if accessories:
+                    line += f"；配饰特征：{accessories}"
+                items.append(line)
         return "\n".join(items) if items else "（无历史记录）"
 
     def _favorite_outfit_context(self, limit: int = 5) -> str:
@@ -3071,11 +3817,15 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
                 recent_counts,
                 recent_actions=recent_actions,
             )
-            if diversity_note:
+            food_diversity_note = self._food_diversity_revision_note(today, display_items)
+            advisory_note = " | ".join(
+                note for note in (diversity_note, food_diversity_note) if note
+            )
+            if advisory_note:
                 logger.info(
                     "日程多样性建议（不拦截） (attempt %s): %s",
                     attempt + 1,
-                    diversity_note,
+                    advisory_note,
                 )
             missing_display = self._missing_required_periods(schedule_display)
             missing_prompt = self._missing_required_periods(schedule_prompt)
@@ -3125,7 +3875,13 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
                 disliked_items,
             )
             if disliked_similarity_error:
-                if outfit_reference_path:
+                if theme_day:
+                    logger.info(
+                        "主题日主线优先，忽略不喜欢相似度建议 (attempt %s): %s",
+                        attempt + 1,
+                        disliked_similarity_error,
+                    )
+                elif outfit_reference_path:
                     logger.info(
                         "小红书真人参考图优先，忽略文本不喜欢相似度建议 (attempt %s): %s",
                         attempt + 1,

@@ -109,6 +109,28 @@ class ScheduleRecoveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, calls)
         self.assertIsNone(app._schedule_refresh_task)
 
+    async def test_refresh_stops_before_photo_job_rebuild_when_save_fails(self):
+        app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+        entry = DailyEntry(
+            date="2026-07-15",
+            schedule="08:00 买早餐",
+            status="ok",
+        )
+        app.scheduler_gen = SimpleNamespace(generate_today=AsyncMock(return_value=entry))
+        app.data_dir = "unused"
+        app._schedule_dynamic_photos = AsyncMock()
+
+        with patch.object(
+            main_module,
+            "save_schedule_entry",
+            side_effect=OSError("disk full"),
+        ) as save_entry:
+            with self.assertRaisesRegex(OSError, "disk full"):
+                await app._refresh_schedule_impl()
+
+        save_entry.assert_called_once_with(app.data_dir, entry)
+        app._schedule_dynamic_photos.assert_not_awaited()
+
     async def test_startup_missing_schedule_always_starts_background_generation(self):
         app = PortraitGalleryApp.__new__(PortraitGalleryApp)
         app._today_schedule_entry = Mock(return_value=None)

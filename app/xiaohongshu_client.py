@@ -244,7 +244,13 @@ class XiaohongshuClient:
         data = payload.get("data")
         return data if isinstance(data, dict) else {}
 
-    async def status(self, *, start_service: bool = True) -> dict:
+    async def status(
+        self,
+        *,
+        start_service: bool = True,
+        check_login: bool = True,
+    ) -> dict:
+        """Return service readiness and, when requested, the account login state."""
         running = await self._health()
         if start_service and not running:
             try:
@@ -255,6 +261,7 @@ class XiaohongshuClient:
                     "configured": bool(self.binary_path),
                     "service_running": False,
                     "is_logged_in": False,
+                    "login_state": "unknown",
                     "error": exc.code,
                     "message": exc.message,
                 }
@@ -263,6 +270,14 @@ class XiaohongshuClient:
                 "configured": bool(self.binary_path),
                 "service_running": False,
                 "is_logged_in": False,
+                "login_state": "unknown",
+            }
+        if not check_login:
+            return {
+                "configured": bool(self.binary_path) or running,
+                "service_running": True,
+                "is_logged_in": None,
+                "login_state": "unknown",
             }
         try:
             data = await self._request("GET", "/api/v1/login/status", timeout_seconds=45)
@@ -271,6 +286,7 @@ class XiaohongshuClient:
                 "configured": bool(self.binary_path),
                 "service_running": True,
                 "is_logged_in": False,
+                "login_state": "unknown",
                 "error": exc.code,
                 "message": exc.message,
             }
@@ -278,6 +294,7 @@ class XiaohongshuClient:
             "configured": bool(self.binary_path) or running,
             "service_running": True,
             "is_logged_in": bool(data.get("is_logged_in")),
+            "login_state": "logged_in" if data.get("is_logged_in") else "logged_out",
             "username": str(data.get("username") or "").strip(),
         }
 

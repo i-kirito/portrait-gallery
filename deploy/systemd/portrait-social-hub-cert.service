@@ -1,0 +1,10 @@
+[Unit]
+Description=Renew the Portrait Social Hub short-lived IP certificate
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+TimeoutStartSec=5min
+ExecStart=/usr/local/bin/lego run --no-random-sleep --path /etc/lego-social-hub --server letsencrypt --email= --accept-tos --domains 8.134.251.200 --profile shortlived --key-type EC256 --tls --tls.address 0.0.0.0:443 --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx"
+ExecStopPost=/usr/bin/systemctl start nginx

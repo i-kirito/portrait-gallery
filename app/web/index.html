@@ -496,6 +496,7 @@ textarea:focus-visible,
 .xhs-qr-expiry {
   color: #888;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .xhs-schedule-card {
   display: grid;
@@ -2301,7 +2302,7 @@ textarea:focus-visible,
 }
 .gallery-card .card-body .card-actions {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 6px;
   margin-top: 7px;
   padding-top: 7px;
@@ -2310,7 +2311,7 @@ textarea:focus-visible,
 .gallery-card .card-body .card-actions .ca-btn {
   min-width: 0;
   min-height: 32px;
-  padding: 0 6px;
+  padding: 0;
   border-radius: 999px;
   border: 1px solid #eadfea;
   background: linear-gradient(180deg,#fff,#fffafd);
@@ -2320,7 +2321,7 @@ textarea:focus-visible,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 0;
   color: #786d7c;
   transition: background 0.16s, border-color 0.16s, color 0.16s, box-shadow 0.16s, transform 0.16s;
   line-height: 1;
@@ -2330,16 +2331,14 @@ textarea:focus-visible,
 .gallery-card .card-body .card-actions .ca-btn .ca-icon {
   flex: 0 0 auto;
   width: 1em;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 .gallery-card .card-body .card-actions .ca-btn .ca-label {
-  min-width: 0;
-  overflow: visible;
-  text-overflow: clip;
+  display: none;
 }
 .gallery-card .card-body .card-actions .ca-btn:hover {
   border-color: #e91e63;
@@ -2933,6 +2932,11 @@ textarea:focus-visible,
   transition: border 0.2s;
   color: #333;
 }
+#cgPrompt {
+  height: 76px;
+  min-height: 76px;
+  padding: 10px 14px;
+}
 .cg-field textarea:focus {
   border-color: #e91e63;
   box-shadow: 0 0 0 3px rgba(233,30,99,0.08);
@@ -3174,6 +3178,7 @@ textarea:focus-visible,
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  margin-top: 20px;
 }
 .cg-ref-item {
   border-radius: 10px;
@@ -3275,9 +3280,13 @@ textarea:focus-visible,
   padding: 2px 1px 7px;
   scrollbar-width: thin;
 }
-.xhs-creator-results { grid-auto-columns: 190px; }
+.xhs-search-status[hidden],
+.xhs-search-results[hidden],
+.xhs-note-images[hidden],
+.xhs-search-pagination[hidden],
 .xhs-creator-results[hidden],
 .xhs-creator-profile[hidden] { display: none; }
+.xhs-creator-results { grid-auto-columns: 190px; }
 .xhs-creator-card {
   position: relative;
   display: grid;
@@ -5016,6 +5025,21 @@ textarea:focus-visible,
 
 /* ===== Responsive ===== */
 @media (max-width: 1200px) {
+  .gallery-list { gap: 14px; }
+  .gallery-grid { gap: 10px; }
+  .big-card-image { flex: 0 0 38%; min-height: 280px; }
+  .big-card-info { padding: 18px 22px; }
+  .big-card-info .bc-desc { font-size: 14px; }
+  .big-card-info .bc-schedule { padding: 10px 14px; }
+  .big-card-info .bc-schedule .sched-row { font-size: 13px; }
+}
+@media (min-width: 1081px) and (max-width: 1200px) {
+  .header { gap: 12px; padding: 15px 24px 14px; }
+  .header-left h1 { font-size: 24px; }
+  .header .tab { padding: 8px 10px; }
+  .header-actions { gap: 8px; }
+}
+@media (max-width: 1080px) {
   .header {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
@@ -5053,13 +5077,6 @@ textarea:focus-visible,
     margin-left: 1px;
     transform: none;
   }
-  .gallery-list { gap: 14px; }
-  .gallery-grid { gap: 10px; }
-  .big-card-image { flex: 0 0 38%; min-height: 280px; }
-  .big-card-info { padding: 18px 22px; }
-  .big-card-info .bc-desc { font-size: 14px; }
-  .big-card-info .bc-schedule { padding: 10px 14px; }
-  .big-card-info .bc-schedule .sched-row { font-size: 13px; }
 }
 @media (max-width: 980px) {
   .header {
@@ -5895,29 +5912,74 @@ textarea:focus-visible,
 .egg-header::after { content: ''; position: absolute; inset: 0; background: radial-gradient(circle at 88% 20%, rgba(255,255,255,0.28), transparent 28%), radial-gradient(circle at 18% 78%, rgba(255,255,255,0.18), transparent 22%); pointer-events: none; z-index: 0; }
 .egg-header h2 { color: #fff; font-size: 22px; margin: 0; font-family: 'ZCOOL KuaiLe', cursive; text-shadow: 0 2px 10px rgba(64,24,80,0.22); position: relative; z-index: 1; }
 .egg-header .egg-date { color: rgba(255,255,255,0.88); font-size: 13px; margin-top: 6px; position: relative; z-index: 1; }
-.egg-theme-day-controls { margin: -2px 0 18px; padding: 13px 14px; border: 1px solid rgba(216,180,254,0.38); border-radius: 14px; background: linear-gradient(135deg, rgba(255,247,251,0.96), rgba(246,242,255,0.96)); box-shadow: 0 6px 16px rgba(168,85,247,0.06); }
-.egg-theme-day-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
-.egg-theme-day-title { color: #7c3aed; font-size: 13px; font-weight: 800; }
-.egg-theme-day-hint { color: #9a8ca8; font-size: 11px; }
-.egg-theme-day-switch { margin-left: auto; transform: scale(0.82); transform-origin: right center; }
+.egg-theme-day-controls {
+  margin: 16px 18px -4px;
+  padding: 16px;
+  border: 1px solid #eee7f3;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgba(74,45,91,0.08);
+  color: #302a35;
+  letter-spacing: 0;
+}
+.egg-theme-day-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px; margin-bottom: 16px; }
+.egg-theme-day-heading { display: flex; align-items: flex-start; gap: 11px; min-width: 0; }
+.egg-theme-day-icon { width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, #fce7f3, #ede9fe); color: #9d2471; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 36px; font-size: 15px; }
+.egg-theme-day-copy { min-width: 0; padding-top: 1px; }
+.egg-theme-day-title-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.egg-theme-day-title { color: #302a35; font-size: 14px; font-weight: 800; line-height: 1.35; }
+.egg-theme-day-state { min-height: 21px; padding: 2px 8px; border-radius: 999px; background: #f3f0f5; color: #6b6472; font-size: 10px; font-weight: 800; line-height: 17px; white-space: nowrap; }
+.egg-theme-day-controls.is-enabled .egg-theme-day-state { background: #ede9fe; color: #6d28d9; }
+.egg-theme-day-controls.is-busy .egg-theme-day-state { background: #fce7f3; color: #9d174d; display: inline-flex; align-items: center; gap: 6px; }
+.egg-theme-day-controls.is-busy .egg-theme-day-state::before,
+.egg-theme-day-controls.is-busy #eggThemeDayStatus:not(:empty)::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  box-sizing: border-box;
+  flex: 0 0 12px;
+  animation: eggSpin 0.8s linear infinite;
+}
+.egg-theme-day-hint { margin-top: 3px; color: #6b6472; font-size: 12px; line-height: 1.5; }
+.egg-theme-day-switch { width: 44px; height: 44px; margin: -4px -1px 0 0; }
+.egg-theme-day-switch .sk-switch-knob { position: relative; width: 42px; height: 24px; margin: auto; }
+.egg-theme-day-switch:has(input:focus-visible) .sk-switch-knob { box-shadow: 0 0 0 3px rgba(124,58,237,0.2); }
+.egg-theme-day-field-label { display: block; margin-bottom: 7px; color: #514a57; font-size: 12px; font-weight: 800; }
+.egg-theme-day-field-label i { margin-right: 5px; color: #8b5cf6; }
 .egg-theme-day-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
-.egg-theme-day-xhs-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; min-height: 30px; }
-.egg-theme-day-xhs-selected { min-width: 0; flex: 1; color: #6d28d9; font-size: 11px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.egg-theme-day-xhs-picker { margin-top: 8px; padding: 10px; border: 1px solid rgba(139,92,246,0.22); border-radius: 12px; background: rgba(255,255,255,0.72); }
+.egg-theme-day-input { min-width: 0; height: 42px; padding: 0 12px; border: 1px solid #ddd4e3; border-radius: 10px; background: #fff; color: #302a35; font: inherit; font-size: 13px; outline: none; transition: border-color 0.16s ease, box-shadow 0.16s ease; }
+.egg-theme-day-input::placeholder { color: #918997; }
+.egg-theme-day-input:focus { border-color: #8b5cf6; box-shadow: 0 0 0 3px rgba(139,92,246,0.13); }
+.egg-theme-day-buttons { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 9px; }
+.egg-theme-day-action-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; min-width: 0; }
+.egg-theme-day-action-pair .egg-theme-day-action { min-width: 0; width: 100%; padding-inline: 10px; }
+.egg-theme-day-target-group { display: grid; grid-template-columns: repeat(2, minmax(68px, 1fr)); gap: 2px; padding: 3px; border: 1px solid #e8e1ec; border-radius: 10px; background: #f6f3f7; }
+.egg-theme-day-target { min-height: 40px; padding: 0 13px; border: 1px solid #ddd4e3; border-radius: 10px; background: #fff; color: #655d6b; font-size: 12px; font-weight: 750; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease; }
+.egg-theme-day-target:hover:not(:disabled) { border-color: #bdaec8; color: #6d28d9; background: #fdfbff; }
+.egg-theme-day-target-group .egg-theme-day-target { min-height: 34px; padding: 0 12px; border: 0; border-radius: 7px; background: transparent; }
+.egg-theme-day-target.active { border-color: #7c3aed; background: #7c3aed; color: #fff; box-shadow: 0 3px 8px rgba(124,58,237,0.22); }
+.egg-theme-day-action { min-height: 42px; padding: 0 14px; border: 1px solid transparent; border-radius: 10px; font-size: 12px; font-weight: 800; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 7px; white-space: nowrap; transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background 0.16s ease; }
+.egg-theme-day-action--primary { background: linear-gradient(135deg, #db2777, #7c3aed); color: #fff; box-shadow: 0 6px 14px rgba(124,58,237,0.2); }
+.egg-theme-day-action--primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 18px rgba(124,58,237,0.27); }
+.egg-theme-day-action--secondary { border-color: #d8cde0; background: #fff; color: #6d28d9; box-shadow: none; }
+.egg-theme-day-action--secondary:hover:not(:disabled) { border-color: #bca6cc; background: #faf7fc; }
+.egg-theme-day-action:disabled, .egg-theme-day-target:disabled { opacity: 0.5; cursor: default; transform: none; box-shadow: none; }
+.egg-theme-day-controls.is-busy { cursor: progress; }
+.egg-theme-day-xhs-selected { display: block; min-width: 0; margin-top: 8px; color: #6d28d9; font-size: 11px; font-weight: 700; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.egg-theme-day-xhs-selected:empty { display: none; }
+.egg-theme-day-xhs-picker { margin-top: 10px; padding: 11px; border: 1px solid #e5d8ec; border-radius: 10px; background: #fcfafd; }
 .egg-theme-day-xhs-search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .egg-theme-day-xhs-results, .egg-theme-day-xhs-images { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; margin-top: 8px; }
 .egg-theme-day-xhs-result, .egg-theme-day-xhs-image { position: relative; min-height: 112px; border: 0; border-radius: 8px; padding: 0; overflow: hidden; background: #f3e8ff; cursor: pointer; }
 .egg-theme-day-xhs-result img, .egg-theme-day-xhs-image img { width: 100%; height: 112px; object-fit: cover; display: block; }
-.egg-theme-day-xhs-result span, .egg-theme-day-xhs-image span { position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 5px; color: #fff; background: rgba(76,29,149,0.76); font-size: 10px; line-height: 1.25; text-align: left; }
-.egg-theme-day-input { min-width: 0; height: 38px; padding: 0 11px; border: 1px solid rgba(216,180,254,0.78); border-radius: 10px; background: #fff; color: #4c1d95; font: inherit; font-size: 13px; outline: none; }
-.egg-theme-day-input:focus { border-color: #a78bfa; box-shadow: 0 0 0 3px rgba(167,139,250,0.14); }
-.egg-theme-day-buttons { display: flex; gap: 7px; margin-top: 8px; flex-wrap: wrap; }
-.egg-theme-day-target { height: 30px; padding: 0 10px; border: 1px solid rgba(139,92,246,0.2); border-radius: 999px; background: #fff; color: #6d28d9; font-size: 11px; font-weight: 700; cursor: pointer; }
-.egg-theme-day-target.active { background: #8b5cf6; border-color: #8b5cf6; color: #fff; }
-.egg-theme-day-action { height: 30px; padding: 0 12px; border: 0; border-radius: 999px; background: linear-gradient(135deg, #ff6b9d, #c084fc); color: #fff; font-size: 11px; font-weight: 800; cursor: pointer; box-shadow: 0 5px 12px rgba(192,132,252,0.18); }
-.egg-theme-day-action:disabled, .egg-theme-day-target:disabled { opacity: 0.55; cursor: default; }
-.egg-theme-day-status { min-height: 16px; margin-top: 6px; color: #8b5cf6; font-size: 11px; line-height: 1.45; }
-.egg-theme-day-status.error { color: #be123c; }
+.egg-theme-day-xhs-result span, .egg-theme-day-xhs-image span { position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 5px; color: #fff; background: rgba(76,29,149,0.82); font-size: 10px; line-height: 1.25; text-align: left; }
+.egg-theme-day-status { margin-top: 9px; padding: 8px 10px; border: 1px solid #e9e0ef; border-radius: 8px; background: #faf7fc; color: #6d28d9; font-size: 11px; line-height: 1.45; }
+.egg-theme-day-status:empty { display: none; }
+.egg-theme-day-controls.is-busy #eggThemeDayStatus:not(:empty) { display: flex; align-items: flex-start; gap: 7px; }
+.egg-theme-day-status.error { border-color: #fecdd3; background: #fff1f2; color: #be123c; }
 .egg-close { position: absolute; top: 16px; right: 18px; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.24); color: #fff; width: 32px; height: 32px; border-radius: 50%; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s, transform 0.2s; z-index: 2; }
 .egg-close:hover { background: rgba(255,255,255,0.4); transform: scale(1.05); }
 .egg-body { padding: 20px 22px 22px; }
@@ -6117,8 +6179,17 @@ textarea:focus-visible,
 @keyframes eggCardBeat { 0% { transform: scale(0.85) translateY(22px); } 54% { transform: scale(1.035) translateY(-2px); } 70% { transform: scale(0.985) translateY(1px); } 86% { transform: scale(1.012) translateY(0); } 100% { transform: scale(1) translateY(0); } }
 .egg-slot-empty { opacity: 0.5; font-style: italic; }
 @media (max-width: 420px) {
+  .egg-theme-day-controls { margin: 12px 12px -6px; padding: 14px; }
+  .egg-theme-day-head { gap: 8px; margin-bottom: 14px; }
+  .egg-theme-day-heading { gap: 9px; }
+  .egg-theme-day-icon { width: 32px; height: 32px; flex-basis: 32px; }
   .egg-theme-day-row { grid-template-columns: 1fr; }
-  .egg-theme-day-hint { display: none; }
+  .egg-theme-day-action--primary { width: 100%; min-height: 44px; }
+  .egg-theme-day-buttons { grid-template-columns: 1fr; }
+  .egg-theme-day-target-group { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .egg-theme-day-target-group .egg-theme-day-target { min-height: 38px; }
+  .egg-theme-day-action--secondary { width: 100%; min-height: 44px; }
+  #eggThemeDayManualBtn { width: 100%; min-height: 44px; }
   .egg-theme-day-xhs-search-row { grid-template-columns: 1fr; }
   .egg-section-title.with-action { grid-template-columns: 1fr; align-items: start; }
 	  .egg-title-actions { justify-self: end; flex-wrap: wrap; max-width: 100%; }
@@ -6260,6 +6331,1235 @@ textarea:focus-visible,
   .sk-endpoint-del-btn { width: 100%; }
 }
 
+/* ===== X-like social workspace, scoped to the group-chat tab ===== */
+#groupChatSection {
+  --gcx-ink: #0f1419;
+  --gcx-muted: #536471;
+  --gcx-line: #eff3f4;
+  --gcx-soft: #f7f9f9;
+  --gcx-blue: #0f8bd7;
+  --gcx-blue-hover: #0a78bd;
+  --gcx-green: #00a67e;
+  --gcx-red: #e0245e;
+  color: var(--gcx-ink);
+  font-family: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", -apple-system, sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+#groupChatSection button,
+#groupChatSection input,
+#groupChatSection select,
+#groupChatSection textarea { letter-spacing: 0; }
+#groupChatSection .gcx-page {
+  height: calc(100vh - 89px);
+  min-height: 660px;
+  max-height: calc(100vh - 89px);
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+}
+#groupChatSection { padding: 0; }
+.container:has(#groupChatSection:not(.hidden)) { padding: 0; max-width: none; margin: 0 auto; }
+#groupChatSection .gcx-layout {
+  height: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 220px minmax(420px, 1fr) 300px;
+  gap: 0;
+  align-items: stretch;
+}
+#groupChatSection .gcx-left,
+#groupChatSection .gcx-center,
+#groupChatSection .gcx-right { min-width: 0; min-height: 0; }
+#groupChatSection .gcx-left {
+  height: 100%;
+  padding: 18px 14px;
+  overflow-y: auto;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+#groupChatSection .gcx-brand { display: flex; align-items: center; gap: 10px; }
+#groupChatSection .gcx-brand > i {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--gcx-ink);
+  color: #fff;
+  font-size: 17px;
+  font-weight: 900;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 38px;
+}
+#groupChatSection .gcx-brand div { min-width: 0; }
+#groupChatSection .gcx-brand strong { display: block; font-size: 16px; font-weight: 800; line-height: 1.25; }
+#groupChatSection .gcx-brand small { display: block; color: var(--gcx-muted); font-size: 10px; font-weight: 500; }
+#groupChatSection .gcx-nav { display: grid; gap: 4px; }
+#groupChatSection .gcx-nav button {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--gcx-ink);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+#groupChatSection .gcx-nav button i { width: 20px; font-size: 18px; text-align: center; }
+#groupChatSection .gcx-nav button:hover { background: var(--gcx-soft); }
+#groupChatSection .gcx-nav button.active { background: #eaf5fb; color: var(--gcx-blue); font-weight: 800; }
+#groupChatSection .gcx-left-section { padding-top: 14px; border-top: 1px solid var(--gcx-line); }
+#groupChatSection .gcx-section-head { min-height: 34px; margin-bottom: 7px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+#groupChatSection .gcx-section-head strong { font-size: 12px; font-weight: 800; }
+#groupChatSection .gcx-section-actions { display: flex; align-items: center; gap: 2px; }
+#groupChatSection .gcx-section-head button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--gcx-blue);
+  cursor: pointer;
+}
+#groupChatSection .gcx-section-head button:hover { background: #eaf5fb; }
+#groupChatSection .group-character-avatars.character-picker { gap: 7px; }
+#groupChatSection .group-character-avatars .character-choice {
+  width: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  min-height: 44px;
+  padding: 3px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+}
+#groupChatSection .group-character-avatars .character-choice:hover { border-color: #b8dff4; background: #fff; box-shadow: none; }
+#groupChatSection .group-character-avatars .character-choice:has(input:checked) { border-color: var(--gcx-blue); background: #fff; box-shadow: none; }
+#groupChatSection .group-character-avatars .character-choice-avatar { width: 34px; height: 34px; flex-basis: 34px; border-color: #dfe7eb; background: #dfe9ef; color: #24485c; }
+#groupChatSection #groupRoomParticipantList { display: grid; gap: 5px; }
+#groupChatSection #groupRoomParticipantList .character-choice {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  min-height: 38px;
+  padding: 4px 7px 4px 4px;
+  border: 1px solid var(--gcx-line);
+  border-radius: 8px;
+  background: #fff;
+}
+#groupChatSection #groupRoomParticipantList .character-choice:has(input:checked) { border-color: #9ad0ee; background: #f1f9fd; box-shadow: none; }
+#groupChatSection #groupRoomParticipantList .character-choice-avatar { width: 28px; height: 28px; flex-basis: 28px; }
+#groupChatSection #groupRoomParticipantList .character-choice-main { display: block; min-width: 0; }
+#groupChatSection #groupRoomParticipantList .character-choice-name { font-size: 12px; }
+#groupChatSection .gcx-statuses { margin-top: auto; display: flex; flex-wrap: wrap; gap: 5px; }
+#groupChatSection .tool-status-pill,
+#groupChatSection .hermes-status-pill {
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: #e8f1f5;
+  color: var(--gcx-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+#groupChatSection .tool-status-pill.ok { background: #e4f5ef; color: #087b5e; }
+#groupChatSection .tool-status-pill.error { background: #ffe8ed; color: #b51f4f; }
+
+#groupChatSection .gcx-center {
+  height: 100%;
+  overflow: hidden;
+  border-right: 1px solid var(--gcx-line);
+  border-left: 1px solid var(--gcx-line);
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+}
+#groupChatSection .gcx-center-head {
+  min-height: 58px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--gcx-line);
+  background: rgba(255,255,255,0.96);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+#groupChatSection .gcx-center-head h2 { margin: 0; color: var(--gcx-ink); font-size: 18px; font-weight: 800; line-height: 1.25; }
+#groupChatSection .gcx-center-head p { margin: 1px 0 0; color: var(--gcx-muted); font-size: 11px; }
+#groupChatSection .gcx-center-head button {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--gcx-muted);
+  cursor: pointer;
+}
+#groupChatSection .gcx-center-head button:hover { background: var(--gcx-soft); color: var(--gcx-blue); }
+#groupChatSection .gcx-head-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+#groupChatSection .social-connection-pill {
+  max-width: 138px;
+  min-height: 24px;
+  padding: 2px 7px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 6px;
+  background: #e8f1f5;
+  color: var(--gcx-muted);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#groupChatSection .social-connection-pill.ok { background: #e4f5ef; color: #087b5e; }
+#groupChatSection .social-connection-pill.error { background: #ffe8ed; color: #b51f4f; }
+#groupChatSection .gcx-social-settings {
+  flex: 0 0 auto;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--gcx-line);
+  background: var(--gcx-soft);
+}
+#groupChatSection .gcx-social-settings[hidden] { display: none; }
+#groupChatSection .gcx-social-settings-head,
+#groupChatSection .gcx-social-settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+#groupChatSection .gcx-social-settings-head { margin-bottom: 10px; }
+#groupChatSection .gcx-social-settings-head strong { display: block; color: var(--gcx-ink); font-size: 13px; font-weight: 800; }
+#groupChatSection .gcx-social-settings-head span:not(.social-connection-pill) { display: block; margin-top: 1px; color: var(--gcx-muted); font-size: 10px; }
+#groupChatSection .gcx-social-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+#groupChatSection .gcx-social-settings-grid > label { display: grid; min-width: 0; gap: 4px; color: var(--gcx-muted); font-size: 10px; font-weight: 700; }
+#groupChatSection .gcx-social-settings-grid input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 1px solid #d2dce1;
+  border-radius: 7px;
+  background: #fff;
+  color: var(--gcx-ink);
+  font: inherit;
+  font-size: 11px;
+}
+#groupChatSection .gcx-social-settings-grid input[readonly] { color: var(--gcx-muted); background: #f1f4f5; }
+#groupChatSection .gcx-token-copy { display: grid; grid-template-columns: minmax(0, 1fr) 34px; gap: 4px; }
+#groupChatSection .gcx-token-copy button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid #d2dce1;
+  border-radius: 7px;
+  background: #fff;
+  color: var(--gcx-blue);
+  cursor: pointer;
+}
+#groupChatSection .gcx-token-copy button:hover { background: #eaf5fb; }
+#groupChatSection .gcx-social-settings-divider {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 12px 0 8px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--gcx-line);
+  color: var(--gcx-muted);
+  font-size: 10px;
+}
+#groupChatSection .gcx-social-settings-divider strong { color: var(--gcx-ink); font-size: 12px; font-weight: 800; }
+#groupChatSection .gcx-social-settings-divider span:not(.social-connection-pill) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#groupChatSection .gcx-social-settings-divider span.ok { color: var(--gcx-green, #2f9e6e); font-weight: 700; }
+#groupChatSection .gcx-social-settings-note { margin: 8px 0 0; color: var(--gcx-muted); font-size: 10px; line-height: 1.4; }
+#groupChatSection .gcx-social-settings-actions { margin-top: 10px; }
+#groupChatSection .gcx-social-settings-actions > span { min-width: 0; color: var(--gcx-muted); font-size: 10px; line-height: 1.35; overflow-wrap: anywhere; }
+#groupChatSection .gcx-social-settings-actions > div { display: flex; flex: 0 0 auto; gap: 6px; }
+#groupChatSection .gcx-social-settings-actions .btn { min-height: 32px; padding: 0 11px; border-radius: 7px; box-shadow: none; font-size: 11px; }
+#groupChatSection .gcx-social-settings-actions .btn-primary { background: var(--gcx-blue); }
+#groupChatSection .gcx-social-settings-actions .btn-primary:hover { background: var(--gcx-blue-hover); transform: none; }
+#groupChatSection .gcx-feed-view,
+#groupChatSection .gcx-chat-view { min-height: 0; flex: 1 1 auto; overflow-y: auto; }
+#groupChatSection .gcx-feed-view[hidden],
+#groupChatSection .gcx-chat-view[hidden] { display: none; }
+#groupChatSection .gcx-composer {
+  padding: 13px 14px 9px;
+  border-bottom: 1px solid var(--gcx-line);
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 10px;
+}
+#groupChatSection .gcx-avatar,
+#groupChatSection .gcx-post-avatar,
+#groupChatSection .gcx-comment-avatar {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  overflow: hidden;
+  border: 1px solid #dfe7eb;
+  border-radius: 50%;
+  background: #dfe9ef;
+  color: #24485c;
+  font-size: 15px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 42px;
+}
+#groupChatSection .gcx-avatar::before,
+#groupChatSection .gcx-post-avatar::before,
+#groupChatSection .gcx-comment-avatar::before { content: attr(data-initial); }
+#groupChatSection .gcx-avatar img,
+#groupChatSection .gcx-post-avatar img,
+#groupChatSection .gcx-comment-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+#groupChatSection .gcx-composer-main { min-width: 0; }
+#groupChatSection .gcx-author-row { margin-bottom: 2px; display: flex; align-items: center; gap: 7px; }
+#groupChatSection .gcx-author-row label { color: var(--gcx-muted); font-size: 10px; font-weight: 700; }
+#groupChatSection .gcx-author-row select {
+  height: 28px;
+  min-width: 0;
+  padding: 0 25px 0 7px;
+  border: 1px solid #cfd9de;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--gcx-blue);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+}
+#groupChatSection #socialPostText {
+  width: 100%;
+  min-height: 68px;
+  padding: 8px 0;
+  border: 0;
+  outline: 0;
+  resize: vertical;
+  background: transparent;
+  color: var(--gcx-ink);
+  font: inherit;
+  font-size: 17px;
+  line-height: 1.45;
+}
+#groupChatSection #socialPostText::placeholder { color: #82909b; }
+#groupChatSection .gcx-composer-actions {
+  min-height: 40px;
+  padding-top: 7px;
+  border-top: 1px solid var(--gcx-line);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+}
+#groupChatSection .gcx-composer-actions > div { display: flex; gap: 2px; }
+#groupChatSection .gcx-composer-actions > div button,
+#groupChatSection .gcx-media-shelf-head button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--gcx-blue);
+  cursor: pointer;
+}
+#groupChatSection .gcx-composer-actions > div button:hover,
+#groupChatSection .gcx-media-shelf-head button:hover { background: #eaf5fb; }
+#groupChatSection .gcx-composer-actions > span { color: var(--gcx-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+#groupChatSection .gcx-composer-actions .btn { min-height: 36px; padding: 0 16px; border-radius: 8px; background: var(--gcx-blue); box-shadow: none; }
+#groupChatSection .gcx-media-preview {
+  position: relative;
+  margin: 3px 0 8px;
+  overflow: hidden;
+  border: 1px solid var(--gcx-line);
+  border-radius: 8px;
+  background: var(--gcx-soft);
+}
+#groupChatSection .gcx-media-preview img { display: block; width: 100%; max-height: 360px; object-fit: cover; }
+#groupChatSection .gcx-media-preview button {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(15,20,25,0.78);
+  color: #fff;
+  cursor: pointer;
+}
+#groupChatSection .gcx-media-shelf { margin: 3px 0 8px; padding-top: 8px; border-top: 1px solid var(--gcx-line); }
+#groupChatSection .gcx-media-shelf-head { min-height: 34px; display: flex; align-items: center; justify-content: space-between; }
+#groupChatSection .gcx-media-shelf-head strong { font-size: 11px; }
+#groupChatSection .gcx-media-grid { display: grid; grid-auto-flow: column; grid-auto-columns: 82px; gap: 7px; overflow-x: auto; padding-bottom: 4px; }
+#groupChatSection .gcx-media-grid button { width: 82px; aspect-ratio: 1; padding: 0; overflow: hidden; border: 2px solid transparent; border-radius: 8px; background: var(--gcx-soft); cursor: pointer; }
+#groupChatSection .gcx-media-grid button:hover,
+#groupChatSection .gcx-media-grid button.active { border-color: var(--gcx-blue); }
+#groupChatSection .gcx-media-grid img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* 多图预览（单图 / 三图 / 六图 / 九宫格） */
+#groupChatSection .gcx-media-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+  background: #dfe7eb;
+}
+#groupChatSection .gcx-media-preview-grid.single { grid-template-columns: minmax(0, 1fr); }
+#groupChatSection .gcx-media-preview-item { position: relative; min-width: 0; }
+#groupChatSection .gcx-media-preview-item img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: 360px;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+#groupChatSection .gcx-media-preview-grid.single .gcx-media-preview-item img { aspect-ratio: auto; }
+#groupChatSection .gcx-media-preview-item button {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(15,20,25,0.78);
+  color: #fff;
+  cursor: pointer;
+}
+#groupChatSection .gcx-media-preview-item button i { font-size: 12px; }
+
+/* 今日日程推文面板 */
+#groupChatSection .gcx-schedule-tool-actions {
+  min-height: 30px;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+#groupChatSection .gcx-schedule-tool-actions button {
+  padding: 3px 8px;
+  border: 1px solid var(--gcx-line);
+  border-radius: 999px;
+  background: var(--gcx-soft);
+  color: var(--gcx-blue);
+  font-size: 11px;
+  cursor: pointer;
+}
+#groupChatSection .gcx-schedule-tool-actions button:hover { background: #eaf5fb; }
+#groupChatSection .gcx-schedule-tool-actions span { color: var(--gcx-muted); font-size: 11px; }
+#groupChatSection .gcx-schedule-count { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 6px; }
+#groupChatSection .gcx-schedule-count > span { color: var(--gcx-muted); font-size: 12px; font-weight: 700; }
+#groupChatSection .gcx-schedule-count-btns { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+#groupChatSection .gcx-schedule-count-btns button {
+  min-height: 46px;
+  padding: 5px 2px;
+  border: 1px solid var(--gcx-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--gcx-muted);
+  font-size: 11px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  cursor: pointer;
+}
+#groupChatSection .gcx-schedule-count-btns button .gcx-count-ic { width: 17px; height: 17px; flex: 0 0 17px; }
+#groupChatSection .gcx-schedule-count-btns button:hover { border-color: var(--gcx-blue); color: var(--gcx-blue); }
+#groupChatSection .gcx-schedule-count-btns button.active { border-color: var(--gcx-blue); background: #eaf5fb; color: var(--gcx-blue); font-weight: 700; }
+#groupChatSection .gcx-schedule-avail { margin: 2px 0 10px; color: var(--gcx-muted); font-size: 11px; line-height: 1.5; }
+#groupChatSection .gcx-feed-status { padding: 16px 14px; color: var(--gcx-muted); font-size: 12px; text-align: center; }
+#groupChatSection .gcx-feed-status:empty { display: none; }
+#groupChatSection .gcx-post {
+  padding: 12px 14px 7px;
+  border-bottom: 1px solid var(--gcx-line);
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 9px;
+  transition: background-color 150ms ease;
+}
+#groupChatSection .gcx-post:hover { background: #fbfcfc; }
+#groupChatSection .gcx-post-main { min-width: 0; }
+#groupChatSection .gcx-post-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 7px; }
+#groupChatSection .gcx-post-identity { min-width: 0; display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
+#groupChatSection .gcx-post-name { overflow: hidden; color: var(--gcx-ink); font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+#groupChatSection .gcx-post-handle,
+#groupChatSection .gcx-post-time { color: var(--gcx-muted); font-size: 11px; }
+#groupChatSection .gcx-post-source { color: #087b5e; font-size: 10px; font-weight: 700; }
+#groupChatSection .gcx-post-delete,
+#groupChatSection .gcx-comment-delete {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--gcx-muted);
+  cursor: pointer;
+}
+#groupChatSection .gcx-post-delete:hover,
+#groupChatSection .gcx-comment-delete:hover { background: #fff0f3; color: var(--gcx-red); }
+#groupChatSection .gcx-post-text { margin-top: 1px; color: var(--gcx-ink); font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+#groupChatSection .gcx-post-media {
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid #dfe7eb;
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: #dfe7eb;
+}
+#groupChatSection .gcx-post-media.single { grid-template-columns: minmax(0, 1fr); }
+#groupChatSection .gcx-post-media.multi3 { display: flex; align-items: center; gap: 1px; width: 100%; }
+#groupChatSection .gcx-post-media button { min-width: 0; padding: 0; border: 0; background: #eef2f4; cursor: pointer; }
+#groupChatSection .gcx-post-media img { display: block; width: 100%; height: auto; aspect-ratio: auto; object-fit: contain; }
+#groupChatSection .gcx-post-media.multi3 img { width: auto; height: auto; max-height: none; object-fit: fill; }
+#groupChatSection .gcx-post-media.single img { max-height: 430px; }
+#groupChatSection .gcx-post-actions { min-height: 36px; margin: 3px 0 0 -7px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: center; }
+#groupChatSection .gcx-post-action {
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--gcx-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+#groupChatSection .gcx-post-action i { width: 16px; font-size: 14px; }
+#groupChatSection .gcx-post-action:hover { background: #eaf5fb; color: var(--gcx-blue); }
+#groupChatSection .gcx-post-action[data-kind="like"].active { color: var(--gcx-red); }
+#groupChatSection .gcx-post-action[data-kind="repost"].active { color: var(--gcx-green); }
+#groupChatSection .gcx-post-action[data-kind="bookmark"].active { color: var(--gcx-blue); }
+#groupChatSection .gcx-thread { margin: 1px 0 3px; }
+#groupChatSection .gcx-comment { position: relative; padding: 8px 0 5px; display: grid; grid-template-columns: 30px minmax(0, 1fr) 28px; gap: 7px; }
+#groupChatSection .gcx-comment::before { content: ""; position: absolute; top: -5px; bottom: 34px; left: 14px; width: 2px; background: var(--gcx-line); }
+#groupChatSection .gcx-comment-avatar { z-index: 1; width: 30px; height: 30px; flex-basis: 30px; font-size: 10px; }
+#groupChatSection .gcx-comment-copy { min-width: 0; }
+#groupChatSection .gcx-comment-meta { display: flex; gap: 4px; align-items: baseline; flex-wrap: wrap; }
+#groupChatSection .gcx-comment-meta strong { font-size: 12px; }
+#groupChatSection .gcx-comment-meta span { color: var(--gcx-muted); font-size: 10px; }
+#groupChatSection .gcx-comment-text { margin-top: 1px; font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+#groupChatSection .gcx-comment-delete { width: 28px; height: 28px; }
+#groupChatSection .gcx-reply-composer { margin: 3px 0 7px; padding: 8px; border-top: 1px solid var(--gcx-line); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+#groupChatSection .gcx-reply-composer[hidden] { display: none; }
+#groupChatSection .gcx-reply-fields { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 7px; }
+#groupChatSection .gcx-reply-fields select,
+#groupChatSection .gcx-reply-fields input { width: 100%; min-width: 0; height: 36px; padding: 0 8px; border: 1px solid #cfd9de; border-radius: 8px; background: #fff; color: var(--gcx-ink); font: inherit; font-size: 11px; }
+#groupChatSection .gcx-reply-composer .btn { min-height: 36px; padding: 0 12px; border-radius: 8px; background: var(--gcx-blue); box-shadow: none; }
+#groupChatSection .gcx-load-more { width: 100%; min-height: 44px; border: 0; border-bottom: 1px solid var(--gcx-line); background: #fff; color: var(--gcx-blue); cursor: pointer; }
+#groupChatSection .gcx-load-more:hover { background: var(--gcx-soft); }
+
+#groupChatSection .gcx-chat-view { overflow: hidden; }
+#groupChatSection .gcx-chat-view .agent-bind-note { margin: 0; padding: 7px 12px; border: 0; border-bottom: 1px solid var(--gcx-line); border-radius: 0; background: #fff; color: var(--gcx-muted); }
+#groupChatSection .gcx-chat-view .chat-main { height: calc(100% - 39px); min-height: 0; border: 0; border-radius: 0; background: #fff; box-shadow: none; }
+#groupChatSection .gcx-chat-view .chat-main-head { padding: 10px 12px; border-bottom: 1px solid var(--gcx-line); }
+#groupChatSection .gcx-chat-view .chat-messages { padding: 12px; background: #fff; }
+#groupChatSection .gcx-chat-view .chat-composer { padding: 8px 12px 10px; border-top: 1px solid var(--gcx-line); background: #fff; }
+#groupChatSection .gcx-chat-view .chat-message-bubble,
+#groupChatSection .gcx-chat-view .chat-sender-row select,
+#groupChatSection .gcx-chat-view #groupChatMessageInput { border-radius: 8px; box-shadow: none; }
+
+#groupChatSection .gcx-right {
+  height: 100%;
+  padding: 16px 14px;
+  overflow-y: auto;
+  background: var(--gcx-soft);
+}
+#groupChatSection .gcx-right-head { min-height: 48px; margin-bottom: 12px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+#groupChatSection .gcx-right-head h3 { margin: 0; color: var(--gcx-ink); font-size: 16px; font-weight: 800; }
+#groupChatSection .gcx-right-head p { margin: 2px 0 0; color: var(--gcx-muted); font-size: 10px; }
+#groupChatSection .gcx-right-head > i { margin-top: 4px; color: var(--gcx-blue); }
+#groupChatSection .gcx-right .cg-field { margin-bottom: 10px; }
+#groupChatSection .gcx-right .cg-field > label,
+#groupChatSection .gcx-image-options label { display: block; margin-bottom: 4px; color: var(--gcx-muted); font-size: 10px; font-weight: 700; }
+#groupChatSection .gcx-right textarea,
+#groupChatSection .gcx-right input,
+#groupChatSection .gcx-right select { width: 100%; min-width: 0; border: 1px solid #d8e0e4; border-radius: 8px; background: #fff; color: var(--gcx-ink); font: inherit; font-size: 11px; }
+#groupChatSection .gcx-right textarea { min-height: 105px; padding: 9px; resize: vertical; }
+#groupChatSection .gcx-right input,
+#groupChatSection .gcx-right select { height: 34px; padding: 0 7px; }
+#groupChatSection .gcx-image-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+#groupChatSection .gcx-generate-btn { width: 100%; min-height: 40px; margin-top: 12px; border-radius: 8px; background: var(--gcx-blue); box-shadow: none; justify-content: center; font-size: 12px; }
+#groupChatSection .gcx-generate-btn:hover { background: var(--gcx-blue-hover); transform: none; }
+#groupChatSection .gcx-right-note { margin-top: 12px; padding-top: 10px; border-top: 1px solid #dfe7eb; color: var(--gcx-muted); font-size: 10px; line-height: 1.55; display: flex; align-items: flex-start; gap: 6px; }
+#groupChatSection .gcx-right-note i { margin-top: 2px; color: var(--gcx-green); }
+#groupChatSection .gcx-mobile-tabs { display: none; }
+
+@media (max-width: 1180px) {
+  #groupChatSection .gcx-layout { grid-template-columns: 190px minmax(390px, 1fr) 270px; }
+  #groupChatSection .gcx-left { padding: 14px 10px; }
+  #groupChatSection .gcx-brand small { display: none; }
+}
+@media (max-width: 980px) {
+  #groupChatSection .gcx-layout { grid-template-columns: minmax(0, 1fr) minmax(240px, 280px); }
+  #groupChatSection .gcx-left { display: none; }
+  #groupChatSection .gcx-mobile-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 8px; }
+  #groupChatSection .gcx-page { height: calc(100vh - 178px); max-height: calc(100vh - 178px); }
+  #groupChatSection .gcx-layout[data-gcx-view="tools"] { grid-template-columns: 190px minmax(0, 1fr); }
+  #groupChatSection .gcx-layout[data-gcx-view="tools"] .gcx-left { display: flex; }
+  #groupChatSection .gcx-layout[data-gcx-view="tools"] .gcx-center { display: none; }
+  #groupChatSection .gcx-social-settings-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  #groupChatSection { font-size: 13px; }
+  #groupChatSection .gcx-page { height: calc(100vh - 170px); min-height: 540px; max-height: calc(100vh - 170px); border-radius: 0; }
+  #groupChatSection .gcx-layout { grid-template-columns: minmax(0, 1fr); }
+  #groupChatSection .gcx-center { border: 0; }
+  #groupChatSection .gcx-right { display: none; }
+  #groupChatSection .gcx-layout[data-gcx-view="tools"] { display: block; overflow-y: auto; }
+  #groupChatSection .gcx-layout[data-gcx-view="tools"] .gcx-left { display: flex; height: auto; overflow: visible; }
+  #groupChatSection .gcx-layout[data-gcx-view="tools"] .gcx-center { display: none; }
+  #groupChatSection .gcx-layout[data-gcx-view="tools"] .gcx-right { display: block; height: auto; overflow: visible; }
+  #groupChatSection .gcx-center-head { min-height: 52px; padding: 7px 10px; }
+  #groupChatSection .gcx-center-head h2 { font-size: 16px; }
+  #groupChatSection .gcx-head-actions .social-connection-pill { display: none; }
+  #groupChatSection .gcx-social-settings-actions { align-items: flex-start; flex-direction: column; }
+  #groupChatSection .gcx-social-settings-actions > div { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
+  #groupChatSection .gcx-social-settings-actions .btn { width: 100%; }
+  #groupChatSection .gcx-composer { padding: 10px 10px 7px; grid-template-columns: 38px minmax(0, 1fr); gap: 8px; }
+  #groupChatSection .gcx-avatar,
+  #groupChatSection .gcx-post-avatar { width: 38px; height: 38px; flex-basis: 38px; }
+  #groupChatSection #socialPostText { min-height: 58px; font-size: 15px; }
+  #groupChatSection .gcx-author-row { align-items: flex-start; flex-direction: column; gap: 2px; }
+  #groupChatSection .gcx-composer-actions > span { display: none; }
+  #groupChatSection .gcx-post { padding: 10px 10px 5px; grid-template-columns: 38px minmax(0, 1fr); gap: 8px; }
+  #groupChatSection .gcx-post-action { justify-content: center; padding: 0 3px; }
+  #groupChatSection .gcx-post-action .label { display: none; }
+  #groupChatSection .gcx-reply-composer { grid-template-columns: minmax(0, 1fr); }
+  #groupChatSection .gcx-reply-fields { grid-template-columns: 102px minmax(0, 1fr); }
+  #groupChatSection .gcx-right { padding: 12px; background: #fff; }
+  #groupChatSection .gcx-chat-view .chat-messages { padding: 9px; }
+  #groupChatSection .gcx-chat-view .chat-composer { padding: 7px 9px 8px; }
+  #groupChatSection .group-chat-mobile-tab,
+  #groupChatSection .gcx-composer-actions > div button,
+  #groupChatSection .gcx-media-shelf-head button,
+  #groupChatSection .gcx-post-action { min-height: 44px; }
+  #groupChatSection .gcx-composer-actions > div button,
+  #groupChatSection .gcx-media-shelf-head button { width: 44px; height: 44px; }
+  #groupChatSection .gcx-post-delete,
+  #groupChatSection .gcx-comment-delete { width: 40px; height: 40px; }
+  #groupChatSection .gcx-generate-btn { min-height: 44px; }
+}
+
+
+/* ===== X.com 风格首页时间线（覆盖群聊页默认样式） ===== */
+#groupChatSection {
+  --x-bg: #ffffff;
+  --x-border: rgb(239, 243, 244);
+  --x-text: rgb(15, 20, 25);
+  --x-muted: rgb(83, 100, 113);
+  --x-blue: rgb(29, 155, 240);
+  --x-blue-soft: rgba(29, 155, 240, 0.1);
+  --x-hover: rgb(247, 249, 249);
+  --x-like: rgb(249, 24, 128);
+  --x-repost: rgb(0, 186, 124);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  background: var(--x-bg);
+  color: var(--x-text);
+}
+#groupChatSection .gcx-page,
+#groupChatSection .group-chat-layout { background: var(--x-bg); }
+#groupChatSection .gcx-layout {
+  max-width: min(1560px, 100%);
+  margin: 0 auto;
+  grid-template-columns: 275px minmax(600px, 1200px) 350px;
+  justify-content: center;
+}
+/* 左侧导航 */
+#groupChatSection .gcx-left {
+  padding: 8px 12px 12px 20px;
+  background: var(--x-bg);
+  gap: 6px;
+  overflow-y: auto;
+}
+#groupChatSection .gcx-brand { margin: 8px 8px 4px; }
+#groupChatSection .gcx-brand > i {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--x-blue);
+  font-size: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+#groupChatSection .gcx-nav { display: flex; flex-direction: column; gap: 2px; padding: 2px 0 6px; }
+#groupChatSection .gcx-nav button {
+  min-height: 50px;
+  width: fit-content;
+  min-width: 0;
+  padding: 0 20px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--x-text);
+  font-size: 17px;
+  font-weight: 500;
+  gap: 18px;
+}
+#groupChatSection .gcx-nav button i { width: 24px; font-size: 20px; text-align: center; }
+#groupChatSection .gcx-nav button:hover { background: var(--x-hover); color: var(--x-text); }
+#groupChatSection .gcx-nav button.active { background: transparent; color: var(--x-text); font-weight: 800; }
+#groupChatSection .gcx-x-post-btn {
+  width: 100%;
+  max-width: 225px;
+  min-height: 50px;
+  margin: 8px 0 10px;
+  padding: 0 24px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--x-blue);
+  color: #fff;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: none;
+}
+#groupChatSection .gcx-x-post-btn:hover { background: rgb(26, 140, 216); }
+#groupChatSection .gcx-left-section {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: var(--x-hover);
+}
+#groupChatSection .gcx-layout[data-gcx-view="feed"] .gcx-left-section,
+#groupChatSection .gcx-layout[data-gcx-view="feed"] .gcx-statuses { display: none; }
+#groupChatSection .gcx-left-section .gcx-section-head strong { color: var(--x-text); font-size: 15px; font-weight: 800; }
+#groupChatSection .gcx-left-section .gcx-section-head .gcx-section-actions button {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: var(--x-muted);
+}
+#groupChatSection .gcx-left-section .gcx-section-head .gcx-section-actions button:hover { background: var(--x-blue-soft); color: var(--x-blue); }
+#groupChatSection .gcx-x-account {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--x-text);
+}
+#groupChatSection .gcx-x-account:hover { background: var(--x-hover); }
+#groupChatSection .gcx-x-account .gcx-avatar { width: 40px; height: 40px; flex-basis: 40px; font-size: 14px; }
+#groupChatSection .gcx-x-account-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+#groupChatSection .gcx-x-account-copy strong { font-size: 15px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#groupChatSection .gcx-x-account-copy span { font-size: 13px; color: var(--x-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#groupChatSection .gcx-x-account > i { color: var(--x-muted); }
+/* 中间时间线 */
+#groupChatSection .gcx-center {
+  border-left: 1px solid var(--x-border);
+  border-right: 1px solid var(--x-border);
+  background: var(--x-bg);
+}
+#groupChatSection .gcx-center-head {
+  min-height: 53px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--x-border);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(4px);
+  position: sticky;
+  top: 0;
+  z-index: 6;
+}
+#groupChatSection .gcx-center-head h2 { font-size: 20px; font-weight: 800; color: var(--x-text); }
+#groupChatSection .gcx-center-head p { font-size: 12px; color: var(--x-muted); }
+#groupChatSection .gcx-center-head button { width: 36px; height: 36px; color: var(--x-muted); }
+#groupChatSection .gcx-center-head button:hover { background: var(--x-hover); color: var(--x-blue); }
+#groupChatSection .social-connection-pill { border-radius: 999px; background: var(--x-hover); color: var(--x-muted); }
+/* 连接状态胶囊 */
+#groupChatSection .gcx-head-actions .social-connection-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: none;
+  min-height: 30px;
+  padding: 3px 12px 3px 11px;
+  border: 1px solid var(--x-border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--x-text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  box-shadow: 0 1px 3px rgba(15, 20, 25, 0.06);
+}
+#groupChatSection .gcx-head-actions .social-connection-pill::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: var(--x-muted);
+}
+#groupChatSection .gcx-head-actions .social-connection-pill.ok {
+  border-color: rgba(15, 139, 94, 0.32);
+  background: #eafaf3;
+  color: #087b5e;
+}
+#groupChatSection .gcx-head-actions .social-connection-pill.ok::before {
+  background: #16a34a;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.14);
+  animation: gcxPillPing 2.4s ease-out infinite;
+}
+#groupChatSection .gcx-head-actions .social-connection-pill.error {
+  border-color: rgba(181, 31, 79, 0.32);
+  background: #fff0f3;
+  color: #b51f4f;
+}
+#groupChatSection .gcx-head-actions .social-connection-pill.error::before {
+  background: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12);
+}
+@keyframes gcxPillPing {
+  0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.35); }
+  70% { box-shadow: 0 0 0 6px rgba(22, 163, 74, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
+}
+/* 为你/关注 */
+#groupChatSection .gcx-x-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--x-border);
+  position: sticky;
+  top: 0;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(4px);
+  z-index: 5;
+}
+#groupChatSection .gcx-x-tabs button {
+  min-height: 53px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--x-muted);
+  cursor: pointer;
+  position: relative;
+}
+#groupChatSection .gcx-x-tabs button:hover { background: var(--x-hover); }
+#groupChatSection .gcx-x-tabs button.active { font-weight: 800; color: var(--x-text); }
+#groupChatSection .gcx-x-tabs button.active::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: 56px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--x-blue);
+}
+/* 发布框 */
+#groupChatSection .gcx-composer {
+  display: flex;
+  gap: 10px;
+  padding: 10px 16px 6px;
+  border-bottom: 1px solid var(--x-border);
+  background: var(--x-bg);
+}
+#groupChatSection .gcx-composer .gcx-avatar { width: 36px; height: 36px; flex-basis: 36px; font-size: 13px; }
+#groupChatSection .gcx-composer-main { flex: 1; min-width: 0; }
+#groupChatSection .gcx-author-row { display: flex; align-items: center; margin-bottom: 0; }
+#groupChatSection .gcx-author-row label { margin: 0 8px 0 0; color: var(--x-muted); font-size: 13px; font-weight: 600; }
+#groupChatSection .gcx-author-row select {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid rgb(207, 217, 222);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--x-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  outline: none;
+}
+#groupChatSection #socialPostText {
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--x-text);
+  font: inherit;
+  font-size: 17px;
+  line-height: 22px;
+}
+#groupChatSection #socialPostText::placeholder { color: #7d8b94; }
+#groupChatSection .gcx-composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--x-border);
+}
+#groupChatSection .gcx-composer-actions > div { display: flex; gap: 2px; }
+#groupChatSection .gcx-composer-actions button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--x-blue);
+  font-size: 14px;
+  cursor: pointer;
+}
+#groupChatSection .gcx-composer-actions button:hover { background: var(--x-blue-soft); }
+#groupChatSection .gcx-composer-actions > span { color: var(--x-muted); font-size: 13px; }
+#groupChatSection #socialPostSubmitBtn {
+  min-height: 32px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: var(--x-blue);
+  font-size: 14px;
+  font-weight: 700;
+  width: auto;
+  box-shadow: none;
+}
+#groupChatSection #socialPostSubmitBtn:hover { background: rgb(26, 140, 216); }
+#groupChatSection #socialPostSubmitBtn:disabled { background: rgb(141, 213, 250); cursor: default; }
+@media (min-width: 761px) {
+  #groupChatSection .gcx-composer { min-height: 60px; }
+  #groupChatSection .gcx-composer:not(.gcx-composer-active) { padding: 10px 16px; cursor: text; }
+  #groupChatSection .gcx-composer:not(.gcx-composer-active) .gcx-composer-main {
+    display: flex;
+    align-items: center;
+    cursor: text;
+  }
+  #groupChatSection .gcx-composer:not(.gcx-composer-active) .gcx-author-row,
+  #groupChatSection .gcx-composer:not(.gcx-composer-active) .gcx-composer-actions,
+  #groupChatSection .gcx-composer:not(.gcx-composer-active) .gcx-media-preview,
+  #groupChatSection .gcx-composer:not(.gcx-composer-active) .gcx-media-shelf { display: none; }
+  #groupChatSection .gcx-composer:not(.gcx-composer-active) #socialPostText {
+    min-height: 40px;
+    max-height: 40px;
+    padding: 0;
+    font-size: 16px;
+    line-height: 40px;
+    cursor: text;
+  }
+}
+/* 帖子卡片 */
+#groupChatSection .gcx-feed-status { padding: 24px 16px; color: var(--x-muted); font-size: 14px; }
+#groupChatSection .gcx-post {
+  padding: 10px 16px 2px;
+  border-bottom: 1px solid var(--x-border);
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 10px;
+}
+#groupChatSection .gcx-post:hover { background: var(--x-hover); }
+#groupChatSection .gcx-post-avatar { width: 40px; height: 40px; flex-basis: 40px; font-size: 14px; }
+#groupChatSection .gcx-post-name { font-size: 15px; font-weight: 700; color: var(--x-text); }
+#groupChatSection .gcx-post-verified { margin-left: 2px; color: var(--x-blue); font-size: 13px; }
+#groupChatSection .gcx-post-handle,
+#groupChatSection .gcx-post-time { font-size: 14px; color: var(--x-muted); }
+#groupChatSection .gcx-post-text { margin: 2px 0 5px; color: var(--x-text); font-size: 15px; line-height: 19px; }
+#groupChatSection .gcx-post-media {
+  margin-top: 6px;
+  border: 0;
+  border-radius: 16px;
+  gap: 2px;
+  background: transparent;
+}
+#groupChatSection .gcx-post-media.single { grid-template-columns: minmax(0, 1fr); }
+#groupChatSection .gcx-post-media.single img { aspect-ratio: auto; max-height: 520px; border-radius: 16px; }
+#groupChatSection .gcx-post-media button { background: #f0f3f4; overflow: hidden; }
+#groupChatSection .gcx-post-media img { max-height: 400px; border-radius: 0; }
+#groupChatSection .gcx-post-media.multi3 {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+}
+#groupChatSection .gcx-post-media.multi3 button { flex: 0 0 auto; padding: 0; }
+#groupChatSection .gcx-post-media.multi3 img { width: auto; height: auto; max-width: none; max-height: none; aspect-ratio: auto; object-fit: fill; border-radius: 0; }
+#groupChatSection .gcx-post-actions {
+  min-height: 38px;
+  margin: 2px 0 0 -8px;
+  max-width: 425px;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: center;
+}
+#groupChatSection .gcx-post-action {
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--x-muted);
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+}
+#groupChatSection .gcx-post-action i { width: 17px; font-size: 15px; }
+#groupChatSection .gcx-post-action .label { display: none; }
+#groupChatSection .gcx-post-action:hover { background: var(--x-blue-soft); color: var(--x-blue); }
+#groupChatSection .gcx-post-action[data-kind="reply"].active { color: var(--x-blue); }
+#groupChatSection .gcx-post-action[data-kind="repost"]:hover { background: rgba(0, 186, 124, 0.1); color: var(--x-repost); }
+#groupChatSection .gcx-post-action[data-kind="repost"].active { color: var(--x-repost); }
+#groupChatSection .gcx-post-action[data-kind="like"]:hover { background: rgba(249, 24, 128, 0.1); color: var(--x-like); }
+#groupChatSection .gcx-post-action[data-kind="like"].active { color: var(--x-like); }
+#groupChatSection .gcx-post-action[data-kind="bookmark"]:hover,
+#groupChatSection .gcx-post-action[data-kind="share"]:hover { background: var(--x-blue-soft); color: var(--x-blue); }
+#groupChatSection .gcx-post-action[data-kind="bookmark"].active { color: var(--x-blue); }
+/* 回复与加载更多 */
+#groupChatSection .gcx-thread { margin: 4px 0 2px; }
+#groupChatSection .gcx-comment { grid-template-columns: 32px minmax(0, 1fr) 28px; }
+#groupChatSection .gcx-comment-meta strong { font-size: 13px; color: var(--x-text); }
+#groupChatSection .gcx-comment-meta span { font-size: 12px; color: var(--x-muted); }
+#groupChatSection .gcx-comment-text { font-size: 13px; color: var(--x-text); }
+#groupChatSection .gcx-reply-composer { padding: 8px 0; }
+#groupChatSection .gcx-reply-fields select,
+#groupChatSection .gcx-reply-fields input { height: 34px; border-color: rgb(207, 217, 222); border-radius: 999px; font-size: 13px; }
+#groupChatSection .gcx-reply-composer .btn { min-height: 32px; padding: 0 16px; border-radius: 999px; background: var(--x-blue); font-weight: 700; }
+#groupChatSection .gcx-load-more { min-height: 44px; border: 0; border-bottom: 1px solid var(--x-border); background: var(--x-bg); color: var(--x-blue); font-size: 14px; }
+#groupChatSection .gcx-load-more:hover { background: var(--x-hover); }
+/* 右侧栏 */
+#groupChatSection .gcx-right {
+  height: 100%;
+  padding: 12px 0 24px;
+  overflow-y: auto;
+  background: var(--x-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+#groupChatSection .gcx-right > *,
+#groupChatSection .gcx-left > * { flex-shrink: 0; }
+#groupChatSection .gcx-xsearch { position: relative; margin: 0 16px; }
+#groupChatSection .gcx-xsearch i {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--x-muted);
+  font-size: 15px;
+  pointer-events: none;
+}
+#groupChatSection .gcx-xsearch input {
+  width: 100%;
+  height: 44px;
+  padding: 0 16px 0 44px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--x-hover);
+  color: var(--x-text);
+  font: inherit;
+  font-size: 15px;
+  outline: none;
+}
+#groupChatSection .gcx-xsearch input::placeholder { color: var(--x-muted); }
+#groupChatSection .gcx-xsearch input:focus { background: #fff; border-color: var(--x-blue); box-shadow: 0 0 0 1px var(--x-blue); padding-left: 43px; }
+#groupChatSection .gcx-x-card { background: var(--x-hover); border-radius: 16px; margin: 0 16px; overflow: hidden; }
+#groupChatSection .gcx-x-card .gcx-right-head { min-height: 0; margin: 0; padding: 12px 16px 2px; align-items: center; }
+#groupChatSection .gcx-x-card .gcx-right-head h3 { font-size: 17px; font-weight: 800; color: var(--x-text); }
+#groupChatSection .gcx-x-card .gcx-right-head p { font-size: 11px; color: var(--x-muted); }
+#groupChatSection .gcx-x-card .gcx-right-head > i { color: var(--x-blue); font-size: 18px; }
+#groupChatSection .gcx-x-card-head { padding: 12px 16px 2px; }
+#groupChatSection .gcx-x-card-head h3 { margin: 0; font-size: 18px; font-weight: 800; color: var(--x-text); }
+#groupChatSection #socialScheduleTool,
+#groupChatSection #gcxLegacyGenerateTool { padding: 0 16px 14px; }
+#groupChatSection .gcx-right .cg-field > label,
+#groupChatSection .gcx-image-options label { color: var(--x-text); font-size: 13px; font-weight: 700; }
+#groupChatSection .gcx-right textarea,
+#groupChatSection .gcx-right input,
+#groupChatSection .gcx-right select { border-color: rgb(207, 217, 222); border-radius: 12px; font-size: 13px; color: var(--x-text); }
+#groupChatSection .gcx-right textarea { min-height: 96px; padding: 10px 12px; }
+#groupChatSection .gcx-schedule-tool-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+#groupChatSection .gcx-schedule-tool-actions button {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--x-blue);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 6px 12px;
+}
+#groupChatSection .gcx-schedule-tool-actions button:hover { background: var(--x-blue-soft); }
+#groupChatSection .gcx-schedule-tool-actions span { color: var(--x-muted); font-size: 12px; }
+#groupChatSection .gcx-schedule-count { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin-top: 8px; }
+#groupChatSection .gcx-schedule-count > span { color: var(--x-muted); font-size: 12px; font-weight: 700; }
+#groupChatSection .gcx-schedule-count-btns { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+#groupChatSection .gcx-schedule-count-btns button {
+  min-height: 46px;
+  padding: 5px 2px;
+  border: 1px solid rgb(207, 217, 222);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--x-muted);
+  font: inherit;
+  font-size: 11px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  cursor: pointer;
+}
+#groupChatSection .gcx-schedule-count-btns button .gcx-count-ic { width: 17px; height: 17px; flex: 0 0 17px; }
+#groupChatSection .gcx-schedule-count-btns button:hover { border-color: var(--x-blue); color: var(--x-blue); }
+#groupChatSection .gcx-schedule-count-btns button.active { border-color: var(--x-blue); background: var(--x-blue-soft); color: var(--x-blue); font-weight: 700; }
+#groupChatSection .gcx-schedule-avail { margin: 8px 0 2px; color: var(--x-muted); font-size: 12px; line-height: 1.5; }
+#groupChatSection .gcx-generate-btn { min-height: 40px; margin-top: 12px; border-radius: 999px; background: var(--x-blue); font-weight: 700; box-shadow: none; }
+#groupChatSection .gcx-generate-btn:hover { background: rgb(26, 140, 216); transform: none; }
+#groupChatSection .gcx-right-note { color: var(--x-muted); font-size: 11px; }
+/* 趋势与推荐 */
+#groupChatSection .gcx-x-trends { padding: 4px 0 8px; }
+#groupChatSection .gcx-x-trend-item {
+  display: block;
+  width: 100%;
+  padding: 10px 16px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+#groupChatSection .gcx-x-trend-item:hover { background: rgba(0, 0, 0, 0.03); }
+#groupChatSection .gcx-x-trend-item .gcx-x-trend-rank { display: block; font-size: 12px; color: var(--x-muted); }
+#groupChatSection .gcx-x-trend-item strong { display: block; margin-top: 2px; font-size: 15px; color: var(--x-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#groupChatSection .gcx-x-trend-item span:last-child { display: block; margin-top: 2px; font-size: 13px; color: var(--x-muted); }
+#groupChatSection .gcx-x-trend-more {
+  display: block;
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--x-blue);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+#groupChatSection .gcx-x-trend-more:hover { background: var(--x-hover); }
+#groupChatSection #socialPostCounter.over,
+#groupChatSection #socialScheduleTextCounter.over { color: var(--x-like); }
+#groupChatSection .gcx-left,
+#groupChatSection .gcx-right,
+#groupChatSection .gcx-feed-view,
+#groupChatSection .gcx-chat-view { scrollbar-width: thin; scrollbar-color: rgb(185, 202, 211) transparent; }
+#groupChatSection .gcx-left::-webkit-scrollbar,
+#groupChatSection .gcx-right::-webkit-scrollbar,
+#groupChatSection .gcx-feed-view::-webkit-scrollbar,
+#groupChatSection .gcx-chat-view::-webkit-scrollbar { width: 10px; }
+#groupChatSection .gcx-left::-webkit-scrollbar-thumb,
+#groupChatSection .gcx-right::-webkit-scrollbar-thumb,
+#groupChatSection .gcx-feed-view::-webkit-scrollbar-thumb,
+#groupChatSection .gcx-chat-view::-webkit-scrollbar-thumb {
+  background: rgb(150, 168, 180);
+  border-radius: 999px;
+  border: 2px solid var(--x-bg);
+}
+#groupChatSection .gcx-x-card-note { padding: 12px 16px 16px; color: var(--x-muted); font-size: 13px; }
+#groupChatSection .gcx-x-follow { padding: 4px 0 8px; }
+#groupChatSection .gcx-x-follow-item { display: flex; align-items: center; gap: 10px; padding: 10px 16px; cursor: pointer; }
+#groupChatSection .gcx-x-follow-item:hover { background: rgba(0, 0, 0, 0.03); }
+#groupChatSection .gcx-x-follow-item img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: #e8ebed; }
+#groupChatSection .gcx-x-follow-copy { min-width: 0; flex: 1; }
+#groupChatSection .gcx-x-follow-copy strong { display: block; font-size: 15px; color: var(--x-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#groupChatSection .gcx-x-follow-copy span { display: block; font-size: 13px; color: var(--x-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#groupChatSection .gcx-x-follow-btn {
+  min-height: 32px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--x-text);
+  color: #fff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+#groupChatSection .gcx-x-follow-btn:hover { background: rgb(39, 44, 48); }
+/* 中屏收窄左侧为图标导航 */
+@media (max-width: 1290px) {
+  #groupChatSection .gcx-layout { grid-template-columns: 88px minmax(600px, 990px) 350px; }
+  #groupChatSection .gcx-left { padding: 8px 6px 12px; align-items: center; }
+  #groupChatSection .gcx-brand { margin: 8px auto 4px; }
+  #groupChatSection .gcx-nav { align-items: center; }
+  #groupChatSection .gcx-nav button { width: 52px; min-height: 52px; padding: 0; justify-content: center; gap: 0; }
+  #groupChatSection .gcx-nav button span,
+  #groupChatSection .gcx-x-post-btn span,
+  #groupChatSection .gcx-x-account-copy,
+  #groupChatSection .gcx-x-account > i { display: none; }
+  #groupChatSection .gcx-x-post-btn { width: 52px; min-width: 52px; max-width: 52px; padding: 0; border-radius: 50%; margin: 10px auto; }
+  #groupChatSection .gcx-left-section { width: 100%; padding: 8px 4px; align-items: center; }
+  #groupChatSection .gcx-left-section .gcx-section-head { justify-content: center; }
+  #groupChatSection .gcx-left-section .gcx-section-head strong,
+  #groupChatSection .gcx-left-section .gcx-section-actions { display: none; }
+  #groupChatSection .gcx-x-account { justify-content: center; padding: 8px; }
+}
+@media (max-width: 1180px) {
+  #groupChatSection .gcx-layout { grid-template-columns: 88px minmax(520px, 1fr) 320px; }
+}
+@media (max-width: 980px) {
+  #groupChatSection .gcx-layout { grid-template-columns: minmax(0, 1fr) minmax(240px, 280px); }
+  #groupChatSection .gcx-left { display: none; }
+  #groupChatSection .gcx-mobile-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 8px; }
+  #groupChatSection .gcx-layout[data-gcx-view="tools"] .gcx-left { display: flex; }
+}
+@media (max-width: 760px) {
+  #groupChatSection .gcx-layout { grid-template-columns: minmax(0, 1fr); }
+  #groupChatSection .gcx-right { display: none; }
+}
+
 </style>
 </head>
 <body>
@@ -6293,37 +7593,57 @@ textarea:focus-visible,
     </div>
     <div class="egg-theme-day-controls" id="eggThemeDayControls">
       <div class="egg-theme-day-head">
-        <span class="egg-theme-day-title">✨ 主题日</span>
-        <label class="sk-switch egg-theme-day-switch" for="eggThemeDayEnabled" aria-label="启用主题日">
+        <div class="egg-theme-day-heading">
+          <span class="egg-theme-day-icon" aria-hidden="true"><i class="fa-solid fa-wand-magic-sparkles"></i></span>
+          <div class="egg-theme-day-copy">
+            <div class="egg-theme-day-title-row">
+              <span class="egg-theme-day-title">主题日</span>
+              <span class="egg-theme-day-state" id="eggThemeDayState">已关闭</span>
+            </div>
+            <div class="egg-theme-day-hint" id="eggThemeDayHint">关闭时按随机风格与日常日程生成；开启后可指定主题或手动选小红书穿搭</div>
+          </div>
+        </div>
+        <label class="sk-switch egg-theme-day-switch" for="eggThemeDayEnabled" aria-label="启用主题日" aria-describedby="eggThemeDayHint">
           <input type="checkbox" id="eggThemeDayEnabled" onchange="setThemeDayEnabled(this.checked)">
           <span class="sk-switch-knob"></span>
         </label>
       </div>
-      <div class="egg-theme-day-hint">关闭时按随机风格与日常日程生成；开启后可指定主题或手动选小红书穿搭</div>
+      <label class="egg-theme-day-field-label" for="eggThemeDayInput"><i class="fa-solid fa-pen" aria-hidden="true"></i>主题设定</label>
       <div class="egg-theme-day-row">
         <input class="egg-theme-day-input" id="eggThemeDayInput" type="text" maxlength="160" placeholder="例如：穿越到霍格沃兹体验当学生的一天（留空可随机）">
-        <button class="egg-theme-day-action" id="eggThemeDayGenerateBtn" type="button" onclick="generateThemeDay(false)">生成主题日</button>
+        <button class="egg-theme-day-action egg-theme-day-action--primary" id="eggThemeDayGenerateBtn" type="button" onclick="generateThemeDay(false)">
+          <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
+          <span id="eggThemeDayGenerateLabel">生成主题日</span>
+        </button>
       </div>
       <div class="egg-theme-day-buttons">
-        <button class="egg-theme-day-target active" type="button" data-theme-target="today" onclick="selectThemeDayTarget('today')">当天</button>
-        <button class="egg-theme-day-target" type="button" data-theme-target="tomorrow" onclick="selectThemeDayTarget('tomorrow')">第二天</button>
-        <button class="egg-theme-day-action" type="button" onclick="generateThemeDay(true)">🎲 随机主题</button>
+        <div class="egg-theme-day-target-group" role="group" aria-label="生成日期">
+          <button class="egg-theme-day-target active" type="button" data-theme-target="today" aria-pressed="true" onclick="selectThemeDayTarget('today')">当天</button>
+          <button class="egg-theme-day-target" type="button" data-theme-target="tomorrow" aria-pressed="false" onclick="selectThemeDayTarget('tomorrow')">第二天</button>
+        </div>
+        <div class="egg-theme-day-action-pair">
+          <button class="egg-theme-day-action egg-theme-day-action--secondary" type="button" onclick="generateThemeDay(true)">
+            <i class="fa-solid fa-dice" aria-hidden="true"></i>
+            <span>随机主题</span>
+          </button>
+          <button class="egg-theme-day-action egg-theme-day-action--secondary" id="eggThemeDayManualBtn" type="button" aria-controls="eggThemeDayXhsPicker" aria-expanded="false" onclick="toggleThemeDayXhsPicker()">
+            <i class="fa-solid fa-shirt" aria-hidden="true"></i>
+            <span>指定小红书穿搭</span>
+          </button>
+        </div>
       </div>
-      <div class="egg-theme-day-xhs-row">
-        <button class="egg-theme-day-target" id="eggThemeDayManualBtn" type="button" onclick="toggleThemeDayXhsPicker()">指定小红书穿搭</button>
-        <span class="egg-theme-day-xhs-selected" id="eggThemeDayXhsSelected"></span>
-      </div>
+      <span class="egg-theme-day-xhs-selected" id="eggThemeDayXhsSelected"></span>
       <div class="egg-theme-day-xhs-picker" id="eggThemeDayXhsPicker" hidden>
         <div class="egg-theme-day-xhs-search-row">
           <input class="egg-theme-day-input" id="eggThemeDayXhsKeyword" type="search" maxlength="80" placeholder="搜索霍格沃兹/魔法学院穿搭">
-          <button class="egg-theme-day-target" type="button" onclick="searchThemeDayXhs()">搜索</button>
+          <button class="egg-theme-day-target" type="button" onclick="searchThemeDayXhs()"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><span>搜索</span></button>
         </div>
-        <div class="egg-theme-day-status" id="eggThemeDayXhsStatus"></div>
+        <div class="egg-theme-day-status" id="eggThemeDayXhsStatus" role="status" aria-live="polite" aria-atomic="true"></div>
         <div class="egg-theme-day-xhs-results" id="eggThemeDayXhsResults"></div>
         <div class="egg-theme-day-xhs-images" id="eggThemeDayXhsImages"></div>
         <button class="egg-theme-day-target" id="eggThemeDayXhsClear" type="button" onclick="clearThemeDayXhs()">清除手动指定</button>
       </div>
-      <div class="egg-theme-day-status" id="eggThemeDayStatus"></div>
+      <div class="egg-theme-day-status" id="eggThemeDayStatus" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
     <div class="egg-body" id="eggBody">
       <div class="egg-loading">加载中...</div>
@@ -6429,14 +7749,14 @@ textarea:focus-visible,
 
 <div class="header">
   <div class="header-left">
-      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">每日穿搭画廊</span> <span class="version-tag" id="versionTag">v1.3.7</span></h1>
+      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">穿搭画廊</span> <span class="version-tag" id="versionTag">v1.3.7</span></h1>
   </div>
   <div class="tabs">
     <button class="tab has-badge" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="showUnfavoriteGallery(event)"><span class="tab-label"><span class="tab-icon" aria-hidden="true">✨</span><span class="tab-text">全部</span></span><span class="tab-badge" id="badge-all">0</span></button>
     <button class="tab has-badge" data-tab="today" onclick="switchTab('today')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">🌸</span><span class="tab-text">今日</span></span><span class="tab-badge" id="badge-today">0</span></button>
     <button class="tab has-badge" data-tab="favorites" onclick="switchTab('favorites')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">❤️</span><span class="tab-text">收藏</span></span><span class="tab-badge" id="badge-favorites">0</span></button>
     <button class="tab has-badge" data-tab="wardrobe" onclick="switchTab('wardrobe')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">👗</span><span class="tab-text">衣柜</span></span><span class="tab-badge" id="badge-wardrobe">0</span></button>
-    <button class="tab" data-tab="group-chat" onclick="switchTab('group-chat')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">💬</span><span class="tab-text">群聊</span></span></button>
+    <button class="tab" data-tab="group-chat" onclick="switchTab('group-chat')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">💬</span><span class="tab-text">互动</span></span></button>
   </div>
   <div class="header-actions">
     <button class="btn btn-primary header-gen-btn" onclick="openCustomGen()" title="穿搭生成" aria-label="穿搭生成"><span class="header-action-icon" aria-hidden="true">🎀</span><span class="header-gen-label">穿搭生成</span></button>
@@ -6487,140 +7807,131 @@ textarea:focus-visible,
 
   <!-- Group Chat Page -->
   <div class="tool-page group-chat-section hidden" id="groupChatSection">
-    <div class="cg-modal group-chat-page">
-      <div class="tool-modal-head group-chat-head">
-        <div class="group-chat-title-line">
-          <h2>群聊</h2>
-          <div class="character-picker compact group-character-avatars" id="characterRoleList" aria-label="角色头像">
-            <div class="character-empty">正在加载角色...</div>
+    <div class="cg-modal group-chat-page gcx-page">
+      <div class="group-chat-mobile-tabs gcx-mobile-tabs" role="tablist" aria-label="群聊视图">
+        <button class="group-chat-mobile-tab active" type="button" role="tab" aria-selected="true" data-gcx-view="feed" onclick="setGroupChatWorkspaceView('feed')"><i class="fa-solid fa-house" aria-hidden="true"></i><span>动态</span></button>
+        <button class="group-chat-mobile-tab" type="button" role="tab" aria-selected="false" data-group-chat-mobile-view="chat" data-gcx-view="chat" onclick="setGroupChatWorkspaceView('chat')"><i class="fa-solid fa-comments" aria-hidden="true"></i><span>对话</span></button>
+        <button class="group-chat-mobile-tab" type="button" role="tab" aria-selected="false" data-group-chat-mobile-view="tools" data-gcx-view="tools" onclick="setGroupChatWorkspaceView('tools')"><i class="fa-solid fa-image" aria-hidden="true"></i><span>配图</span></button>
+      </div>
+      <div class="group-chat-layout gcx-layout" data-mobile-view="chat" data-gcx-view="feed">
+        <aside class="chat-side gcx-left gcx-xnav" id="groupChatToolPanel">
+          <div class="gcx-brand" title="每日穿搭画廊"><i class="fa-brands fa-x-twitter" aria-hidden="true"></i></div>
+          <nav class="gcx-nav" aria-label="群聊页导航">
+            <button class="active" type="button" data-gcx-view="feed" onclick="setGroupChatWorkspaceView('feed')"><i class="fa-solid fa-house" aria-hidden="true"></i><span>首页</span></button>
+            <button type="button" onclick="switchTab('gallery')"><i class="fa-solid fa-compass" aria-hidden="true"></i><span>探索</span></button>
+            <button type="button" onclick="openLiveLogs()"><i class="fa-regular fa-bell" aria-hidden="true"></i><span>通知</span></button>
+            <button type="button" data-gcx-view="chat" onclick="setGroupChatWorkspaceView('chat')"><i class="fa-regular fa-comment-dots" aria-hidden="true"></i><span>对话</span></button>
+            <button type="button" data-gcx-view="tools" onclick="setGroupChatWorkspaceView('tools')"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span>配图</span></button>
+            <button type="button" onclick="switchTab('favorites')"><i class="fa-regular fa-bookmark" aria-hidden="true"></i><span>收藏</span></button>
+            <button type="button" onclick="toggleSocialHubSettings()"><i class="fa-solid fa-gear" aria-hidden="true"></i><span>设置</span></button>
+          </nav>
+          <button class="gcx-x-post-btn" type="button" onclick="focusSocialComposer()"><i class="fa-solid fa-feather-point" aria-hidden="true"></i><span>发布</span></button>
+          <div class="gcx-left-section">
+            <div class="gcx-section-head"><strong>角色</strong><div class="gcx-section-actions"><button type="button" onclick="openSelectedCharacterDetail()" aria-label="查看所选角色" title="查看所选角色"><i class="fa-regular fa-address-card" aria-hidden="true"></i></button><button type="button" onclick="openManualCharacterModal()" aria-label="新增角色" title="新增角色"><i class="fa-solid fa-user-plus" aria-hidden="true"></i></button></div></div>
+            <div class="character-picker compact group-character-avatars" id="characterRoleList" aria-label="角色头像"><div class="character-empty">正在加载角色...</div></div>
           </div>
-        </div>
-        <div class="character-head-actions">
-          <button class="btn btn-primary character-add-btn" type="button" onclick="openManualCharacterModal()" title="新增角色">
-            <i class="fa-solid fa-user-plus" aria-hidden="true"></i><span>新增</span>
-          </button>
-          <span class="tool-status-pill" id="characterStatus">准备加载</span>
-          <span class="tool-status-pill" id="groupChatStatus">准备加载</span>
-        </div>
-      </div>
-      <div class="group-chat-mobile-tabs" role="tablist" aria-label="群聊视图">
-        <button class="group-chat-mobile-tab active" type="button" role="tab" aria-selected="true" data-group-chat-mobile-view="chat" onclick="setGroupChatMobileView('chat')">
-          <i class="fa-solid fa-comments" aria-hidden="true"></i><span>聊天</span>
-        </button>
-        <button class="group-chat-mobile-tab" type="button" role="tab" aria-selected="false" data-group-chat-mobile-view="tools" onclick="setGroupChatMobileView('tools')">
-          <i class="fa-solid fa-image" aria-hidden="true"></i><span>生图</span>
-        </button>
-      </div>
-      <div class="agent-bind-note">
-        <span>角色-agent 绑定由后端配置；前端只提交参与角色和消息内容。</span>
-        <span class="hermes-status-pill">Hermes 可配置/未启用</span>
-      </div>
-      <div class="group-chat-layout" data-mobile-view="chat">
-        <section class="chat-side" id="groupChatToolPanel">
-          <div class="cg-field group-participants-field">
-            <label>参与角色</label>
-            <div class="character-picker compact" id="groupRoomParticipantList">
-              <div class="character-empty">角色加载后可选择参与者</div>
-            </div>
+          <div class="gcx-left-section">
+            <div class="gcx-section-head"><strong>对话成员</strong></div>
+            <div class="character-picker compact" id="groupRoomParticipantList"><div class="character-empty">角色加载后可选择参与者</div></div>
           </div>
-          <section class="character-chat-panel chat-image-panel">
-            <div class="character-inline-head">
-              <h3>生成图片</h3>
+          <div class="gcx-statuses"><span class="tool-status-pill" id="characterStatus">准备加载</span><span class="tool-status-pill" id="groupChatStatus">准备加载</span></div>
+          <div class="gcx-x-account" role="button" tabindex="0" onclick="focusSocialComposer()" title="以当前角色发布动态">
+            <div class="gcx-avatar" id="gcxXAccountAvatar" data-initial="角" aria-hidden="true"></div>
+            <div class="gcx-x-account-copy"><strong id="gcxXAccountName">角色</strong><span id="gcxXAccountHandle">@character</span></div>
+            <i class="fa-solid fa-ellipsis" aria-hidden="true"></i>
+          </div>
+        </aside>
+
+        <main class="gcx-center">
+          <header class="gcx-center-head">
+            <div><h2 id="gcxViewTitle">动态</h2><p id="gcxViewSubtitle">角色正在分享什么</p></div>
+            <div class="gcx-head-actions"><span class="social-connection-pill" id="socialConnectionPill">检查连接中</span><button type="button" onclick="toggleSocialHubSettings()" id="socialHubSettingsBtn" aria-label="在线时间线设置" title="在线时间线设置" aria-expanded="false"><i class="fa-solid fa-gear" aria-hidden="true"></i></button><button type="button" onclick="loadSocialPosts({force:true})" id="gcxRefreshFeedBtn" aria-label="刷新动态" title="刷新动态"><i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i></button></div>
+          </header>
+
+          <section class="gcx-social-settings" id="socialHubSettings" hidden aria-label="在线时间线设置">
+            <div class="gcx-social-settings-head"><div><strong>在线时间线</strong><span id="socialHubModeText">本机中心节点</span></div></div>
+            <div class="gcx-social-settings-grid">
+              <label><span>本机名称</span><input id="socialDisplayName" type="text" maxlength="80" autocomplete="off" placeholder="例如：小林的画廊"></label>
+              <label><span>中心地址</span><input id="socialHubUrl" type="url" inputmode="url" autocomplete="url" placeholder="https://gallery.example.com"></label>
+              <label><span>中心令牌</span><input id="socialHubToken" type="password" maxlength="256" autocomplete="off" placeholder="连接远端中心节点时填写"></label>
+              <label><span>本机中心令牌</span><span class="gcx-token-copy"><input id="socialServerToken" type="text" readonly aria-label="本机中心令牌"><button type="button" onclick="copySocialServerToken()" aria-label="复制本机中心令牌" title="复制本机中心令牌"><i class="fa-regular fa-copy" aria-hidden="true"></i></button></span></label>
             </div>
-            <div class="character-generation-grid roleless">
-              <div class="character-generation-side character-generation-main">
-                <div class="cg-field">
-                  <label for="characterPrompt">提示词</label>
-                  <textarea id="characterPrompt" rows="3" placeholder="例如：雨后的城市天台，轻松聊天的角色画面，柔和电影感光线"></textarea>
-                </div>
-                <div class="cg-field">
-                  <label>选项</label>
-                  <div class="character-option-grid">
-                    <div class="mini-field">
-                      <label for="characterStyleInput">风格</label>
-                      <input type="text" id="characterStyleInput" placeholder="可选">
-                    </div>
-                    <div class="mini-field">
-                      <label for="characterSizeSelect">尺寸</label>
-                      <select id="characterSizeSelect">
-                        <option value="">可选</option>
-                        <option value="1024x1024">1024x1024</option>
-                        <option value="2048x2048">2048x2048</option>
-                        <option value="4096x4096">4096x4096</option>
-                        <option value="768x1024">768x1024</option>
-                        <option value="1536x2048">1536x2048</option>
-                        <option value="3072x4096">3072x4096</option>
-                        <option value="1024x768">1024x768</option>
-                        <option value="2048x1536">2048x1536</option>
-                        <option value="4096x3072">4096x3072</option>
-                        <option value="1024x1536">1024x1536</option>
-                        <option value="1365x2048">1365x2048</option>
-                        <option value="2731x4096">2731x4096</option>
-                        <option value="768x1366">768x1366</option>
-                        <option value="1152x2048">1152x2048</option>
-                        <option value="2304x4096">2304x4096</option>
-                      </select>
-                    </div>
-                    <div class="mini-field">
-                      <label for="characterShotSelect">视角</label>
-                      <select id="characterShotSelect">
-                        <option value="">可选</option>
-                        <option value="selfie">自拍</option>
-                        <option value="half_body">半身照</option>
-                        <option value="full_body">全身照</option>
-                      </select>
-                    </div>
-                    <div class="mini-field">
-                      <label for="characterImageModelSelect">模型</label>
-                      <select id="characterImageModelSelect">
-                        <option value="">默认模型</option>
-                        <option value="gpt-image-2">gpt-image-2</option>
-                        <option value="agnes-image-2.1-flash">agnes-image-2.1-flash</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-                <div class="cg-actions character-generate-actions">
-                  <button class="btn btn-primary" type="button" id="characterGenerateBtn" data-idle-text="生成图片" onclick="generateSelectedCharacterPortrait()">生成图片</button>
-                </div>
-              </div>
+            <div class="gcx-social-settings-divider"><strong>GitHub 图床</strong><span id="socialGithubStatus">未配置</span></div>
+            <div class="gcx-social-settings-grid">
+              <label><span>仓库</span><input id="socialGithubRepo" type="text" maxlength="100" autocomplete="off" placeholder="例如：i-kirito/picx-images-hosting"></label>
+              <label><span>分支</span><input id="socialGithubBranch" type="text" maxlength="100" autocomplete="off" placeholder="master"></label>
+              <label><span>图片路径</span><input id="socialGithubImagePath" type="text" maxlength="200" autocomplete="off" placeholder="img"></label>
+              <label><span>Token</span><input id="socialGithubToken" type="password" maxlength="256" autocomplete="off" placeholder="GitHub 个人访问令牌（repo 权限）"></label>
             </div>
+            <p class="gcx-social-settings-note">发布动态的图片会直接保存到该 GitHub 仓库，动态里用 GitHub 链接显示；无需额外安装 PicGo。</p>
+            <div class="gcx-social-settings-actions"><span id="socialHubSettingsHint"></span><div><button class="btn" type="button" id="socialHubTestBtn" onclick="testSocialHubConnection()">测试连接</button><button class="btn btn-primary" type="button" id="socialHubSaveBtn" onclick="saveSocialHubConfig()">保存</button></div></div>
           </section>
-        </section>
-        <section class="chat-main" id="groupChatMainPanel">
-          <div class="chat-main-head">
-            <div class="chat-main-title-wrap">
-              <div class="chat-main-title-line">
-                <div class="chat-main-title" id="groupChatActiveTitle">群聊</div>
-                <div class="chat-typing-indicator" id="groupChatTypingIndicator" hidden></div>
+
+          <section class="gcx-feed-view" id="socialFeedView">
+            <div class="gcx-x-tabs" id="gcxXFeedTabs" role="tablist" aria-label="时间线筛选">
+              <button class="active" type="button" role="tab" aria-selected="true" data-feed-filter="forYou" onclick="setSocialFeedFilter('forYou', this)">为你</button>
+              <button type="button" role="tab" aria-selected="false" data-feed-filter="following" onclick="setSocialFeedFilter('following', this)">关注</button>
+            </div>
+            <div class="gcx-composer">
+              <div class="gcx-avatar" id="socialComposerAvatar" data-initial="角" aria-hidden="true"></div>
+              <div class="gcx-composer-main">
+                <div class="gcx-author-row"><label for="socialPostAuthor">以谁的身份</label><select id="socialPostAuthor" onchange="updateSocialComposerAuthor()"><option value="">选择角色</option></select></div>
+                <textarea id="socialPostText" rows="3" maxlength="1200" placeholder="发生了什么？" oninput="updateSocialComposerState()" onkeydown="handleSocialComposerKeydown(event)"></textarea>
+                <div class="gcx-media-preview" id="socialMediaPreview" hidden></div>
+                <div class="gcx-media-shelf" id="socialMediaShelf" hidden><div class="gcx-media-shelf-head"><strong>最近的画廊图片</strong><button type="button" onclick="toggleSocialMediaShelf(false)" aria-label="关闭图片选择"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></div><div class="gcx-media-grid" id="socialMediaGrid"></div></div>
+                <div class="gcx-composer-actions">
+                  <div><button type="button" onclick="toggleSocialMediaShelf()" aria-label="从画廊添加图片" title="从画廊添加图片"><i class="fa-regular fa-image" aria-hidden="true"></i></button><button type="button" onclick="setGroupChatWorkspaceView('tools', {forComposer:true})" aria-label="生成新配图" title="生成新配图"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i></button></div>
+                  <span id="socialPostCounter">0 / 1200</span><button class="btn btn-primary" type="button" id="socialPostSubmitBtn" onclick="createSocialPost()" disabled>发布</button>
+                </div>
               </div>
-              <div class="chat-main-subtitle" id="groupChatActiveMeta">角色加载后自动进入群聊</div>
             </div>
-            <div class="chat-main-tools">
-              <button class="chat-main-tool-btn danger" type="button" id="groupChatClearContextBtn" onclick="clearGroupChatContext()" title="清空上下文">
-                <i class="fa-solid fa-eraser" aria-hidden="true"></i><span>清空上下文</span>
-              </button>
+            <div class="gcx-feed-status" id="socialFeedStatus" role="status">正在加载动态...</div>
+            <div class="gcx-feed" id="socialFeed"></div>
+            <button class="gcx-load-more" type="button" id="socialLoadMoreBtn" onclick="loadMoreSocialPosts()" hidden>加载更多</button>
+          </section>
+
+          <section class="gcx-chat-view" id="socialChatView" hidden>
+            <div class="agent-bind-note"><span>保留原群聊上下文、自动回复、回溯和图片消息。</span><span class="hermes-status-pill">Hermes 对话</span></div>
+            <section class="chat-main" id="groupChatMainPanel">
+              <div class="chat-main-head"><div class="chat-main-title-wrap"><div class="chat-main-title-line"><div class="chat-main-title" id="groupChatActiveTitle">群聊</div><div class="chat-typing-indicator" id="groupChatTypingIndicator" hidden></div></div><div class="chat-main-subtitle" id="groupChatActiveMeta">角色加载后自动进入群聊</div></div><div class="chat-main-tools"><button class="chat-main-tool-btn danger" type="button" id="groupChatClearContextBtn" onclick="clearGroupChatContext()" title="清空上下文"><i class="fa-solid fa-eraser" aria-hidden="true"></i><span>清空上下文</span></button></div></div>
+              <div class="chat-messages" id="groupChatMessages"><div class="chat-empty">正在准备群聊...</div></div>
+              <div class="chat-composer"><div class="chat-sender-row"><select id="chatSenderType" onchange="updateGroupChatSenderControls()"><option value="user">我</option><option value="character">角色</option></select><select id="chatSenderCharacter" onchange="handleGroupChatSenderCharacterChange()"><option value="">选择角色</option></select></div><textarea id="groupChatMessageInput" rows="3" placeholder="输入要发到当前房间的消息" onkeydown="handleGroupChatComposerKeydown(event)"></textarea><div class="chat-composer-actions"><button class="btn btn-primary" type="button" id="groupChatSendBtn" onclick="sendGroupChatMessage()"><i class="fa-solid fa-paper-plane" aria-hidden="true"></i><span>发送</span></button></div></div>
+            </section>
+          </section>
+        </main>
+
+        <aside class="gcx-right gcx-xright" id="gcxImageTools">
+          <div class="gcx-xsearch" role="search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><input id="gcxSocialSearchInput" type="search" placeholder="搜索动态" aria-label="搜索动态" oninput="setSocialFeedQuery(this.value)"></div>
+          <div class="gcx-x-card">
+            <div class="gcx-right-head"><div><h3 id="gcxImageToolTitle">今日日程推文</h3><p id="gcxImageToolHint">将今日日程整理为一条动态发送</p></div><i class="fa-solid fa-calendar-day" aria-hidden="true"></i></div>
+          <section id="socialScheduleTool">
+            <div class="cg-field"><label for="socialScheduleText">推文文案</label><textarea id="socialScheduleText" rows="7" maxlength="1200" placeholder="正在整理今日日程..." oninput="updateSocialScheduleTextCounter()"></textarea><div class="gcx-schedule-tool-actions"><button type="button" onclick="composeSocialScheduleText(true)" title="按今日日程重新整理文案"><i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> 重新整理</button><span id="socialScheduleTextCounter">0 / 1200</span></div></div>
+            <div class="gcx-schedule-count"><span>配图数量</span><div class="gcx-schedule-count-btns" id="socialScheduleCountBtns"><button type="button" data-count="1" onclick="selectSocialScheduleImageCount(1)" title="单图"><svg class="gcx-count-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.1" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/></svg><span>单图</span></button><button type="button" data-count="3" onclick="selectSocialScheduleImageCount(3)" title="三图"><svg class="gcx-count-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.1" aria-hidden="true"><rect x="2.5" y="2.5" width="6.5" height="11" rx="1"/><rect x="10.5" y="2.5" width="3" height="5" rx="1"/><rect x="10.5" y="8.5" width="3" height="5" rx="1"/></svg><span>三图</span></button><button type="button" class="active" data-count="6" onclick="selectSocialScheduleImageCount(6)" title="六图"><svg class="gcx-count-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.1" aria-hidden="true"><rect x="2" y="2" width="5" height="3.5" rx="0.8"/><rect x="9" y="2" width="5" height="3.5" rx="0.8"/><rect x="2" y="6.5" width="5" height="3.5" rx="0.8"/><rect x="9" y="6.5" width="5" height="3.5" rx="0.8"/><rect x="2" y="11" width="5" height="3.5" rx="0.8"/><rect x="9" y="11" width="5" height="3.5" rx="0.8"/></svg><span>六图</span></button><button type="button" data-count="9" onclick="selectSocialScheduleImageCount(9)" title="九宫格"><svg class="gcx-count-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.1" aria-hidden="true"><rect x="1.5" y="1.5" width="3.9" height="3.9" rx="0.7"/><rect x="6.05" y="1.5" width="3.9" height="3.9" rx="0.7"/><rect x="10.6" y="1.5" width="3.9" height="3.9" rx="0.7"/><rect x="1.5" y="6.05" width="3.9" height="3.9" rx="0.7"/><rect x="6.05" y="6.05" width="3.9" height="3.9" rx="0.7"/><rect x="10.6" y="6.05" width="3.9" height="3.9" rx="0.7"/><rect x="1.5" y="10.6" width="3.9" height="3.9" rx="0.7"/><rect x="6.05" y="10.6" width="3.9" height="3.9" rx="0.7"/><rect x="10.6" y="10.6" width="3.9" height="3.9" rx="0.7"/></svg><span>九宫格</span></button></div></div>
+            <p class="gcx-schedule-avail" id="socialScheduleAvail">正在读取今日照片...</p>
+            <button class="btn btn-primary gcx-generate-btn" type="button" id="socialScheduleSendBtn" onclick="publishScheduleTweet(this)"><i class="fa-regular fa-paper-plane" aria-hidden="true"></i><span>整理并发送推文</span></button>
+            <div class="gcx-right-note"><i class="fa-regular fa-circle-check" aria-hidden="true"></i><span>优先使用今日已生成的照片，缺图会自动调用生图补齐；发布后图片会自动保存到 GitHub 图床，在首页设置中配置仓库与 Token 即可。</span></div>
+          </section>
+          <section id="gcxLegacyGenerateTool" hidden>
+            <div class="cg-field"><label for="characterPrompt">提示词</label><textarea id="characterPrompt" rows="5" placeholder="描述角色、动作、场景和光线"></textarea></div>
+            <div class="character-option-grid gcx-image-options">
+              <div class="mini-field"><label for="characterStyleInput">风格</label><input type="text" id="characterStyleInput" placeholder="可选"></div>
+              <div class="mini-field"><label for="characterSizeSelect">尺寸</label><select id="characterSizeSelect"><option value="">可选</option><option value="1024x1024">1024x1024</option><option value="2048x2048">2048x2048</option><option value="4096x4096">4096x4096</option><option value="768x1024">768x1024</option><option value="1536x2048">1536x2048</option><option value="3072x4096">3072x4096</option><option value="1024x768">1024x768</option><option value="2048x1536">2048x1536</option><option value="4096x3072">4096x3072</option><option value="1024x1536">1024x1536</option><option value="1365x2048">1365x2048</option><option value="2731x4096">2731x4096</option><option value="768x1366">768x1366</option><option value="1152x2048">1152x2048</option><option value="2304x4096">2304x4096</option></select></div>
+              <div class="mini-field"><label for="characterShotSelect">视角</label><select id="characterShotSelect"><option value="">可选</option><option value="selfie">自拍</option><option value="half_body">半身照</option><option value="full_body">全身照</option></select></div>
+              <div class="mini-field"><label for="characterImageModelSelect">模型</label><select id="characterImageModelSelect"><option value="">默认模型</option><option value="gpt-image-2">gpt-image-2</option><option value="agnes-image-2.1-flash">agnes-image-2.1-flash</option></select></div>
             </div>
+            <button class="btn btn-primary gcx-generate-btn" type="button" id="characterGenerateBtn" data-idle-text="生成并插入动态" onclick="generateSelectedCharacterPortrait()"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span>生成并插入动态</span></button>
+            <div class="gcx-right-note"><i class="fa-regular fa-circle-check" aria-hidden="true"></i><span>动态配图与群聊图片相互独立；切到“对话”后生成会发送进当前房间。</span></div>
+          </section>
           </div>
-          <div class="chat-messages" id="groupChatMessages">
-            <div class="chat-empty">正在准备群聊...</div>
+          <div class="gcx-x-card">
+            <div class="gcx-x-card-head"><h3>正在发生</h3></div>
+            <div class="gcx-x-trends" id="gcxXTrends"><div class="gcx-x-card-note">正在读取今日日程...</div></div>
           </div>
-          <div class="chat-composer">
-            <div class="chat-sender-row">
-              <select id="chatSenderType" onchange="updateGroupChatSenderControls()">
-                <option value="user">我</option>
-                <option value="character">角色</option>
-              </select>
-              <select id="chatSenderCharacter" onchange="handleGroupChatSenderCharacterChange()">
-                <option value="">选择角色</option>
-              </select>
-            </div>
-            <textarea id="groupChatMessageInput" rows="3" placeholder="输入要发到当前房间的消息" onkeydown="handleGroupChatComposerKeydown(event)"></textarea>
-            <div class="chat-composer-actions">
-              <button class="btn btn-primary" type="button" id="groupChatSendBtn" onclick="sendGroupChatMessage()"><i class="fa-solid fa-paper-plane" aria-hidden="true"></i><span>发送</span></button>
-            </div>
+          <div class="gcx-x-card">
+            <div class="gcx-x-card-head"><h3>谁在关注</h3></div>
+            <div class="gcx-x-follow" id="gcxXWhoToFollow"><div class="gcx-x-card-note">角色加载后可查看</div></div>
           </div>
-        </section>
+        </aside>
       </div>
     </div>
   </div>
@@ -7060,7 +8371,7 @@ textarea:focus-visible,
     <h2 id="cgDialogTitle">🎀 穿搭生成</h2>
     <div class="cg-field">
       <label for="cgPrompt">穿搭描述</label>
-      <textarea id="cgPrompt" placeholder="描述你想看到的穿搭，比如：穿着粉色JK制服在樱花树下吃团子~" rows="3"></textarea>
+      <textarea id="cgPrompt" placeholder="描述你想看到的穿搭，比如：穿着粉色JK制服在樱花树下吃团子~" rows="2"></textarea>
       <div class="hint">支持中英文，越详细效果越好哦～</div>
     </div>
     <div class="cg-field cg-dimension-field">
@@ -7143,7 +8454,7 @@ textarea:focus-visible,
           <input type="search" id="xhsSearchKeyword" maxlength="80" autocomplete="off" placeholder="搜索真人夏季穿搭" onkeydown="if(event.key==='Enter'){event.preventDefault();searchXiaohongshuOutfits();}">
           <button type="button" class="btn btn-secondary" id="xhsSearchButton" onclick="searchXiaohongshuOutfits()"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i> <span id="xhsSearchButtonText">搜索</span></button>
         </div>
-        <div class="xhs-search-status" id="xhsSearchStatus"></div>
+        <div class="xhs-search-status" id="xhsSearchStatus" hidden></div>
         <div class="xhs-creator-results" id="xhsCreatorResults" hidden></div>
         <div class="xhs-creator-profile" id="xhsCreatorProfile" hidden></div>
         <div class="xhs-search-results" id="xhsSearchResults" hidden></div>
@@ -7494,6 +8805,7 @@ function closeAccessibleDialog(overlay) {
   else if (overlay.id === 'imageVersionOverlay') closeImageVersions();
   else if (overlay.id === 'wardrobeVersionOverlay') closeWardrobeVersions();
   else if (overlay.id === 'modalOverlay') closeModal();
+  else if (overlay.id === 'deleteConfirmOverlay') closeDeleteConfirm(false);
 }
 
 function handleAccessibleDialogKeydown(event) {
@@ -7508,7 +8820,7 @@ function handleAccessibleDialogKeydown(event) {
   const focusable = dialogFocusableElements(overlay);
   if (!focusable.length) {
     event.preventDefault();
-    const dialog = overlay.querySelector('[role="dialog"]');
+    const dialog = overlay.querySelector('[role="dialog"], [role="alertdialog"]');
     if (dialog) dialog.focus();
     return;
   }
@@ -7582,6 +8894,37 @@ const groupChatPendingReplyRooms = new Set();
 let groupChatReplyPollTimer = null;
 let groupChatReplyPollRequest = null;
 let groupChatTypingState = { roomId: "", names: [], phase: "typing" };
+let groupChatPrimaryView = "feed";
+let groupChatImageTarget = "feed";
+let socialPosts = [];
+let socialNextCursor = "";
+let socialPostsLoaded = false;
+let socialPostsRequest = null;
+let socialSelectedMediaList = [];
+let socialSchedulePanelData = null;
+let socialScheduleImageCount = (function () {
+  try {
+    const saved = parseInt(localStorage.getItem("gcx_schedule_image_count") || "", 10);
+    return [1, 3, 6, 9].includes(saved) ? saved : 6;
+  } catch (e) {
+    return 6;
+  }
+})();
+let socialReplyOpenPostId = "";
+let socialHubConfig = null;
+let socialHubConfigRequest = null;
+let socialLocalReactions = (() => {
+  try {
+    const value = JSON.parse(window.galleryStorageGet("social_local_reactions", "{}"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value).map(([postId, kinds]) => [
+      postId,
+      Array.isArray(kinds) ? kinds.filter(kind => ["like", "repost", "bookmark"].includes(kind)) : [],
+    ]));
+  } catch (error) {
+    return {};
+  }
+})();
 
 function compactDisplayText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -7616,7 +8959,7 @@ function applyDisplayConfig(data) {
   appDisplay.shareTitle = `${appDisplay.characterName === "角色" ? "" : appDisplay.characterName}${title.includes("穿搭") ? "穿搭" : "画廊图片"}` || "穿搭分享";
 
   document.title = title;
-  updateText("appHeaderTitle", title);
+  updateText("appHeaderTitle", title.replace(/^每日/, ""));
   updateText("appHeroTitle", title);
   updateText("appHeroSubtitle", `每一天，都是不一样的${appDisplay.characterName}`);
   updateText("todayEmptyText", `今天还没有穿搭记录呢～让${appDisplay.characterName}生成一个吧！`);
@@ -7799,6 +9142,14 @@ function renderReferenceMetaTag(e, className = "meta-tag") {
   return `<span class="${escapeAttr(classes)}" tabindex="0" aria-label="${escapeAttr(label)}" data-ref-preview="1"><span class="meta-ref-label">${escapeHtml(label)}</span><span class="meta-ref-preview" role="img" aria-label="参考像预览"><img src="${escapeAttr(src)}" alt="参考像预览" loading="lazy" decoding="async"></span></span>`;
 }
 
+function renderEntryTagsMeta(e, className = "meta-tag") {
+  const tags = Array.isArray(e && e.tags)
+    ? e.tags.map(tag => String(tag).trim()).filter(Boolean)
+    : [];
+  if (!tags.length) return "";
+  return tags.map(tag => `<span class="${escapeAttr(className)} meta-entry-tag">${escapeHtml(tag)}</span>`).join("");
+}
+
 function positionReferencePreview(tag) {
   if (!tag) return;
   const preview = tag.querySelector(".meta-ref-preview");
@@ -7974,22 +9325,1133 @@ function setToolStatus(id, text, kind = "") {
   el.className = `tool-status-pill${kind ? " " + kind : ""}`;
 }
 
-function setGroupChatMobileView(view) {
-  const normalized = view === "tools" ? "tools" : "chat";
+function socialConnectionPresentation(payload) {
+  const connection = payload?.connection || {};
+  const remote = payload?.mode === "remote";
+  if (!remote) return {text: "本机中心节点", kind: "ok"};
+  if (connection.ok === true) return {text: "已连通中心", kind: "ok"};
+  if (connection.ok === false) return {text: "中心不可用", kind: "error"};
+  return {text: "等待测试", kind: ""};
+}
+
+function setSocialConnectionStatus(payload) {
+  const state = socialConnectionPresentation(payload);
+  ["socialConnectionPill"].forEach(id => {
+    const element = document.getElementById(id);
+    if (!element) return;
+    element.textContent = state.text;
+    element.className = `social-connection-pill${state.kind ? " " + state.kind : ""}`;
+  });
+  const hint = document.getElementById("socialHubSettingsHint");
+  if (hint) hint.textContent = String(payload?.connection?.message || "");
+}
+
+function renderSocialHubConfig(payload) {
+  if (!payload || typeof payload !== "object") return;
+  socialHubConfig = payload;
+  const displayName = document.getElementById("socialDisplayName");
+  const hubUrl = document.getElementById("socialHubUrl");
+  const hubToken = document.getElementById("socialHubToken");
+  const serverToken = document.getElementById("socialServerToken");
+  const modeText = document.getElementById("socialHubModeText");
+  if (displayName) displayName.value = String(payload.display_name || "");
+  if (hubUrl) {
+    const configuredUrl = String(payload.hub_url || "");
+    hubUrl.value = "";
+    hubUrl.placeholder = configuredUrl ? "已保存，留空不修改" : "https://gallery.example.com";
+  }
+  if (hubToken) {
+    hubToken.value = "";
+    hubToken.placeholder = payload.hub_token_configured ? "已保存，留空不修改" : "连接远端中心节点时填写";
+  }
+  if (serverToken) serverToken.value = String(payload.server_token || "");
+  if (modeText) modeText.textContent = payload.mode === "remote" ? "使用远端中心节点" : "本机保存动态与图片";
+  const githubStatus = document.getElementById("socialGithubStatus");
+  const githubRepo = document.getElementById("socialGithubRepo");
+  const githubBranch = document.getElementById("socialGithubBranch");
+  const githubImagePath = document.getElementById("socialGithubImagePath");
+  const githubToken = document.getElementById("socialGithubToken");
+  if (githubRepo) githubRepo.value = String(payload.github_repo || "");
+  if (githubBranch) githubBranch.value = String(payload.github_branch || "");
+  if (githubImagePath) githubImagePath.value = String(payload.github_image_path || "");
+  if (githubToken) {
+    githubToken.value = "";
+    githubToken.placeholder = payload.github_token_configured ? "已保存，留空不修改" : "GitHub 个人访问令牌（repo 权限）";
+  }
+  if (githubStatus) {
+    const configured = String(payload.github_repo || "");
+    githubStatus.textContent = configured ? `已配置 ${configured}${payload.github_branch ? " · " + payload.github_branch : ""}` : "未配置";
+    githubStatus.classList.toggle("ok", Boolean(configured));
+  }
+  setSocialConnectionStatus(payload);
+}
+
+async function loadSocialHubConfig(options = {}) {
+  if (socialHubConfigRequest && !options.force) return socialHubConfigRequest;
+  const query = options.test ? "?test=1" : "";
+  socialHubConfigRequest = fetch(`${API}/api/social/config${query}`, {cache: "no-store"})
+    .then(async response => {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+      renderSocialHubConfig(data);
+      return data;
+    })
+    .catch(error => {
+      setSocialConnectionStatus({connection: {ok: false, message: `在线设置读取失败：${error?.message || "未知错误"}`}, mode: "remote"});
+      return null;
+    })
+    .finally(() => { socialHubConfigRequest = null; });
+  return socialHubConfigRequest;
+}
+
+function toggleSocialHubSettings(forceOpen) {
+  const panel = document.getElementById("socialHubSettings");
+  const button = document.getElementById("socialHubSettingsBtn");
+  if (!panel) return;
+  const open = typeof forceOpen === "boolean" ? forceOpen : panel.hidden;
+  panel.hidden = !open;
+  if (button) button.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) loadSocialHubConfig({test: true, force: true});
+}
+
+async function testSocialHubConnection() {
+  const button = document.getElementById("socialHubTestBtn");
+  if (button) { button.disabled = true; button.textContent = "测试中..."; }
+  try {
+    const result = await loadSocialHubConfig({test: true, force: true});
+    if (!result) throw new Error("无法读取在线设置");
+    showToast(result.connection?.ok === false ? "中心节点未连通" : "连接正常");
+  } catch (error) {
+    showToast(`测试失败：${error?.message || "未知错误"}`);
+  } finally {
+    if (button) { button.disabled = false; button.textContent = "测试连接"; }
+  }
+}
+
+async function saveSocialHubConfig() {
+  const button = document.getElementById("socialHubSaveBtn");
+  const hubToken = document.getElementById("socialHubToken");
+  const body = {
+    display_name: document.getElementById("socialDisplayName")?.value.trim() || "",
+    hub_url: document.getElementById("socialHubUrl")?.value.trim() || socialHubConfig?.hub_url || "",
+    github_repo: document.getElementById("socialGithubRepo")?.value.trim() || "",
+    github_branch: document.getElementById("socialGithubBranch")?.value.trim() || "master",
+    github_image_path: document.getElementById("socialGithubImagePath")?.value.trim() || "img",
+  };
+  if (hubToken?.value.trim()) body.hub_token = hubToken.value.trim();
+  const githubTokenInput = document.getElementById("socialGithubToken");
+  if (githubTokenInput?.value.trim()) body.github_token = githubTokenInput.value.trim();
+  if (button) { button.disabled = true; button.textContent = "保存中..."; }
+  try {
+    const response = await fetch(`${API}/api/social/config`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    renderSocialHubConfig(data);
+    socialPostsLoaded = false;
+    socialNextCursor = "";
+    await loadSocialPosts({force: true});
+    showToast(data.connection?.ok === false ? "已保存，但中心节点尚未连通" : "在线设置已保存");
+  } catch (error) {
+    showToast(`保存失败：${error?.message || "未知错误"}`);
+  } finally {
+    if (button) { button.disabled = false; button.textContent = "保存"; }
+  }
+}
+
+async function copySocialServerToken() {
+  const input = document.getElementById("socialServerToken");
+  const value = String(input?.value || "");
+  if (!value) return;
+  try {
+    await navigator.clipboard.writeText(value);
+  } catch (error) {
+    input?.select();
+    document.execCommand("copy");
+  }
+  showToast("本机中心令牌已复制");
+}
+
+function setGroupChatWorkspaceView(view, options = {}) {
+  const normalized = ["feed", "chat", "tools"].includes(view) ? view : "feed";
   const section = document.getElementById("groupChatSection");
   const layout = section?.querySelector(".group-chat-layout");
   if (!section || !layout) return;
-  layout.dataset.mobileView = normalized;
-  section.querySelectorAll("[data-group-chat-mobile-view]").forEach(button => {
-    const active = button.dataset.groupChatMobileView === normalized;
+  if (normalized === "feed" || normalized === "chat") {
+    groupChatPrimaryView = normalized;
+    groupChatImageTarget = normalized;
+  } else {
+    groupChatImageTarget = options.forComposer ? "feed" : groupChatPrimaryView;
+  }
+  layout.dataset.gcxView = normalized;
+  layout.dataset.mobileView = normalized === "tools" ? "tools" : "chat";
+  section.querySelectorAll("[data-gcx-view]").forEach(button => {
+    const active = button.dataset.gcxView === normalized;
     button.classList.toggle("active", active);
-    button.setAttribute("aria-selected", active ? "true" : "false");
+    if (button.getAttribute("role") === "tab") {
+      button.setAttribute("aria-selected", active ? "true" : "false");
+    }
   });
-  if (normalized === "chat") {
+  const feedView = document.getElementById("socialFeedView");
+  const chatView = document.getElementById("socialChatView");
+  if (feedView) feedView.hidden = groupChatPrimaryView !== "feed";
+  if (chatView) chatView.hidden = groupChatPrimaryView !== "chat";
+  if (groupChatPrimaryView === "feed") {
+    requestAnimationFrame(reflowSocialAlbumMedia);
+  }
+  updateText("gcxViewTitle", groupChatPrimaryView === "chat" ? "对话" : "首页");
+  updateText("gcxViewSubtitle", groupChatPrimaryView === "chat" ? "角色群聊与自动回复" : "角色们的最新动态");
+  const refreshButton = document.getElementById("gcxRefreshFeedBtn");
+  if (refreshButton) refreshButton.hidden = groupChatPrimaryView !== "feed";
+  updateGroupChatImageToolState();
+  if (groupChatPrimaryView === "chat") {
     const messages = document.getElementById("groupChatMessages");
     requestAnimationFrame(() => {
       if (messages) messages.scrollTop = messages.scrollHeight;
     });
+  }
+  if (normalized === "tools" && options.focusPrompt !== false) {
+    requestAnimationFrame(() => document.getElementById("characterPrompt")?.focus());
+  }
+}
+
+function setGroupChatMobileView(view) {
+  setGroupChatWorkspaceView(view === "tools" ? "tools" : "chat");
+}
+
+function updateGroupChatImageToolState() {
+  const sendsToChat = groupChatImageTarget === "chat";
+  updateText("gcxImageToolTitle", sendsToChat ? "生成配图" : "今日日程推文");
+  updateText("gcxImageToolHint", sendsToChat ? "生成后发送到当前对话" : "将今日日程整理为一条动态发送");
+  const scheduleTool = document.getElementById("socialScheduleTool");
+  const legacyTool = document.getElementById("gcxLegacyGenerateTool");
+  if (scheduleTool) scheduleTool.hidden = sendsToChat;
+  if (legacyTool) legacyTool.hidden = !sendsToChat;
+  const button = document.getElementById("characterGenerateBtn");
+  if (button) {
+  const text = sendsToChat ? "生成并发送到对话" : "生成并插入动态";
+  button.dataset.idleText = text;
+  if (!button.disabled) {
+    const label = button.querySelector("span");
+    if (label) label.textContent = text;
+    else button.textContent = text;
+  }
+  }
+  if (!sendsToChat) loadSocialSchedulePanel();
+}
+
+function socialCharacterById(characterIdValue) {
+  return characterItems.find(item => item.id === String(characterIdValue || "")) || null;
+}
+
+function renderSocialAuthorOptions() {
+  const select = document.getElementById("socialPostAuthor");
+  if (!select) return;
+  const current = select.value;
+  const stored = window.galleryStorageGet("social_post_author", "");
+  const preferred = [current, stored, selectedCharacterId(), defaultCharacterId, characterItems[0]?.id]
+    .find(value => value && characterItems.some(item => item.id === value)) || "";
+  select.innerHTML = '<option value="">选择角色</option>' + characterItems.map(item =>
+    `<option value="${toolEscapeAttr(item.id)}">${toolEscapeHtml(item.name)}</option>`
+  ).join("");
+  select.value = preferred;
+  updateSocialComposerAuthor();
+}
+
+function updateSocialComposerAuthor() {
+  const select = document.getElementById("socialPostAuthor");
+  const character = socialCharacterById(select?.value);
+  if (select?.value) window.galleryStorageSet("social_post_author", select.value);
+  const avatar = document.getElementById("socialComposerAvatar");
+  if (avatar) {
+    avatar.dataset.initial = characterAvatarInitial(character || {name: "角色"});
+    avatar.innerHTML = character?.referenceImageUrl
+      ? `<img src="${toolEscapeAttr(character.referenceImageUrl)}" alt="" onerror="this.remove()">`
+      : "";
+  }
+  const accountName = document.getElementById("gcxXAccountName");
+  const accountHandle = document.getElementById("gcxXAccountHandle");
+  const accountAvatar = document.getElementById("gcxXAccountAvatar");
+  if (accountName && accountHandle) {
+    if (character) {
+      accountName.textContent = character.name;
+      accountHandle.textContent = "@" + String(character.id || "character");
+      if (accountAvatar) {
+        accountAvatar.dataset.initial = characterAvatarInitial(character);
+        accountAvatar.innerHTML = character?.referenceImageUrl
+          ? `<img src="${toolEscapeAttr(character.referenceImageUrl)}" alt="" onerror="this.remove()">`
+          : "";
+      }
+    } else if (accountAvatar) {
+      accountName.textContent = "角色";
+      accountHandle.textContent = "@character";
+      accountAvatar.dataset.initial = "角";
+      accountAvatar.innerHTML = "";
+    }
+  }
+  updateSocialComposerState();
+  updateSocialScheduleSendState();
+}
+
+function updateSocialComposerState() {
+  const text = document.getElementById("socialPostText")?.value || "";
+  const authorId = document.getElementById("socialPostAuthor")?.value || "";
+  updateText("socialPostCounter", `${text.length} / 1200`);
+  const counter = document.getElementById("socialPostCounter");
+  if (counter) counter.classList.toggle("over", text.length > 1150);
+  const button = document.getElementById("socialPostSubmitBtn");
+  if (button) button.disabled = !authorId || (!text.trim() && !socialSelectedMediaList.length) || text.length > 1200;
+  syncSocialComposerCollapse();
+}
+
+function syncSocialComposerCollapse() {
+  const composer = document.querySelector("#socialFeedView .gcx-composer");
+  if (!composer) return;
+  bindSocialComposerCollapse(composer);
+  const text = document.getElementById("socialPostText");
+  const focused = document.activeElement && composer.contains(document.activeElement);
+  const hasContent = Boolean(text && text.value.trim()) || (socialSelectedMediaList || []).length > 0;
+  composer.classList.toggle("gcx-composer-active", Boolean(focused) || hasContent);
+}
+
+function bindSocialComposerCollapse(composer) {
+  if (!composer || composer.dataset.gcxCollapseBound) return;
+  composer.dataset.gcxCollapseBound = "1";
+  composer.addEventListener("click", function (event) {
+    if (!composer.classList.contains("gcx-composer-active")) {
+      document.getElementById("socialPostText")?.focus();
+    }
+  });
+  composer.addEventListener("focusin", syncSocialComposerCollapse);
+  composer.addEventListener("focusout", function (event) {
+    if (!event.relatedTarget || !composer.contains(event.relatedTarget)) syncSocialComposerCollapse();
+  });
+}
+
+function handleSocialComposerKeydown(event) {
+  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault();
+    createSocialPost();
+  }
+}
+
+function socialMediaFromEntry(entry, source = "gallery") {
+  const filename = generatedEntryImageFilename(entry);
+  if (!filename) return null;
+  return {
+    image_filename: filename,
+    image_url: generatedEntryImageUrl(entry) || `/images/${encodeURIComponent(filename)}`,
+    alt: truncateGroupChatMetadataText(entry?.caption || entry?.prompt || "角色动态配图", 240),
+    source,
+  };
+}
+
+function renderSocialMediaPreview() {
+  const preview = document.getElementById("socialMediaPreview");
+  if (!preview) return;
+  if (!socialSelectedMediaList.length) {
+    preview.hidden = true;
+    preview.innerHTML = "";
+    updateSocialComposerState();
+    return;
+  }
+  preview.hidden = false;
+  const single = socialSelectedMediaList.length === 1 ? " single" : "";
+  preview.innerHTML = `<div class="gcx-media-preview-grid${single}">${socialSelectedMediaList.map((media, index) =>
+    `<div class="gcx-media-preview-item"><img src="${toolEscapeAttr(media.image_url)}" alt="${toolEscapeAttr(media.alt || "动态配图")}"><button type="button" onclick="removeSocialMediaByIndex(${index})" aria-label="移除配图" title="移除配图"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></div>`
+  ).join("")}</div>`;
+  updateSocialComposerState();
+}
+
+function clearSocialMedia() {
+  socialSelectedMediaList = [];
+  renderSocialMediaPreview();
+  renderSocialMediaGrid();
+}
+
+function setSocialMediaFromEntry(entry, source = "generated") {
+  const media = socialMediaFromEntry(entry, source);
+  if (!media) throw new Error("生成结果缺少图片文件名");
+  upsertGeneratedGalleryEntry(entry);
+  if (socialSelectedMediaList.length >= 9) {
+    throw new Error("单条动态最多 9 张图");
+  }
+  if (!socialSelectedMediaList.some(item => item.image_filename === media.image_filename)) {
+    socialSelectedMediaList.push(media);
+  }
+  renderSocialMediaPreview();
+  toggleSocialMediaShelf(false);
+}
+
+function removeSocialMediaByIndex(index) {
+  if (index >= 0 && index < socialSelectedMediaList.length) {
+    socialSelectedMediaList.splice(index, 1);
+  }
+  renderSocialMediaPreview();
+  renderSocialMediaGrid();
+}
+
+async function shareGalleryImageToSocial(imageFilename, event) {
+  event?.preventDefault();
+  event?.stopPropagation();
+  const filename = String(imageFilename || "").trim();
+  if (!filename) return;
+  let entry = allEntries.find(item => item && item.image_filename === filename)
+    || (Array.isArray(todayData?.photos) ? todayData.photos.find(item => item && item.image_filename === filename) : null);
+  if (!entry) {
+    try {
+      await ensureCharacterGalleryEntries();
+      entry = allEntries.find(item => item && item.image_filename === filename) || null;
+    } catch (error) {
+      entry = null;
+    }
+  }
+  const media = socialMediaFromEntry(entry, "gallery");
+  if (!media) {
+    showToast("找不到这张画廊图片");
+    return;
+  }
+  try {
+    setSocialMediaFromEntry(entry, "gallery");
+  } catch (error) {
+    showToast(error?.message || "图片添加失败");
+    return;
+  }
+  switchTab("group-chat");
+  setGroupChatWorkspaceView("feed", {focusPrompt: false});
+  requestAnimationFrame(() => {
+    const textarea = document.getElementById("socialPostText");
+    if (textarea && !textarea.value.trim()) {
+      textarea.value = String(entry?.caption || "").trim().slice(0, 1200);
+    }
+    updateSocialComposerState();
+    textarea?.focus();
+  });
+  showToast("已加入动态草稿");
+}
+
+function shareCurrentModalImageToSocial(event) {
+  const filename = String(currentModalImg || "").trim();
+  if (!filename) return;
+  closeModal();
+  shareGalleryImageToSocial(filename, event);
+}
+
+function renderSocialMediaGrid() {
+  const grid = document.getElementById("socialMediaGrid");
+  if (!grid) return;
+  const entries = galleryPickerEntries().slice(0, 30);
+  if (!entries.length) {
+    grid.innerHTML = '<div class="chat-empty">画廊里还没有可选图片</div>';
+    return;
+  }
+  grid.innerHTML = entries.map(entry => {
+    const media = socialMediaFromEntry(entry);
+    if (!media) return "";
+    const active = socialSelectedMediaList.some(item => item.image_filename === media.image_filename) ? " active" : "";
+    return `<button type="button" class="${active.trim()}" onclick="selectSocialMedia(${jsStringArg(media.image_filename)})" aria-label="选择画廊图片"><img src="${toolEscapeAttr(media.image_url)}" alt="${toolEscapeAttr(media.alt || "画廊图片")}" loading="lazy" decoding="async"></button>`;
+  }).join("");
+}
+
+async function toggleSocialMediaShelf(forceOpen) {
+  const shelf = document.getElementById("socialMediaShelf");
+  if (!shelf) return;
+  const open = typeof forceOpen === "boolean" ? forceOpen : shelf.hidden;
+  shelf.hidden = !open;
+  if (!open) return;
+  const grid = document.getElementById("socialMediaGrid");
+  if (grid) grid.innerHTML = '<div class="chat-empty">正在读取画廊...</div>';
+  try {
+    await ensureCharacterGalleryEntries();
+    renderSocialMediaGrid();
+  } catch(e) {
+    if (grid) grid.innerHTML = `<div class="chat-empty">加载失败：${toolEscapeHtml(e?.message || "未知错误")}</div>`;
+  }
+}
+
+function selectSocialMedia(filename) {
+  const entry = allEntries.find(item => item && item.image_filename === filename);
+  const media = socialMediaFromEntry(entry);
+  if (!media) return;
+  const index = socialSelectedMediaList.findIndex(item => item.image_filename === media.image_filename);
+  if (index >= 0) {
+    socialSelectedMediaList.splice(index, 1);
+  } else {
+    if (socialSelectedMediaList.length >= 9) {
+      showToast("单条动态最多 9 张图");
+      return;
+    }
+    socialSelectedMediaList.push(media);
+  }
+  renderSocialMediaPreview();
+  renderSocialMediaGrid();
+}
+
+function socialTimeLabel(value) {
+  const date = new Date(value || "");
+  if (Number.isNaN(date.getTime())) return "";
+  const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return "刚刚";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时`;
+  if (seconds < 604800) return `${Math.floor(seconds / 86400)} 天`;
+  return date.toLocaleDateString([], {month: "short", day: "numeric"});
+}
+
+function socialActorSnapshot(value) {
+  const snapshot = value?.author_snapshot && typeof value.author_snapshot === "object" ? value.author_snapshot : {};
+  const id = String(value?.author_id || "");
+  const known = socialCharacterById(id);
+  return {
+    id,
+    type: String(value?.author_type || "character"),
+    instanceId: "",
+    name: compactDisplayText(snapshot.display_name || known?.name || (id === "user" ? "我" : id) || "角色"),
+    avatar: compactDisplayText(snapshot.avatar || known?.referenceImageUrl || ""),
+  };
+}
+
+function socialHandle(actor) {
+  const rawId = String(actor.id || actor.name || "character");
+  const localId = rawId.includes(":") ? rawId.split(":").pop() : rawId;
+  const clean = localId.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_\u4e00-\u9fff-]/g, "");
+  if (actor.type === "user" && !actor.instanceId) return "@you";
+  return `@${clean || "character"}`;
+}
+
+function socialAvatarHtml(className, actor) {
+  const initial = Array.from(actor.name || "角")[0] || "角";
+  const src = /^(https?:\/\/|data:image\/|\/images\/|\/refs\/|\/local-refs\/|\/api\/social\/media\/)/i.test(actor.avatar) ? actor.avatar : "";
+  const image = src ? `<img src="${toolEscapeAttr(src)}" alt="" loading="lazy" onerror="this.remove()">` : "";
+  return `<div class="${className}" data-initial="${toolEscapeAttr(initial)}" aria-hidden="true">${image}</div>`;
+}
+
+function socialReplyAuthorOptions(selected = "user:user") {
+  const options = ['<option value="user:user">我</option>'].concat(characterItems.map(item =>
+    `<option value="character:${toolEscapeAttr(item.id)}">${toolEscapeHtml(item.name)}</option>`
+  ));
+  return options.join("").replace(`value="${toolEscapeAttr(selected)}"`, `value="${toolEscapeAttr(selected)}" selected`);
+}
+
+function socialCommentHtml(post, comment) {
+  const actor = socialActorSnapshot(comment);
+  const deleteButton = comment?.can_delete === true ? `<button class="gcx-comment-delete" type="button" onclick="deleteSocialComment(${jsStringArg(post.id)}, ${jsStringArg(comment.id)})" aria-label="删除回复" title="删除回复"><i class="fa-regular fa-trash-can" aria-hidden="true"></i></button>` : "";
+  return `<div class="gcx-comment">
+    ${socialAvatarHtml("gcx-comment-avatar", actor)}
+    <div class="gcx-comment-copy"><div class="gcx-comment-meta"><strong>${toolEscapeHtml(actor.name)}</strong><span>${toolEscapeHtml(socialHandle(actor))} · ${toolEscapeHtml(socialTimeLabel(comment.created_at))}</span></div><div class="gcx-comment-text">${toolEscapeHtml(comment.text || "")}</div></div>
+    ${deleteButton}
+  </div>`;
+}
+
+function socialMediaHtml(post) {
+  const media = Array.isArray(post.media) ? post.media.filter(item => item && /^(https?:\/\/|\/images\/|\/api\/social\/media\/)/.test(String(item.image_url || ""))) : [];
+  if (!media.length) return "";
+  const single = media.length === 1 ? " single" : "";
+  const multi3 = media.length >= 3 ? " multi3" : "";
+  return `<div class="gcx-post-media${single}${multi3}">${media.map(item => {
+    return `<button type="button" onclick="openGroupChatImage(${jsStringArg(item.image_url)})" aria-label="查看动态图片"><img src="${toolEscapeAttr(item.image_url)}" alt="${toolEscapeAttr(item.alt || "动态图片")}" loading="lazy" decoding="async"></button>`;
+  }).join("")}</div>`;
+}
+
+function socialReactionButton(post, kind, icon, label) {
+  const localKinds = Array.isArray(socialLocalReactions[post.id]) ? socialLocalReactions[post.id] : [];
+  const active = localKinds.includes(kind);
+  const count = active ? 1 : 0;
+  return `<button class="gcx-post-action${active ? " active" : ""}" type="button" data-kind="${toolEscapeAttr(kind)}" onclick="toggleSocialReaction(${jsStringArg(post.id)}, ${jsStringArg(kind)}, this)" aria-label="${toolEscapeAttr(label)}" title="${toolEscapeAttr(label)}" aria-pressed="${active ? "true" : "false"}"><i class="${toolEscapeAttr(icon)}" aria-hidden="true"></i><span class="label">${toolEscapeHtml(label)}</span><span>${count || ""}</span></button>`;
+}
+
+function socialPostHtml(post) {
+  const actor = socialActorSnapshot(post);
+  const comments = Array.isArray(post.comments) ? post.comments : [];
+  const replyOpen = socialReplyOpenPostId === post.id;
+  const fullTime = new Date(post.created_at || "").toLocaleString();
+  const deleteButton = post?.can_delete === true ? `<button class="gcx-post-delete" type="button" onclick="deleteSocialPost(${jsStringArg(post.id)})" aria-label="删除动态" title="删除动态"><i class="fa-regular fa-trash-can" aria-hidden="true"></i></button>` : "";
+  return `<article class="gcx-post" data-social-post-id="${toolEscapeAttr(post.id)}">
+    ${socialAvatarHtml("gcx-post-avatar", actor)}
+    <div class="gcx-post-main">
+      <div class="gcx-post-head"><div class="gcx-post-identity"><span class="gcx-post-name">${toolEscapeHtml(actor.name)}</span>${socialCharacterById(actor.id) || characterItems.some(item => String(item.name || "").trim() === String(actor.name || "").trim()) ? '<i class="fa-solid fa-circle-check gcx-post-verified" aria-hidden="true"></i>' : ""}<span class="gcx-post-handle">${toolEscapeHtml(socialHandle(actor))}</span><time class="gcx-post-time" datetime="${toolEscapeAttr(post.created_at || "")}" title="${toolEscapeAttr(fullTime)}">· ${toolEscapeHtml(socialTimeLabel(post.created_at))}</time></div>${deleteButton}</div>
+      ${post.text ? `<div class="gcx-post-text">${toolEscapeHtml(post.text)}</div>` : ""}
+      ${socialMediaHtml(post)}
+      <div class="gcx-post-actions">
+        <button class="gcx-post-action${replyOpen ? " active" : ""}" type="button" data-kind="reply" onclick="toggleSocialReply(${jsStringArg(post.id)})" aria-label="回复" title="回复" aria-expanded="${replyOpen ? "true" : "false"}"><i class="fa-regular fa-comment" aria-hidden="true"></i><span class="label">回复</span><span>${Number(post.comment_count || comments.length) || ""}</span></button>
+        ${socialReactionButton(post, "repost", "fa-solid fa-retweet", "转发")}
+        ${socialReactionButton(post, "like", activeSocialHeartIcon(post), "喜欢")}
+        ${socialReactionButton(post, "bookmark", "fa-regular fa-bookmark", "收藏")}
+        <button class="gcx-post-action" type="button" data-kind="share" onclick="copySocialPostText(${jsStringArg(post.id)})" aria-label="分享" title="分享"><i class="fa-solid fa-arrow-up-from-bracket" aria-hidden="true"></i><span class="label">分享</span><span></span></button>
+      </div>
+      <div class="gcx-thread">${comments.map(comment => socialCommentHtml(post, comment)).join("")}</div>
+      <div class="gcx-reply-composer"${replyOpen ? "" : " hidden"}><div class="gcx-reply-fields"><select id="socialReplyAuthor-${toolEscapeAttr(post.id)}" aria-label="回复身份">${socialReplyAuthorOptions()}</select><input id="socialReplyText-${toolEscapeAttr(post.id)}" type="text" maxlength="1200" placeholder="写下回复" onkeydown="handleSocialReplyKeydown(event, ${jsStringArg(post.id)})"></div><button class="btn btn-primary" type="button" onclick="createSocialComment(${jsStringArg(post.id)}, this)">回复</button></div>
+    </div>
+  </article>`;
+}
+
+function reflowSocialAlbumMedia() {
+  document.querySelectorAll("#socialFeed .gcx-post-media.multi3").forEach(container => {
+    const imgs = Array.from(container.querySelectorAll("img"));
+    const width = container.clientWidth;
+    if (!imgs.length || !width) return;
+    const gap = parseFloat(getComputedStyle(container).gap || "0") || 0;
+    const aspects = imgs.map(img => {
+      if (img.naturalWidth && img.naturalHeight) {
+        return img.naturalWidth / img.naturalHeight;
+      } else {
+        if (!img.dataset.albumReflow) {
+          img.dataset.albumReflow = "1";
+          img.addEventListener("load", reflowSocialAlbumMedia);
+        }
+        return 0.75;
+      }
+    });
+    const aspectSum = aspects.reduce((sum, value) => sum + value, 0);
+    if (!aspectSum) return;
+    const height = Math.max(56, Math.min(400, (width - gap * (imgs.length - 1)) / aspectSum));
+    imgs.forEach((img, index) => {
+      img.style.height = `${height.toFixed(2)}px`;
+      img.style.width = `${(height * aspects[index]).toFixed(2)}px`;
+    });
+  });
+}
+
+function activeSocialHeartIcon(post) {
+  return Array.isArray(socialLocalReactions[post.id]) && socialLocalReactions[post.id].includes("like") ? "fa-solid fa-heart" : "fa-regular fa-heart";
+}
+
+let socialFeedFilter = "forYou";
+let socialFeedQuery = "";
+
+function setSocialFeedFilter(mode, button) {
+  socialFeedFilter = ["forYou", "following"].includes(mode) ? mode : "forYou";
+  document.querySelectorAll("#gcxXFeedTabs button").forEach(tab => {
+    const active = tab.dataset.feedFilter === socialFeedFilter;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  renderSocialFeed();
+}
+
+function setSocialFeedQuery(value) {
+  socialFeedQuery = String(value || "").trim();
+  renderSocialFeed();
+}
+
+function socialPostMatchesFeedFilter(post) {
+  if (socialFeedFilter === "following") {
+    const actor = socialActorSnapshot(post);
+    const known = Boolean(socialCharacterById(actor.id));
+    const nameMatch = characterItems.some(item => String(item.name || "").trim() === String(actor.name || "").trim());
+    if (!known && !nameMatch) return false;
+  }
+  if (socialFeedQuery) {
+    const haystack = `${post.text || ""} ${post.author_snapshot?.display_name || ""}`.toLowerCase();
+    if (!haystack.includes(socialFeedQuery.toLowerCase())) return false;
+  }
+  return true;
+}
+
+function renderSocialFeed() {
+  const feed = document.getElementById("socialFeed");
+  if (!feed) return;
+  const visible = socialPosts.filter(socialPostMatchesFeedFilter);
+  feed.innerHTML = visible.map(socialPostHtml).join("");
+  const status = document.getElementById("socialFeedStatus");
+  if (status) {
+    if (visible.length) status.textContent = "";
+    else if (socialPosts.length) status.textContent = "没有符合条件的动态。";
+    else status.textContent = socialPostsLoaded ? "还没有动态，先让角色发布第一条吧。" : "正在加载动态...";
+  }
+  const more = document.getElementById("socialLoadMoreBtn");
+  if (more) more.hidden = !socialNextCursor;
+  requestAnimationFrame(reflowSocialAlbumMedia);
+}
+
+function replaceSocialPost(post) {
+  if (!post?.id) return;
+  const index = socialPosts.findIndex(item => item.id === post.id);
+  if (index >= 0) socialPosts[index] = post;
+  else socialPosts.unshift(post);
+  renderSocialFeed();
+}
+
+async function loadSocialPosts(options = {}) {
+  const append = options.append === true;
+  if (!append && socialPostsLoaded && !options.force) {
+    renderSocialFeed();
+    return socialPosts;
+  }
+  if (append && !socialNextCursor) return socialPosts;
+  if (socialPostsRequest) return socialPostsRequest;
+  const status = document.getElementById("socialFeedStatus");
+  if (status) status.textContent = append ? "正在加载更多..." : "正在加载动态...";
+  const params = new URLSearchParams({limit: "30"});
+  if (append) params.set("before", socialNextCursor);
+  socialPostsRequest = (async () => {
+    const res = await fetch(`${API}/api/social/posts?${params.toString()}`, {cache: "no-store"});
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    const incoming = Array.isArray(data.posts) ? data.posts : [];
+    if (append) {
+      const seen = new Set(socialPosts.map(item => item.id));
+      socialPosts = socialPosts.concat(incoming.filter(item => item?.id && !seen.has(item.id)));
+    } else {
+      socialPosts = incoming;
+    }
+    socialNextCursor = String(data.next_cursor || "");
+    socialPostsLoaded = true;
+    renderSocialFeed();
+    return socialPosts;
+  })().catch(error => {
+    if (status) status.textContent = `动态加载失败：${error?.message || "未知错误"}`;
+    const more = document.getElementById("socialLoadMoreBtn");
+    if (more) more.hidden = true;
+    return socialPosts;
+  }).finally(() => {
+    socialPostsRequest = null;
+  });
+  return socialPostsRequest;
+}
+
+function loadMoreSocialPosts() {
+  return loadSocialPosts({append: true});
+}
+
+function focusSocialComposer() {
+  setGroupChatWorkspaceView("feed");
+  requestAnimationFrame(() => document.getElementById("socialPostText")?.focus());
+}
+
+function selectSocialXAuthor(characterId) {
+  const select = document.getElementById("socialPostAuthor");
+  if (!select) return;
+  select.value = String(characterId || "");
+  updateSocialComposerAuthor();
+  focusSocialComposer();
+}
+
+async function copySocialPostText(postId) {
+  const post = socialPosts.find(item => item.id === postId);
+  const text = String(post?.text || "").trim();
+  if (!text) {
+    showToast("这条动态没有文字内容");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("动态内容已复制");
+  } catch (error) {
+    showToast("复制失败：" + (error?.message || "未知错误"));
+  }
+}
+
+function composeSocialXTrend(time, activity) {
+  const textarea = document.getElementById("socialPostText");
+  if (!textarea) return;
+  setGroupChatWorkspaceView("feed");
+  const line = `${String(time || "").trim()} ${String(activity || "").trim()}`.trim();
+  textarea.value = line.slice(0, 1200);
+  updateSocialComposerState();
+  requestAnimationFrame(() => textarea.focus());
+}
+
+function renderSocialXWhoToFollow() {
+  const container = document.getElementById("gcxXWhoToFollow");
+  if (!container) return;
+  const items = characterItems.slice(0, 3);
+  if (!items.length) {
+    container.innerHTML = '<div class="gcx-x-card-note">角色加载后可查看</div>';
+    return;
+  }
+  container.innerHTML = items.map(item => {
+    const avatar = item.referenceImageUrl
+      ? `<img src="${toolEscapeAttr(item.referenceImageUrl)}" alt="" onerror="this.remove()">`
+      : `<div class="gcx-avatar" data-initial="${toolEscapeAttr(characterAvatarInitial(item))}" aria-hidden="true"></div>`;
+    return `<div class="gcx-x-follow-item" role="button" tabindex="0" onclick="selectSocialXAuthor(${jsStringArg(item.id)})" title="以 ${toolEscapeAttr(item.name)} 的身份发布">
+      ${avatar}
+      <div class="gcx-x-follow-copy"><strong>${toolEscapeHtml(item.name)}</strong><span>@${toolEscapeHtml(item.id)}</span></div>
+      <button class="gcx-x-follow-btn" type="button" onclick="event.stopPropagation(); selectSocialXAuthor(${jsStringArg(item.id)})">发推</button>
+    </div>`;
+  }).join("");
+}
+
+let socialTrendExpanded = false;
+
+function renderSocialXTrends(detail) {
+  const container = document.getElementById("gcxXTrends");
+  if (!container) return;
+  const items = Array.isArray(detail?.schedule) ? detail.schedule : [];
+  if (!items.length) {
+    container.innerHTML = '<div class="gcx-x-card-note">今日日程暂未生成。</div>';
+    renderSocialXWhoToFollow();
+    return;
+  }
+  const visible = socialTrendExpanded ? items : items.slice(0, 5);
+  container.innerHTML = visible.map((item, index) => {
+    const time = String(item.time || "").trim();
+    const activity = String(item.activity || "").trim();
+    return `<button class="gcx-x-trend-item" type="button" onclick="composeSocialXTrend(${jsStringArg(time)}, ${jsStringArg(activity)})" title="写入动态草稿">
+      <span class="gcx-x-trend-rank">${index + 1} · 今日日程</span>
+      <strong>${toolEscapeHtml(activity.slice(0, 60))}</strong>
+      <span>${toolEscapeHtml(time)}</span>
+    </button>`;
+  }).join("") + (items.length > 5 ? `<button class="gcx-x-trend-more" type="button" onclick="toggleSocialTrendsExpanded()">${socialTrendExpanded ? "收起" : "显示更多"}</button>` : "");
+  renderSocialXWhoToFollow();
+}
+
+function toggleSocialTrendsExpanded() {
+  socialTrendExpanded = !socialTrendExpanded;
+  renderSocialXTrends(socialSchedulePanelData ? socialSchedulePanelData.detail : null);
+}
+
+async function createSocialPost() {
+  const button = document.getElementById("socialPostSubmitBtn");
+  const authorId = document.getElementById("socialPostAuthor")?.value || "";
+  const text = document.getElementById("socialPostText")?.value.trim() || "";
+  if (!authorId || (!text && !socialSelectedMediaList.length) || button?.disabled) return;
+  if (button) { button.disabled = true; button.textContent = "发布中..."; }
+  try {
+    const body = {
+      author_type: "character",
+      author_id: authorId,
+      text,
+      media: socialSelectedMediaList.map(item => ({
+        image_filename: item.image_filename,
+      })),
+    };
+    const res = await fetch(`${API}/api/social/posts`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    if (!data.post?.id) throw new Error("中心节点未返回有效动态");
+    socialPostsLoaded = true;
+    socialPosts = [data.post, ...socialPosts.filter(item => item.id !== data.post?.id)].filter(Boolean);
+    const textarea = document.getElementById("socialPostText");
+    if (textarea) textarea.value = "";
+    socialSelectedMediaList = [];
+    renderSocialMediaPreview();
+    renderSocialFeed();
+    showToast("动态已发布");
+  } catch(error) {
+    showToast("发布失败：" + (error?.message || "未知错误"));
+  } finally {
+    if (button) button.textContent = "发布";
+    updateSocialComposerState();
+  }
+}
+
+/* ===== 今日日程推文面板 ===== */
+function updateSocialScheduleTextCounter() {
+  const el = document.getElementById("socialScheduleText");
+  const counter = document.getElementById("socialScheduleTextCounter");
+  if (el && counter) {
+    counter.textContent = `${el.value.length} / 1200`;
+    counter.classList.toggle("over", el.value.length > 1150);
+  }
+}
+
+function updateSocialScheduleSendState() {
+  const text = document.getElementById("socialScheduleText")?.value.trim() || "";
+  const authorId = document.getElementById("socialPostAuthor")?.value || "";
+  const button = document.getElementById("socialScheduleSendBtn");
+  if (button) button.disabled = !text || !authorId || !socialSchedulePanelData;
+}
+
+async function loadSocialSchedulePanel(options = {}) {
+  const force = options.force === true;
+  const textarea = document.getElementById("socialScheduleText");
+  if (!textarea || (socialSchedulePanelData && !force)) {
+    renderSocialSchedulePanel();
+    return;
+  }
+  try {
+    const [detail, today] = await Promise.all([
+      fetch(`${API}/api/schedule-detail`).then(r => r.json()).catch(() => null),
+      fetch(`${API}/api/today`).then(r => r.json()).catch(() => null),
+    ]);
+    socialSchedulePanelData = { detail, today };
+    renderSocialSchedulePanel();
+    renderSocialXTrends(detail);
+    composeSocialScheduleText(false);
+  } catch (error) {
+    const avail = document.getElementById("socialScheduleAvail");
+    if (avail) avail.textContent = "今日日程读取失败：" + toolEscapeHtml(error?.message || "未知错误");
+  }
+}
+
+function renderSocialSchedulePanel() {
+  const avail = document.getElementById("socialScheduleAvail");
+  document.querySelectorAll("#socialScheduleCountBtns button").forEach(btn => {
+    btn.classList.toggle("active", Number(btn.dataset.count) === socialScheduleImageCount);
+  });
+  if (avail && socialSchedulePanelData) {
+    const photos = Array.isArray(socialSchedulePanelData.today?.photos) ? socialSchedulePanelData.today.photos : [];
+    const count = socialScheduleImageCount;
+    const missing = Math.max(0, count - photos.length);
+    avail.textContent = `今日已有照片 ${photos.length} 张，选择 ${count} 张${missing ? `，缺少 ${missing} 张将自动生成` : ""}。`;
+  }
+  updateSocialScheduleSendState();
+}
+
+function buildScheduleTweetFallback(detail) {
+  const lines = [];
+  const header = [];
+  if (detail && detail.theme_day) header.push(`✨ ${detail.theme_day}`);
+  if (detail && detail.outfit_style) header.push(`🌸 今日穿搭 · ${detail.outfit_style}`);
+  if (header.length) lines.push(header.join(" "));
+  const caption = String(detail?.caption || "").trim();
+  if (caption) lines.push(caption);
+  const items = Array.isArray(detail?.schedule) ? detail.schedule : [];
+  const highlights = items.slice(0, 2).map(item => {
+    const line = `${String(item.time || "").trim()} ${String(item.activity || "").trim()}`.trim();
+    return line ? `✨ ${line}` : "";
+  }).filter(Boolean);
+  if (highlights.length) lines.push(...highlights);
+  return trimScheduleTweetText(lines.filter(Boolean).join("\n"), 200);
+}
+
+function trimScheduleTweetText(text, limit) {
+  const trimmed = String(text || "").trim();
+  if (trimmed.length <= limit) return trimmed;
+  let cut = trimmed.slice(0, limit);
+  const match = cut.match(/^[\s\S]*[。！？!?…]/);
+  if (match && match[0].length >= Math.max(20, limit / 2)) cut = match[0];
+  return cut.replace(/\s+$/, "") + "…";
+}
+
+async function composeSocialScheduleText(force) {
+  const el = document.getElementById("socialScheduleText");
+  if (!el) return;
+  if (!force && el.value.trim()) return;
+  const button = document.querySelector("#socialScheduleTool .gcx-schedule-tool-actions button");
+  if (force && button) {
+    button.disabled = true;
+    button.innerHTML = '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> 整理中...';
+  }
+  try {
+    if (force || !socialSchedulePanelData) {
+      await loadSocialSchedulePanel({ force: force === true });
+    }
+    const detail = socialSchedulePanelData?.detail;
+    if (!detail || detail.status !== "ok") {
+      el.value = "";
+    } else {
+      const generated = await fetch(`${API}/api/social/schedule-tweet`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          theme_day: String(detail.theme_day || "").trim(),
+          outfit_style: String(detail.outfit_style || "").trim(),
+          caption: String(detail.caption || "").trim(),
+          schedule: (Array.isArray(detail.schedule) ? detail.schedule : []).slice(0, 12).map(item => ({
+            time: String(item.time || "").trim(),
+            activity: String(item.activity || "").trim(),
+          })),
+          image_count: socialScheduleImageCount || 6,
+        }),
+      }).then(r => r.json()).catch(() => null);
+      if (generated && generated.text && generated.text.trim()) {
+        el.value = trimScheduleTweetText(generated.text, 200);
+      } else {
+        el.value = buildScheduleTweetFallback(detail);
+      }
+    }
+    updateSocialScheduleTextCounter();
+    updateSocialScheduleSendState();
+    if (force) showToast("已按今日日程重新整理");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.innerHTML = '<i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> 重新整理';
+    }
+  }
+}
+
+function selectSocialScheduleImageCount(count) {
+  if (![1, 3, 6, 9].includes(count)) return;
+  socialScheduleImageCount = count;
+  try {
+    localStorage.setItem("gcx_schedule_image_count", String(count));
+  } catch (e) {
+  }
+  document.querySelectorAll("#socialScheduleCountBtns button").forEach(btn => {
+    btn.classList.toggle("active", Number(btn.dataset.count) === count);
+  });
+  renderSocialSchedulePanel();
+}
+
+function socialSchedulePhotoCandidates() {
+  const photos = Array.isArray(socialSchedulePanelData?.today?.photos) ? socialSchedulePanelData.today.photos : [];
+  const detail = socialSchedulePanelData?.detail;
+  const items = Array.isArray(detail?.schedule) ? detail.schedule : [];
+  const itemTimes = new Set(
+    items.map(item => String(item.time || "").trim().slice(0, 5)).filter(Boolean)
+  );
+  return photos
+    .filter(photo => photo && photo.image_filename && itemTimes.has(String(photo.time || photo.schedule_time || "").trim().slice(0, 5)))
+    .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")))
+    .map(photo => {
+      const item = items.find(it => String(it.time || "").slice(0, 5) === String(photo.time || "").slice(0, 5)) || {};
+      return {
+        image_filename: photo.image_filename,
+        image_url: `/images/${encodeURIComponent(photo.image_filename)}`,
+        alt: truncateGroupChatMetadataText(String(item.activity || photo.outfit_style || photo.caption || "今日日程照片"), 240),
+        time: String(photo.time || photo.schedule_time || "").trim().slice(0, 5),
+      };
+    });
+}
+
+async function generateScheduleTweetImage(item, characterId) {
+  const body = Object.assign({ character_id: characterId }, characterGenerationControlOptions());
+  body.prompt = `${String(item.time || "").trim()} ${String(item.activity || "").trim()}`.trim() || "今日日程中的日常瞬间";
+  body.reference_mode = "today_schedule";
+  body.tags = ["推文"];
+  const res = await fetch(`${API}/api/generate-character`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+  const media = socialMediaFromEntry(data, "generated");
+  if (!media) throw new Error("生成结果缺少图片文件名");
+  upsertGeneratedGalleryEntry(data);
+  return media;
+}
+
+async function publishScheduleTweet(button) {
+  const authorId = document.getElementById("socialPostAuthor")?.value || "";
+  if (!authorId) {
+    showToast("请先在动态输入框“以谁的身份”选择角色");
+    return;
+  }
+  const textarea = document.getElementById("socialScheduleText");
+  const text = textarea?.value.trim() || "";
+  if (!text) {
+    showToast("推文文案为空，请点击“重新整理”或手动填写");
+    return;
+  }
+  if (button.disabled) return;
+  await loadSocialSchedulePanel({force: true});
+  if (!socialSchedulePanelData) {
+    showToast("今日日程加载失败，请稍后重试");
+    return;
+  }
+  const detail = socialSchedulePanelData.detail;
+  const count = socialScheduleImageCount;
+  const chosen = socialSchedulePhotoCandidates().slice(0, count);
+  const missing = count - chosen.length;
+  const items = Array.isArray(detail?.schedule) ? detail.schedule.filter(item => item && (item.time || item.activity)) : [];
+  const coveredTimes = new Set(chosen.map(media => String(media.time || "").slice(0, 5)).filter(Boolean));
+  const uncoveredItems = items.filter(item => !coveredTimes.has(String(item.time || "").slice(0, 5)));
+  const label = button.querySelector("span");
+
+  document.getElementById("socialPostText").value = text;
+  updateSocialComposerState();
+  socialSelectedMediaList = chosen.slice();
+  renderSocialMediaPreview();
+
+  if (missing > 0) {
+    button.disabled = true;
+    try {
+      for (let index = 0; index < missing; index++) {
+        if (label) label.textContent = `生图中 ${index + 1}/${missing}...`;
+        const item = uncoveredItems[index] || items[index % Math.max(items.length, 1)] || {time: "", activity: "今日日程中的日常瞬间"};
+        const media = await generateScheduleTweetImage(item, authorId);
+        socialSelectedMediaList.push(media);
+        renderSocialMediaPreview();
+      }
+    } catch (error) {
+      showToast("补图失败：" + (error?.message || "未知错误") + "，已保留已选图片，可重试或直接发布");
+      button.disabled = false;
+      if (label) label.textContent = "整理并发送推文";
+      updateSocialScheduleSendState();
+      return;
+    }
+    button.disabled = false;
+    if (label) label.textContent = "整理并发送推文";
+    updateSocialScheduleSendState();
+  }
+  await createSocialPost();
+}
+
+function toggleSocialReply(postId) {
+  socialReplyOpenPostId = socialReplyOpenPostId === postId ? "" : postId;
+  renderSocialFeed();
+  if (socialReplyOpenPostId) {
+    requestAnimationFrame(() => document.getElementById(`socialReplyText-${postId}`)?.focus());
+  }
+}
+
+function handleSocialReplyKeydown(event, postId) {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    createSocialComment(postId, event.currentTarget.closest(".gcx-reply-composer")?.querySelector("button"));
+  }
+}
+
+async function createSocialComment(postId, button) {
+  const input = document.getElementById(`socialReplyText-${postId}`);
+  const authorSelect = document.getElementById(`socialReplyAuthor-${postId}`);
+  const text = input?.value.trim() || "";
+  if (!text || button?.disabled) return;
+  const [authorType, authorId] = String(authorSelect?.value || "user:user").split(":", 2);
+  if (button) { button.disabled = true; button.textContent = "发送中..."; }
+  try {
+    const res = await fetch(`${API}/api/social/posts/${encodeURIComponent(postId)}/comments`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({author_type: authorType, author_id: authorId, text}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    if (!data.post?.id) throw new Error("中心节点未返回有效回复动态");
+    socialReplyOpenPostId = "";
+    replaceSocialPost(data.post);
+  } catch(error) {
+    showToast("回复失败：" + (error?.message || "未知错误"));
+    if (button) { button.disabled = false; button.textContent = "回复"; }
+  }
+}
+
+function toggleSocialReaction(postId, kind, button) {
+  if (!postId || !["like", "repost", "bookmark"].includes(kind)) return;
+  const current = new Set(Array.isArray(socialLocalReactions[postId]) ? socialLocalReactions[postId] : []);
+  if (current.has(kind)) current.delete(kind);
+  else current.add(kind);
+  if (current.size) socialLocalReactions[postId] = Array.from(current);
+  else delete socialLocalReactions[postId];
+  window.galleryStorageSet("social_local_reactions", JSON.stringify(socialLocalReactions));
+  renderSocialFeed();
+}
+
+async function deleteSocialPost(postId) {
+  if (!window.confirm("删除这条动态？画廊中的原图会保留。")) return;
+  try {
+    const res = await fetch(`${API}/api/social/posts/${encodeURIComponent(postId)}`, {method: "DELETE"});
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    socialPosts = socialPosts.filter(item => item.id !== postId);
+    if (socialReplyOpenPostId === postId) socialReplyOpenPostId = "";
+    renderSocialFeed();
+    showToast("动态已删除，原图仍在画廊");
+  } catch(error) {
+    showToast("删除失败：" + (error?.message || "未知错误"));
+  }
+}
+
+async function deleteSocialComment(postId, commentId) {
+  if (!window.confirm("删除这条回复？")) return;
+  try {
+    const res = await fetch(`${API}/api/social/posts/${encodeURIComponent(postId)}/comments/${encodeURIComponent(commentId)}`, {method: "DELETE"});
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    replaceSocialPost(data.post);
+  } catch(error) {
+    showToast("删除回复失败：" + (error?.message || "未知错误"));
   }
 }
 
@@ -8170,6 +10632,15 @@ function openCharacterDetail(characterId) {
   if (item.editable) ensureLlmModelsForCharacterDetail(item.llmModel || "");
 }
 
+function openSelectedCharacterDetail() {
+  const characterIdValue = selectedCharacterId() || defaultCharacterId || characterItems[0]?.id || "";
+  if (!characterIdValue) {
+    showToast("暂无可查看的角色");
+    return;
+  }
+  openCharacterDetail(characterIdValue);
+}
+
 function closeCharacterDetail() {
   const overlay = document.getElementById("characterDetailOverlay");
   if (overlay) overlay.classList.remove("open");
@@ -8259,10 +10730,11 @@ function galleryPickerEntries() {
 
 async function ensureCharacterGalleryEntries() {
   if (galleryPickerEntries().length) return;
-  const res = await fetch(`${API}/api/gallery`);
+  const res = await fetch(`${API}/api/gallery?limit=48&include_prompt=false`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
   if (Array.isArray(data)) allEntries = data;
+  else if (Array.isArray(data?.items)) allEntries = data.items;
 }
 
 function renderCharacterGalleryPicker() {
@@ -8503,9 +10975,12 @@ function renderCharacterPickers() {
     type: "checkbox",
     name: "characterRole",
     selected: roleSelected,
-    emptyText: "暂无角色"
+    emptyText: "暂无角色",
+    detailOnClick: false
   });
   renderGroupChatParticipants();
+  renderSocialAuthorOptions();
+  renderSocialXWhoToFollow();
 }
 
 async function loadCharacters(options = {}) {
@@ -8649,6 +11124,11 @@ function selectCharacterInPickers(characterId) {
   Array.from(document.querySelectorAll('#characterGroupList input[type="checkbox"]')).forEach(input => {
     if (input.value === id) input.checked = true;
   });
+  const socialAuthor = document.getElementById("socialPostAuthor");
+  if (socialAuthor && characterItems.some(item => item.id === id)) {
+    socialAuthor.value = id;
+    updateSocialComposerAuthor();
+  }
 }
 
 async function saveManualCharacter() {
@@ -8723,8 +11203,32 @@ function activeTabName() {
 }
 
 function activeGroupChatGenerationRoomId() {
-  if (activeTabName() !== "group-chat") return "";
+  if (activeTabName() !== "group-chat" || groupChatImageTarget !== "chat") return "";
   return activeGroupChatRoom() ? activeGroupChatRoomId : "";
+}
+
+function groupChatGenerationNeedsRoom() {
+  return activeTabName() === "group-chat" && groupChatImageTarget === "chat";
+}
+
+function setCharacterGenerateButtonText(button, text) {
+  if (!button) return;
+  const label = button.querySelector("span");
+  if (label) label.textContent = text;
+  else button.textContent = text;
+}
+
+function insertGeneratedImageIntoSocialDraft(entry, characterIds = []) {
+  setSocialMediaFromEntry(entry, "generated");
+  const authorSelect = document.getElementById("socialPostAuthor");
+  const preferredAuthor = (Array.isArray(characterIds) ? characterIds : [])
+    .find(id => characterItems.some(item => item.id === id));
+  if (authorSelect && preferredAuthor) {
+    authorSelect.value = preferredAuthor;
+    updateSocialComposerAuthor();
+  }
+  setGroupChatWorkspaceView("feed");
+  document.getElementById("socialPostText")?.focus();
 }
 
 function generatedEntryImageFilename(entry) {
@@ -8863,13 +11367,14 @@ async function generateCharacterPortrait() {
   const character_id = selectedCharacterId();
   const body = Object.assign({ character_id }, characterGenerationOptions());
   const targetRoomId = activeGroupChatGenerationRoomId();
+  const targetSocialDraft = activeTabName() === "group-chat" && groupChatImageTarget === "feed";
   if (!character_id) { showToast("请先选择角色"); return; }
   if (!body.prompt) { showToast("请先输入生成提示词"); return; }
-  if (activeTabName() === "group-chat" && !targetRoomId) { showToast("请先选择房间"); return; }
+  if (groupChatGenerationNeedsRoom() && !targetRoomId) { showToast("请先选择房间"); return; }
   const btn = characterGenerateButton("single");
   if (btn && btn.disabled) return;
   if (targetRoomId) body.reference_mode = "today_schedule";
-  if (btn) { btn.disabled = true; btn.textContent = "生成中..."; }
+  if (btn) { btn.disabled = true; setCharacterGenerateButtonText(btn, "生成中..."); }
   setToolStatus("characterStatus", "生成中");
   try {
     const res = await fetch(`${API}/api/generate-character`, {
@@ -8883,13 +11388,17 @@ async function generateCharacterPortrait() {
     if (targetRoomId) {
       try {
         await appendGeneratedImageToGroupChatRoom(targetRoomId, data, [character_id]);
-        setGroupChatMobileView("chat");
+        setGroupChatWorkspaceView("chat");
         setToolStatus("characterStatus", "已发送到房间", "ok");
         showToast("图片已发送到房间");
       } catch(sendError) {
         setToolStatus("characterStatus", "发送到房间失败", "error");
         showToast("图片已生成，发送到房间失败：" + (sendError && sendError.message ? sendError.message : "未知错误"));
       }
+    } else if (targetSocialDraft) {
+      insertGeneratedImageIntoSocialDraft(data, [character_id]);
+      setToolStatus("characterStatus", "已插入动态草稿", "ok");
+      showToast("图片已插入动态草稿");
     } else {
       showToast("生成完成");
       await revealGeneratedGalleryEntry(data);
@@ -8898,7 +11407,7 @@ async function generateCharacterPortrait() {
     setToolStatus("characterStatus", "生成失败", "error");
     showToast("生成失败：" + (e && e.message ? e.message : "未知错误"));
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = characterGenerateIdleText(btn, "生成图片"); }
+    if (btn) { btn.disabled = false; setCharacterGenerateButtonText(btn, characterGenerateIdleText(btn, "生成图片")); }
   }
 }
 
@@ -8943,13 +11452,14 @@ async function generateGroupPortrait() {
   const character_ids = selectedGroupCharacterIds();
   const body = Object.assign({ character_ids }, characterGenerationOptions());
   const targetRoomId = activeGroupChatGenerationRoomId();
+  const targetSocialDraft = activeTabName() === "group-chat" && groupChatImageTarget === "feed";
   if (character_ids.length < 2) { showToast("请至少选择 2 个角色"); return; }
   if (!body.prompt) { showToast("请先输入生成提示词"); return; }
-  if (activeTabName() === "group-chat" && !targetRoomId) { showToast("请先选择房间"); return; }
+  if (groupChatGenerationNeedsRoom() && !targetRoomId) { showToast("请先选择房间"); return; }
   const btn = characterGenerateButton("group");
   if (btn && btn.disabled) return;
   if (targetRoomId) body.reference_mode = "today_schedule";
-  if (btn) { btn.disabled = true; btn.textContent = "生成中..."; }
+  if (btn) { btn.disabled = true; setCharacterGenerateButtonText(btn, "生成中..."); }
   setToolStatus("characterStatus", "生成中");
   try {
     const res = await fetch(`${API}/api/generate-group`, {
@@ -8963,13 +11473,17 @@ async function generateGroupPortrait() {
     if (targetRoomId) {
       try {
         await appendGeneratedImageToGroupChatRoom(targetRoomId, data, character_ids);
-        setGroupChatMobileView("chat");
+        setGroupChatWorkspaceView("chat");
         setToolStatus("characterStatus", "已发送到房间", "ok");
         showToast("图片已发送到房间");
       } catch(sendError) {
         setToolStatus("characterStatus", "发送到房间失败", "error");
         showToast("图片已生成，发送到房间失败：" + (sendError && sendError.message ? sendError.message : "未知错误"));
       }
+    } else if (targetSocialDraft) {
+      insertGeneratedImageIntoSocialDraft(data, character_ids);
+      setToolStatus("characterStatus", "已插入动态草稿", "ok");
+      showToast("图片已插入动态草稿");
     } else {
       showToast("生成完成");
       await revealGeneratedGalleryEntry(data);
@@ -8978,7 +11492,7 @@ async function generateGroupPortrait() {
     setToolStatus("characterStatus", "生成失败", "error");
     showToast("生成失败：" + (e && e.message ? e.message : "未知错误"));
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = characterGenerateIdleText(btn, "生成图片"); }
+    if (btn) { btn.disabled = false; setCharacterGenerateButtonText(btn, characterGenerateIdleText(btn, "生成图片")); }
   }
 }
 
@@ -9412,7 +11926,7 @@ async function openGroupChatImage(value) {
     openModal(entry);
     return;
   }
-  if (/^(https?:\/\/|data:image\/|\/images\/)/i.test(raw)) {
+  if (/^(https?:\/\/|data:image\/|\/images\/|\/api\/social\/media\/)/i.test(raw)) {
     openFullscreenImg(raw);
     return;
   }
@@ -9918,6 +12432,7 @@ function updateFavoriteButtonState(imgId, isFavorite) {
     if (button.dataset.favoriteImg !== imgId) return;
     button.classList.toggle('liked', isFavorite);
     button.setAttribute('aria-label', isFavorite ? '取消收藏' : '收藏');
+    button.setAttribute('title', isFavorite ? '取消收藏' : '收藏');
     const icon = button.querySelector('.fa-heart');
     if (icon) {
       icon.classList.toggle('fa-solid', isFavorite);
@@ -10082,7 +12597,7 @@ function switchTab(tab) {
     renderWardrobe();
   } else if (tab === "group-chat") {
     if (groupChatSec) groupChatSec.classList.remove("hidden");
-    setGroupChatMobileView("chat");
+    setGroupChatWorkspaceView("feed", {focusPrompt: false});
     showFavoritesOnly = false;
     showUnfavoritesOnly = false;
     showTodayOnly = false;
@@ -10093,6 +12608,8 @@ function switchTab(tab) {
       renderGroupChatParticipants();
       loadGroupChatRooms();
     });
+    loadSocialPosts();
+    loadSocialHubConfig({test: true});
     loadCharacterImageModels();
   } else {
     if (gallerySec) gallerySec.classList.remove("hidden");
@@ -10121,12 +12638,8 @@ async function triggerGenerate() {
       headers: {"Content-Type": "application/json"},
     }, IMAGE_OPERATION_TIMEOUT_MS, '生图请求超时，后台可能仍在处理，请稍后刷新画廊');
     const data = await res.json();
-    if (data.error || data.status === "limit_reached") {
-      if (data.error === "limit_reached" || data.status === "limit_reached") {
-        showToast("⚠️ " + (data.message || "今日生图计划已达上限"));
-      } else {
-        showToast("❌ " + (data.message || data.error));
-      }
+    if (data.error) {
+      showToast("❌ " + (data.message || data.error));
     } else {
       showToast("✨ 新图生成完成～");
       await loadGallery();
@@ -10382,7 +12895,7 @@ function renderToday() {
 
     const captionHtml = renderThoughtBlock(today.caption, "modal-caption tc-thought", today.caption_status);
     const todayStyle = displayOutfitStyle(today);
-    const metaHtml = `${today.model_name ? `<span class="meta-tag">🤖 ${escapeHtml(today.model_name)}</span>` : ""}${renderReferenceMetaTag(today)}${displayImageSizeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayImageSizeMeta(today))}</span>` : ""}${displayFileSizeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayFileSizeMeta(today))}</span>` : ""}${displayGenerationTimeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayGenerationTimeMeta(today))}</span>` : ""}${renderRerollButton(today)}`;
+    const metaHtml = `${today.model_name ? `<span class="meta-tag">🤖 ${escapeHtml(today.model_name)}</span>` : ""}${renderEntryTagsMeta(today)}${renderReferenceMetaTag(today)}${displayImageSizeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayImageSizeMeta(today))}</span>` : ""}${displayFileSizeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayFileSizeMeta(today))}</span>` : ""}${displayGenerationTimeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayGenerationTimeMeta(today))}</span>` : ""}${renderRerollButton(today)}`;
 
     html += `
       <div class="today-compact" data-gallery-img="${todayImageFilenameAttr}" style="cursor:default;">
@@ -10402,6 +12915,7 @@ function renderToday() {
           ${captionHtml}
           <div class="modal-actions" onclick="event.stopPropagation()">
             <button class="mbtn ${today.favorite ? 'liked' : ''}" data-favorite-img="${todayImageFilenameAttr}" aria-label="${today.favorite ? '取消收藏' : '收藏'}" onclick="event.stopPropagation();toggleFavorite(${todayImageArg},event)"><i class="${today.favorite ? 'fa-solid' : 'fa-regular'} fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
+            <button class="mbtn" onclick="shareGalleryImageToSocial(${todayImageArg}, event)"><i class="fa-solid fa-paper-plane btn-icon" aria-hidden="true"></i> 发推</button>
             <button class="mbtn" onclick="event.stopPropagation();shareImage(${todayImageArg});"><i class="fa-solid fa-share-nodes btn-icon" aria-hidden="true"></i> 分享</button>
             <button class="mbtn" onclick="event.stopPropagation();showPrompt(this)" data-image="${todayImageFilenameAttr}" data-prompt="${encodeURIComponent(today.prompt || '')}"><i class="fa-regular fa-pen-to-square btn-icon" aria-hidden="true"></i> 提示词</button>
             <button class="mbtn danger" onclick="event.stopPropagation();deleteImage(${todayDeleteArg}, event);"><i class="fa-regular fa-trash-can btn-icon" aria-hidden="true"></i> 删除</button>
@@ -10612,6 +13126,7 @@ function renderGallery() {
           const timeDisplay = e.time ? e.time : "";
           let metaHtml = "";
           if (e.model_name) metaHtml += `<span class="tc-meta-tag">🤖 ${escapeHtml(e.model_name)}</span>`;
+          metaHtml += renderEntryTagsMeta(e, "tc-meta-tag");
           metaHtml += renderReferenceMetaTag(e, "tc-meta-tag");
           const sizeLabel = displayImageSizeMeta(e);
           if (sizeLabel) metaHtml += `<span class="tc-meta-tag">${escapeHtml(sizeLabel)}</span>`;
@@ -10647,6 +13162,7 @@ function renderGallery() {
                 ${periodHtml}
                 <div class="tc-actions">
                   <button class="tc-btn ${e.favorite ? 'liked' : ''}" onclick="toggleFavorite(${imageFilenameArg}, event)" data-img="${safeImageFilename}" data-favorite-img="${safeImageFilename}" aria-label="${e.favorite ? '取消收藏' : '收藏'}"><i class="${e.favorite ? 'fa-solid' : 'fa-regular'} fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
+                  <button class="tc-btn" onclick="shareGalleryImageToSocial(${imageFilenameArg}, event)"><i class="fa-solid fa-paper-plane btn-icon" aria-hidden="true"></i> 发推</button>
                   <button class="tc-btn" onclick="shareImage(${imageFilenameArg}, event)"><i class="fa-solid fa-share-nodes btn-icon" aria-hidden="true"></i> 分享</button>
                   <button class="tc-btn" onclick="showPrompt(this)" data-image="${safeImageFilename}" data-prompt="${encodeURIComponent(e.prompt || '')}"><i class="fa-regular fa-pen-to-square btn-icon" aria-hidden="true"></i> 提示词</button>
                   <button class="tc-btn danger" onclick="deleteImage(${deleteArg}, event)"><i class="fa-regular fa-trash-can btn-icon" aria-hidden="true"></i> 删除</button>
@@ -10671,6 +13187,7 @@ function renderGallery() {
           const timeDisplay = e.time ? e.time : "";
           let metaHtml = "";
           if (e.model_name) metaHtml += `<span class="meta-tag meta-model">🤖 ${escapeHtml(e.model_name)}</span>`;
+          metaHtml += renderEntryTagsMeta(e, "meta-tag meta-ref");
           metaHtml += renderReferenceMetaTag(e, "meta-tag meta-ref");
           return `
             <div class="gallery-card" data-gallery-img="${imageFilenameAttr}" onclick="event.stopPropagation();openModal(allEntries.find(x=>x.image_filename===${imageFilenameArg}),this.querySelector('.card-edit-btn'))">
@@ -10686,10 +13203,11 @@ function renderGallery() {
                 </div>
                 ${metaHtml ? `<div class="card-meta">${metaHtml}</div>` : ''}
                 <div class="card-actions">
-                  <button class="ca-btn ${e.favorite ? 'liked' : ''}" aria-label="${e.favorite ? '取消收藏' : '收藏'}" onclick="event.stopPropagation();toggleFavorite(${imageFilenameArg}, event)" data-img="${imageFilenameAttr}" data-favorite-img="${imageFilenameAttr}"><i class="${e.favorite ? 'fa-solid' : 'fa-regular'} fa-heart ca-icon" aria-hidden="true"></i><span class="ca-label">收藏</span></button>
+                  <button class="ca-btn ${e.favorite ? 'liked' : ''}" title="${e.favorite ? '取消收藏' : '收藏'}" aria-label="${e.favorite ? '取消收藏' : '收藏'}" onclick="event.stopPropagation();toggleFavorite(${imageFilenameArg}, event)" data-img="${imageFilenameAttr}" data-favorite-img="${imageFilenameAttr}"><i class="${e.favorite ? 'fa-solid' : 'fa-regular'} fa-heart ca-icon" aria-hidden="true"></i><span class="ca-label">收藏</span></button>
                   ${renderRerollButton(e, {card: true})}
-                  <button class="ca-btn card-edit-btn" aria-label="编辑图片" onclick="event.stopPropagation();openImageEditForImage(${imageFilenameArg})"><i class="fa-solid fa-wand-magic-sparkles ca-icon" aria-hidden="true"></i><span class="ca-label">编辑</span></button>
-                  <button class="ca-btn danger" aria-label="删除" onclick="event.stopPropagation();deleteImage(${deleteArg}, event)"><i class="fa-regular fa-trash-can ca-icon" aria-hidden="true"></i><span class="ca-label">删除</span></button>
+                  <button class="ca-btn card-edit-btn" title="编辑图片" aria-label="编辑图片" onclick="event.stopPropagation();openImageEditForImage(${imageFilenameArg})"><i class="fa-solid fa-wand-magic-sparkles ca-icon" aria-hidden="true"></i><span class="ca-label">编辑</span></button>
+                  <button class="ca-btn" title="发推" aria-label="发推" onclick="shareGalleryImageToSocial(${imageFilenameArg}, event)"><i class="fa-solid fa-paper-plane ca-icon" aria-hidden="true"></i><span class="ca-label">发推</span></button>
+                  <button class="ca-btn danger" title="删除" aria-label="删除" onclick="event.stopPropagation();deleteImage(${deleteArg}, event)"><i class="fa-regular fa-trash-can ca-icon" aria-hidden="true"></i><span class="ca-label">删除</span></button>
                 </div>
               </div>
             </div>`;
@@ -10914,7 +13432,7 @@ ms.textContent = `
 .modal-actions .mbtn.active:disabled { opacity: 1; }
 .today-compact .modal-actions {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   width: 100%;
   margin-top: 6px;
   padding-top: 6px;
@@ -10924,7 +13442,7 @@ ms.textContent = `
 }
 .modal-content .today-card-info .modal-actions {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   margin-top: auto;
   padding-top: 10px;
   gap: 7px;
@@ -11276,6 +13794,7 @@ modalOverlay.innerHTML = `
       <div class="modal-caption tc-thought" id="modalCaption"></div>
 	      <div class="modal-actions">
 	        <button class="mbtn" id="modalFav" onclick="modalToggleFav()"><i class="fa-regular fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
+	        <button class="mbtn" id="modalSocialPost" onclick="shareCurrentModalImageToSocial(event)"><i class="fa-solid fa-paper-plane btn-icon" aria-hidden="true"></i> 发推</button>
 	        <button class="mbtn" id="modalWardrobe" onclick="modalAddToWardrobe()" title="收藏到衣柜"><i class="fa-solid fa-shirt btn-icon" aria-hidden="true"></i> 入衣柜</button>
 	        <button class="mbtn" id="modalEditBtn" onclick="openImageEdit()"><i class="fa-solid fa-wand-magic-sparkles btn-icon" aria-hidden="true"></i> 编辑</button>
 	        <button class="mbtn" id="modalPromptBtn" onclick="showPrompt(this)"><i class="fa-regular fa-pen-to-square btn-icon" aria-hidden="true"></i> 提示词</button>
@@ -11360,11 +13879,11 @@ deleteConfirmOverlay.className = "delete-confirm-overlay";
 deleteConfirmOverlay.id = "deleteConfirmOverlay";
 deleteConfirmOverlay.setAttribute("aria-hidden", "true");
 deleteConfirmOverlay.innerHTML = `
-  <div class="delete-confirm-card" role="dialog" aria-modal="true" aria-labelledby="deleteConfirmTitle" onclick="event.stopPropagation()">
-    <div class="delete-confirm-icon" aria-hidden="true">🗑</div>
+  <div class="delete-confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="deleteConfirmTitle" aria-describedby="deleteConfirmDescription" tabindex="-1" onclick="event.stopPropagation()">
+    <div class="delete-confirm-icon" aria-hidden="true"><i class="fa-solid fa-trash-can"></i></div>
     <div class="delete-confirm-copy">
       <strong id="deleteConfirmTitle">删除这条穿搭？</strong>
-      <span>图片和记录会一起移除，收藏状态也会同步更新。</span>
+      <span id="deleteConfirmDescription">图片和记录会一起移除，收藏状态也会同步更新。</span>
     </div>
     <div class="delete-confirm-actions">
       <button class="delete-confirm-btn ghost" id="deleteConfirmCancel" type="button">取消</button>
@@ -11644,6 +14163,7 @@ function openModal(e, returnFocusTarget = null) {
   // Meta tags (model + base_style)
   let metaHtml = "";
   if (e.model_name) metaHtml += `<span class="meta-tag">🤖 ${escapeHtml(e.model_name)}</span>`;
+  metaHtml += renderEntryTagsMeta(e);
   metaHtml += renderReferenceMetaTag(e);
   const sizeLabel = displayImageSizeMeta(e);
   if (sizeLabel) metaHtml += `<span class="meta-tag">${escapeHtml(sizeLabel)}</span>`;
@@ -12026,44 +14546,41 @@ function modalDelete() {
 }
 
 let deleteConfirmResolve = null;
-let deleteConfirmLastFocus = null;
 
 function closeDeleteConfirm(confirmed) {
   if (!deleteConfirmResolve) return;
   const resolve = deleteConfirmResolve;
   deleteConfirmResolve = null;
   deleteConfirmOverlay.classList.remove("open");
-  deleteConfirmOverlay.setAttribute("aria-hidden", "true");
-  document.removeEventListener("keydown", handleDeleteConfirmKeydown, true);
-  if (deleteConfirmLastFocus && typeof deleteConfirmLastFocus.focus === "function") {
-    deleteConfirmLastFocus.focus({ preventScroll: true });
-  }
+  deactivateAccessibleDialog(deleteConfirmOverlay);
   resolve(Boolean(confirmed));
 }
 
-function handleDeleteConfirmKeydown(event) {
-  if (!deleteConfirmResolve) return;
-  if (event.key === "Escape") {
-    event.preventDefault();
-    closeDeleteConfirm(false);
-    return;
-  }
-  if (event.key === "Enter" || event.key === " " || event.code === "Space") {
-    event.preventDefault();
-    closeDeleteConfirm(true);
-  }
+function confirmDeleteAction(options = {}) {
+  if (deleteConfirmResolve) closeDeleteConfirm(false);
+  const title = String(options.title || "删除这条穿搭？");
+  const description = String(options.description || "图片和记录会一起移除，收藏状态也会同步更新。");
+  const confirmLabel = String(options.confirmLabel || "删除");
+  document.getElementById("deleteConfirmTitle").textContent = title;
+  document.getElementById("deleteConfirmDescription").textContent = description;
+  document.getElementById("deleteConfirmOk").textContent = confirmLabel;
+  deleteConfirmOverlay.classList.add("open");
+  activateAccessibleDialog(
+    deleteConfirmOverlay,
+    "#deleteConfirmOk",
+    options.returnFocusTarget instanceof HTMLElement ? options.returnFocusTarget : null
+  );
+  document.getElementById("deleteConfirmCancel").onclick = () => closeDeleteConfirm(false);
+  document.getElementById("deleteConfirmOk").onclick = () => closeDeleteConfirm(true);
+  return new Promise(resolve => { deleteConfirmResolve = resolve; });
 }
 
 function confirmDeleteImage() {
-  if (deleteConfirmResolve) closeDeleteConfirm(false);
-  deleteConfirmLastFocus = document.activeElement;
-  deleteConfirmOverlay.classList.add("open");
-  deleteConfirmOverlay.removeAttribute("aria-hidden");
-  document.getElementById("deleteConfirmCancel").onclick = () => closeDeleteConfirm(false);
-  document.getElementById("deleteConfirmOk").onclick = () => closeDeleteConfirm(true);
-  document.addEventListener("keydown", handleDeleteConfirmKeydown, true);
-  requestAnimationFrame(() => document.getElementById("deleteConfirmOk")?.focus({ preventScroll: true }));
-  return new Promise(resolve => { deleteConfirmResolve = resolve; });
+  return confirmDeleteAction({
+    title: "删除这条穿搭？",
+    description: "图片和记录会一起移除，收藏状态也会同步更新。",
+    confirmLabel: "删除"
+  });
 }
 
 function setRerollButtonLoading(btn, loading) {
@@ -12957,10 +15474,11 @@ function renderRefImages(defaultRefs, uploadRefs, options = {}) {
 
   uploadRefs.forEach((u, idx) => {
     const label = escapeHtml(u.label || "自定义上传");
+    const labelAttr = escapeAttr(u.label || "自定义上传");
     const url = escapeHtml(u.url || "");
     html += `<div class="cg-ref-item uploaded" data-ref="${url}" data-idx="${idx}" title="${label}">
       <img src="${url}" alt="${label}" loading="lazy" decoding="async" style="object-fit:cover;width:100%;height:100%;">
-      <button class="cg-ref-del" onclick="event.stopPropagation();deleteUploadedRef(${idx})">✕</button>
+      <button class="cg-ref-del" type="button" aria-label="删除${labelAttr}参考图" title="删除${labelAttr}参考图" onclick="event.stopPropagation();deleteUploadedRef(${idx}, this)">✕</button>
     </div>`;
   });
 
@@ -12996,7 +15514,10 @@ async function loadRefImages(options = {}) {
 
 function setXiaohongshuSearchStatus(message) {
   const element = document.getElementById("xhsSearchStatus");
-  if (element) element.textContent = message || "";
+  if (!element) return;
+  const text = String(message || "").trim();
+  element.textContent = text;
+  element.hidden = !text;
 }
 
 function xiaohongshuCreatorAvatar(creator) {
@@ -13477,24 +15998,33 @@ async function uploadRefImage(event) {
   } catch(e) { showToast("❌ " + e.message); }
   event.target.value = "";
 }
-function deleteUploadedRef(idx) {
+async function deleteUploadedRef(idx, trigger) {
   const ref = uploadedRefs[idx];
-  if (!ref || !confirm(`确定删除"${ref.label}"参考图吗？`)) return;
+  if (!ref || !ref.filename) return;
+  const confirmed = await confirmDeleteAction({
+    title: "删除参考图？",
+    description: `“${ref.label || "这张自定义上传的参考图"}”将从本地参考图中移除，删除后无法恢复。`,
+    confirmLabel: "删除参考图",
+    returnFocusTarget: trigger
+  });
+  if (!confirmed) return;
   const filename = ref.filename;
-  fetch(`${API}/api/uploaded-refs/${encodeURIComponent(filename)}`, { method: "DELETE" })
-    .then(res => res.json())
-    .then(data => {
-      if (data.success) {
-        showToast("🗑 已删除");
-      } else {
-        showToast("❌ 删除失败");
-      }
-      loadRefImages();
-    })
-    .catch(e => {
-      showToast("❌ " + e.message);
-      loadRefImages();
-    });
+  try {
+    const response = await fetch(`${API}/api/uploaded-refs/${encodeURIComponent(filename)}`, { method: "DELETE" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) {
+      throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    }
+    showToast("🗑 已删除参考图");
+  } catch (error) {
+    showToast("❌ 删除参考图失败：" + (error?.message || "未知错误"));
+  } finally {
+    try {
+      await loadRefImages();
+    } catch (error) {
+      showToast("参考图列表刷新失败：" + (error?.message || "未知错误"));
+    }
+  }
 }
 async function deleteXiaohongshuRef(index) {
   const ref = xiaohongshuRefs[index];
@@ -13816,6 +16346,7 @@ let xhsLoginStatusRequestGeneration = 0;
 let xhsLoginStatusPollBusy = false;
 let xhsLoginQrRequestInFlight = null;
 let xhsLoginStatusRequestInFlight = null;
+let xhsLoginProbeRequestInFlight = null;
 let xhsLoginExpiryCheckBusy = false;
 let xhsLoginAutoRefreshFailures = 0;
 const XHS_QR_RETRY_BASE_DELAY_MS = 3000;
@@ -14027,33 +16558,45 @@ function updateXiaohongshuQrCountdown() {
   return remaining;
 }
 
-function getXiaohongshuStatusRequest() {
-  if (xhsLoginStatusRequestInFlight) return xhsLoginStatusRequestInFlight;
+function getXiaohongshuStatusRequest({ probe = false } = {}) {
+  const activeRequest = probe
+    ? xhsLoginProbeRequestInFlight
+    : xhsLoginStatusRequestInFlight;
+  if (activeRequest) return activeRequest;
   const request = (async () => {
-    const response = await fetch(`${API}/api/xiaohongshu/status`);
+    const response = await fetch(`${API}/api/xiaohongshu/status${probe ? "?probe=1" : ""}`);
     const data = await response.json().catch(() => ({}));
     return { response, data };
   })();
-  xhsLoginStatusRequestInFlight = request;
+  if (probe) xhsLoginProbeRequestInFlight = request;
+  else xhsLoginStatusRequestInFlight = request;
   void request.then(
     () => {
-      if (xhsLoginStatusRequestInFlight === request) xhsLoginStatusRequestInFlight = null;
+      if (probe && xhsLoginProbeRequestInFlight === request) xhsLoginProbeRequestInFlight = null;
+      if (!probe && xhsLoginStatusRequestInFlight === request) xhsLoginStatusRequestInFlight = null;
     },
     () => {
-      if (xhsLoginStatusRequestInFlight === request) xhsLoginStatusRequestInFlight = null;
+      if (probe && xhsLoginProbeRequestInFlight === request) xhsLoginProbeRequestInFlight = null;
+      if (!probe && xhsLoginStatusRequestInFlight === request) xhsLoginStatusRequestInFlight = null;
     },
   );
   return request;
 }
 
-async function loadXiaohongshuStatus(silent = false, expectedGeneration = xhsLoginRequestGeneration) {
+async function loadXiaohongshuStatus(
+  silent = false,
+  expectedGeneration = xhsLoginRequestGeneration,
+  options = {},
+) {
+  const probe = options?.probe === true;
+  const refreshLoginState = options?.refreshLoginState === true;
   const statusRequestGeneration = ++xhsLoginStatusRequestGeneration;
   const button = document.getElementById("xhsStatusButton");
   const message = document.getElementById("xhsLoginMessage");
   if (button && !silent) button.disabled = true;
-  if (!silent) setXiaohongshuLoginState("", "正在检测");
+  if (!silent) setXiaohongshuLoginState("", probe ? "正在检查服务" : "正在检测");
   try {
-    const { response, data } = await getXiaohongshuStatusRequest();
+    const { response, data } = await getXiaohongshuStatusRequest({ probe });
     if (
       expectedGeneration !== xhsLoginRequestGeneration
       || statusRequestGeneration !== xhsLoginStatusRequestGeneration
@@ -14061,6 +16604,32 @@ async function loadXiaohongshuStatus(silent = false, expectedGeneration = xhsLog
     if (!response.ok || data.error) {
       setXiaohongshuLoginState("offline", "服务不可用");
       if (message) message.textContent = data.message || data.error || `HTTP ${response.status}`;
+      return false;
+    }
+    if (data.login_state === "unknown") {
+      if (data.service_running) {
+        setXiaohongshuLoginState("", "服务已就绪");
+        if (message) {
+          message.textContent = refreshLoginState
+            ? "正在后台确认登录状态"
+            : "点击“检测状态”确认登录状态";
+        }
+      } else {
+        setXiaohongshuLoginState("offline", "服务未启动");
+        if (message) {
+          message.textContent = refreshLoginState
+            ? "正在启动服务并确认登录状态"
+            : (data.message || "请检查小红书 MCP 配置");
+        }
+      }
+      if (refreshLoginState) {
+        window.setTimeout(() => {
+          if (
+            expectedGeneration === xhsLoginRequestGeneration
+            && isXiaohongshuLoginPanelActive()
+          ) void loadXiaohongshuStatus(true, expectedGeneration);
+        }, 0);
+      }
       return false;
     }
     if (data.is_logged_in) {
@@ -14228,7 +16797,10 @@ function setSettingsPanel(panel) {
     section.classList.toggle("active", section.dataset.settingsPanelContent === normalized);
   });
   if (normalized === "xiaohongshu") {
-    loadXiaohongshuStatus();
+    loadXiaohongshuStatus(false, xhsLoginRequestGeneration, {
+      probe: true,
+      refreshLoginState: true,
+    });
     loadXiaohongshuScheduleMode();
   }
 }
@@ -16016,6 +18588,9 @@ function themeDayScheduleDate() {
 
 function renderThemeDayEnabled() {
   var toggle = document.getElementById('eggThemeDayEnabled');
+  var panel = document.getElementById('eggThemeDayControls');
+  var state = document.getElementById('eggThemeDayState');
+  var generateLabel = document.getElementById('eggThemeDayGenerateLabel');
   var interactionLocked = themeDayBusy || themeDayManualReferenceBusy;
   var controls = [
     'eggThemeDayInput',
@@ -16026,6 +18601,13 @@ function renderThemeDayEnabled() {
   ];
   var targets = Array.prototype.slice.call(document.querySelectorAll('.egg-theme-day-target'));
   var actions = Array.prototype.slice.call(document.querySelectorAll('.egg-theme-day-action'));
+  if (panel) {
+    panel.classList.toggle('is-enabled', themeDayEnabled);
+    panel.classList.toggle('is-busy', interactionLocked);
+    panel.setAttribute('aria-busy', interactionLocked ? 'true' : 'false');
+  }
+  if (state) state.textContent = interactionLocked ? '处理中' : (themeDayEnabled ? '已开启' : '已关闭');
+  if (generateLabel) generateLabel.textContent = themeDayBusy ? '生成中…' : '生成主题日';
   if (toggle) toggle.disabled = interactionLocked;
   targets.forEach(function(btn) {
     if (btn.id === 'eggThemeDayEnabled') return;
@@ -16130,7 +18712,11 @@ async function loadThemeDayManualReference() {
 
 function toggleThemeDayXhsPicker() {
   var picker = document.getElementById('eggThemeDayXhsPicker');
-  if (picker) picker.hidden = !picker.hidden;
+  var button = document.getElementById('eggThemeDayManualBtn');
+  if (picker) {
+    picker.hidden = !picker.hidden;
+    if (button) button.setAttribute('aria-expanded', picker.hidden ? 'false' : 'true');
+  }
 }
 
 function renderThemeDayXhsResults() {
@@ -16304,7 +18890,9 @@ function selectThemeDayTarget(target) {
   if (themeDayManualReferenceBusy) return;
   selectedThemeDayTarget = target === 'tomorrow' ? 'tomorrow' : 'today';
   document.querySelectorAll('[data-theme-target]').forEach(function(button) {
-    button.classList.toggle('active', button.dataset.themeTarget === selectedThemeDayTarget);
+    var selected = button.dataset.themeTarget === selectedThemeDayTarget;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-pressed', selected ? 'true' : 'false');
   });
   scheduleEggCache = { html: '', dateText: '', updatedAt: 0 };
   loadScheduleEggData({force: true});
@@ -16460,9 +19048,9 @@ function loadScheduleEggData(options) {
     var isFutureSchedule = !!(detail && today && detail.date && detail.date !== today.date);
     var eggTitle = document.querySelector('#eggOverlay .egg-header h2');
     if (eggTitle) eggTitle.textContent = isFutureSchedule ? '✨ 第二天主题日日程' : '🌸 今日日程彩蛋';
-    var maxDaily = Math.max(1, Math.min(6, parseInt((jobsData && jobsData.max_daily) || 6, 10) || 6));
+    var maxDaily = Math.max(1, Math.min(9, parseInt((jobsData && jobsData.max_daily) || 6, 10) || 6));
     var minDaily = Math.max(1, parseInt((jobsData && jobsData.min) || 1, 10) || 1);
-    var maxCap = Math.max(minDaily, Math.min(6, parseInt((jobsData && jobsData.max) || 6, 10) || 6));
+    var maxCap = Math.max(minDaily, Math.min(9, parseInt((jobsData && jobsData.max) || 9, 10) || 9));
     var completedToday = Math.max(0, parseInt((jobsData && jobsData.completed_today) || 0, 10) || 0);
     var activeToday = Math.max(0, parseInt((jobsData && jobsData.active_today) || 0, 10) || 0);
     var failedToday = Math.max(0, parseInt((jobsData && jobsData.failed_today) || 0, 10) || 0);

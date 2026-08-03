@@ -1,0 +1,46 @@
+services:
+  social-hub:
+    image: ${SOCIAL_HUB_IMAGE:-hermes-portrait-gallery-social-hub:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.social-hub
+    container_name: hermes-portrait-social-hub
+    restart: unless-stopped
+    network_mode: host
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    volumes:
+      - social-hub-data:/app/data
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      SOCIAL_HUB_HOST: ${SOCIAL_HUB_HOST:-127.0.0.1}
+      SOCIAL_HUB_PORT: ${SOCIAL_HUB_PORT:-18889}
+      SOCIAL_SERVER_TOKEN_FILE: /run/secrets/social_server_token
+    secrets:
+      - social_server_token
+    logging:
+      # Keep operational errors available without allowing unbounded host logs.
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os, urllib.request; port = os.environ.get('SOCIAL_HUB_PORT', '18889'); urllib.request.urlopen(f'http://127.0.0.1:{port}/api/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    stop_grace_period: 15s
+
+volumes:
+  social-hub-data:
+    name: hermes-portrait-social-hub-data
+
+secrets:
+  social_server_token:
+    file: ${SOCIAL_SERVER_TOKEN_FILE:-./secrets/social_server_token}

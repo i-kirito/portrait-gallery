@@ -128,6 +128,50 @@ docker compose build
 docker compose up -d
 ```
 
+### 在线动态时间线
+
+“群聊”Tab 的动态流可以作为一个共享时间线使用。每个用户的浏览器仍只访问自己的本地画廊；本地服务负责把用户确认发布的推文上传到 ECS 中心，并代理其他用户的动态图片。
+
+1. 在 ECS 使用专用 Compose 文件和全新的专用 Docker volume 启动只包含共享动态 API 的中心进程。不要复用完整画廊的旧 `data/`。令牌通过 Compose secret 文件或 Secrets Manager 提供，不会写入中心数据卷，也不会出现在容器环境变量中：
+
+   ```bash
+   install -d -m 700 secrets
+   install -o 10001 -g 10001 -m 400 /dev/null secrets/social_server_token
+   openssl rand -hex 32 > secrets/social_server_token
+   docker compose -f docker-compose.social-hub.yaml up -d --build
+   curl http://127.0.0.1:18889/api/health  # 应包含 "service":"social-hub"
+   test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18889/)" = 404
+   ```
+
+   最后一条检查用于确认 18889 对应的是不提供 UI 的专用 Hub，而不是完整画廊或其他服务。
+   如使用已发布镜像而不是在服务器上构建源码，可指定与画廊版本相同的镜像标签：
+
+   ```bash
+   SOCIAL_HUB_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery-social-hub:1.3.10 \
+     docker compose -f docker-compose.social-hub.yaml up -d
+   ```
+
+2. 当前线上中心地址为 `https://8.134.251.200`，使用 Let's Encrypt 短周期 IP 证书提供受信任的 HTTPS，不依赖域名或 DNS 配置。Nginx 模板见 [`deploy/nginx/portrait-gallery-social-hub.conf`](deploy/nginx/portrait-gallery-social-hub.conf)，只公开 `/api/social/hub/*`，并将动态配图上传上限提高到 70 MiB；不要把 18889 或画廊的其他路径直接暴露到公网。
+
+   证书检查和续期模板见 [`deploy/systemd/portrait-social-hub-cert.service`](deploy/systemd/portrait-social-hub-cert.service) 与 [`deploy/systemd/portrait-social-hub-cert.timer`](deploy/systemd/portrait-social-hub-cert.timer)。它们使用 `lego` 每日两次检查证书；需要续期时临时释放 443 端口完成 TLS-ALPN-01 验证，并保证任务结束后恢复 Nginx。将模板安装到 ECS 宿主机对应目录后启用 timer：
+
+   ```bash
+   systemctl daemon-reload
+   systemctl start portrait-social-hub-cert.service
+   systemctl enable --now portrait-social-hub-cert.timer
+   nginx -t
+   test "$(curl -sS -o /dev/null -w '%{http_code}' https://8.134.251.200/api/social/hub/status)" = 401
+   ```
+
+   上述模板假定 Nginx 运行在 ECS 宿主机；若 Nginx 本身在普通 bridge 网络容器中，它的 `127.0.0.1` 不是宿主机，需让两者使用同一可达网络或让 Nginx 也使用 host 网络。中心令牌只放在专用 secret 文件中，不要写入 Nginx、systemd unit 或 README。
+
+3. 在每台客户端画廊的“群聊 → 动态 → 设置”将中心地址填写为 `https://8.134.251.200`，再填写中心令牌和本机名称，保存后用“测试连接”确认连通。
+4. 在今日卡片、画廊卡片或图片详情点击“发推”，确认草稿后发布。中心节点会保存图片副本，因此之后删除原画廊图片不会让已发布动态失效。
+
+中心节点只持久化所发布的名称、256px 头像、推文/回复正文、推文配图，以及分页和安全删除所必需的不透明 ID 与时间。头像和配图会在上传前后重新编码并移除 EXIF/XMP 等本地元数据；本地角色 ID、画廊名称、生成提示词、来源路径、客户端令牌以及点赞/转发/收藏参与者都不会写进 ECS 的动态数据。点赞、转发和收藏仅保存在各自浏览器中；回复作为回复推文共享。
+
+客户端身份由其仅保存在本机的私有令牌派生，中心无须保存客户端注册表，其他客户端也无法仅凭共享中心令牌冒充它删除内容。普通画廊 API 和图片仍沿用原有访问密码保护。专用中心的 `hermes-portrait-social-hub-data` volume 只创建 `social.json`、`social.lock` 和 `social-media/`；不启动日程、生图、群聊房间、设置页面或静态 UI。启动时会清理中断写入留下的社交临时文件。运行时数据不应提交到 Git。
+
 ## 📐 架构
 
 ```
@@ -330,6 +374,12 @@ curl -X POST http://localhost:18889/api/config/keys \
 | `GITHUB_RELEASE_API` | GitHub Release API 完整地址，优先级高于 `GITHUB_REPOSITORY` |
 | `GALLERY_PASSWORD` | Web UI 访问密码；留空时首次本机打开页面设置 |
 | `PORTRAIT_GALLERY_IMAGE` | Docker Compose 使用的镜像名/标签，默认 `hermes-portrait-gallery:latest` |
+| `SOCIAL_HUB_IMAGE` | Social Hub Compose 使用的镜像名/标签，默认 `hermes-portrait-gallery-social-hub:latest` |
+| `SOCIAL_SERVER_TOKEN` | 共享动态中心令牌；Hub-only 进程必填、须为 24–256 个可打印 ASCII 字符；直接运行时可用 |
+| `SOCIAL_SERVER_TOKEN_FILE` | 共享动态中心令牌文件；Compose 默认挂载 `./secrets/social_server_token` |
+| `SOCIAL_HUB_DATA_DIR` | Hub-only 数据目录，容器默认 `/app/data` |
+| `SOCIAL_HUB_HOST` | Hub-only 监听地址，默认仅监听 `127.0.0.1` |
+| `SOCIAL_HUB_PORT` | Hub-only 监听端口，默认 `18889` |
 
 Docker Compose 会读取本地 `.env` 并把 `GALLERY_PASSWORD` 传入容器；不要把 `.env` 提交到仓库。
 

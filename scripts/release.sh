@@ -14,6 +14,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 IMAGE_REPO="${IMAGE_REPO:-ikirito9/hermes-portrait-gallery}"
+SOCIAL_HUB_IMAGE_REPO="${SOCIAL_HUB_IMAGE_REPO:-${IMAGE_REPO}-social-hub}"
 BUILDER="${BUILDX_BUILDER:-portrait-gallery-publisher}"
 PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
 REMOTE="${REMOTE:-origin}"
@@ -45,6 +46,7 @@ Options:
   --notes-file PATH         Read release notes from file
   --bump patch|minor|major  Auto-bump from current VERSION
   --image REPO              Docker image repo
+  --social-hub-image REPO   Social Hub Docker image repo
   --builder NAME            buildx builder name
   --platforms LIST          buildx platforms
   --remote NAME             git remote
@@ -121,6 +123,7 @@ parse_args() {
       --notes-file) NOTES_FILE="${2:-}"; shift 2 ;;
       --bump) BUMP="${2:-}"; shift 2 ;;
       --image) IMAGE_REPO="${2:-}"; shift 2 ;;
+      --social-hub-image) SOCIAL_HUB_IMAGE_REPO="${2:-}"; shift 2 ;;
       --builder) BUILDER="${2:-}"; shift 2 ;;
       --platforms) PLATFORMS="${2:-}"; shift 2 ;;
       --remote) REMOTE="${2:-}"; shift 2 ;;
@@ -259,6 +262,11 @@ def replace_version_pins(text: str) -> str:
         rf"\g<1>{version}",
         text,
     )
+    text = re.sub(
+        r"(SOCIAL_HUB_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery-social-hub:)\d+\.\d+\.\d+",
+        rf"\g<1>{version}",
+        text,
+    )
     return text
 
 
@@ -365,30 +373,42 @@ ensure_builder() {
   docker buildx create --name "$BUILDER" --driver docker-container --use --bootstrap
 }
 
+docker_publish_image() {
+  local version="$1" image_repo="$2" dockerfile="$3"
+  local version_tag latest_tag
+  version_tag="${image_repo}:${version}"
+  latest_tag="${image_repo}:latest"
+
+  log "docker buildx build/push $version_tag + $latest_tag ($PLATFORMS) via $BUILDER"
+  run docker buildx build \
+    --builder "$BUILDER" \
+    --platform "$PLATFORMS" \
+    -t "$version_tag" \
+    -t "$latest_tag" \
+    -f "$dockerfile" \
+    --push \
+    .
+}
+
 docker_publish() {
   local version="$1"
-  local version_tag latest_tag
-  version_tag="${IMAGE_REPO}:${version}"
-  latest_tag="${IMAGE_REPO}:latest"
 
   need_cmd docker
   ensure_builder
 
   if [[ "$SKIP_PUSH" -eq 1 && "$DRY_RUN" -eq 0 ]]; then
     warn "skipping docker push; planned tags only"
-    log "would build/push: $version_tag and $latest_tag ($PLATFORMS) via $BUILDER"
+    log "would build/push: ${IMAGE_REPO}:${version} + ${IMAGE_REPO}:latest ($PLATFORMS) via $BUILDER"
+    if [[ -f Dockerfile.social-hub ]]; then
+      log "would build/push: ${SOCIAL_HUB_IMAGE_REPO}:${version} + ${SOCIAL_HUB_IMAGE_REPO}:latest ($PLATFORMS) via $BUILDER"
+    fi
     return 0
   fi
 
-  log "docker buildx build/push $version_tag + $latest_tag ($PLATFORMS)"
-  run docker buildx build \
-    --builder "$BUILDER" \
-    --platform "$PLATFORMS" \
-    -t "$version_tag" \
-    -t "$latest_tag" \
-    -f Dockerfile \
-    --push \
-    .
+  docker_publish_image "$version" "$IMAGE_REPO" "Dockerfile"
+  if [[ -f Dockerfile.social-hub ]]; then
+    docker_publish_image "$version" "$SOCIAL_HUB_IMAGE_REPO" "Dockerfile.social-hub"
+  fi
 }
 
 github_release() {
@@ -403,9 +423,11 @@ github_release() {
     notes="$(extract_readme_notes "$version")"
   fi
 
-  body="$(python3 - "$tag" "$notes" "$IMAGE_REPO" "$version" <<'PY2'
+  body="$(python3 - "$tag" "$notes" "$IMAGE_REPO" "$SOCIAL_HUB_IMAGE_REPO" "$version" <<'PY2'
 import sys
-tag, notes, image_repo, version = sys.argv[1:5]
+from pathlib import Path
+
+tag, notes, image_repo, social_hub_image_repo, version = sys.argv[1:6]
 print(f"""## {tag}
 
 {notes}
@@ -414,6 +436,16 @@ print(f"""## {tag}
 
 ```bash
 docker pull {image_repo}:{version}
+```
+
+支持 `linux/amd64` 与 `linux/arm64`。""")
+if Path("Dockerfile.social-hub").is_file():
+    print(f"""
+
+### Social Hub Docker
+
+```bash
+docker pull {social_hub_image_repo}:{version}
 ```
 
 支持 `linux/amd64` 与 `linux/arm64`。""")
@@ -448,6 +480,9 @@ print_summary() {
   printf '  branch  : %s\n' "$BRANCH"
   printf '  remote  : %s\n' "$REMOTE"
   printf '  image   : %s:%s + :latest\n' "$IMAGE_REPO" "$version"
+  if [[ -f Dockerfile.social-hub ]]; then
+    printf '  hub     : %s:%s + :latest\n' "$SOCIAL_HUB_IMAGE_REPO" "$version"
+  fi
   printf '  builder : %s\n' "$BUILDER"
   printf '  plats   : %s\n' "$PLATFORMS"
   printf '  github  : %s\n' "$GH_REPO"
@@ -523,6 +558,10 @@ main() {
   printf '  tag    : %s\n' "$(version_tag "$version")"
   printf '  image  : %s:%s\n' "$IMAGE_REPO" "$version"
   printf '  latest : %s:latest\n' "$IMAGE_REPO"
+  if [[ -f Dockerfile.social-hub ]]; then
+    printf '  hub    : %s:%s\n' "$SOCIAL_HUB_IMAGE_REPO" "$version"
+    printf '  hub latest : %s:latest\n' "$SOCIAL_HUB_IMAGE_REPO"
+  fi
   printf '  pull   : docker pull %s:%s\n' "$IMAGE_REPO" "$version"
   if [[ "$SKIP_GITHUB" -eq 0 && "$SKIP_PUSH" -eq 0 && "$DRY_RUN" -eq 0 ]]; then
     gh release view "$(version_tag "$version")" --repo "$GH_REPO" --json url --jq .url || true

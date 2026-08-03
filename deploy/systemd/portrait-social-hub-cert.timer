@@ -1,0 +1,11 @@
+[Unit]
+Description=Check the Portrait Social Hub IP certificate twice daily
+
+[Timer]
+OnCalendar=*-*-* 03,15:17:00
+RandomizedDelaySec=30m
+Persistent=true
+Unit=portrait-social-hub-cert.service
+
+[Install]
+WantedBy=timers.target

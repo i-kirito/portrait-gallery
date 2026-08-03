@@ -54,6 +54,33 @@ class XiaohongshuClientTest(unittest.IsolatedAsyncioTestCase):
             timeout_seconds=60,
         )
 
+    async def test_status_probe_reports_service_readiness_without_login_request(self):
+        client = XiaohongshuClient()
+        client._health = AsyncMock(return_value=True)
+        client._request = AsyncMock()
+
+        payload = await client.status(start_service=False, check_login=False)
+
+        self.assertTrue(payload["service_running"])
+        self.assertIsNone(payload["is_logged_in"])
+        self.assertEqual("unknown", payload["login_state"])
+        client._request.assert_not_awaited()
+
+    async def test_status_requests_login_state_after_health_probe(self):
+        client = XiaohongshuClient()
+        client._health = AsyncMock(return_value=True)
+        client._request = AsyncMock(return_value={"is_logged_in": True, "username": "测试用户"})
+
+        payload = await client.status(start_service=False)
+
+        self.assertTrue(payload["is_logged_in"])
+        self.assertEqual("logged_in", payload["login_state"])
+        client._request.assert_awaited_once_with(
+            "GET",
+            "/api/v1/login/status",
+            timeout_seconds=45,
+        )
+
     async def test_search_filters_video_and_incomplete_results(self):
         client = XiaohongshuClient()
         client._request = AsyncMock(return_value={
@@ -233,14 +260,21 @@ class XiaohongshuFrontendContractTest(unittest.TestCase):
         status_request_start = html.index("function getXiaohongshuStatusRequest")
         status_request_end = html.index("async function loadXiaohongshuStatus", status_request_start)
         status_request = html[status_request_start:status_request_end]
-        self.assertIn("if (xhsLoginStatusRequestInFlight)", status_request)
+        self.assertIn("if (activeRequest)", status_request)
         self.assertIn("xhsLoginStatusRequestInFlight = request", status_request)
+        self.assertIn("xhsLoginProbeRequestInFlight", status_request)
+        self.assertIn('"?probe=1"', status_request)
 
         status_start = status_request_end
         status_end = html.index("async function refreshExpiredXiaohongshuQrcode", status_start)
         status = html[status_start:status_end]
         self.assertIn("const statusRequestGeneration = ++xhsLoginStatusRequestGeneration", status)
         self.assertIn("statusRequestGeneration !== xhsLoginStatusRequestGeneration", status)
+        self.assertIn('const probe = options?.probe === true', status)
+        self.assertIn('data.login_state === "unknown"', status)
+        self.assertIn('"正在后台确认登录状态"', status)
+        self.assertIn('"正在启动服务并确认登录状态"', status)
+        self.assertIn("if (refreshLoginState)", status)
 
         refresh_start = status_end
         refresh_end = html.index("function startXiaohongshuLoginPolling", refresh_start)
@@ -295,6 +329,8 @@ class XiaohongshuFrontendContractTest(unittest.TestCase):
         panel = html[panel_start:panel_end]
         self.assertIn('activeSettingsPanel === "xiaohongshu"', panel)
         self.assertIn("cancelXiaohongshuLoginFlow()", panel)
+        self.assertIn("probe: true", panel)
+        self.assertIn("refreshLoginState: true", panel)
 
         cancel_start = html.index("function cancelXiaohongshuLoginFlow")
         cancel_end = html.index("function scheduleXiaohongshuQrcodeRetry", cancel_start)
@@ -394,11 +430,38 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(200, status_response.status)
             self.assertTrue(status["is_logged_in"])
+            server.xiaohongshu_client.status.assert_awaited_once_with(
+                start_service=True,
+                check_login=True,
+            )
             self.assertEqual(200, search_response.status)
             self.assertEqual(1, search["count"])
             server.xiaohongshu_client.search.assert_awaited_once_with(
                 "夏季穿搭",
                 max_results=30,
+            )
+
+    async def test_status_probe_does_not_start_service_or_check_login(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            server = self._make_server(Path(tmpdir))
+            server.xiaohongshu_client.status = AsyncMock(return_value={
+                "configured": True,
+                "service_running": True,
+                "is_logged_in": None,
+                "login_state": "unknown",
+            })
+            client = await self._start_client(server)
+            try:
+                response = await client.get("/api/xiaohongshu/status?probe=1")
+                payload = await response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(200, response.status)
+            self.assertEqual("unknown", payload["login_state"])
+            server.xiaohongshu_client.status.assert_awaited_once_with(
+                start_service=False,
+                check_login=False,
             )
 
     async def test_login_qrcode_route_returns_client_payload(self):
@@ -1028,6 +1091,29 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual({}, result)
             self.assertEqual("error", state["status"])
             self.assertIn("240 秒", state["last_error"])
+            server.xiaohongshu_client.search.assert_not_called()
+
+    async def test_schedule_selection_timeout_override_extends_deadline(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            server = self._make_server(Path(tmpdir))
+            server.xiaohongshu_schedule_store.update(
+                lambda state: {**state, "enabled": True}
+            )
+            server.xiaohongshu_client.status = AsyncMock(
+                side_effect=asyncio.TimeoutError()
+            )
+            server.xiaohongshu_client.search = AsyncMock()
+
+            result = await server.ensure_xiaohongshu_schedule_reference(
+                "2026-07-30",
+                {"xiaohongshu_search_query": "夏季通勤穿搭"},
+                force=True,
+                timeout_seconds=480,
+            )
+            state = server.xiaohongshu_schedule_state("2026-07-30")
+
+            self.assertEqual({}, result)
+            self.assertIn("480 秒", state["last_error"])
             server.xiaohongshu_client.search.assert_not_called()
 
     def test_failed_refresh_keeps_old_reference_but_exposes_warning(self):

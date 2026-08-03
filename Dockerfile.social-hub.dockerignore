@@ -1,0 +1,26 @@
+**
+
+# Keep the build context closed by default. Re-open only the app directory,
+# immediately ignore all of its children, then allow the Hub's import closure.
+!app/
+app/*
+
+!app/requirements.txt
+!app/social_hub_main.py
+!app/web_server.py
+!app/social.py
+!app/social_hub.py
+!app/store.py
+
+# web_server imports these modules at module load time even in Hub-only mode.
+!app/characters.py
+!app/group_chat.py
+!app/image_editing.py
+!app/image_versions.py
+!app/keyword_cloud.py
+!app/outfit_plan_edit.py
+!app/picxazz_sync.py
+!app/reference_profiles.py
+!app/settings.py
+!app/text_repair.py
+!app/xiaohongshu_client.py
