@@ -1006,7 +1006,7 @@ def _split_persona_name(value: str) -> str:
     text = _clean_persona_text(value, 80)
     if not text:
         return ""
-    text = re.split(r"[/／,，|、（(]", text, 1)[0].strip()
+    text = re.split(r"[/／,，|、（(]", text, maxsplit=1)[0].strip()
     return text[:40].strip()
 
 
@@ -1103,7 +1103,7 @@ def _read_keyed_persona_file(path: Path) -> dict:
         if not line or ":" not in line and "：" not in line:
             continue
         cleaned = re.sub(r"[*`#>]", "", line).strip()
-        parts = re.split(r"[:：]", cleaned, 1)
+        parts = re.split(r"[:：]", cleaned, maxsplit=1)
         if len(parts) != 2:
             continue
         label_text = parts[0].strip()

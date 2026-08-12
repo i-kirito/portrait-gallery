@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.4.1**
+当前版本：**v1.4.2**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -96,7 +96,7 @@ curl http://localhost:18889/api/health
 如果要使用已经发布到 Docker Hub/GHCR 的镜像，通过 `PORTRAIT_GALLERY_IMAGE` 指定：
 
 ```bash
-PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.4.1 docker compose up -d
+PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.4.2 docker compose up -d
 curl http://localhost:18889/api/health
 ```
 
@@ -147,7 +147,7 @@ docker compose up -d
    如使用已发布镜像而不是在服务器上构建源码，可指定与画廊版本相同的镜像标签：
 
    ```bash
-   SOCIAL_HUB_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery-social-hub:1.4.1 \
+   SOCIAL_HUB_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery-social-hub:1.4.2 \
      docker compose -f docker-compose.social-hub.yaml up -d
    ```
 
@@ -422,6 +422,14 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥、三级 LLM 模型链、Gitee 回退、日程风格和升级选项
 
 ## 🧾 Release Notes
+
+### v1.4.2
+
+- 新增 Hermes 聊天图片穿搭识别、参考图预览增强，以及图片详情中的 Grok 视频生成、播放和重试入口。
+- 新增 Hermes API 专用日志筛选与请求诊断，并在设置页集中配置文本、生图和 Grok2API 视频模型链路。
+- 重构主题日为自动/手动模式，支持当天与第二天独立生成、刷新和并发保护，避免覆盖已保存的手动主题。
+- 优化日程多样性审查、关键词偏好云过滤与轮换，减少模板化重复和无关提示词污染。
+- 改进小红书笔记直链选图、超时反馈、图片版本参考标识和模型设置响应式布局。
 
 ### v1.4.1
 

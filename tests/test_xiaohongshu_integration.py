@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from aiohttp.test_utils import TestClient, TestServer
@@ -62,9 +63,48 @@ class XiaohongshuClientTest(unittest.IsolatedAsyncioTestCase):
         payload = await client.status(start_service=False, check_login=False)
 
         self.assertTrue(payload["service_running"])
+        self.assertEqual("ready", payload["service_state"])
         self.assertIsNone(payload["is_logged_in"])
         self.assertEqual("unknown", payload["login_state"])
         client._request.assert_not_awaited()
+
+    async def test_status_probe_reports_starting_process_as_configured(self):
+        client = XiaohongshuClient()
+        client.binary_path = ""
+        client._process = SimpleNamespace(returncode=None)
+        client._health = AsyncMock(return_value=False)
+        client._request = AsyncMock()
+
+        payload = await client.status(start_service=False, check_login=False)
+
+        self.assertTrue(payload["configured"])
+        self.assertFalse(payload["service_running"])
+        self.assertEqual("starting", payload["service_state"])
+        self.assertEqual("unknown", payload["login_state"])
+        client._request.assert_not_awaited()
+
+    async def test_status_probe_reports_stopped_without_process_or_binary(self):
+        client = XiaohongshuClient()
+        client.binary_path = ""
+        client._health = AsyncMock(return_value=False)
+
+        payload = await client.status(start_service=False, check_login=False)
+
+        self.assertFalse(payload["configured"])
+        self.assertFalse(payload["service_running"])
+        self.assertEqual("stopped", payload["service_state"])
+
+    async def test_status_probe_reports_error_for_exited_process(self):
+        client = XiaohongshuClient()
+        client.binary_path = ""
+        client._process = SimpleNamespace(returncode=1)
+        client._health = AsyncMock(return_value=False)
+
+        payload = await client.status(start_service=False, check_login=False)
+
+        self.assertTrue(payload["configured"])
+        self.assertFalse(payload["service_running"])
+        self.assertEqual("error", payload["service_state"])
 
     async def test_status_requests_login_state_after_health_probe(self):
         client = XiaohongshuClient()
@@ -75,6 +115,7 @@ class XiaohongshuClientTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(payload["is_logged_in"])
         self.assertEqual("logged_in", payload["login_state"])
+        self.assertEqual("ready", payload["service_state"])
         client._request.assert_awaited_once_with(
             "GET",
             "/api/v1/login/status",
@@ -209,17 +250,115 @@ class XiaohongshuClientTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("invalid_max_results", raised.exception.code)
 
-    async def test_search_retries_one_transient_upstream_error(self):
+    async def test_search_raises_upstream_error_without_restarting_service(self):
         client = XiaohongshuClient()
         client._request = AsyncMock(side_effect=[
             XiaohongshuError("upstream_error", "服务器内部错误"),
             {"feeds": []},
         ])
+        client.close = AsyncMock()
+
+        with self.assertRaises(XiaohongshuError) as raised:
+            await client.search("通勤")
+
+        self.assertEqual("upstream_error", raised.exception.code)
+        self.assertEqual(1, client._request.await_count)
+        client.close.assert_not_awaited()
+
+    async def test_search_restarts_service_on_request_timeout(self):
+        client = XiaohongshuClient()
+        client._request = AsyncMock(side_effect=[
+            XiaohongshuError("request_timeout", "小红书请求超时，请稍后重试。"),
+            {"feeds": []},
+        ])
+        client.close = AsyncMock()
 
         items = await client.search("通勤")
 
         self.assertEqual([], items)
         self.assertEqual(2, client._request.await_count)
+        client.close.assert_awaited_once_with()
+
+    async def test_resolve_note_url_reads_explore_link_detail(self):
+        client = XiaohongshuClient()
+        client._request = AsyncMock(return_value={
+            "data": {
+                "note": {
+                    "type": "normal",
+                    "noteId": "6a057b86000000003502961e",
+                    "title": "白色连衣裙",
+                    "user": {"nickname": "穿搭博主"},
+                    "imageList": [
+                        {
+                            "urlDefault": "https://sns-webpic-qc.xhscdn.com/a.webp",
+                            "width": 100,
+                            "height": 200,
+                        },
+                    ],
+                }
+            }
+        })
+
+        detail = await client.resolve_note_url(
+            "https://www.xiaohongshu.com/explore/6a057b86000000003502961e?xsec_token=abc123"
+        )
+
+        self.assertEqual("6a057b86000000003502961e", detail["id"])
+        self.assertEqual("白色连衣裙", detail["title"])
+        self.assertEqual(1, len(detail["images"]))
+        client._request.assert_awaited_once_with(
+            "POST",
+            "/api/v1/feeds/detail",
+            json_body={
+                "feed_id": "6a057b86000000003502961e",
+                "xsec_token": "abc123",
+                "load_all_comments": False,
+            },
+            timeout_seconds=90,
+        )
+
+    async def test_resolve_note_url_rejects_link_without_xsec_token(self):
+        client = XiaohongshuClient()
+
+        with self.assertRaises(XiaohongshuError) as raised:
+            await client.resolve_note_url(
+                "https://www.xiaohongshu.com/discovery/item/6a057b86000000003502961e"
+            )
+
+        self.assertEqual("note_token_missing", raised.exception.code)
+
+    async def test_resolve_note_url_rejects_non_xiaohongshu_link(self):
+        client = XiaohongshuClient()
+
+        with self.assertRaises(XiaohongshuError) as raised:
+            await client.resolve_note_url("https://example.com/note/123")
+
+        self.assertEqual("invalid_note_url", raised.exception.code)
+
+    async def test_follow_redirects_resolves_short_link(self):
+        from aiohttp import web
+
+        async def redirect_handler(request):
+            return web.Response(
+                status=302,
+                headers={"Location": "https://www.xiaohongshu.com/explore/6a057b86000000003502961e?xsec_token=abc123"},
+            )
+
+        app = web.Application()
+        app.router.add_get("/s/short", redirect_handler)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        try:
+            port = site._server.sockets[0].getsockname()[1]
+            client = XiaohongshuClient()
+            resolved = await client._follow_redirects(f"http://127.0.0.1:{port}/s/short")
+            feed_id, token = client._parse_note_url(resolved)
+            self.assertEqual("6a057b86000000003502961e", feed_id)
+            self.assertEqual("abc123", token)
+        finally:
+            await runner.cleanup()
 
     async def test_image_import_rejects_non_xiaohongshu_host(self):
         client = XiaohongshuClient()
@@ -272,6 +411,9 @@ class XiaohongshuFrontendContractTest(unittest.TestCase):
         self.assertIn("statusRequestGeneration !== xhsLoginStatusRequestGeneration", status)
         self.assertIn('const probe = options?.probe === true', status)
         self.assertIn('data.login_state === "unknown"', status)
+        self.assertIn('data.service_state === "starting"', status)
+        self.assertIn('"服务启动中"', status)
+        self.assertIn('"登录状态检测失败"', status)
         self.assertIn('"正在后台确认登录状态"', status)
         self.assertIn('"正在启动服务并确认登录状态"', status)
         self.assertIn("if (refreshLoginState)", status)
@@ -632,6 +774,37 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
                 (root / "data" / "references" / "xiaohongshu" / "xhs_test.png").exists()
             )
 
+    async def test_note_url_endpoint_resolves_pasted_link(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            server = self._make_server(Path(tmpdir))
+            server.xiaohongshu_client.resolve_note_url = AsyncMock(return_value={
+                "id": "note-1",
+                "title": "白色连衣裙",
+                "author": "穿搭博主",
+                "images": [{
+                    "index": 0,
+                    "url": "https://sns-webpic-qc.xhscdn.com/a.webp",
+                    "width": 100,
+                    "height": 200,
+                }],
+            })
+            client = await self._start_client(server)
+            try:
+                response = await client.post(
+                    "/api/xiaohongshu/note-url",
+                    json={"url": "https://www.xiaohongshu.com/explore/note-1?xsec_token=tok"},
+                )
+                payload = await response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(200, response.status, payload)
+            self.assertEqual("note-1", payload["id"])
+            self.assertEqual(1, len(payload["images"]))
+            server.xiaohongshu_client.resolve_note_url.assert_awaited_once_with(
+                "https://www.xiaohongshu.com/explore/note-1?xsec_token=tok"
+            )
+
     async def test_schedule_mode_selects_hidden_persistent_daily_reference(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
             root = Path(tmpdir)
@@ -745,6 +918,111 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(server._delete_xiaohongshu_reference_file(schedule_filename))
             self.assertTrue(schedule_path.exists())
             self.assertFalse((root / "data" / "references" / "xiaohongshu" / "xhs_daily.png").exists())
+
+    async def test_schedule_mode_binds_and_clears_manual_reference_for_tomorrow(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            server._now = lambda: datetime(2026, 8, 9, 12, 0)
+            original_filename = "xhs_manual_source.png"
+            original_path = (
+                root
+                / "data"
+                / "references"
+                / "xiaohongshu"
+                / original_filename
+            )
+            Image.new("RGB", (900, 1200), "white").save(original_path)
+            server.xiaohongshu_reference_store.update(lambda records: {
+                **records,
+                original_filename: {
+                    "id": "xiaohongshu_manual_source",
+                    "filename": original_filename,
+                    "label": "小红书 · 魔法学院穿搭",
+                    "title": "魔法学院穿搭",
+                    "author": "测试作者",
+                    "source": "xiaohongshu",
+                    "width": 900,
+                    "height": 1200,
+                    "size_bytes": original_path.stat().st_size,
+                    "created_at": "2026-08-09T11:50:00",
+                },
+            })
+            client = await self._start_client(server)
+            try:
+                bind_response = await client.post(
+                    "/api/xiaohongshu/schedule-mode",
+                    json={
+                        "schedule_date": "2026-08-10",
+                        "manual_reference_url": (
+                            "/local-refs/xiaohongshu/" + original_filename
+                        ),
+                        "title": "第二天魔法学院穿搭",
+                        "author": "测试作者",
+                    },
+                )
+                bound = await bind_response.json()
+                tomorrow_response = await client.get(
+                    "/api/xiaohongshu/schedule-mode?schedule_date=2026-08-10"
+                )
+                tomorrow = await tomorrow_response.json()
+                today_response = await client.get(
+                    "/api/xiaohongshu/schedule-mode?schedule_date=2026-08-09"
+                )
+                today = await today_response.json()
+                schedule_filename = bound["today_reference"]["filename"]
+                schedule_path = (
+                    root
+                    / "data"
+                    / "references"
+                    / "xiaohongshu"
+                    / schedule_filename
+                )
+                schedule_path_existed_before_clear = schedule_path.exists()
+                schedule_scope_before_clear = (
+                    server.xiaohongshu_reference_store.load()[schedule_filename]["scope"]
+                )
+                clear_response = await client.post(
+                    "/api/xiaohongshu/schedule-mode",
+                    json={
+                        "schedule_date": "2026-08-10",
+                        "clear_manual_reference": True,
+                    },
+                )
+                cleared = await clear_response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(200, bind_response.status, bound)
+            self.assertTrue(bound["enabled"])
+            self.assertEqual("2026-08-10", bound["schedule_date"])
+            self.assertEqual(
+                "manual",
+                bound["today_reference"]["selection_source"],
+            )
+            self.assertEqual(
+                "第二天魔法学院穿搭",
+                bound["today_reference"]["title"],
+            )
+            self.assertEqual(bound["today_reference"], tomorrow["today_reference"])
+            self.assertEqual({}, today["today_reference"])
+            self.assertTrue(original_path.exists())
+            self.assertTrue(schedule_path_existed_before_clear)
+            self.assertEqual("daily_schedule", schedule_scope_before_clear)
+            self.assertEqual(200, clear_response.status, cleared)
+            self.assertTrue(cleared["enabled"])
+            self.assertEqual("missing", cleared["status"])
+            self.assertEqual({}, cleared["today_reference"])
+            self.assertTrue(original_path.exists())
+            self.assertFalse(schedule_path.exists())
+            self.assertIn(
+                original_filename,
+                server.xiaohongshu_reference_store.load(),
+            )
+            self.assertNotIn(
+                schedule_filename,
+                server.xiaohongshu_reference_store.load(),
+            )
 
     async def test_schedule_prefers_favorite_creator_profile_notes(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
@@ -1201,6 +1479,32 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(str(xhs_path), call.args[2])
             self.assertEqual([str(xhs_path), str(face_path)], call.args[10])
             self.assertEqual("xiaohongshu", call.args[9]["source"])
+
+    async def test_hermes_custom_generation_does_not_synthesize_caption(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            server = self._make_server(Path(tmpdir))
+            server.on_generate_custom = AsyncMock(return_value=DailyEntry(
+                date="2026-07-30",
+                image_filename="hermes.png",
+                image_path="/images/hermes.png",
+                outfit="风格：自定义 穿搭：Hermes 图生图：按原始描述生成",
+                source="hermes_api",
+                status="ok",
+            ))
+            client = await self._start_client(server)
+            try:
+                response = await client.post("/api/generate-custom", json={
+                    "prompt": "18-year-old Chinese girl at a sunny beach",
+                    "api_source": "hermes",
+                })
+                payload = await response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(200, response.status, payload)
+            call = server.on_generate_custom.await_args
+            self.assertEqual("", call.args[6])
+            self.assertNotIn("18-year-old", payload.get("outfit", ""))
 
     async def test_generate_custom_replaces_builtin_face_with_face_only_crop(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):

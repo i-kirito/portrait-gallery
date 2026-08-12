@@ -62,6 +62,517 @@ class ScheduleDiversityTest(unittest.TestCase):
         self.assertEqual("image_url", content[1]["type"])
         self.assertTrue(content[1]["image_url"]["url"].startswith("data:image/webp;base64,"))
 
+    def test_schedule_similarity_is_judged_by_llm_with_full_activity_context(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = self.make_scheduler(tmpdir)
+            recent_history = (
+                "[2026-07-26]\n"
+                "08:16 在露台为几盆多肉植物浇水并清理叶片上的灰尘\n"
+                "15:20 去植物园观察稀有发光植物的生长形态"
+            )
+            extended_history = (
+                recent_history
+                + "\n[2026-07-22]\n"
+                "09:18 在花艺教室修剪枝叶并完成桌面花束"
+            )
+            call_llm = AsyncMock(return_value=json.dumps({
+                "needs_revision": True,
+                "cross_day_repeat": True,
+                "within_day_homogeneous": False,
+                "dominant_themes": ["植物相关照料与观察"],
+                "matches": [{"reason": "两条活动都在进行植物补水养护"}],
+                "revision_guidance": "替换候选时段为目标、过程和产出都不同的核心事件",
+                "reason": "候选只是更换了植物对象和地点",
+            }, ensure_ascii=False))
+            scheduler._call_llm = call_llm
+
+            review = asyncio.run(
+                scheduler._review_schedule_similarity_with_llm(
+                    recent_history,
+                    [("08:14", "在阳台给空气凤梨喷水并观察叶片生长状况")],
+                    extended_schedule_history=extended_history,
+                )
+            )
+
+        self.assertTrue(review["available"])
+        self.assertTrue(review["needs_revision"])
+        self.assertTrue(review["similar"])
+        self.assertTrue(review["cross_day_repeat"])
+        self.assertEqual(["植物相关照料与观察"], review["dominant_themes"])
+        self.assertIn("更换了植物对象", review["reason"])
+        prompt = call_llm.await_args.args[0]
+        self.assertIn("在露台为几盆多肉植物浇水并清理叶片上的灰尘", prompt)
+        self.assertIn("去植物园观察稀有发光植物的生长形态", prompt)
+        self.assertIn("在花艺教室修剪枝叶并完成桌面花束", prompt)
+        self.assertIn("禁止依赖预设活动类别、固定关键词", prompt)
+        self.assertIn("第四至第七日主题疲劳", prompt)
+        self.assertIn("候选内部同质化", prompt)
+        self.assertIn("动态归纳候选主题簇", prompt)
+        self.assertIn("transition、core_active 或 core_passive", prompt)
+        self.assertIn("仅更换材料、对象、步骤、地点、道具或措辞", prompt)
+        self.assertIn("真实行动与进展", prompt)
+        self.assertIn("needs_revision", prompt)
+        self.assertTrue(call_llm.await_args.kwargs["json_mode"])
+
+    def test_schedule_similarity_review_accepts_legacy_similar_field(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = self.make_scheduler(tmpdir)
+            scheduler._call_llm = AsyncMock(return_value=json.dumps({
+                "similar": True,
+                "matches": [],
+                "reason": "兼容旧审查结果",
+            }, ensure_ascii=False))
+
+            review = asyncio.run(
+                scheduler._review_schedule_similarity_with_llm(
+                    "（无近期日程）",
+                    [("09:12", "参加一场陶艺拉坯体验")],
+                )
+            )
+
+        self.assertTrue(review["available"])
+        self.assertTrue(review["needs_revision"])
+        self.assertTrue(review["similar"])
+
+    def test_schedule_similarity_review_runs_without_history_for_internal_homogeneity(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = self.make_scheduler(tmpdir)
+            call_llm = AsyncMock(return_value=json.dumps({
+                "needs_revision": True,
+                "cross_day_repeat": False,
+                "within_day_homogeneous": True,
+                "dominant_themes": ["日常过渡", "低行动密度的被动观察"],
+                "matches": [],
+                "revision_guidance": "保留必要过渡，替换两个核心时段并增加有明确成果的新锚点",
+                "reason": "候选全天缺少会推动进展的核心事件",
+            }, ensure_ascii=False))
+            scheduler._call_llm = call_llm
+
+            review = asyncio.run(
+                scheduler._review_schedule_similarity_with_llm(
+                    "（无近期日程）",
+                    [
+                        ("08:15", "在家吃早餐"),
+                        ("12:30", "在家准备午餐"),
+                        ("15:20", "坐在窗边看云"),
+                        ("19:10", "在家吃晚餐"),
+                        ("21:25", "泡澡后躺着休息"),
+                    ],
+                )
+            )
+
+        self.assertTrue(review["available"])
+        self.assertTrue(review["needs_revision"])
+        self.assertTrue(review["within_day_homogeneous"])
+        self.assertEqual(1, call_llm.await_count)
+        prompt = call_llm.await_args.args[0]
+        self.assertIn("（无近期日程）", prompt)
+        self.assertIn("坐在窗边看云", prompt)
+
+    def test_random_museum_theme_homogeneity_overrides_inconsistent_review_flag(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = self.make_scheduler(tmpdir)
+            call_llm = AsyncMock(return_value=json.dumps({
+                "needs_revision": False,
+                "cross_day_repeat": False,
+                "within_day_homogeneous": True,
+                "dominant_themes": ["馆藏文献处理流程", "自然生活过渡"],
+                "candidate_clusters": [{
+                    "theme": "馆藏文献处理流程",
+                    "times": ["08:15", "10:28", "15:15", "17:35", "22:15"],
+                    "role": "core_active",
+                    "why": "核心时段只是同一文献工作流的核对、翻阅、修复、记录和复盘阶段",
+                }],
+                "novel_anchor": "",
+                "matches": [],
+                "revision_guidance": "保留博物馆背景，但替换为实质不同的参与方式与结果",
+                "reason": "拿掉两顿饭后，核心活动仍是同一文献处理循环",
+            }, ensure_ascii=False))
+            scheduler._call_llm = call_llm
+
+            review = asyncio.run(
+                scheduler._review_schedule_similarity_with_llm(
+                    "[2026-08-08]\n10:20 参观市立博物馆油画展",
+                    [
+                        ("08:15", "核对古籍目录"),
+                        ("10:28", "翻阅手绘地图"),
+                        ("12:46", "在馆内吃午餐"),
+                        ("15:15", "修复古籍书脊"),
+                        ("17:35", "整理修复日志"),
+                        ("20:12", "在馆内吃晚餐"),
+                        ("22:15", "阅读古物笔记"),
+                    ],
+                    theme_context="博物馆灵感日",
+                    theme_day_mode="random",
+                )
+            )
+
+        self.assertTrue(review["available"])
+        self.assertTrue(review["needs_revision"])
+        self.assertTrue(review["within_day_homogeneous"])
+        self.assertFalse(review["cross_day_repeat"])
+        prompt = call_llm.await_args.args[0]
+        self.assertIn("系统自动随机主题，不是用户明确指定的主题", prompt)
+        self.assertIn("不享有主题豁免", prompt)
+        self.assertIn("<theme_mode>\nrandom\n</theme_mode>", prompt)
+        self.assertIn("核对古籍目录", prompt)
+        self.assertIn("阅读古物笔记", prompt)
+        self.assertIn("主题只是叙事背景", prompt)
+        self.assertIn("同一流程的准备、执行、检查、记录、整理或复盘阶段", prompt)
+        self.assertNotIn("本候选是用户明确选择的主题日", prompt)
+
+    def test_custom_theme_keeps_theme_name_but_not_workflow_exemption(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = self.make_scheduler(tmpdir)
+            call_llm = AsyncMock(return_value=json.dumps({
+                "needs_revision": False,
+                "cross_day_repeat": False,
+                "within_day_homogeneous": False,
+                "dominant_themes": ["用户指定主题下的多种体验"],
+                "candidate_clusters": [],
+                "novel_anchor": "完成一次面向观众的互动讲解",
+                "matches": [],
+                "revision_guidance": "",
+                "reason": "主题统一，但参与方式和结果不同",
+            }, ensure_ascii=False))
+            scheduler._call_llm = call_llm
+
+            review = asyncio.run(
+                scheduler._review_schedule_similarity_with_llm(
+                    "（无近期日程）",
+                    [("10:20", "在主题场馆参加互动导览")],
+                    theme_context="博物馆灵感日",
+                    theme_day_mode="custom",
+                )
+            )
+
+        self.assertFalse(review["needs_revision"])
+        prompt = call_llm.await_args.args[0]
+        self.assertIn("用户明确选择的主题日", prompt)
+        self.assertIn("主题只是叙事背景，不豁免同一工作流程", prompt)
+        self.assertIn("<theme_mode>\ncustom\n</theme_mode>", prompt)
+
+    def test_theme_drift_overrides_false_revision_flag(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = self.make_scheduler(tmpdir)
+            call_llm = AsyncMock(return_value=json.dumps({
+                "needs_revision": False,
+                "cross_day_repeat": False,
+                "within_day_homogeneous": False,
+                "theme_drift": True,
+                "theme_connection": "候选已经变成独立陶艺创作日，与博物馆主题没有实际叙事联系",
+                "dominant_themes": ["陶艺创作流程"],
+                "candidate_clusters": [],
+                "novel_anchor": "完成一只陶器",
+                "matches": [],
+                "revision_guidance": "恢复博物馆主题联系，同时保留不同参与方式",
+                "reason": "候选替换成了无关主题",
+            }, ensure_ascii=False))
+            scheduler._call_llm = call_llm
+
+            review = asyncio.run(
+                scheduler._review_schedule_similarity_with_llm(
+                    "（无近期日程）",
+                    [
+                        ("10:35", "参加陶艺器皿塑形工作坊"),
+                        ("15:12", "为陶艺作品进行上釉处理"),
+                        ("22:15", "为陶胚勾勒装饰草图"),
+                    ],
+                    theme_context="博物馆灵感日",
+                    theme_day_mode="random",
+                )
+            )
+
+        self.assertTrue(review["available"])
+        self.assertTrue(review["needs_revision"])
+        self.assertTrue(review["theme_drift"])
+        self.assertIn("独立陶艺创作日", review["theme_connection"])
+        prompt = call_llm.await_args.args[0]
+        self.assertIn("主题符合度", prompt)
+        self.assertIn("theme_drift=true", prompt)
+        self.assertIn("不要用关键词重合代替语义判断", prompt)
+        feedback = scheduler._schedule_similarity_revision_feedback(review)
+        self.assertIn("主题偏离", feedback)
+        self.assertIn("独立陶艺创作日", feedback)
+
+    def test_targeted_revision_eligibility_uses_only_semantic_review_fields(self):
+        review = {
+            "cross_day_repeat": True,
+            "within_day_homogeneous": False,
+            "theme_drift": False,
+            "novel_anchor": "完成一次与艺术家的共同视觉决策",
+            "matches": [{
+                "candidate_time": "15:42",
+                "reason": "该时段与近期核心任务实质重复",
+            }],
+        }
+
+        self.assertTrue(
+            DailyScheduler._schedule_similarity_supports_targeted_revision(review)
+        )
+
+        for key, value in (
+            ("within_day_homogeneous", True),
+            ("theme_drift", True),
+            ("cross_day_repeat", False),
+            ("novel_anchor", ""),
+            ("matches", []),
+        ):
+            changed = dict(review)
+            changed[key] = value
+            self.assertFalse(
+                DailyScheduler._schedule_similarity_supports_targeted_revision(
+                    changed
+                )
+            )
+
+    def test_schedule_similarity_review_failure_does_not_fallback_to_keywords(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = self.make_scheduler(tmpdir)
+            scheduler._call_llm = AsyncMock(return_value=None)
+
+            review = asyncio.run(
+                scheduler._review_schedule_similarity_with_llm(
+                    "[2026-07-26]\n08:16 在露台照料多肉植物",
+                    [("08:14", "在阳台给空气凤梨喷水")],
+                )
+            )
+
+        self.assertFalse(review["available"])
+        self.assertIsNone(review["needs_revision"])
+        self.assertIsNone(review["similar"])
+        self.assertIn("LLM", review["reason"])
+
+    def test_schedule_similarity_review_tries_next_model_after_invalid_result(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = self.make_scheduler(tmpdir)
+            call_llm = AsyncMock(side_effect=[
+                None,
+                json.dumps({
+                    "needs_revision": True,
+                    "cross_day_repeat": False,
+                    "within_day_homogeneous": True,
+                    "dominant_themes": ["低行动密度"],
+                    "candidate_clusters": [],
+                    "novel_anchor": "",
+                    "matches": [],
+                    "revision_guidance": "增加有明确产出的核心事件",
+                    "reason": "第二个模型完成了有效审查",
+                }, ensure_ascii=False),
+            ])
+            scheduler._call_llm = call_llm
+
+            review = asyncio.run(
+                scheduler._review_schedule_similarity_with_llm(
+                    "（无近期日程）",
+                    [("15:20", "坐在窗边观察云层变化")],
+                    models_override=["grok-4.5", "gemini-3.5-flash"],
+                )
+            )
+
+        self.assertTrue(review["available"])
+        self.assertTrue(review["needs_revision"])
+        self.assertEqual(2, call_llm.await_count)
+        first_call, second_call = call_llm.await_args_list
+        self.assertEqual(["grok-4.5"], first_call.kwargs["models_override"])
+        self.assertEqual(["gemini-3.5-flash"], second_call.kwargs["models_override"])
+        self.assertEqual(12, first_call.kwargs["timeout"])
+        self.assertEqual(45, second_call.kwargs["timeout"])
+        self.assertEqual(1, first_call.kwargs["per_model_attempts"])
+        self.assertEqual(1, second_call.kwargs["per_model_attempts"])
+
+    def test_schedule_similarity_reviewer_moves_generation_model_to_chain_end(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = self.make_scheduler(tmpdir)
+            with patch("scheduler.llm_request_config", return_value={
+                "models": [
+                    "gemini-3.5-flash",
+                    "grok-4.5",
+                    "deepseek-v4-flash",
+                    "gpt-5.6-luna",
+                ],
+            }):
+                models = scheduler._schedule_similarity_review_models(
+                    "gemini-3.5-flash"
+                )
+
+        self.assertEqual(
+            [
+                "grok-4.5",
+                "deepseek-v4-flash",
+                "gpt-5.6-luna",
+                "gemini-3.5-flash",
+            ],
+            models,
+        )
+
+    def test_generation_allows_two_bounded_llm_revisions_for_semantic_repeat(self):
+        candidate = {
+            "outfit_style": "清新风",
+            "reference_query": "清爽自然的城市生活穿搭",
+            "outfit": "风格：清新风\n发型：低马尾\n穿搭：蓝色衬衫配白色长裤和运动鞋。",
+            "schedule": "19:30 在小店享用潮汕牛肉火锅",
+            "schedule_prompt": "19:30 enjoy Chaoshan beef hot pot at a small restaurant",
+            "schedule_details": [],
+            "prompt": "adult woman having dinner at a small restaurant",
+            "caption": "晚上想去吃顿热乎的晚餐。",
+            "photo_style_en": "Natural evening lifestyle photography.",
+        }
+        revised = {
+            **candidate,
+            "schedule": "19:30 在海边小馆品尝柠檬香草烤鲈鱼配时蔬",
+            "schedule_prompt": "19:30 enjoy lemon herb grilled sea bass with vegetables",
+            "prompt": "adult woman eating grilled sea bass at a seaside bistro",
+            "caption": "晚上想去海边吃一份清爽的烤鱼。",
+        }
+        final_revision = {
+            **candidate,
+            "schedule": "19:30 参加海边夜间生态观测并完成一页潮间带记录",
+            "schedule_prompt": "19:30 join a nighttime coastal ecology survey and complete a field record",
+            "prompt": "adult woman completing a coastal ecology field record at night",
+            "caption": "晚上想认真观察一次潮间带，也给今天留下一页新的记录。",
+        }
+        review_similar = {
+            "needs_revision": True,
+            "cross_day_repeat": True,
+            "within_day_homogeneous": True,
+            "dominant_themes": ["餐饮过渡", "低行动密度"],
+            "candidate_clusters": [{
+                "theme": "餐饮过渡",
+                "times": ["19:30"],
+                "role": "transition",
+                "why": "唯一时段仍只是普通用餐，没有会推动进展的核心事件",
+            }],
+            "novel_anchor": "",
+            "matches": [{
+                "candidate_time": "19:30",
+                "candidate_activity": "在小店享用潮汕牛肉火锅",
+                "history_date": "2026-07-26",
+                "history_activity": "在铜锅店涮牛肉",
+                "reason": "两顿饭都是牛肉涮锅，只更换了地区和店名",
+            }],
+            "revision_guidance": "替换 19:30，并增加一个有明确成果的非餐饮核心事件",
+            "reason": "候选火锅与近三日牛肉涮锅属于同一餐型",
+        }
+        review_still_repetitive = {
+            "needs_revision": False,
+            "cross_day_repeat": False,
+            "within_day_homogeneous": True,
+            "dominant_themes": ["餐饮过渡"],
+            "candidate_clusters": [{
+                "theme": "餐饮过渡",
+                "times": ["19:30"],
+                "role": "transition",
+                "why": "改稿仍只有一顿饭，缺少独立核心事件",
+            }],
+            "novel_anchor": "",
+            "matches": [],
+            "revision_guidance": "再次改稿，增加一个有参与结果的非餐饮核心事件",
+            "reason": "第二版仍只有生活过渡，内部同质化字段应触发再次改稿",
+        }
+        review_final = {
+            "needs_revision": False,
+            "cross_day_repeat": False,
+            "within_day_homogeneous": False,
+            "dominant_themes": ["夜间生态参与"],
+            "candidate_clusters": [{
+                "theme": "夜间生态参与",
+                "times": ["19:30"],
+                "role": "core_active",
+                "why": "活动有观察过程和明确记录成果",
+            }],
+            "novel_anchor": "完成一页潮间带生态记录",
+            "matches": [],
+            "revision_guidance": "",
+            "reason": "第三版已经形成新的主动核心事件",
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = self.make_scheduler(tmpdir)
+            call_llm = AsyncMock(side_effect=[
+                json.dumps(candidate, ensure_ascii=False),
+                json.dumps(review_similar, ensure_ascii=False),
+                json.dumps(revised, ensure_ascii=False),
+                json.dumps(review_still_repetitive, ensure_ascii=False),
+                json.dumps(final_revision, ensure_ascii=False),
+                json.dumps(review_final, ensure_ascii=False),
+            ])
+            with (
+                patch.object(
+                    scheduler,
+                    "_get_schedule_history",
+                    return_value="[2026-07-26]\n19:20 在铜锅店涮牛肉",
+                ),
+                patch.object(scheduler, "_call_llm", new=call_llm),
+                patch.object(
+                    scheduler,
+                    "_validate_schedule_alignment",
+                    side_effect=[
+                        (
+                            [("19:30", candidate["schedule"].split(" ", 1)[1])],
+                            [("19:30", "enjoy beef hot pot")],
+                            "",
+                        ),
+                        (
+                            [("19:30", revised["schedule"].split(" ", 1)[1])],
+                            [("19:30", "enjoy grilled sea bass")],
+                            "",
+                        ),
+                        (
+                            [("19:30", final_revision["schedule"].split(" ", 1)[1])],
+                            [("19:30", "join a nighttime coastal ecology survey")],
+                            "",
+                        ),
+                    ],
+                ),
+                patch.object(scheduler, "_missing_required_periods", return_value=[]),
+                patch.object(scheduler, "_valid_display_outfit", return_value=True),
+                patch.object(scheduler, "_normalize_schedule_details", return_value=([], "")),
+                patch.object(scheduler, "_theme_scene_drift_error", return_value=""),
+                patch.object(scheduler, "_schedule_forbidden_output_error", return_value=""),
+                patch.object(scheduler, "_disliked_outfit_similarity_error", return_value=""),
+                patch.object(scheduler, "_calendar_conflict_message", return_value=""),
+                patch.object(
+                    scheduler,
+                    "_schedule_diversity_error",
+                    side_effect=AssertionError("不应调用本地关键词相似判定"),
+                ),
+            ):
+                entry = asyncio.run(
+                    scheduler.generate_today(
+                        target_date=date(2026, 7, 27),
+                        theme_day="博物馆灵感日",
+                        theme_day_mode="random",
+                    )
+                )
+
+        self.assertEqual(final_revision["schedule"], entry.schedule)
+        self.assertEqual("博物馆灵感日", entry.theme_day)
+        self.assertEqual("random", entry.theme_day_mode)
+        self.assertEqual(6, call_llm.await_count)
+        first_revision_prompt = call_llm.await_args_list[2].args[0]
+        self.assertIn("上一候选经 LLM 多样性审查判定需要改稿", first_revision_prompt)
+        self.assertIn("候选火锅与近三日牛肉涮锅属于同一餐型", first_revision_prompt)
+        self.assertIn("主导主题：餐饮过渡、低行动密度", first_revision_prompt)
+        self.assertIn("活动簇：餐饮过渡（19:30 / transition）", first_revision_prompt)
+        self.assertIn("唯一时段仍只是普通用餐", first_revision_prompt)
+        self.assertIn("精彩锚点：缺失", first_revision_prompt)
+        self.assertIn("替换 19:30，并增加一个有明确成果的非餐饮核心事件", first_revision_prompt)
+        self.assertIn("整稿策略", first_revision_prompt)
+        self.assertIn("视为需要淘汰的草稿", first_revision_prompt)
+        self.assertIn("核心体验从空白重新设计", first_revision_prompt)
+        self.assertIn("跨日策略", first_revision_prompt)
+        self.assertIn("更换核心目的、参与方式和最终结果", first_revision_prompt)
+        self.assertIn("不能只换对象、地点、材料、道具、店名或措辞", first_revision_prompt)
+        self.assertIn("解除单一场馆、职业或工作流绑定", first_revision_prompt)
+        self.assertIn("不要只把同一任务流程改写成另一种同结构流程", first_revision_prompt)
+        self.assertIn("从空白重建整天的核心体验与精彩锚点", first_revision_prompt)
+        self.assertIn("上一候选的非过渡核心活动、地点、道具、步骤和结果关系都视为废弃草稿", first_revision_prompt)
+        self.assertIn("新增的精彩锚点必须推动一天发生新进展", first_revision_prompt)
+        second_revision_prompt = call_llm.await_args_list[4].args[0]
+        self.assertIn("第二版仍只有生活过渡", second_revision_prompt)
+        self.assertIn("再次改稿，增加一个有参与结果的非餐饮核心事件", second_revision_prompt)
+
     def test_all_schedule_prompt_variants_require_solo_character_focus(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scheduler = self.make_scheduler(tmpdir)
@@ -105,7 +616,7 @@ class ScheduleDiversityTest(unittest.TestCase):
             self.assertNotIn("生成时硬约束", prompt)
             self.assertNotIn("双保障", prompt)
 
-    def test_generation_keeps_diversity_advisory_without_second_llm_call(self):
+    def test_generation_accepts_when_llm_review_fails_without_local_fallback(self):
         candidate = {
             "outfit_style": "清新风",
             "reference_query": "清爽自然的日常穿搭与城市生活氛围",
@@ -128,7 +639,10 @@ class ScheduleDiversityTest(unittest.TestCase):
             scheduler = self.make_scheduler(tmpdir)
             outfit_reference = Path(tmpdir) / "xiaohongshu-outfit.webp"
             outfit_reference.write_bytes(b"reference")
-            call_llm = AsyncMock(return_value=json.dumps(candidate, ensure_ascii=False))
+            call_llm = AsyncMock(side_effect=[
+                json.dumps(candidate, ensure_ascii=False),
+                None,
+            ])
             with (
                 patch.object(scheduler, "_configured_today", return_value=date(2026, 7, 28)),
                 patch.object(scheduler, "_call_llm", new=call_llm),
@@ -171,12 +685,88 @@ class ScheduleDiversityTest(unittest.TestCase):
         self.assertEqual("ok", entry.status)
         self.assertEqual(candidate["schedule"], entry.schedule)
         self.assertEqual(candidate["prompt"], entry.prompt)
-        self.assertEqual(1, call_llm.await_count)
-        diversity_note.assert_called_once()
+        self.assertEqual(2, call_llm.await_count)
+        diversity_note.assert_not_called()
         accessory_note.assert_called_once()
-        self.assertEqual(str(outfit_reference), call_llm.await_args.kwargs["image_path"])
-        self.assertIn("小红书真人穿搭参考图", call_llm.await_args.args[0])
-        self.assertIn("今日穿搭的唯一事实来源", call_llm.await_args.args[0])
+        generation_call = call_llm.await_args_list[0]
+        review_call = call_llm.await_args_list[1]
+        self.assertEqual(str(outfit_reference), generation_call.kwargs["image_path"])
+        self.assertNotIn("image_path", review_call.kwargs)
+        self.assertIn("小红书真人穿搭参考图", generation_call.args[0])
+        self.assertIn("今日穿搭的唯一事实来源", generation_call.args[0])
+
+    def test_generation_uses_three_day_prompt_and_seven_day_review_history(self):
+        candidate = {
+            "outfit_style": "清新风",
+            "reference_query": "清爽自然的城市活动穿搭",
+            "outfit": "风格：清新风\n发型：低马尾\n穿搭：蓝色衬衫配白色长裤和运动鞋。",
+            "schedule": "10:25 在社区工坊完成一只手捏陶杯",
+            "schedule_prompt": "10:25 make a hand-built clay cup in a community workshop",
+            "schedule_details": [],
+            "prompt": "adult woman making a clay cup in a community workshop",
+            "caption": "今天想认真完成一个小作品。",
+            "photo_style_en": "Natural workshop lifestyle photography.",
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = self.make_scheduler(tmpdir)
+            history_loader = Mock(side_effect=lambda _today, days=3: (
+                "RECENT_THREE_DAY_HISTORY"
+                if days == 3
+                else "EXTENDED_SEVEN_DAY_HISTORY"
+            ))
+            review = AsyncMock(return_value={
+                "available": True,
+                "needs_revision": False,
+                "similar": False,
+                "cross_day_repeat": False,
+                "within_day_homogeneous": False,
+                "dominant_themes": [],
+                "matches": [],
+                "revision_guidance": "",
+                "reason": "候选有新的核心事件",
+            })
+            call_llm = AsyncMock(return_value=json.dumps(candidate, ensure_ascii=False))
+            with (
+                patch.object(scheduler, "_get_schedule_history", new=history_loader),
+                patch.object(scheduler, "_call_llm", new=call_llm),
+                patch.object(
+                    scheduler,
+                    "_review_schedule_similarity_with_llm",
+                    new=review,
+                ),
+                patch.object(
+                    scheduler,
+                    "_validate_schedule_alignment",
+                    return_value=(
+                        [("10:25", "在社区工坊完成一只手捏陶杯")],
+                        [("10:25", "make a hand-built clay cup")],
+                        "",
+                    ),
+                ),
+                patch.object(scheduler, "_missing_required_periods", return_value=[]),
+                patch.object(scheduler, "_valid_display_outfit", return_value=True),
+                patch.object(scheduler, "_normalize_schedule_details", return_value=([], "")),
+                patch.object(scheduler, "_schedule_forbidden_output_error", return_value=""),
+                patch.object(scheduler, "_disliked_outfit_similarity_error", return_value=""),
+                patch.object(scheduler, "_calendar_conflict_message", return_value=""),
+            ):
+                entry = asyncio.run(
+                    scheduler.generate_today(target_date=date(2026, 8, 9))
+                )
+
+        self.assertEqual("ok", entry.status)
+        self.assertIn("RECENT_THREE_DAY_HISTORY", call_llm.await_args.args[0])
+        self.assertNotIn("EXTENDED_SEVEN_DAY_HISTORY", call_llm.await_args.args[0])
+        self.assertEqual("RECENT_THREE_DAY_HISTORY", review.await_args.args[0])
+        self.assertEqual(
+            "EXTENDED_SEVEN_DAY_HISTORY",
+            review.await_args.kwargs["extended_schedule_history"],
+        )
+        self.assertEqual(
+            [((date(2026, 8, 9),), {}), ((date(2026, 8, 9),), {"days": 7})],
+            history_loader.call_args_list,
+        )
 
     def test_xiaohongshu_keyword_is_selected_before_specific_garments(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -938,6 +1528,7 @@ class ScheduleDiversityTest(unittest.TestCase):
                 self.assertIn("三日反同质化执行简报", prompt)
                 self.assertIn("植物养护/花艺", prompt)
                 self.assertIn("今日主题/主线优先避开的近期高频动作族", prompt)
+                self.assertIn("近三日已发生的具体核心主线", prompt)
                 self.assertIn("本次去重首要要求", prompt)
                 self.assertIn("今日所有餐食不得落入", prompt)
                 self.assertIn("必须在输出 JSON 前自行替换", prompt)

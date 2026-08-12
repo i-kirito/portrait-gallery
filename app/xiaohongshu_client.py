@@ -11,7 +11,7 @@ import re
 import socket
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import aiohttp
 
@@ -113,6 +113,7 @@ class XiaohongshuClient:
         self.allowed_image_hosts = tuple(host.lower().lstrip(".") for host in allowed_image_hosts if host)
         self.allow_private_image_hosts = allow_private_image_hosts
         self._process: asyncio.subprocess.Process | None = None
+        self._service_log = None
         self._start_lock = asyncio.Lock()
         self._validate_loopback_base_url(self.base_url)
 
@@ -145,6 +146,13 @@ class XiaohongshuClient:
     def configured(self) -> bool:
         return bool(self.binary_path) or self._process is not None
 
+    def _service_state_when_unhealthy(self) -> str:
+        """Classify a non-ready service without conflating startup and stop."""
+        process = self._process
+        if process is None:
+            return "stopped"
+        return "starting" if getattr(process, "returncode", None) is None else "error"
+
     async def _health(self) -> bool:
         timeout = aiohttp.ClientTimeout(total=2)
         try:
@@ -176,16 +184,19 @@ class XiaohongshuClient:
                     "小红书服务目录不存在。",
                     status=503,
                 )
+            service_log = open(workdir / "service.log", "ab")
+            self._service_log = service_log
             self._process = await asyncio.create_subprocess_exec(
                 str(binary),
                 "-headless=true",
                 "-port",
                 f"127.0.0.1:{port}",
                 cwd=str(workdir),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
+                stdout=service_log,
+                stderr=service_log,
             )
-            for _ in range(80):
+            # 首次冷启动可能需要下载浏览器（约 140MB），预留 120 秒就绪窗口
+            for _ in range(480):
                 if self._process.returncode is not None:
                     break
                 if await self._health():
@@ -203,14 +214,20 @@ class XiaohongshuClient:
     async def close(self) -> None:
         process = self._process
         self._process = None
-        if not process or process.returncode is not None:
-            return
-        process.terminate()
-        try:
-            await asyncio.wait_for(process.wait(), timeout=5)
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
+        if process and process.returncode is None:
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+        log_file = self._service_log
+        self._service_log = None
+        if log_file is not None:
+            try:
+                log_file.close()
+            except OSError:
+                pass
 
     async def _request(
         self,
@@ -252,49 +269,56 @@ class XiaohongshuClient:
     ) -> dict:
         """Return service readiness and, when requested, the account login state."""
         running = await self._health()
+        service_state = "ready" if running else self._service_state_when_unhealthy()
         if start_service and not running:
             try:
                 await self.ensure_service()
                 running = True
+                service_state = "ready"
             except XiaohongshuError as exc:
                 return {
-                    "configured": bool(self.binary_path),
+                    "configured": self.configured,
                     "service_running": False,
                     "is_logged_in": False,
                     "login_state": "unknown",
+                    "service_state": "error",
                     "error": exc.code,
                     "message": exc.message,
                 }
         if not running:
             return {
-                "configured": bool(self.binary_path),
+                "configured": self.configured,
                 "service_running": False,
                 "is_logged_in": False,
                 "login_state": "unknown",
+                "service_state": service_state,
             }
         if not check_login:
             return {
-                "configured": bool(self.binary_path) or running,
+                "configured": self.configured or running,
                 "service_running": True,
                 "is_logged_in": None,
                 "login_state": "unknown",
+                "service_state": "ready",
             }
         try:
             data = await self._request("GET", "/api/v1/login/status", timeout_seconds=45)
         except XiaohongshuError as exc:
             return {
-                "configured": bool(self.binary_path),
+                "configured": self.configured or running,
                 "service_running": True,
                 "is_logged_in": False,
                 "login_state": "unknown",
+                "service_state": "ready",
                 "error": exc.code,
                 "message": exc.message,
             }
         return {
-            "configured": bool(self.binary_path) or running,
+            "configured": self.configured or running,
             "service_running": True,
             "is_logged_in": bool(data.get("is_logged_in")),
             "login_state": "logged_in" if data.get("is_logged_in") else "logged_out",
+            "service_state": "ready",
             "username": str(data.get("username") or "").strip(),
         }
 
@@ -332,7 +356,8 @@ class XiaohongshuClient:
                 timeout_seconds=70,
             )
         except XiaohongshuError as exc:
-            if exc.code not in {"upstream_error", "request_timeout", "service_unavailable"}:
+            # 上游业务错误（如反爬拦截）不重启进程重试，只对服务不可用/超时兜底
+            if exc.code not in {"request_timeout", "service_unavailable"}:
                 raise
             await self.close()
             await asyncio.sleep(0.5)
@@ -550,6 +575,79 @@ class XiaohongshuClient:
             "author": str(user.get("nickname") or user.get("nickName") or "").strip(),
             "images": images,
         }
+
+    @staticmethod
+    def _parse_note_url(value: str) -> tuple[str, str]:
+        parsed = urlparse(str(value or "").strip())
+        hostname = str(parsed.hostname or "").lower().rstrip(".")
+        if parsed.scheme not in {"http", "https"} or not (
+            hostname == "xiaohongshu.com" or hostname.endswith(".xiaohongshu.com")
+        ):
+            return "", ""
+        matched = re.search(r"/(?:explore|discovery/item)/([0-9a-fA-F]{24})", parsed.path)
+        if not matched:
+            return "", ""
+        token = str((parse_qs(parsed.query).get("xsec_token") or [""])[0]).strip()
+        return matched.group(1), token
+
+    async def _resolve_share_url(self, value: str) -> str:
+        """Follow xhslink short-link redirects and validate the final host."""
+        current = str(value or "").strip()
+        if not current:
+            raise XiaohongshuError("note_url_required", "请输入小红书笔记链接。", status=400)
+        parsed = urlparse(current)
+        hostname = str(parsed.hostname or "").lower().rstrip(".")
+        if parsed.scheme not in {"http", "https"} or not hostname:
+            raise XiaohongshuError("invalid_note_url", "链接格式不正确。", status=400)
+        is_short_link = hostname == "xhslink.com" or hostname.endswith(".xhslink.com")
+        if not is_short_link:
+            if hostname != "xiaohongshu.com" and not hostname.endswith(".xiaohongshu.com"):
+                raise XiaohongshuError("invalid_note_url", "只支持小红书笔记链接。", status=400)
+            return current
+        current = await self._follow_redirects(current)
+        final_host = str(urlparse(current).hostname or "").lower().rstrip(".")
+        if final_host != "xiaohongshu.com" and not final_host.endswith(".xiaohongshu.com"):
+            raise XiaohongshuError("invalid_note_url", "短链没有指向小红书笔记。", status=400)
+        return current
+
+    async def _follow_redirects(self, current: str) -> str:
+        timeout = aiohttp.ClientTimeout(total=20, connect=10)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                for _ in range(MAX_REDIRECTS + 1):
+                    async with session.get(current, allow_redirects=False) as response:
+                        location = response.headers.get("Location")
+                        if not location:
+                            break
+                        current = urljoin(current, location)
+                        hostname = str(urlparse(current).hostname or "").lower().rstrip(".")
+                        if hostname == "xiaohongshu.com" or hostname.endswith(".xiaohongshu.com"):
+                            break
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            raise XiaohongshuError(
+                "note_url_unavailable",
+                "短链跳转失败，请复制完整的笔记链接。",
+                status=502,
+            ) from exc
+        return current
+
+    async def resolve_note_url(self, url: str) -> dict:
+        """Resolve one pasted note link to its image list, bypassing keyword search."""
+        final_url = await self._resolve_share_url(url)
+        feed_id, xsec_token = self._parse_note_url(final_url)
+        if not feed_id:
+            raise XiaohongshuError(
+                "invalid_note_url",
+                "无法从链接中识别笔记，请粘贴完整的笔记链接。",
+                status=400,
+            )
+        if not xsec_token:
+            raise XiaohongshuError(
+                "note_token_missing",
+                "链接缺少 xsec_token 参数，请在 App 里点分享复制完整链接。",
+                status=400,
+            )
+        return await self.detail(feed_id, xsec_token)
 
     def _image_host_allowed(self, hostname: str) -> bool:
         hostname = hostname.lower().rstrip(".")

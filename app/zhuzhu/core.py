@@ -61,7 +61,9 @@ REQUEST_SESSION = requests.Session()
 DAILY_IMAGE_SAFETY_GUARD = (
     "The subject is unmistakably an adult woman in her late twenties. "
     "This is a non-sexual everyday lifestyle photograph. Her clothing is fully opaque, "
-    "secure, activity-appropriate daywear with a modest neckline and comfortable coverage. "
+    "secure, activity-appropriate daywear. "
+    "IMPORTANT: preserve her natural adult body proportions exactly - never compress, flatten, shrink or reduce the chest, "
+    "keep clothing naturally fitted without squeezing or minimizing. "
     "Her pose, expression, and camera treatment are natural and focused on the scheduled task."
 )
 
@@ -1128,7 +1130,8 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
 
     if not schedule_activity and not allow_random_pool:
         print(
-            f"ERROR: missing LLM scene context for theme={theme}; refusing random theme pool",
+            f"INFO: no LLM scene context for theme={theme}; random theme pool disabled "
+            "(daily schedule may be injected by the caller)",
             file=sys.stderr,
         )
         return ""
@@ -1237,7 +1240,10 @@ def build_prompt(theme: str, extra_prompt: Optional[str] = None, schedule_activi
     )
     if schedule_activity and not is_sexy:
         prompt = sanitize_daily_image_prompt(prompt, limit=0)
-        prompt = f"{prompt} {DAILY_IMAGE_SAFETY_GUARD} {NATURAL_FACE_SHAPE_GUARD}".strip()
+        prompt = sanitize_daily_image_prompt(
+            f"{prompt} {DAILY_IMAGE_SAFETY_GUARD} {NATURAL_FACE_SHAPE_GUARD}".strip(),
+            limit=0,
+        )
     elif not is_sexy:
         prompt = sanitize_image_prompt(prompt, limit=0)
         prompt = f"{prompt} {NATURAL_FACE_SHAPE_GUARD}".strip()

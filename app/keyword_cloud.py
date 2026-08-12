@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from group_chat import GroupChatStore
-from store import ScheduleStore
+from store import LockedJsonDictStore, ScheduleStore
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +19,8 @@ IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
 DEFAULT_CLOUD_LIMIT = 48
 MAX_SCHEDULE_CLOUD_TERMS = 5
 MIN_SCHEDULE_CLOUD_POOL = 12
+MAX_HIDDEN_KEYWORDS = 500
+KEYWORD_CLOUD_PREFERENCES_FILENAME = "keyword_cloud_preferences.json"
 USER_PROMPT_FIELDS = (
     "custom_prompt",
     "user_prompt",
@@ -28,6 +30,33 @@ USER_PROMPT_FIELDS = (
     "raw_prompt",
     "raw_user_prompt",
 )
+
+EXPLICIT_USER_PROMPT_FIELDS = (
+    "custom_prompt",
+    "original_prompt",
+    "input_prompt",
+    "request_prompt",
+    "raw_prompt",
+    "raw_user_prompt",
+)
+
+AUTOMATIC_PROMPT_SOURCES = {"cron", "web"}
+
+LEGACY_PROMPT_FALLBACK_SOURCES = {
+    "chat",
+    "custom",
+    "custom_ui",
+    "group_chat",
+    "hermes",
+    "hermes_api",
+    "openclaw",
+}
+
+LEGACY_ALIAS_FALLBACK_SOURCES = {
+    "gallery",
+    "import",
+    "recovered",
+}
 
 SOURCE_LABELS = {
     "hermes_api": "Hermes",
@@ -115,12 +144,51 @@ ZH_STOPWORDS = {
     "高质量",
 }
 
+GENERIC_TEMPLATE_TERMS = {
+    "action",
+    "background",
+    "best quality",
+    "camera",
+    "candid smartphone photo",
+    "composition",
+    "expression",
+    "framing",
+    "full body in frame",
+    "hair style",
+    "hairstyle",
+    "hem",
+    "highly detailed",
+    "lighting",
+    "location",
+    "mood",
+    "natural fit",
+    "natural relaxed pose",
+    "outfit",
+    "pose",
+    "pores",
+    "props",
+    "scene",
+    "setting",
+    "sharp focus on the face",
+    "shoulders",
+    "style",
+    "subtle film grain",
+    "third-person photography",
+    "time of day",
+}
+
 REJECT_MARKERS = (
     "18-year",
     "year-old",
+    "adult body proportions",
+    "adult facial proportions",
+    "balanced adult proportions",
+    "balanced facial features",
     "breast",
     "bust",
     "cleavage",
+    "detailed fabric textures",
+    "fair skin",
     "hourglass",
     "slim waist",
     "skin texture",
@@ -147,11 +215,14 @@ REJECT_MARKERS = (
     "intimate atmosphere",
     "landscape or wide canvas",
     "masterpiece clarity",
+    "natural waistline",
     "oversized heads",
     "passport-photo",
+    "real photographed person",
     "smartphone camera",
     "smudges",
     "soft shadows",
+    "true-to-life colors",
     "volumetric rays",
     "warm smartphone flash",
 )
@@ -175,6 +246,7 @@ JK_ALIAS_RE = re.compile(r"\bjk\b|jk\s*uniform|jk\s*outfit|jk制服", re.IGNOREC
 def build_keyword_cloud_payload(data_dir: str, limit: int = DEFAULT_CLOUD_LIMIT) -> dict:
     """Return high-frequency keywords from raw user-entered generation prompts."""
     limit = _bounded_limit(limit)
+    hidden_keyword_keys = _load_hidden_keyword_keys(data_dir)
     counter: Counter[str] = Counter()
     source_counts: dict[str, Counter[str]] = defaultdict(Counter)
     scanned_entries = 0
@@ -188,6 +260,8 @@ def build_keyword_cloud_payload(data_dir: str, limit: int = DEFAULT_CLOUD_LIMIT)
             continue
         used_entries += 1
         for term in terms:
+            if _hidden_keyword_key(term) in hidden_keyword_keys:
+                continue
             counter[term] += 1
             source_counts[term][source] += 1
 
@@ -198,6 +272,7 @@ def build_keyword_cloud_payload(data_dir: str, limit: int = DEFAULT_CLOUD_LIMIT)
             "entry_count": used_entries,
             "scanned_count": scanned_entries,
             "basis": "user_input_and_favorite_wardrobe",
+            "hidden_count": len(hidden_keyword_keys),
             "updated_at": _utc_now(),
         }
 
@@ -234,7 +309,38 @@ def build_keyword_cloud_payload(data_dir: str, limit: int = DEFAULT_CLOUD_LIMIT)
         "entry_count": used_entries,
         "scanned_count": scanned_entries,
         "basis": "user_input_and_favorite_wardrobe",
+        "hidden_count": len(hidden_keyword_keys),
         "updated_at": _utc_now(),
+    }
+
+
+def hide_keyword_cloud_term(data_dir: str, value: Any) -> dict:
+    """Persist one exact keyword so future cloud and schedule hints omit it."""
+    term = _normalize_hidden_keyword(value)
+    if not term:
+        raise ValueError("keyword_required")
+
+    store = _keyword_cloud_preferences_store(data_dir)
+    hidden_at = _utc_now()
+
+    def _hide(data: dict) -> dict:
+        hidden_keywords = _normalized_hidden_keywords(data.get("hidden_keywords"))
+        hidden_keys = {_hidden_keyword_key(item) for item in hidden_keywords}
+        if _hidden_keyword_key(term) not in hidden_keys:
+            hidden_keywords.append(term)
+        data.update({
+            "version": 1,
+            "hidden_keywords": hidden_keywords[-MAX_HIDDEN_KEYWORDS:],
+            "updated_at": hidden_at,
+        })
+        return data
+
+    saved = store.update(_hide)
+    hidden_keywords = _normalized_hidden_keywords(saved.get("hidden_keywords"))
+    return {
+        "hidden_keyword": term,
+        "hidden_count": len(hidden_keywords),
+        "updated_at": str(saved.get("updated_at") or hidden_at),
     }
 
 
@@ -398,6 +504,46 @@ def _load_json(path: str) -> Any:
         return {}
 
 
+def _keyword_cloud_preferences_store(data_dir: str) -> LockedJsonDictStore:
+    return LockedJsonDictStore(
+        os.path.join(data_dir, KEYWORD_CLOUD_PREFERENCES_FILENAME),
+        os.path.join(data_dir, ".keyword_cloud_preferences.lock"),
+    )
+
+
+def _load_hidden_keyword_keys(data_dir: str) -> set[str]:
+    path = os.path.join(data_dir, KEYWORD_CLOUD_PREFERENCES_FILENAME)
+    if not os.path.exists(path):
+        return set()
+    data = _keyword_cloud_preferences_store(data_dir).load()
+    return {
+        _hidden_keyword_key(term)
+        for term in _normalized_hidden_keywords(data.get("hidden_keywords"))
+    }
+
+
+def _normalized_hidden_keywords(value: Any) -> list[str]:
+    items = value if isinstance(value, list) else []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        term = _normalize_hidden_keyword(item)
+        key = _hidden_keyword_key(term)
+        if not term or not key or key in seen:
+            continue
+        seen.add(key)
+        normalized.append(term)
+    return normalized
+
+
+def _normalize_hidden_keyword(value: Any) -> str:
+    return _clean_term(str(value or ""))
+
+
+def _hidden_keyword_key(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip().casefold()
+
+
 def _merge_entry(entry: dict, meta: dict) -> dict:
     merged = dict(meta or {})
     merged.update(entry or {})
@@ -422,13 +568,34 @@ def _merge_entry(entry: dict, meta: dict) -> dict:
 def _entry_terms(entry: dict) -> set[str]:
     terms: list[str] = []
     source = _normalize_source(entry.get("source"), entry.get("image_filename") or entry.get("filename"))
+    if source in AUTOMATIC_PROMPT_SOURCES:
+        return set()
+
     if source == "favorite_wardrobe" or entry.get("favorite_outfit"):
         terms.extend(_terms_from_favorite_outfit(entry))
     else:
-        for field in USER_PROMPT_FIELDS:
-            terms.extend(_terms_from_user_prompt_value(entry.get(field)))
+        for field in EXPLICIT_USER_PROMPT_FIELDS:
+            field_terms = _terms_from_user_prompt_value(entry.get(field))
+            if field_terms:
+                terms.extend(field_terms)
+                break
+
+        # `user_prompt` is ambiguous in historical data. Manual and Hermes
+        # calls used it for caller input, while schedule/web generation stored
+        # the fully expanded final prompt in the same field. Prefer explicit
+        # raw fields. Automatic jobs were already excluded above.
         if not terms:
-            terms.extend(_terms_from_prompt_fallback(entry.get("prompt")))
+            terms.extend(_terms_from_user_prompt_value(entry.get("user_prompt")))
+
+        if not terms:
+            prompt = entry.get("prompt")
+            if source in LEGACY_PROMPT_FALLBACK_SOURCES:
+                terms.extend(_terms_from_prompt_fallback(prompt))
+            elif source in LEGACY_ALIAS_FALLBACK_SOURCES:
+                # Old recovered/imported records often have only the final
+                # generation prompt. Keep compact known aliases without
+                # treating the whole generated template as user preference.
+                terms.extend(_keyword_aliases(prompt))
     result = []
     seen = set()
     for term in terms:
@@ -616,9 +783,9 @@ def _clean_term(value: str) -> str:
         return ""
 
     lower = text.casefold()
-    if lower in EN_STOPWORDS or text in ZH_STOPWORDS:
+    if lower in EN_STOPWORDS or lower in GENERIC_TEMPLATE_TERMS or text in ZH_STOPWORDS:
         return ""
-    if lower.startswith(("avoid ", "no ")):
+    if lower.startswith(("avoid ", "do not ", "don't ", "exact same ", "no ", "same ")):
         return ""
     if any(marker in lower for marker in REJECT_MARKERS):
         return ""
@@ -652,17 +819,19 @@ def _normalize_source(source: Any, filename: Any = "") -> str:
         return "openclaw"
     if "hermes" in raw or name.startswith("hermes_"):
         return "hermes_api"
+    # Explicit provenance is more reliable than legacy filename conventions.
+    # In particular, edited schedule images often contain "custom" in their
+    # filename while their source remains cron/web.
+    if raw not in {"", "gallery", "metadata"}:
+        if raw in {"custom", "custom_ui"}:
+            return "custom"
+        return raw
     if (
-        raw in {"custom", "custom_ui"}
-        or "_custom_" in name
+        "_custom_" in name
         or name.startswith(("custom_", "zhuzhu_custom"))
     ):
         return "custom"
-    if raw in SOURCE_LABELS:
-        return raw
-    if raw in {"", "metadata"}:
-        return "gallery"
-    return raw
+    return "gallery"
 
 
 def _looks_image_filename(value: str) -> bool:

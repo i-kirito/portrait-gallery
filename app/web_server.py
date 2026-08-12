@@ -54,7 +54,7 @@ from social_hub import (
     normalize_client_token,
     normalize_instance_id,
 )
-from keyword_cloud import build_keyword_cloud_payload
+from keyword_cloud import build_keyword_cloud_payload, hide_keyword_cloud_term
 from image_editing import (
     MAX_IMAGE_EDIT_INSTRUCTION_LENGTH,
     MAX_IMAGE_EDIT_SCHEDULE_DESCRIPTION_LENGTH,
@@ -77,6 +77,7 @@ from outfit_plan_edit import (
 )
 from picxazz_sync import PicxazzSyncClient
 from reference_profiles import (
+    analyze_image_outfit,
     analyze_reference_image,
     ensure_reference_profiles,
     load_reference_profiles,
@@ -273,6 +274,30 @@ SCHEDULED_PHOTO_SOURCES = {"cron"}
 TODAY_PHOTO_SOURCES = {"cron", "web"}
 FAILED_SCHEDULE_TEXT = "生成失败"
 REFERENCE_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+VIDEO_EXTENSIONS = (".mp4",)
+MAX_VIDEO_FILE_BYTES = 256 * 1024 * 1024
+MAX_VIDEO_PROMPT_CHARS = 1000
+GROK_VIDEO_ROUTE = "http://127.0.0.1:8100"
+GROK_VIDEO_MODEL = "grok-imagine-video"
+GROK_VIDEO_TIMEOUT_SECONDS = 20 * 60
+VIDEO_METADATA_FIELDS = (
+    "video_filename",
+    "video_url",
+    "video_status",
+    "video_prompt",
+    "video_error",
+    "video_job_id",
+    "video_source",
+    "video_model",
+    "video_resolution",
+    "video_aspect_ratio",
+    "video_duration",
+    "video_width",
+    "video_height",
+    "video_file_size_bytes",
+    "video_created_at",
+    "video_updated_at",
+)
 CLEANUP_PRESET_DAYS = {
     "3d": 3,
     "7d": 7,
@@ -397,6 +422,7 @@ class GalleryServer:
         )
         self.default_image_dir = default_image_dir(data_dir)
         self.image_dir = self._resolve_image_dir()
+        self.video_dir = os.path.join(self.data_dir, "videos")
         self.app_reference_dir = resolve_builtin_reference_dir(config, config_path)
         self.reference_dir = resolve_reference_dir(config, data_dir, config_path)
         self.uploaded_reference_dir = os.path.join(self.reference_dir, "uploads")
@@ -425,6 +451,7 @@ class GalleryServer:
         self.group_chat_store = GroupChatStore(data_dir)
         self._group_chat_reply_progress: dict[str, dict] = {}
         self._group_chat_background_tasks: set[asyncio.Task] = set()
+        self._video_generation_tasks: dict[str, asyncio.Task] = {}
         self._wardrobe_image_locks: dict[str, asyncio.Lock] = {}
         self._image_mutation_locks: dict[str, asyncio.Lock] = {}
         self._image_mutation_lock_users: dict[str, int] = {}
@@ -432,16 +459,21 @@ class GalleryServer:
         self._manual_send_cooldown_until = 0.0
         self._manual_send_last_error = ""
         self._schedule_refresh_task: Optional[asyncio.Task] = None
+        self._schedule_refresh_task_date = ""
+        self._tomorrow_schedule_refresh_task: Optional[asyncio.Task] = None
+        self._tomorrow_schedule_refresh_task_date = ""
         self._theme_day_task: Optional[asyncio.Task] = None
         self._theme_day_job: Optional[dict] = None
         self._restart_scheduled = False
         os.makedirs(self.default_image_dir, exist_ok=True)
         os.makedirs(self.image_dir, exist_ok=True)
+        os.makedirs(self.video_dir, exist_ok=True)
         os.makedirs(self.reference_dir, exist_ok=True)
         os.makedirs(self.uploaded_reference_dir, exist_ok=True)
         os.makedirs(self.wardrobe_reference_dir, exist_ok=True)
         os.makedirs(self.xiaohongshu_reference_dir, exist_ok=True)
         self._recover_interrupted_wardrobe_image_statuses()
+        self._recover_interrupted_video_statuses()
         ensure_reference_profiles(
             self.data_dir,
             self.reference_dir,
@@ -471,6 +503,7 @@ class GalleryServer:
         self.app = web.Application(middlewares=[self.gallery_auth_middleware])
         self._setup_routes()
         self.app.on_cleanup.append(self._cleanup_group_chat_background_tasks)
+        self.app.on_cleanup.append(self._cleanup_video_generation_tasks)
         self.app.on_cleanup.append(self._cleanup_xiaohongshu_client)
 
     def _now(self) -> datetime:
@@ -748,6 +781,7 @@ class GalleryServer:
         self.app.router.add_post("/api/xiaohongshu/schedule-mode", self.handle_xiaohongshu_schedule_mode)
         self.app.router.add_post("/api/xiaohongshu/search", self.handle_xiaohongshu_search)
         self.app.router.add_post("/api/xiaohongshu/detail", self.handle_xiaohongshu_detail)
+        self.app.router.add_post("/api/xiaohongshu/note-url", self.handle_xiaohongshu_note_url)
         self.app.router.add_post("/api/xiaohongshu/creators/search", self.handle_xiaohongshu_creator_search)
         self.app.router.add_post("/api/xiaohongshu/creators/profile", self.handle_xiaohongshu_creator_profile)
         self.app.router.add_get("/api/xiaohongshu/creators", self.handle_xiaohongshu_creators)
@@ -814,6 +848,16 @@ class GalleryServer:
             self.handle_activate_image_version,
         )
         self.app.router.add_get("/api/images/{img_id}", self.handle_image_detail)
+        self.app.router.add_post(
+            "/api/images/{img_id}/recognize-outfit",
+            self.handle_recognize_image_outfit,
+        )
+        self.app.router.add_get("/api/images/{img_id}/video", self.handle_image_video)
+        self.app.router.add_post("/api/images/{img_id}/video", self.handle_image_video)
+        self.app.router.add_post(
+            "/api/images/{img_id}/video/register",
+            self.handle_register_image_video,
+        )
         self.app.router.add_post("/api/images/{img_id}/reroll", self.handle_reroll_image)
         self.app.router.add_post("/api/images/{img_id}/edit", self.handle_edit_image)
         self.app.router.add_post("/api/images/{img_id}/favorite", self.handle_toggle_favorite)
@@ -845,6 +889,7 @@ class GalleryServer:
         self.app.router.add_get("/api/schedule-detail", self.handle_schedule_detail)
         self.app.router.add_get("/api/photo-jobs", self.handle_photo_jobs)
         self.app.router.add_get("/api/keyword-cloud", self.handle_keyword_cloud)
+        self.app.router.add_post("/api/keyword-cloud/hide", self.handle_hide_keyword_cloud_term)
         self.app.router.add_post("/api/photo-jobs/retry", self.handle_retry_photo_job)
         self.app.router.add_patch("/api/photo-jobs/plan", self.handle_update_photo_plan)
         self.app.router.add_post("/api/photo-jobs/plan", self.handle_update_photo_plan)
@@ -871,6 +916,7 @@ class GalleryServer:
 
         # 图片服务
         self.app.router.add_get("/images/{filename:.*}", self.handle_image_file)
+        self.app.router.add_get("/api/videos/{filename}", self.handle_video_file)
 
     def _setup_social_hub_routes(self):
         """Register only the API surface needed by a shared social hub."""
@@ -1167,6 +1213,8 @@ class GalleryServer:
         if any((message or "").strip().startswith(prefix) for prefix in LOG_SYSTEM_NOISE_PREFIXES):
             return "system", "系统"
         text = f"{logger_name} {message}".lower()
+        if "hermes" in text and (" api " in f" {text} " or "/api/hermes/" in text):
+            return "hermes_api", "Hermes API"
         if logger_name == "aiohttp.access" or "接口" in message:
             return "api", "接口"
         if logger_name.startswith("apscheduler"):
@@ -1203,9 +1251,26 @@ class GalleryServer:
         low = (line or "").lower()
         return any(k in low for k in LOG_ERROR_DETAIL_KEYWORDS)
 
-    @staticmethod
-    def _diagnose_error_text(text: str) -> str:
-        low = (text or "").lower()
+    @classmethod
+    def _diagnose_error_text(cls, text: str) -> str:
+        raw = re.sub(r"\s+", " ", cls._redact_log_text(text or "")).strip()
+        low = raw.lower()
+        if "prompt_required" in low:
+            return "请求缺少 prompt 提示词，Hermes 没有真正开始调用生图引擎。"
+        if "ref_image_required" in low:
+            return "图生图请求缺少 ref_image 参考图，Hermes 没有真正开始调用生图引擎。"
+        if "invalid_ref_image" in low:
+            return "参考图路径无效或画廊无法读取，请确认图片仍存在且位于允许目录。"
+        if "engine_not_support_img2img" in low:
+            return "当前图生图只支持 gptimage 引擎，请让 Hermes 不要为图生图指定其他引擎。"
+        if "invalid_engine" in low:
+            return "请求指定了不支持的生图引擎；文生图仅支持 gptimage 或 gitee。"
+        if "generate_failed_no_result" in low:
+            return "生图引擎已执行，但没有返回可保存的图片结果。"
+        if "invalid_json" in low:
+            return "请求体不是有效 JSON，Hermes 没有真正开始调用生图引擎。"
+        if "grok_api_key" in low and any(word in low for word in ("missing", "required", "not set")):
+            return "没有读取到 GROK_API_KEY，无法调用本机 8100 Grok 视频接口。"
         if "fresh wechat conversation context" in low or "send the bot a wechat message first" in low:
             return "微信会话上下文已失效；请先在微信里给 Hermes 发任意一条消息，收到回复后再发送图片。"
         if "ret=-2" in low and "unknown error" in low:
@@ -1247,7 +1312,28 @@ class GalleryServer:
             return "文本模型返回内容格式不对，无法解析成需要的 JSON。"
         if "missing chat_url" in low or "chat_url/models" in low:
             return "文本模型配置缺失，请检查聊天接口地址和模型。"
-        return "详见下方原始错误。"
+        if raw:
+            compact = raw if len(raw) <= 180 else raw[:177] + "..."
+            return f"原始错误：{compact}"
+        return "上游没有返回可诊断的错误信息。"
+
+    @staticmethod
+    def _log_stage_label(stage: str) -> str:
+        normalized = str(stage or "").strip().lower()
+        return {
+            "json": "请求解析",
+            "validation": "参数校验",
+            "provider": "生图引擎",
+            "environment": "环境配置",
+            "launch": "启动生成脚本",
+            "submit": "提交 8100 任务",
+            "poll": "轮询 8100 任务",
+            "download": "下载视频",
+            "validate": "校验视频文件",
+            "persist": "保存元数据",
+            "exception": "服务异常",
+            "unknown": "未知阶段",
+        }.get(normalized, normalized or "未知阶段")
 
     @staticmethod
     def _extract_log_field(message: str, key: str) -> str:
@@ -1304,6 +1390,99 @@ class GalleryServer:
     @classmethod
     def _translate_log_message(cls, message: str, level: str = "INFO", logger_name: str = "") -> str:
         text = (message or "").strip()
+
+        m = re.search(
+            r'Hermes image API call (started|provider started|succeeded|failed|rejected):\s*'
+            r'request=([^\s]+)\s+mode=([^\s]+)(.*)$',
+            text,
+        )
+        if m:
+            action, request_id, mode, detail = m.groups()
+            mode_label = "文生图" if mode == "text-to-image" else "图生图"
+            if action == "started":
+                engine = cls._extract_log_field(detail, "engine") or "未记录"
+                size = cls._extract_log_field(detail, "size") or "默认"
+                prompt_chars = cls._extract_log_field(detail, "prompt_chars") or "?"
+                return (
+                    f"Hermes {mode_label} API 已接收：请求 {request_id[:8]}，"
+                    f"引擎 {engine}，尺寸 {size}，提示词 {prompt_chars} 字。"
+                )
+            if action == "provider started":
+                engine = cls._extract_log_field(detail, "engine") or "未记录"
+                return f"Hermes {mode_label} 已开始调用 {engine} 生图引擎：请求 {request_id[:8]}。"
+            if action == "succeeded":
+                filename = cls._extract_log_field(detail, "file")
+                elapsed = cls._extract_log_field(detail, "elapsed")
+                suffix = f"，耗时 {elapsed}" if elapsed else ""
+                return (
+                    f"Hermes {mode_label} API 生成成功："
+                    f"请求 {request_id[:8]}，{cls._display_log_image_name(filename)}{suffix}。"
+                )
+            stage = cls._extract_log_field(detail, "stage") or "unknown"
+            error_match = re.search(r'\berror=(.*)$', detail)
+            error = (error_match.group(1).strip() if error_match else detail.strip())
+            action_label = "请求被拒绝" if action == "rejected" else "调用失败"
+            return (
+                f"Hermes {mode_label} API {action_label}：请求 {request_id[:8]}，"
+                f"阶段 {cls._log_stage_label(stage)}，"
+                f"{cls._diagnose_error_text(error)}"
+            )
+
+        m = re.search(
+            r'Hermes video API call (queued|started|succeeded|failed):\s*'
+            r'request=([^\s]+)\s+image=([^\s]+)(.*)$',
+            text,
+        )
+        if m:
+            action, request_id, image_name, detail = m.groups()
+            display_image = cls._display_log_image_name(image_name)
+            if action == "queued":
+                return f"Hermes 视频任务已加入队列：{display_image}，请求 {request_id[:8]}。"
+            if action == "started":
+                resolution = cls._extract_log_field(detail, "resolution") or "480p"
+                return (
+                    f"Hermes 已调用本机 8100 Grok 视频 API：{display_image}，"
+                    f"请求 {request_id[:8]}，清晰度 {resolution}。"
+                )
+            if action == "succeeded":
+                video_name = cls._extract_log_field(detail, "video")
+                elapsed = cls._extract_log_field(detail, "elapsed")
+                suffix = f"，耗时 {elapsed}" if elapsed else ""
+                return (
+                    f"Hermes 视频生成成功：请求 {request_id[:8]}，"
+                    f"{video_name or display_image}{suffix}。"
+                )
+            stage = cls._extract_log_field(detail, "stage") or "unknown"
+            error_match = re.search(r'\berror=(.*)$', detail)
+            error = (error_match.group(1).strip() if error_match else detail.strip())
+            return (
+                f"Hermes 视频生成失败：请求 {request_id[:8]}，{display_image}，"
+                f"阶段 {cls._log_stage_label(stage)}，"
+                f"{cls._diagnose_error_text(error)}"
+            )
+
+        m = re.search(
+            r'Hermes video API register (started|succeeded|failed):\s*'
+            r'request=([^\s]+)\s+image=([^\s]+)(.*)$',
+            text,
+        )
+        if m:
+            action, request_id, image_name, detail = m.groups()
+            display_image = cls._display_log_image_name(image_name)
+            if action == "started":
+                return f"Hermes 正在把已生成视频关联到画廊：{display_image}，请求 {request_id[:8]}。"
+            if action == "succeeded":
+                video_name = cls._extract_log_field(detail, "video")
+                return (
+                    f"Hermes 视频已写入画廊：请求 {request_id[:8]}，"
+                    f"{display_image}，文件 {video_name or '已保存'}。"
+                )
+            error_match = re.search(r'\berror=(.*)$', detail)
+            error = (error_match.group(1).strip() if error_match else detail.strip())
+            return (
+                f"Hermes 视频写入画廊失败：请求 {request_id[:8]}，"
+                f"{display_image}，{cls._diagnose_error_text(error)}"
+            )
 
         if text == "Scheduler started":
             return "任务调度器已启动。"
@@ -1804,11 +1983,11 @@ class GalleryServer:
                     )
                     if cls._is_error_detail_line(line):
                         diagnosis = cls._diagnose_error_text(entries[-1]["detail"])
-                        if diagnosis != "详见下方原始错误。":
-                            entries[-1]["message"] = entries[-1]["message"].replace(
-                                "详见下方原始错误。",
-                                diagnosis,
-                            )
+                        entries[-1]["message"] = re.sub(
+                            r"(?:详见下方原始错误。|原始错误：.*)$",
+                            diagnosis,
+                            entries[-1]["message"],
+                        )
                 continue
 
             ts = match.group("ts")
@@ -1844,7 +2023,7 @@ class GalleryServer:
                 "time": cls._format_log_time(ts),
                 "level": display_level,
                 "logger": logger_name,
-                "source": cls._log_source_label(logger_name),
+                "source": "Hermes API" if category == "hermes_api" else cls._log_source_label(logger_name),
                 "category": category,
                 "category_label": category_label,
                 "message": translated,
@@ -2138,6 +2317,75 @@ class GalleryServer:
             return entry
 
         return entry
+
+    def _reference_public_url(self, value: str) -> str:
+        """Resolve a stored reference path to the URL exposed by the gallery.
+
+        Older Hermes image metadata stored only a reference basename
+        (for example ``master_outfit_ref.jpg``).  The frontend cannot know
+        whether that file belongs under ``/local-refs`` or ``/images`` and
+        would otherwise request the wrong route.
+        """
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        if raw.startswith(("http://", "https://", "data:", "blob:")):
+            return raw
+        if raw.startswith(("/refs/", "/local-refs/", "/images/")):
+            return raw
+
+        profile = self._reference_profile_for_value(raw)
+        profile_url = str(profile.get("url") or "").strip() if profile else ""
+        if profile_url:
+            return profile_url
+
+        resolved = self._resolve_reference_image(raw, allow_any_path=True)
+        if not resolved:
+            return ""
+        try:
+            candidate = Path(resolved).resolve()
+            for base_dir, prefix in (
+                (self.reference_dir, "/local-refs"),
+                (self.app_reference_dir, "/refs"),
+                (self.image_dir, "/images"),
+                (self.default_image_dir, "/images"),
+            ):
+                if not base_dir:
+                    continue
+                try:
+                    relative = candidate.relative_to(Path(base_dir).resolve()).as_posix()
+                except ValueError:
+                    continue
+                return f"{prefix}/{quote(relative, safe='/')}"
+        except (OSError, TypeError, ValueError):
+            return ""
+        return ""
+
+    def _normalize_entry_reference_urls(self, entry: dict) -> None:
+        """Expose valid public URLs for legacy/reference metadata fields."""
+        if not isinstance(entry, dict):
+            return
+
+        for field in (
+            "ref_image_path",
+            "requested_ref_image_path",
+        ):
+            raw = str(entry.get(field) or "").strip()
+            public_url = self._reference_public_url(raw)
+            if public_url:
+                entry[field] = public_url
+
+        selected = entry.get("selected_reference")
+        if not isinstance(selected, dict):
+            return
+        if str(selected.get("url") or "").strip():
+            return
+        raw = selected.get("path") or selected.get("filename")
+        public_url = self._reference_public_url(raw)
+        if public_url:
+            selected = dict(selected)
+            selected["url"] = public_url
+            entry["selected_reference"] = selected
 
     @staticmethod
     def _favorite_outfit_wardrobe_status_response_item(item: dict) -> dict:
@@ -3496,6 +3744,42 @@ class GalleryServer:
     def _image_exists(self, filename: str) -> bool:
         return bool(self._image_file_path(filename))
 
+    @staticmethod
+    def _safe_video_relative_path(filename: str) -> Optional[Path]:
+        raw = unquote(str(filename or "")).strip()
+        if (
+            not raw
+            or raw.startswith(("/", "\\"))
+            or "\x00" in raw
+            or not re.fullmatch(r"[a-zA-Z0-9_.-]+", raw)
+            or ".." in raw
+            or not raw.lower().endswith(VIDEO_EXTENSIONS)
+        ):
+            return None
+        rel = Path(raw)
+        if rel.is_absolute() or len(rel.parts) != 1:
+            return None
+        return rel
+
+    def _video_file_path(self, filename: str) -> str:
+        rel = self._safe_video_relative_path(filename)
+        if rel is None:
+            return ""
+        base = Path(self.video_dir).resolve()
+        candidate = (base / rel).resolve()
+        try:
+            candidate.relative_to(base)
+        except ValueError:
+            return ""
+        if not candidate.is_file():
+            return ""
+        return str(candidate)
+
+    @staticmethod
+    def _video_filename_for_image(img_id: str) -> str:
+        stem = re.sub(r"[^a-zA-Z0-9_-]+", "-", Path(img_id).stem).strip("-") or "gallery"
+        return f"{stem}_{int(time.time())}_{uuid.uuid4().hex[:8]}.mp4"
+
     def _image_stat(self, filename: str):
         path = self._image_file_path(filename)
         if not path:
@@ -3606,6 +3890,12 @@ class GalleryServer:
         """Remove one image from storage, gallery data, and image metadata."""
         img_id = self._normalize_gallery_image_filename(filename)
         deleted_file_count, errors = self._delete_image_files(img_id)
+        previous_metadata = ImageMetadataStore(self.data_dir).load().get(img_id, {})
+        previous_video = (
+            str(previous_metadata.get("video_filename") or "").strip()
+            if isinstance(previous_metadata, dict)
+            else ""
+        )
 
         removed_entry_count = 0
         version_records = []
@@ -3640,6 +3930,15 @@ class GalleryServer:
             return metadata
 
         ImageMetadataStore(self.data_dir).update(_delete_metadata)
+        deleted_video_count = 0
+        if previous_video:
+            previous_video_path = self._video_file_path(previous_video)
+            if previous_video_path:
+                try:
+                    os.unlink(previous_video_path)
+                    deleted_video_count = 1
+                except OSError as e:
+                    errors.append(f"{previous_video_path}: {e}")
         deleted_version_count, version_errors = delete_image_versions(
             self.data_dir,
             version_records,
@@ -3651,6 +3950,7 @@ class GalleryServer:
             "deleted_file_count": deleted_file_count,
             "removed_entry_count": removed_entry_count,
             "metadata_deleted": metadata_deleted,
+            "deleted_video_count": deleted_video_count,
             "deleted_version_count": deleted_version_count,
             "errors": errors,
         }
@@ -3664,6 +3964,25 @@ class GalleryServer:
         if not path:
             raise web.HTTPNotFound()
         return web.FileResponse(path)
+
+    async def handle_video_file(self, request: web.Request):
+        filename = request.match_info.get("filename", "")
+        rel = self._safe_video_relative_path(filename)
+        if rel is None:
+            raise web.HTTPNotFound()
+        metadata = self._load_image_metadata()
+        registered = any(
+            isinstance(entry, dict) and entry.get("video_filename") == rel.name
+            for entry in metadata.values()
+        )
+        if not registered:
+            raise web.HTTPNotFound()
+        path = self._video_file_path(rel.name)
+        if not path:
+            raise web.HTTPNotFound()
+        response = web.FileResponse(path)
+        response.headers["Cache-Control"] = "private, max-age=3600"
+        return response
 
     def _image_version_records_for_image(self, img_id: str) -> tuple[dict, list[dict]]:
         entry = self._gallery_entry_for_image(img_id)
@@ -4783,10 +5102,16 @@ class GalleryServer:
         """Queue a retry for a missed/failed dynamic photo job."""
         if not self.on_retry_photo_job:
             return web.json_response({"error": "retry_unavailable"}, status=503)
-        try:
-            body = await request.json()
-        except Exception:
+        if not getattr(request, "can_read_body", True):
             body = {}
+        else:
+            try:
+                body = await request.json()
+            except Exception:
+                return web.json_response(
+                    {"error": "invalid_json", "message": "请求体必须是合法 JSON"},
+                    status=400,
+                )
         raw_time = str(body.get("time") or body.get("schedule_time") or "").strip()
         match = re.match(r'^\s*(\d{1,2}):(\d{2})', raw_time)
         if not match:
@@ -4924,26 +5249,100 @@ class GalleryServer:
             return web.json_response({"error": str(e)}, status=500)
 
     async def handle_refresh_schedule(self, request: web.Request):
-        """Regenerate today's schedule without generating an image."""
+        """Regenerate today's or tomorrow's schedule without generating an image."""
         if not self.on_refresh_schedule:
             return web.json_response({"error": "no_scheduler"}, status=500)
+        if not getattr(request, "can_read_body", True):
+            body = {}
+        else:
+            try:
+                body = await request.json()
+            except Exception:
+                return web.json_response(
+                    {"error": "invalid_json", "message": "请求体必须是合法 JSON"},
+                    status=400,
+                )
+        if not isinstance(body, dict):
+            return web.json_response({"error": "invalid_json"}, status=400)
+
+        target = str(body.get("target") or "today").strip().lower()
+        if target not in {"today", "tomorrow"}:
+            return web.json_response(
+                {"error": "invalid_target", "message": "target 只能是 today 或 tomorrow"},
+                status=400,
+            )
+        expected_date = self._today() + (
+            timedelta(days=1) if target == "tomorrow" else timedelta()
+        )
+        target_date = str(body.get("target_date") or "").strip()
+        if target_date:
+            try:
+                parsed_date = date.fromisoformat(target_date)
+            except ValueError:
+                return web.json_response(
+                    {"error": "invalid_target_date", "message": "target_date 必须是 YYYY-MM-DD"},
+                    status=400,
+                )
+            if parsed_date.isoformat() != target_date or parsed_date != expected_date:
+                return web.json_response(
+                    {
+                        "error": "invalid_target_date",
+                        "message": f"target_date 必须与 target={target} 对应：{expected_date.isoformat()}",
+                    },
+                    status=400,
+                )
+        else:
+            target_date = expected_date.isoformat()
+
         try:
-            entry = await self._refresh_schedule_singleflight()
-            if entry and entry.status == "ok":
+            entry = await self._refresh_schedule_singleflight(
+                target=target,
+                target_date=target_date,
+            )
+            if (
+                entry
+                and entry.status == "ok"
+                and str(getattr(entry, "date", "") or "") == target_date
+            ):
                 source = getattr(entry, "source", "") or ""
                 if source == "preserved":
                     status_text = "preserved"
-                    message = "LLM 暂不可用，已保留当前今日日程。"
+                    message = (
+                        "已保留现有第二天日程。"
+                        if target == "tomorrow"
+                        else "已保留当前今日日程。"
+                    )
+                elif (
+                    source == "theme_day"
+                    and str(getattr(entry, "theme_day_mode", "") or "").strip() == "random"
+                ):
+                    status_text = "ok"
+                    theme = str(getattr(entry, "theme_day", "") or "").strip()
+                    if target == "tomorrow":
+                        message = (
+                            f"第二天自动主题日已刷新：{theme}"
+                            if theme
+                            else "第二天自动主题日已刷新。"
+                        )
+                    else:
+                        message = f"自动主题日已刷新：{theme}" if theme else "自动主题日已刷新。"
                 else:
                     status_text = "ok"
-                    message = "日程已刷新。"
+                    message = "第二天日程已刷新。" if target == "tomorrow" else "日程已刷新。"
                 return web.json_response({
                     "status": status_text,
                     "message": message,
+                    "target": target,
+                    "target_date": target_date,
                     "entry": entry.to_dict(),
                 })
             return web.json_response({
                 "error": "schedule_generate_failed",
+                "message": (
+                    f"日程生成结果日期不匹配，期望 {target_date}。"
+                    if entry and str(getattr(entry, "date", "") or "") != target_date
+                    else "日程生成失败。"
+                ),
                 "entry": entry.to_dict() if entry else None,
             }, status=500)
         except Exception as e:
@@ -4951,13 +5350,17 @@ class GalleryServer:
             return web.json_response({"error": str(e)}, status=500)
 
     def theme_day_enabled(self) -> bool:
-        """Whether the user has switched the theme-day mode on."""
+        """Whether the user has switched from automatic to manual theme mode."""
         return self.theme_day_state_store.load().get("enabled") is True
 
     def theme_day_state(self) -> dict:
         state = self.theme_day_state_store.load()
+        manual_mode = state.get("enabled") is True
         return {
-            "enabled": state.get("enabled") is True,
+            # Keep the legacy boolean for existing clients/state files:
+            # false means automatic theme selection, true exposes manual controls.
+            "enabled": manual_mode,
+            "mode": "manual" if manual_mode else "auto",
             "updated_at": str(state.get("updated_at") or ""),
         }
 
@@ -4971,19 +5374,25 @@ class GalleryServer:
         return self.theme_day_state()
 
     async def handle_theme_day_state(self, request: web.Request):
-        """Read or update the persistent theme-day mode switch."""
+        """Read or update the persistent automatic/manual theme switch."""
         if request.method == "GET":
             return web.json_response(self.theme_day_state())
         try:
             body = await request.json()
         except Exception:
             body = {}
-        enabled_raw = body.get("enabled") if isinstance(body, dict) else None
-        enabled = (
-            enabled_raw
-            if isinstance(enabled_raw, bool)
-            else str(enabled_raw or "").strip().lower() in {"1", "true", "yes", "on"}
-        )
+        mode = str(body.get("mode") or "").strip().lower() if isinstance(body, dict) else ""
+        if mode in {"manual", "custom"}:
+            enabled = True
+        elif mode in {"auto", "automatic", "random"}:
+            enabled = False
+        else:
+            enabled_raw = body.get("enabled") if isinstance(body, dict) else None
+            enabled = (
+                enabled_raw
+                if isinstance(enabled_raw, bool)
+                else str(enabled_raw or "").strip().lower() in {"1", "true", "yes", "on"}
+            )
         return web.json_response(self.set_theme_day_enabled(enabled))
 
     async def handle_theme_day(self, request: web.Request):
@@ -4994,7 +5403,7 @@ class GalleryServer:
             return web.json_response(
                 {
                     "error": "theme_day_disabled",
-                    "message": "请先开启主题日开关，再生成主题日程。",
+                    "message": "请先切换到手动主题，再指定主题或小红书穿搭。",
                 },
                 status=400,
             )
@@ -5163,19 +5572,79 @@ class GalleryServer:
             )
         return web.json_response(dict(job))
 
-    async def _refresh_schedule_singleflight(self):
-        """Share one schedule refresh across startup/UI/generate-now callers."""
+    async def _refresh_schedule_singleflight(
+        self,
+        *,
+        target: str = "today",
+        target_date: str = "",
+    ):
+        """Share one refresh per target day across web callers."""
         if not self.on_refresh_schedule:
             return None
-        task = getattr(self, "_schedule_refresh_task", None)
-        if task is None or task.done():
-            task = asyncio.create_task(self.on_refresh_schedule())
-            self._schedule_refresh_task = task
+        target_key = str(target or "today").strip().lower()
+        task_attr = (
+            "_tomorrow_schedule_refresh_task"
+            if target_key == "tomorrow"
+            else "_schedule_refresh_task"
+        )
+        task = getattr(self, task_attr, None)
+        task_date_attr = (
+            "_tomorrow_schedule_refresh_task_date"
+            if target_key == "tomorrow"
+            else "_schedule_refresh_task_date"
+        )
+        task_date = str(getattr(self, task_date_attr, "") or "")
+        if (
+            task is None
+            or task.done()
+            or task_date != target_date
+        ):
+            if target_key == "today" and not target_date:
+                refresh_call = self.on_refresh_schedule()
+            else:
+                refresh_call = self.on_refresh_schedule(
+                    target=target_key,
+                    target_date=target_date,
+                )
+            task = asyncio.create_task(refresh_call)
+            setattr(self, task_attr, task)
+            setattr(self, task_date_attr, target_date)
+            task.add_done_callback(
+                lambda completed, attr=task_attr, date_attr=task_date_attr: (
+                    self._web_schedule_refresh_finished(
+                        completed,
+                        attr,
+                        date_attr,
+                    )
+                )
+            )
         try:
-            return await asyncio.shield(task)
+            # ``asyncio.shield`` logs a detached task exception on Python 3.14
+            # after the HTTP waiter is cancelled. ``asyncio.wait`` preserves
+            # the shared task without creating that extra shield future.
+            await asyncio.wait({task})
+            return task.result()
         finally:
-            if task.done() and getattr(self, "_schedule_refresh_task", None) is task:
-                self._schedule_refresh_task = None
+            if task.done() and getattr(self, task_attr, None) is task:
+                setattr(self, task_attr, None)
+                setattr(self, task_date_attr, "")
+
+    def _web_schedule_refresh_finished(
+        self,
+        task: asyncio.Task,
+        task_attr: str,
+        task_date_attr: str = "",
+    ) -> None:
+        """Clear a web refresh task and consume any detached exception."""
+        if getattr(self, task_attr, None) is task:
+            setattr(self, task_attr, None)
+            setattr(self, task_date_attr, "")
+        if task.cancelled():
+            return
+        try:
+            task.exception()
+        except asyncio.CancelledError:
+            pass
 
     async def handle_get_keys(self, request: web.Request):
         """获取 API 密钥配置状态（返回 masked 值）"""
@@ -5272,6 +5741,7 @@ class GalleryServer:
             local_gitee_url = ""
         effective_gitee_url = self._effective_gitee_image_url(keys_config)
         effective_gpt_base_url = self._effective_gpt_image_base_url(keys_config)
+        video_settings = self._effective_grok_video_settings(keys_config)
         default_github_api = self._github_api_url()
         persona = load_runtime_persona(self.config, self.data_dir)
         persona_source = normalize_persona_source(keys_config.get("persona_source"))
@@ -5346,6 +5816,21 @@ class GalleryServer:
             "gpt_chat_fallback_enabled": gpt_chat_fallback_enabled,
             "gpt_prompt_compact_enabled": gpt_prompt_compact_enabled,
             "gpt_prompt_compact_target_chars": gpt_prompt_compact_target_chars,
+            "grok_video_url": video_settings["url"],
+            "grok_video_url_local": video_settings["local_url"],
+            "grok_video_url_default": video_settings["default_url"],
+            "grok_video_url_source": video_settings["url_source"],
+            "grok_video_model": video_settings["model"],
+            "grok_video_model_local": video_settings["local_model"],
+            "grok_video_model_default": video_settings["default_model"],
+            "grok_video_model_source": video_settings["model_source"],
+            "grok_api_key": self._mask_key(video_settings["api_key"]),
+            "grok_api_key_source": video_settings["key_source"],
+            "grok_video_configured": bool(
+                video_settings["url"]
+                and video_settings["model"]
+                and video_settings["api_key"]
+            ),
             "push_channel": push_channel,
             "push_channel_local": normalize_push_channel(local_push_channel_raw) if local_push_channel_raw else "",
             "push_agent": push_agent,
@@ -5752,6 +6237,7 @@ class GalleryServer:
                 "delivery_updated_at",
                 "delivery_sent_at",
                 "delivery_error",
+                *VIDEO_METADATA_FIELDS,
             ):
                 if field in meta_entry and (
                     field == "caption_status"
@@ -5772,10 +6258,25 @@ class GalleryServer:
             display_outfit = self._clean_display_description(
                 normalized.get("display_outfit") or normalized.get("outfit_description") or ""
             )
+            generation_mode = str(
+                normalized.get("generation_mode")
+                or normalized.get("requested_generation_mode")
+                or ""
+            ).strip().lower()
+            mode_label = "图生图" if generation_mode in {"img2img", "image-to-image", "reference"} else "文生图"
+            if not self._is_usable_hermes_display_description(display_outfit):
+                display_outfit = self._fallback_hermes_display_description(
+                    normalized.get("prompt", ""),
+                    mode_label,
+                )
+            normalized["display_outfit"] = display_outfit
+            normalized["outfit_description"] = display_outfit
             current_outfit = normalized.get("outfit", "")
-            if display_outfit and self._has_cjk(display_outfit) and (
-                not self._has_cjk(current_outfit) or re.search(r"[A-Za-z]{16,}", current_outfit)
-            ):
+            current_outfit_text = re.split(r"穿搭[：:]", str(current_outfit), maxsplit=1)[-1]
+            if display_outfit and self._is_usable_hermes_display_description(current_outfit_text):
+                # Keep an already normalized Chinese outfit description.
+                pass
+            elif display_outfit:
                 style_name = normalized.get("outfit_style") or "自定义"
                 view_match = re.search(r"视角[：:]\s*([^ \n，,。；;]+)", current_outfit)
                 mode_match = re.search(r"模式[：:]\s*([^ \n，,。；;]+)", current_outfit)
@@ -5786,6 +6287,7 @@ class GalleryServer:
                     parts.append(f"视角：{view_match.group(1)}")
                 parts.append(f"穿搭：{display_outfit}")
                 normalized["outfit"] = " ".join(parts)
+        self._normalize_entry_reference_urls(normalized)
         if img_file:
             image_info = self._image_file_info(img_file)
             if image_info.get("size"):
@@ -5818,6 +6320,9 @@ class GalleryServer:
             normalized.setdefault("outfit_full", normalized.get("outfit", ""))
             normalized["outfit"] = outfit_for_display
 
+        if source == "hermes_api" and self._is_hermes_fallback_caption(normalized.get("caption", "")):
+            normalized["caption"] = ""
+            normalized["caption_status"] = ""
         if normalized.get("caption"):
             normalized["caption"] = self._clean_caption_text(normalized.get("caption", ""))
 
@@ -5904,7 +6409,10 @@ class GalleryServer:
         prompt = prompt or ""
         match = re.search(r'She is wearing\s+(.+?)\.\s+Background:', prompt, re.IGNORECASE | re.DOTALL)
         clothing = match.group(1).strip() if match else prompt
-        if re.search(r'[\u4e00-\u9fff]', clothing) and not re.search(r'[A-Za-z]{12,}', clothing):
+        # Treat a string as Chinese display text only when it does not contain
+        # ordinary English words.  A few Chinese tokens inside an English
+        # prompt (for example ``(丸子头)``) are not enough to make it safe.
+        if re.search(r'[\u4e00-\u9fff]', clothing) and not re.search(r'[A-Za-z]{4,}', clothing):
             return re.sub(r'\s+', ' ', clothing).strip()[:80].rstrip("，,。. ")
 
         lower = clothing.lower()
@@ -6303,6 +6811,38 @@ class GalleryServer:
                             body.get("gitee_url"),
                             default_gitee_url,
                         )
+                    if "grok_video_url" in body:
+                        raw_video_url = str(body.get("grok_video_url") or "").strip()
+                        if raw_video_url:
+                            normalized_video_url = self._normalize_grok_video_url(raw_video_url)
+                            if not normalized_video_url:
+                                return web.json_response(
+                                    {
+                                        "error": "invalid_grok_video_url",
+                                        "message": "Grok 视频接口地址格式不正确。",
+                                    },
+                                    status=400,
+                                )
+                            keys_config["grok_video_url"] = normalized_video_url
+                        else:
+                            keys_config.pop("grok_video_url", None)
+                    if "grok_video_model" in body:
+                        raw_video_model = str(body.get("grok_video_model") or "").strip()
+                        if raw_video_model:
+                            normalized_video_model = self._normalize_grok_video_model(raw_video_model)
+                            if not normalized_video_model:
+                                return web.json_response(
+                                    {
+                                        "error": "invalid_grok_video_model",
+                                        "message": "Grok 视频模型 ID 格式不正确。",
+                                    },
+                                    status=400,
+                                )
+                            keys_config["grok_video_model"] = normalized_video_model
+                        else:
+                            keys_config.pop("grok_video_model", None)
+                    if body.get("grok_api_key") and not self._looks_masked_key(body.get("grok_api_key")):
+                        keys_config["grok_api_key"] = str(body["grok_api_key"]).strip()
                     if "appearance" in body:
                         keys_config["appearance"] = body["appearance"]
                     if "persona_source" in body:
@@ -7466,6 +8006,24 @@ class GalleryServer:
                     continue
                 if candidate.is_file() and self._is_reference_image_file(str(candidate)):
                     return str(candidate)
+        elif ref_path:
+            # Hermes metadata historically persisted only a basename or a
+            # references-relative path. Resolve it within the allowed roots
+            # before the frontend has to guess a public URL.
+            roots = (
+                self.reference_dir,
+                self.xiaohongshu_reference_dir,
+                self.app_reference_dir,
+                self.image_dir,
+                self.default_image_dir,
+            ) if allow_any_path else (
+                self.reference_dir,
+                self.app_reference_dir,
+            )
+            for base_dir in roots:
+                local_path = self._safe_reference_path(base_dir, ref_path)
+                if local_path and self._is_reference_image_file(local_path):
+                    return local_path
         return ""
 
     async def handle_ref_list(self, request: web.Request):
@@ -7830,6 +8388,186 @@ class GalleryServer:
             "selection_reason": f"xiaohongshu_schedule:{schedule_date}",
         })
         return result
+
+    def _normalize_xiaohongshu_schedule_date(self, value: str = "") -> str:
+        """Return today/tomorrow as an ISO date for manual schedule references."""
+        schedule_date = str(value or "").strip() or self._today().isoformat()
+        try:
+            parsed = date.fromisoformat(schedule_date)
+        except ValueError as exc:
+            raise XiaohongshuError(
+                "invalid_schedule_date",
+                "日程日期必须是 YYYY-MM-DD。",
+                status=400,
+            ) from exc
+        today = self._today()
+        if parsed not in {today, today + timedelta(days=1)}:
+            raise XiaohongshuError(
+                "invalid_schedule_date",
+                "小红书手动穿搭目前只支持当天或第二天。",
+                status=400,
+            )
+        return parsed.isoformat()
+
+    def _bind_manual_xiaohongshu_schedule_reference(
+        self,
+        schedule_date: str,
+        reference_url: str,
+        *,
+        title: str = "",
+        author: str = "",
+    ) -> dict:
+        """Copy an imported reference into a date-scoped, durable schedule record."""
+        selected = self._xiaohongshu_reference_for_value(reference_url)
+        if not selected:
+            raise XiaohongshuError(
+                "manual_reference_not_found",
+                "指定的小红书穿搭不存在或已失效，请重新选择。",
+                status=400,
+            )
+        source_filename = str(selected.get("filename") or "").strip()
+        source_path = str(selected.get("path") or "").strip()
+        source_record = self.xiaohongshu_reference_store.load().get(source_filename)
+        if (
+            not source_filename
+            or not source_path
+            or not isinstance(source_record, dict)
+            or not self._is_reference_image_file(source_filename)
+        ):
+            raise XiaohongshuError(
+                "manual_reference_not_found",
+                "指定的小红书穿搭不存在或已失效，请重新选择。",
+                status=400,
+            )
+
+        extension = Path(source_filename).suffix.lower()
+        digest = hashlib.sha256(
+            f"manual:{schedule_date}:{source_filename}".encode("utf-8")
+        ).hexdigest()[:24]
+        filename = (
+            f"xhs_schedule_{schedule_date.replace('-', '')}_manual_{digest}{extension}"
+        )
+        path = os.path.join(self.xiaohongshu_reference_dir, filename)
+        old_reference = self._xiaohongshu_schedule_reference(schedule_date)
+        target_existed = os.path.exists(path)
+        try:
+            if os.path.abspath(source_path) != os.path.abspath(path):
+                shutil.copy2(source_path, path)
+            self._verify_reference_image(path)
+            with Image.open(path) as image:
+                width, height = image.size
+        except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError) as exc:
+            if not target_existed:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            raise XiaohongshuError(
+                "invalid_image",
+                "指定的小红书穿搭图片无效，请重新选择。",
+                status=400,
+            ) from exc
+
+        selected_title = (
+            str(title or source_record.get("title") or "手动穿搭").strip()[:80]
+            or "手动穿搭"
+        )
+        selected_author = str(author or source_record.get("author") or "").strip()[:60]
+        created_at = self._now().isoformat(timespec="seconds")
+        record = {
+            "id": (
+                "xiaohongshu_schedule_"
+                + hashlib.sha1((schedule_date + filename).encode("utf-8")).hexdigest()[:12]
+            ),
+            "filename": filename,
+            "label": f"手动穿搭 · {selected_title}",
+            "title": selected_title,
+            "author": selected_author,
+            "source": "xiaohongshu",
+            "scope": "daily_schedule",
+            "schedule_date": schedule_date,
+            "query": "",
+            "selection_source": "manual",
+            "feed_id": str(source_record.get("feed_id") or ""),
+            "image_index": int(source_record.get("image_index") or 0),
+            "width": width,
+            "height": height,
+            "size_bytes": os.path.getsize(path),
+            "created_at": created_at,
+        }
+        self.xiaohongshu_reference_store.update(
+            lambda records: {**records, filename: record}
+        )
+
+        def _save_state(state: dict) -> dict:
+            references = (
+                dict(state.get("references"))
+                if isinstance(state.get("references"), dict)
+                else {}
+            )
+            references[schedule_date] = record
+            state.update({
+                "enabled": True,
+                "references": references,
+                "pending_query": "",
+                "last_error": "",
+                "last_error_at": "",
+                "updated_at": created_at,
+            })
+            return state
+
+        self.xiaohongshu_schedule_store.update(_save_state)
+        old_filename = str(old_reference.get("filename") or "").strip()
+        if old_filename and old_filename != filename:
+            try:
+                self._delete_xiaohongshu_reference_file(
+                    old_filename,
+                    allow_daily_schedule=True,
+                )
+            except OSError as exc:
+                logger.warning("清理旧的手动小红书日程参考图失败: %s", exc)
+        self._cleanup_old_xiaohongshu_schedule_references(schedule_date)
+        return self._xiaohongshu_schedule_reference(schedule_date)
+
+    def _clear_manual_xiaohongshu_schedule_reference(
+        self,
+        schedule_date: str,
+    ) -> bool:
+        """Remove only the date-scoped manual copy, preserving imported originals."""
+        state = self.xiaohongshu_schedule_store.load()
+        references = state.get("references") if isinstance(state.get("references"), dict) else {}
+        record = references.get(schedule_date)
+        if not isinstance(record, dict) or str(record.get("selection_source") or "") != "manual":
+            return False
+        filename = str(record.get("filename") or "").strip()
+        now_text = self._now().isoformat(timespec="seconds")
+
+        def _remove_state(current: dict) -> dict:
+            current_references = (
+                dict(current.get("references"))
+                if isinstance(current.get("references"), dict)
+                else {}
+            )
+            current_references.pop(schedule_date, None)
+            current.update({
+                "references": current_references,
+                "pending_query": "",
+                "last_error": "",
+                "last_error_at": "",
+                "updated_at": now_text,
+            })
+            return current
+
+        self.xiaohongshu_schedule_store.update(_remove_state)
+        if filename:
+            try:
+                self._delete_xiaohongshu_reference_file(
+                    filename,
+                    allow_daily_schedule=True,
+                )
+            except FileNotFoundError:
+                pass
+        return True
 
     def xiaohongshu_schedule_state(self, schedule_date: str = "") -> dict:
         schedule_date = schedule_date or self._today().isoformat()
@@ -8457,18 +9195,34 @@ class GalleryServer:
             return {}
 
     async def handle_xiaohongshu_schedule_mode(self, request: web.Request):
-        """Read/update daily XHS outfit mode and optionally choose today's reference."""
-        schedule_date = self._today().isoformat()
-        if request.method == "GET":
-            return web.json_response(self.xiaohongshu_schedule_state(schedule_date))
+        """Read/update daily XHS outfit mode and optionally bind a manual reference."""
         try:
+            if request.method == "GET":
+                schedule_date = self._normalize_xiaohongshu_schedule_date(
+                    request.query.get("schedule_date", "")
+                )
+                return web.json_response(self.xiaohongshu_schedule_state(schedule_date))
             body = await self._xiaohongshu_json_body(request)
+            schedule_date = self._normalize_xiaohongshu_schedule_date(
+                body.get("schedule_date") or request.query.get("schedule_date", "")
+            )
         except XiaohongshuError as exc:
             return self._xiaohongshu_error_response(exc)
-        enabled_raw = body.get("enabled")
-        enabled = enabled_raw if isinstance(enabled_raw, bool) else str(enabled_raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
         previous_enabled = self.xiaohongshu_schedule_enabled()
+        enabled = previous_enabled
+        if "enabled" in body:
+            enabled_raw = body.get("enabled")
+            enabled = (
+                enabled_raw
+                if isinstance(enabled_raw, bool)
+                else str(enabled_raw or "").strip().lower() in {"1", "true", "yes", "on"}
+            )
+        manual_reference_url = str(body.get("manual_reference_url") or "").strip()
+        if manual_reference_url:
+            enabled = True
         now_text = self._now().isoformat(timespec="seconds")
+
         def _update(state: dict) -> dict:
             state["enabled"] = enabled
             if "prefer_creators" in body:
@@ -8483,7 +9237,33 @@ class GalleryServer:
                 state["last_error"] = ""
                 state["last_error_at"] = ""
             return state
+
         self.xiaohongshu_schedule_store.update(_update)
+
+        clear_raw = body.get("clear_manual_reference")
+        clear_manual_reference = (
+            clear_raw
+            if isinstance(clear_raw, bool)
+            else str(clear_raw or "").strip().lower() in {"1", "true", "yes", "on"}
+        )
+        if clear_manual_reference:
+            async with self._xiaohongshu_schedule_lock:
+                self._clear_manual_xiaohongshu_schedule_reference(schedule_date)
+            return web.json_response(self.xiaohongshu_schedule_state(schedule_date))
+
+        if manual_reference_url:
+            try:
+                async with self._xiaohongshu_schedule_lock:
+                    self._bind_manual_xiaohongshu_schedule_reference(
+                        schedule_date,
+                        manual_reference_url,
+                        title=str(body.get("title") or ""),
+                        author=str(body.get("author") or ""),
+                    )
+            except XiaohongshuError as exc:
+                return self._xiaohongshu_error_response(exc)
+            return web.json_response(self.xiaohongshu_schedule_state(schedule_date))
+
         if enabled:
             daily = self._xiaohongshu_schedule_daily_entry(schedule_date)
             manual_query = str(body.get("keyword") or "").strip()
@@ -8517,6 +9297,15 @@ class GalleryServer:
                 body.get("feed_id", ""),
                 body.get("xsec_token", ""),
             )
+            return web.json_response(detail)
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+
+    async def handle_xiaohongshu_note_url(self, request: web.Request):
+        """Resolve one pasted note link, bypassing keyword search."""
+        try:
+            body = await self._xiaohongshu_json_body(request)
+            detail = await self.xiaohongshu_client.resolve_note_url(body.get("url", ""))
             return web.json_response(detail)
         except XiaohongshuError as exc:
             return self._xiaohongshu_error_response(exc)
@@ -9148,6 +9937,22 @@ class GalleryServer:
         return "这一张先收进今天的小格子里，回头再慢慢看。"
 
     @staticmethod
+    def _is_hermes_fallback_caption(text: str) -> bool:
+        """Recognize captions generated from a Hermes prompt instead of supplied by Hermes."""
+        compact = re.sub(r"\s+", "", str(text or "")).strip()
+        if not compact:
+            return False
+        if re.fullmatch(r"看着「[^」]{1,80}」这一刻，心里忽然有点想把它留住。", compact):
+            return True
+        return compact in {
+            "先靠着沙发眯一会儿，醒了再把后面的事慢慢接上。",
+            "先把这一口吃完，再把今天剩下的事慢慢接住。",
+            "忙里偷出这一小会儿，感觉今天也能轻一点。",
+            "这个角落刚好安静，适合把心情也放慢一点。",
+            "这一张先收进今天的小格子里，回头再慢慢看。",
+        }
+
+    @staticmethod
     def _has_cjk(text: str) -> bool:
         return bool(re.search(r"[\u4e00-\u9fff]", str(text or "")))
 
@@ -9193,12 +9998,16 @@ class GalleryServer:
 
     def _fallback_hermes_display_description(self, prompt: str, mode_label: str = "") -> str:
         prompt = str(prompt or "").strip()
-        if self._has_cjk(prompt) and not re.search(r"[A-Za-z]{16,}", prompt):
+        # A Hermes prompt may contain a few Chinese tokens (for example a
+        # hairstyle in parentheses) while still being overwhelmingly English.
+        # Do not treat that mixed prompt as a gallery-facing description: it
+        # would leak the raw prompt into the card/detail UI.
+        if self._is_usable_hermes_display_description(prompt):
             return self._clean_display_description(prompt)
         keywords = self._fallback_outfit_keywords_from_prompt(prompt)
-        if keywords:
-            return f"Hermes 自定义生图：{keywords}"
         mode = self._clean_display_description(mode_label) or "自定义生图"
+        if keywords:
+            return f"Hermes {mode}：{keywords}"
         return f"Hermes {mode}：按原始描述生成的场景、动作和穿搭。"
 
     @classmethod
@@ -9488,6 +10297,829 @@ class GalleryServer:
         payload["has_prompt"] = bool(str(payload.get("prompt") or ""))
         return web.json_response(payload)
 
+    @staticmethod
+    def _is_hermes_chat_outfit_entry(entry: dict) -> bool:
+        """Limit visual outfit recognition to Hermes chat-generation records."""
+        if not isinstance(entry, dict):
+            return False
+        source = str(entry.get("source") or "").strip().lower().replace("-", "_")
+        if source in {"hermes", "hermes_api"}:
+            return True
+        return source == "chat" and entry.get("metadata_only") is True
+
+    async def handle_recognize_image_outfit(self, request: web.Request):
+        """Recognize and persist the visible outfit for a Hermes chat image."""
+        try:
+            img_id = self._normalize_gallery_image_filename(
+                request.match_info.get("img_id", "")
+            )
+        except ValueError:
+            return web.json_response({"error": "invalid_filename"}, status=400)
+
+        if img_id not in self._registered_image_filenames():
+            return web.json_response({"error": "not_found"}, status=404)
+        image_path = self._image_file_path(img_id)
+        if not image_path:
+            return web.json_response({"error": "not_found"}, status=404)
+
+        metadata = self._load_image_metadata()
+        schedule_entry = self._gallery_entry_for_image(img_id)
+        if schedule_entry:
+            entry = self._enrich_photo_schedule_time(schedule_entry, metadata)
+        else:
+            meta = metadata.get(img_id)
+            if not isinstance(meta, dict):
+                return web.json_response({"error": "not_found"}, status=404)
+            entry = self._normalize_entry_display(
+                self._metadata_gallery_entry(img_id, meta),
+                metadata,
+            )
+
+        if not self._is_hermes_chat_outfit_entry(entry):
+            return web.json_response(
+                {
+                    "error": "outfit_recognition_not_available",
+                    "message": "识图写穿搭仅支持 Hermes 聊天生图。",
+                },
+                status=403,
+            )
+
+        try:
+            loop = asyncio.get_running_loop()
+            analysis = await loop.run_in_executor(
+                None,
+                lambda: analyze_image_outfit(
+                    self.config,
+                    self.data_dir,
+                    image_path,
+                ),
+            )
+            outfit = self._clean_display_description(
+                analysis.get("outfit") if isinstance(analysis, dict) else "",
+                limit=160,
+            )
+            if not outfit:
+                detail = (
+                    str(analysis.get("analysis_error") or "").strip()
+                    if isinstance(analysis, dict)
+                    else ""
+                )
+                logger.warning(
+                    "Hermes outfit recognition returned no outfit: image=%s detail=%s",
+                    img_id,
+                    detail,
+                )
+                return web.json_response(
+                    {
+                        "error": "outfit_recognition_failed",
+                        "message": "没有识别到清晰的穿搭，请换一张服装更完整的图片重试。",
+                    },
+                    status=502,
+                )
+
+            self._update_image_metadata_entry(
+                img_id,
+                {
+                    "outfit": outfit,
+                    "display_outfit": outfit,
+                    "outfit_description": outfit,
+                },
+            )
+            updated_metadata = self._load_image_metadata()
+            if schedule_entry:
+                payload = self._enrich_photo_schedule_time(
+                    schedule_entry,
+                    updated_metadata,
+                )
+            else:
+                payload = self._normalize_entry_display(
+                    self._metadata_gallery_entry(
+                        img_id,
+                        updated_metadata.get(img_id, {}),
+                    ),
+                    updated_metadata,
+                )
+            payload["success"] = True
+            payload["recognized_outfit"] = outfit
+            payload["has_prompt"] = bool(str(payload.get("prompt") or ""))
+            return web.json_response(payload)
+        except Exception as exc:
+            logger.error(
+                "Hermes outfit recognition failed: image=%s error=%s",
+                img_id,
+                exc,
+            )
+            return web.json_response(
+                {
+                    "error": "outfit_recognition_failed",
+                    "message": "识图写穿搭失败，请稍后重试。",
+                },
+                status=500,
+            )
+
+    def _recover_interrupted_video_statuses(self) -> None:
+        metadata_path = os.path.join(self.data_dir, "image_metadata.json")
+        if not os.path.exists(metadata_path):
+            return
+        now = int(time.time())
+
+        def _recover(metadata: dict) -> dict:
+            for filename, entry in list(metadata.items()):
+                if not isinstance(entry, dict):
+                    continue
+                status = str(entry.get("video_status") or "").strip().lower()
+                if status not in {"queued", "generating"}:
+                    continue
+                recovered = dict(entry)
+                recovered.update({
+                    "video_status": "error",
+                    "video_error": "服务重启中断了上一次视频任务，请重新生成。",
+                    "video_updated_at": now,
+                })
+                metadata[filename] = recovered
+            return metadata
+
+        try:
+            ImageMetadataStore(self.data_dir).update(_recover)
+        except Exception as exc:
+            logger.error("Hermes video API recovery failed: stage=metadata error=%s", exc)
+
+    async def _cleanup_video_generation_tasks(self, _app) -> None:
+        tasks = [
+            task
+            for task in self._video_generation_tasks.values()
+            if task is not None and not task.done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._video_generation_tasks.clear()
+
+    def _video_status_payload(
+        self,
+        img_id: str,
+        metadata: Optional[dict] = None,
+    ) -> dict:
+        metadata = metadata if isinstance(metadata, dict) else self._load_image_metadata()
+        entry = metadata.get(img_id)
+        entry = entry if isinstance(entry, dict) else {}
+        payload = {
+            "image_filename": img_id,
+            "video_status": str(entry.get("video_status") or "idle").strip().lower() or "idle",
+        }
+        for field in VIDEO_METADATA_FIELDS:
+            value = entry.get(field)
+            if value not in ("", None):
+                payload[field] = value
+
+        filename = str(payload.get("video_filename") or "").strip()
+        path = self._video_file_path(filename) if filename else ""
+        if path:
+            payload["video_url"] = f"/api/videos/{quote(filename, safe='')}"
+            try:
+                payload["video_file_size_bytes"] = os.path.getsize(path)
+            except OSError:
+                pass
+            if payload["video_status"] == "idle":
+                payload["video_status"] = "ready"
+        elif filename and payload["video_status"] == "ready":
+            payload["video_status"] = "error"
+            payload["video_error"] = "视频文件不存在，请重新生成。"
+            payload.pop("video_url", None)
+        return payload
+
+    def _set_video_metadata(self, img_id: str, values: dict) -> dict:
+        payload = {
+            key: value
+            for key, value in (values or {}).items()
+            if key in VIDEO_METADATA_FIELDS
+        }
+        payload["video_updated_at"] = int(time.time())
+        self._update_image_metadata_entry(img_id, payload)
+        return self._video_status_payload(img_id)
+
+    @staticmethod
+    def _dotenv_value(path: Path, key: str) -> str:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return ""
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[7:].lstrip()
+            try:
+                tokens = shlex.split(line, comments=True, posix=True)
+            except ValueError:
+                continue
+            if len(tokens) != 1 or "=" not in tokens[0]:
+                continue
+            name, value = tokens[0].split("=", 1)
+            if name.strip() == key:
+                return value.strip()
+        return ""
+
+    @staticmethod
+    def _normalize_grok_video_url(value: str) -> str:
+        url = str(value or "").strip().rstrip("/")
+        if not url or not re.match(r"^https?://", url, re.IGNORECASE):
+            return ""
+        for suffix in ("/v1/videos/generations", "/v1/videos", "/videos/generations", "/videos"):
+            if url.lower().endswith(suffix):
+                url = url[: -len(suffix)]
+                break
+        if url.lower().endswith("/v1"):
+            url = url[:-3]
+        return url.rstrip("/")
+
+    @staticmethod
+    def _normalize_grok_video_model(value: str) -> str:
+        model = str(value or "").strip()
+        if not model or len(model) > 120:
+            return ""
+        if model.lower() in {"default", "auto", "current"}:
+            return ""
+        if not re.match(r"^[A-Za-z0-9._:/+-]+$", model):
+            return ""
+        return model
+
+    def _grok_video_dotenv_value(self, key: str) -> tuple[str, str]:
+        for env_path in (
+            Path.home() / ".hermes" / ".env",
+            Path.home() / ".openclaw" / ".env",
+            Path.home() / ".openclaw" / "workspace" / ".env",
+        ):
+            value = self._dotenv_value(env_path, key)
+            if value:
+                return value, str(env_path)
+        return "", ""
+
+    def _effective_grok_video_settings(
+        self,
+        keys_config: Optional[dict] = None,
+        *,
+        require_key: bool = False,
+    ) -> dict[str, str]:
+        if not isinstance(keys_config, dict):
+            try:
+                keys_config = self._load_api_keys_config()
+            except (AttributeError, OSError, TypeError):
+                keys_config = {}
+        keys_config = keys_config if isinstance(keys_config, dict) else {}
+
+        local_url = self._normalize_grok_video_url(keys_config.get("grok_video_url", ""))
+        local_model = self._normalize_grok_video_model(keys_config.get("grok_video_model", ""))
+        local_key = str(keys_config.get("grok_api_key") or "").strip()
+
+        env_url_raw = str(os.environ.get("GROK2API_URL") or os.environ.get("CLIPROXY_URL") or "").strip()
+        env_url = self._normalize_grok_video_url(env_url_raw)
+        env_model = self._normalize_grok_video_model(os.environ.get("GROK_VIDEO_MODEL", ""))
+        env_key = str(os.environ.get("GROK_API_KEY") or "").strip()
+
+        dotenv_url_raw, dotenv_url_source = self._grok_video_dotenv_value("GROK2API_URL")
+        if not dotenv_url_raw:
+            dotenv_url_raw, dotenv_url_source = self._grok_video_dotenv_value("CLIPROXY_URL")
+        dotenv_url = self._normalize_grok_video_url(dotenv_url_raw)
+        dotenv_model_raw, dotenv_model_source = self._grok_video_dotenv_value("GROK_VIDEO_MODEL")
+        dotenv_model = self._normalize_grok_video_model(dotenv_model_raw)
+        dotenv_key, dotenv_key_source = self._grok_video_dotenv_value("GROK_API_KEY")
+
+        default_url = GROK_VIDEO_ROUTE
+        default_model = GROK_VIDEO_MODEL
+        effective_url = env_url or local_url or dotenv_url or default_url
+        effective_model = env_model or local_model or dotenv_model or default_model
+        effective_key = env_key or local_key or dotenv_key
+        if require_key and not effective_key:
+            return {
+                "url": effective_url,
+                "model": effective_model,
+                "api_key": "",
+                "default_url": default_url,
+                "default_model": default_model,
+                "local_url": local_url,
+                "local_model": local_model,
+                "url_source": "环境变量" if env_url else "本机设置" if local_url else "Hermes/OpenClaw .env" if dotenv_url else "默认值",
+                "model_source": "环境变量" if env_model else "本机设置" if local_model else "Hermes/OpenClaw .env" if dotenv_model else "默认值",
+                "key_source": "",
+            }
+
+        return {
+            "url": effective_url,
+            "model": effective_model,
+            "api_key": effective_key,
+            "default_url": default_url,
+            "default_model": default_model,
+            "local_url": local_url,
+            "local_model": local_model,
+            "url_source": "环境变量" if env_url else "本机设置" if local_url else "Hermes/OpenClaw .env" if dotenv_url else "默认值",
+            "model_source": "环境变量" if env_model else "本机设置" if local_model else "Hermes/OpenClaw .env" if dotenv_model else "默认值",
+            "key_source": "环境变量" if env_key else "本机设置" if local_key else dotenv_key and "Hermes/OpenClaw .env" or "",
+        }
+
+    def _grok_video_environment(self, settings: Optional[dict] = None) -> dict[str, str]:
+        settings = settings if isinstance(settings, dict) else self._effective_grok_video_settings(require_key=True)
+        if not settings["api_key"]:
+            raise RuntimeError("GROK_API_KEY is not configured in the Hermes environment")
+        return self._child_env({
+            "GROK_API_KEY": settings["api_key"],
+            "GROK2API_URL": settings["url"],
+            "GROK_VIDEO_MODEL": settings["model"],
+        })
+
+    @staticmethod
+    def _grok_video_script() -> str:
+        override = str(os.environ.get("GROK_VIDEO_SCRIPT") or "").strip()
+        candidates = [
+            Path(override).expanduser() if override else None,
+            Path.home() / ".hermes" / "workspace" / "skills" / "grok-video-gen" / "scripts" / "generate.py",
+            Path.home() / ".openclaw" / "workspace" / "skills" / "grok-video-gen" / "scripts" / "generate.py",
+            Path.home() / ".hermes" / "skills" / "openclaw-imports" / "grok-video-gen" / "scripts" / "generate.py",
+        ]
+        for candidate in candidates:
+            if candidate and candidate.is_file():
+                return str(candidate)
+        raise FileNotFoundError("grok-video-gen generate.py not found")
+
+    @staticmethod
+    def _probe_video_file(path: str) -> dict:
+        stat = os.stat(path)
+        if stat.st_size <= 0:
+            raise ValueError("video file is empty")
+        if stat.st_size > MAX_VIDEO_FILE_BYTES:
+            raise ValueError("video file exceeds 256 MB")
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type,codec_name,width,height",
+                "-show_entries",
+                "format=duration,size",
+                "-of",
+                "json",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=True,
+        )
+        payload = json.loads(result.stdout or "{}")
+        video_stream = next(
+            (
+                stream
+                for stream in payload.get("streams", [])
+                if isinstance(stream, dict) and stream.get("codec_type") == "video"
+            ),
+            None,
+        )
+        if not video_stream:
+            raise ValueError("video stream is missing")
+        duration = float((payload.get("format") or {}).get("duration") or 0)
+        if duration <= 0:
+            raise ValueError("video duration is invalid")
+        return {
+            "duration": round(duration, 3),
+            "width": int(video_stream.get("width") or 0),
+            "height": int(video_stream.get("height") or 0),
+            "codec": str(video_stream.get("codec_name") or ""),
+            "file_size_bytes": stat.st_size,
+        }
+
+    def _allowed_video_import_path(self, source_path: str) -> str:
+        candidate = Path(str(source_path or "")).expanduser()
+        try:
+            resolved = candidate.resolve(strict=True)
+        except OSError:
+            return ""
+        if not resolved.is_file() or resolved.suffix.lower() not in VIDEO_EXTENSIONS:
+            return ""
+        roots = (
+            Path(self.video_dir).resolve(),
+            (Path.home() / ".hermes" / "workspace" / "media").resolve(),
+            (Path.home() / ".openclaw" / "workspace" / "media").resolve(),
+        )
+        for root in roots:
+            try:
+                resolved.relative_to(root)
+                return str(resolved)
+            except ValueError:
+                continue
+        return ""
+
+    def _store_ready_video(
+        self,
+        img_id: str,
+        source_path: str,
+        *,
+        prompt: str,
+        source: str,
+        resolution: str,
+        aspect_ratio: str,
+        video_model: str = "",
+        move_source: bool = False,
+    ) -> dict:
+        info = self._probe_video_file(source_path)
+        previous = self._video_status_payload(img_id)
+        previous_filename = str(previous.get("video_filename") or "").strip()
+        destination_name = self._video_filename_for_image(img_id)
+        destination_path = os.path.join(self.video_dir, destination_name)
+        temp_path = os.path.join(
+            self.video_dir,
+            f".{destination_name}.{uuid.uuid4().hex}.tmp",
+        )
+        try:
+            if move_source:
+                os.replace(source_path, temp_path)
+            else:
+                shutil.copyfile(source_path, temp_path)
+            os.replace(temp_path, destination_path)
+        except Exception:
+            try:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+            except OSError:
+                pass
+            raise
+
+        now = int(time.time())
+        payload = self._set_video_metadata(
+            img_id,
+            {
+                "video_filename": destination_name,
+                "video_url": f"/api/videos/{destination_name}",
+                "video_status": "ready",
+                "video_prompt": prompt,
+                "video_error": "",
+                "video_source": source,
+                "video_model": video_model or self._effective_grok_video_settings()["model"],
+                "video_resolution": resolution,
+                "video_aspect_ratio": aspect_ratio,
+                "video_duration": info["duration"],
+                "video_width": info["width"],
+                "video_height": info["height"],
+                "video_file_size_bytes": info["file_size_bytes"],
+                "video_created_at": now,
+            },
+        )
+        if previous_filename and previous_filename != destination_name:
+            previous_path = self._video_file_path(previous_filename)
+            if previous_path:
+                try:
+                    os.unlink(previous_path)
+                except OSError as exc:
+                    logger.warning(
+                        "Hermes video API cleanup warning: image=%s video=%s error=%s",
+                        img_id,
+                        previous_filename,
+                        exc,
+                    )
+        return payload
+
+    @staticmethod
+    def _video_process_error(stdout: bytes, stderr: bytes) -> str:
+        text = "\n".join(
+            part.decode("utf-8", errors="replace")
+            for part in (stdout or b"", stderr or b"")
+            if part
+        )
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        preferred = [
+            line
+            for line in lines
+            if line.startswith(("API Error:", "Input Error:", "Timed out"))
+        ]
+        message = (preferred[-1] if preferred else (lines[-1] if lines else "video process failed"))
+        return GalleryServer._redact_log_text(message)[:500]
+
+    async def _run_image_video_generation(
+        self,
+        img_id: str,
+        prompt: str,
+        *,
+        duration: int,
+        resolution: str,
+        aspect_ratio: str,
+        job_id: str,
+    ) -> None:
+        started = time.monotonic()
+        output_path = os.path.join(
+            self.video_dir,
+            f".pending-{job_id}-{uuid.uuid4().hex[:8]}.mp4",
+        )
+        proc = None
+        try:
+            image_path = self._image_file_path(img_id)
+            if not image_path:
+                raise FileNotFoundError("gallery image is missing")
+            script = self._grok_video_script()
+            video_settings = self._effective_grok_video_settings(require_key=True)
+            env = self._grok_video_environment(video_settings)
+            self._set_video_metadata(
+                img_id,
+                {
+                    "video_status": "generating",
+                    "video_prompt": prompt,
+                    "video_error": "",
+                    "video_job_id": job_id,
+                    "video_source": "gallery",
+                    "video_model": video_settings["model"],
+                    "video_resolution": resolution,
+                    "video_aspect_ratio": aspect_ratio,
+                },
+            )
+            logger.info(
+                "Hermes video API call started: request=%s image=%s route=%s model=%s "
+                "prompt_chars=%s duration=%s resolution=%s aspect_ratio=%s",
+                job_id,
+                img_id,
+                video_settings["url"],
+                video_settings["model"],
+                len(prompt),
+                duration,
+                resolution,
+                aspect_ratio,
+            )
+            proc = await asyncio.create_subprocess_exec(
+                self._python_executable(),
+                script,
+                "--prompt",
+                prompt,
+                "--image",
+                image_path,
+                "--output",
+                output_path,
+                "--duration",
+                str(duration),
+                "--aspect-ratio",
+                aspect_ratio,
+                "--resolution",
+                resolution,
+                "--skip-gallery-register",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=os.path.dirname(script),
+                env=env,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=GROK_VIDEO_TIMEOUT_SECONDS,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(self._video_process_error(stdout, stderr))
+            payload = await asyncio.to_thread(
+                self._store_ready_video,
+                img_id,
+                output_path,
+                prompt=prompt,
+                source="gallery",
+                resolution=resolution,
+                aspect_ratio=aspect_ratio,
+                video_model=video_settings["model"],
+                move_source=True,
+            )
+            logger.info(
+                "Hermes video API call succeeded: request=%s image=%s video=%s "
+                "elapsed=%.2fs duration=%s size=%s",
+                job_id,
+                img_id,
+                payload.get("video_filename", ""),
+                time.monotonic() - started,
+                payload.get("video_duration", ""),
+                payload.get("video_file_size_bytes", ""),
+            )
+        except asyncio.CancelledError:
+            if proc and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            raise
+        except asyncio.TimeoutError:
+            if proc and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            message = f"Grok 视频生成等待超过 {GROK_VIDEO_TIMEOUT_SECONDS // 60} 分钟。"
+            self._set_video_metadata(
+                img_id,
+                {
+                    "video_status": "error",
+                    "video_error": message,
+                    "video_job_id": job_id,
+                },
+            )
+            logger.error(
+                "Hermes video API call failed: request=%s image=%s stage=timeout error=%s",
+                job_id,
+                img_id,
+                message,
+            )
+        except Exception as exc:
+            message = self._redact_log_text(str(exc) or "video generation failed")[:500]
+            self._set_video_metadata(
+                img_id,
+                {
+                    "video_status": "error",
+                    "video_error": message,
+                    "video_job_id": job_id,
+                },
+            )
+            logger.error(
+                "Hermes video API call failed: request=%s image=%s stage=generate error=%s",
+                job_id,
+                img_id,
+                message,
+            )
+        finally:
+            try:
+                if os.path.exists(output_path):
+                    os.unlink(output_path)
+            except OSError:
+                pass
+
+    def _video_task_finished(self, img_id: str, task: asyncio.Task) -> None:
+        if self._video_generation_tasks.get(img_id) is task:
+            self._video_generation_tasks.pop(img_id, None)
+        if task.cancelled():
+            return
+        try:
+            task.exception()
+        except asyncio.CancelledError:
+            pass
+
+    async def handle_image_video(self, request: web.Request):
+        try:
+            img_id = self._normalize_gallery_image_filename(
+                request.match_info.get("img_id", "")
+            )
+        except ValueError:
+            return web.json_response({"error": "invalid_filename"}, status=400)
+        if img_id not in self._registered_image_filenames() or not self._image_exists(img_id):
+            return web.json_response({"error": "not_found"}, status=404)
+        if request.method == "GET":
+            return web.json_response(self._video_status_payload(img_id))
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            return web.json_response({"error": "invalid_json"}, status=400)
+        prompt = re.sub(r"\s+", " ", str(body.get("prompt") or "")).strip()
+        if not prompt:
+            prompt = "保持人物外貌、服装和场景一致，自然眨眼和呼吸，轻轻看向镜头，动作流畅，镜头稳定。"
+        if len(prompt) > MAX_VIDEO_PROMPT_CHARS:
+            return web.json_response(
+                {
+                    "error": "video_prompt_too_long",
+                    "message": f"视频描述不能超过 {MAX_VIDEO_PROMPT_CHARS} 个字符。",
+                },
+                status=400,
+            )
+        resolution = str(body.get("resolution") or "480p").strip().lower()
+        if resolution not in {"480p", "720p"}:
+            return web.json_response({"error": "invalid_resolution"}, status=400)
+        aspect_ratio = str(body.get("aspect_ratio") or "auto").strip().lower()
+        if aspect_ratio not in {"auto", "1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3"}:
+            return web.json_response({"error": "invalid_aspect_ratio"}, status=400)
+        duration = 6
+        current_task = self._video_generation_tasks.get(img_id)
+        if current_task and not current_task.done():
+            return web.json_response(
+                {
+                    "error": "video_generating",
+                    "message": "这张图片的视频正在生成，请等待当前任务完成。",
+                    **self._video_status_payload(img_id),
+                },
+                status=409,
+            )
+
+        job_id = uuid.uuid4().hex
+        payload = self._set_video_metadata(
+            img_id,
+            {
+                "video_status": "queued",
+                "video_prompt": prompt,
+                "video_error": "",
+                "video_job_id": job_id,
+                "video_source": "gallery",
+                "video_model": self._effective_grok_video_settings()["model"],
+                "video_resolution": resolution,
+                "video_aspect_ratio": aspect_ratio,
+            },
+        )
+        task = asyncio.create_task(
+            self._run_image_video_generation(
+                img_id,
+                prompt,
+                duration=duration,
+                resolution=resolution,
+                aspect_ratio=aspect_ratio,
+                job_id=job_id,
+            )
+        )
+        self._video_generation_tasks[img_id] = task
+        task.add_done_callback(
+            lambda completed, filename=img_id: self._video_task_finished(
+                filename,
+                completed,
+            )
+        )
+        logger.info(
+            "Hermes video API call queued: request=%s image=%s prompt_chars=%s",
+            job_id,
+            img_id,
+            len(prompt),
+        )
+        return web.json_response(payload, status=202)
+
+    async def handle_register_image_video(self, request: web.Request):
+        try:
+            img_id = self._normalize_gallery_image_filename(
+                request.match_info.get("img_id", "")
+            )
+        except ValueError:
+            return web.json_response({"error": "invalid_filename"}, status=400)
+        if img_id not in self._registered_image_filenames() or not self._image_exists(img_id):
+            return web.json_response({"error": "not_found"}, status=404)
+        if not self._is_local_request(request):
+            return web.json_response(
+                {
+                    "error": "video_registration_local_only",
+                    "message": "视频文件注册只允许在画廊主机本机调用。",
+                },
+                status=403,
+            )
+        current_task = self._video_generation_tasks.get(img_id)
+        if current_task and not current_task.done():
+            return web.json_response(
+                {"error": "video_generating", "message": "画廊正在生成这张图片的视频。"},
+                status=409,
+            )
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid_json"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "invalid_json"}, status=400)
+        source_path = self._allowed_video_import_path(body.get("source_path", ""))
+        if not source_path:
+            return web.json_response(
+                {
+                    "error": "invalid_video_source",
+                    "message": "视频必须位于 Hermes/OpenClaw workspace media 目录，且格式为 MP4。",
+                },
+                status=400,
+            )
+        prompt = re.sub(r"\s+", " ", str(body.get("prompt") or "")).strip()
+        prompt = prompt[:MAX_VIDEO_PROMPT_CHARS]
+        resolution = str(body.get("resolution") or "480p").strip().lower()
+        if resolution not in {"480p", "720p"}:
+            resolution = "480p"
+        aspect_ratio = str(body.get("aspect_ratio") or "auto").strip().lower()
+        source = str(body.get("source") or "hermes_skill").strip()[:80] or "hermes_skill"
+        request_id = uuid.uuid4().hex
+        logger.info(
+            "Hermes video API register started: request=%s image=%s source=%s video=%s",
+            request_id,
+            img_id,
+            source,
+            os.path.basename(source_path),
+        )
+        try:
+            payload = await asyncio.to_thread(
+                self._store_ready_video,
+                img_id,
+                source_path,
+                prompt=prompt,
+                source=source,
+                resolution=resolution,
+                aspect_ratio=aspect_ratio,
+            )
+        except Exception as exc:
+            message = self._redact_log_text(str(exc) or "video registration failed")[:500]
+            logger.error(
+                "Hermes video API register failed: request=%s image=%s stage=validate error=%s",
+                request_id,
+                img_id,
+                message,
+            )
+            return web.json_response(
+                {"error": "video_registration_failed", "message": message},
+                status=400,
+            )
+        logger.info(
+            "Hermes video API register succeeded: request=%s image=%s video=%s duration=%s size=%s",
+            request_id,
+            img_id,
+            payload.get("video_filename", ""),
+            payload.get("video_duration", ""),
+            payload.get("video_file_size_bytes", ""),
+        )
+        return web.json_response(payload, status=201)
+
     async def handle_keyword_cloud(self, request: web.Request):
         """Return high-frequency keywords from historical image-generation calls."""
         try:
@@ -9499,6 +11131,31 @@ class GalleryServer:
         except Exception as e:
             logger.error("Keyword cloud error: %s", e)
             return web.json_response({"error": "keyword_cloud_failed", "keywords": []}, status=500)
+
+    async def handle_hide_keyword_cloud_term(self, request: web.Request):
+        """Persist one exact cloud term as hidden and return the refreshed cloud."""
+        body = await self._read_json_body(request)
+        keyword = body.get("keyword")
+        try:
+            hidden = hide_keyword_cloud_term(self.data_dir, keyword)
+            payload = build_keyword_cloud_payload(self.data_dir, limit=64)
+            payload.update({
+                "success": True,
+                "hidden_keyword": hidden["hidden_keyword"],
+                "hidden_count": hidden["hidden_count"],
+            })
+            return web.json_response(payload)
+        except ValueError:
+            return web.json_response(
+                {"error": "keyword_required", "message": "请选择要隐藏的词。"},
+                status=400,
+            )
+        except Exception as e:
+            logger.error("Hide keyword cloud term error: %s", e)
+            return web.json_response(
+                {"error": "keyword_cloud_hide_failed", "message": "隐藏关键词失败。"},
+                status=500,
+            )
 
     async def handle_entry(self, request: web.Request):
         """获取指定日期的条目"""
@@ -13945,7 +15602,10 @@ JSON 格式：
             if not schedule_text:
                 logger.warning("Generate now found no schedule; refreshing today's schedule first")
                 try:
-                    refreshed = await self._refresh_schedule_singleflight()
+                    refreshed = await self._refresh_schedule_singleflight(
+                        target="today",
+                        target_date=today_str,
+                    )
                 except Exception as e:
                     logger.error("Generate now schedule refresh failed: %s", e)
                     refreshed = None
@@ -14294,8 +15954,6 @@ JSON 格式：
                     user_prompt,
                     "自定义生图",
                 )
-                if not api_caption:
-                    api_caption = self._fallback_hermes_caption(api_description, user_prompt)
             image_model = self._normalize_image_model_id(body.get("model") or body.get("image_model") or body.get("gpt_model"))
             raw_image_model = str(body.get("model") or body.get("image_model") or body.get("gpt_model") or "").strip()
             if raw_image_model and not image_model and raw_image_model.lower() not in {"default", "auto", "current"}:
@@ -15373,80 +17031,191 @@ JSON 格式：
 
     async def handle_hermes_text_to_image(self, request: web.Request):
         """Hermes 纯文生图 API（不注入 persona）"""
+        request_id = uuid.uuid4().hex
+        started = time.monotonic()
         try:
-            body = await request.json()
+            try:
+                body = await request.json()
+            except Exception:
+                logger.warning(
+                    "Hermes image API call rejected: request=%s mode=text-to-image "
+                    "stage=json error=invalid_json",
+                    request_id,
+                )
+                return web.json_response({"error": "invalid_json"}, status=400)
             prompt = str(body.get("prompt", "") or "").strip()
             if not prompt:
+                logger.warning(
+                    "Hermes image API call rejected: request=%s mode=text-to-image "
+                    "stage=validation error=prompt_required",
+                    request_id,
+                )
                 return web.json_response({"error": "prompt_required"}, status=400)
 
             engine = str(body.get("engine", "gptimage") or "gptimage").strip().lower()
             size = str(body.get("size", "") or "").strip()
+            if engine not in {"gptimage", "gitee"}:
+                logger.warning(
+                    "Hermes image API call rejected: request=%s mode=text-to-image "
+                    "stage=validation error=invalid_engine",
+                    request_id,
+                )
+                return web.json_response({"error": "invalid_engine"}, status=400)
+            logger.info(
+                "Hermes image API call started: request=%s mode=text-to-image "
+                "engine=%s size=%s prompt_chars=%s",
+                request_id,
+                engine,
+                size or "default",
+                len(prompt),
+            )
             caption = self._request_caption(body)
             display_outfit = await self._normalize_hermes_display_description(
                 self._request_outfit_description(body),
                 prompt,
                 "文生图",
             )
-            if not caption:
-                caption = self._fallback_hermes_caption(display_outfit, prompt)
-
-            if engine not in {"gptimage", "gitee"}:
-                return web.json_response({"error": "invalid_engine"}, status=400)
 
             loop = asyncio.get_running_loop()
+            logger.info(
+                "Hermes image API call provider started: request=%s mode=text-to-image engine=%s",
+                request_id,
+                engine,
+            )
             result = await loop.run_in_executor(
                 None,
                 lambda: self._run_hermes_image_generation(engine, prompt, size=size, caption=caption, display_outfit=display_outfit),
             )
 
             if not result:
+                logger.error(
+                    "Hermes image API call failed: request=%s mode=text-to-image "
+                    "stage=provider error=generate_failed_no_result",
+                    request_id,
+                )
                 return web.json_response({"error": "generate_failed"}, status=500)
+            logger.info(
+                "Hermes image API call succeeded: request=%s mode=text-to-image "
+                "file=%s model=%s elapsed=%.2fs total_elapsed=%.2fs",
+                request_id,
+                result.get("filename", ""),
+                result.get("model_name", ""),
+                float(result.get("elapsed") or 0),
+                time.monotonic() - started,
+            )
             return web.json_response(result)
         except Exception as e:
-            logger.error(f"Hermes text-to-image error: {e}")
+            logger.error(
+                "Hermes image API call failed: request=%s mode=text-to-image "
+                "stage=exception error=%s",
+                request_id,
+                self._redact_log_text(str(e)),
+                exc_info=True,
+            )
             return web.json_response({"error": str(e)}, status=500)
 
     async def handle_hermes_image_to_image(self, request: web.Request):
         """Hermes 纯图生图 API（不注入 persona）"""
+        request_id = uuid.uuid4().hex
+        started = time.monotonic()
         try:
-            body = await request.json()
+            try:
+                body = await request.json()
+            except Exception:
+                logger.warning(
+                    "Hermes image API call rejected: request=%s mode=image-to-image "
+                    "stage=json error=invalid_json",
+                    request_id,
+                )
+                return web.json_response({"error": "invalid_json"}, status=400)
             prompt = str(body.get("prompt", "") or "").strip()
             ref_image = str(body.get("ref_image", "") or "").strip()
 
             if not prompt:
+                logger.warning(
+                    "Hermes image API call rejected: request=%s mode=image-to-image "
+                    "stage=validation error=prompt_required",
+                    request_id,
+                )
                 return web.json_response({"error": "prompt_required"}, status=400)
             if not ref_image:
+                logger.warning(
+                    "Hermes image API call rejected: request=%s mode=image-to-image "
+                    "stage=validation error=ref_image_required",
+                    request_id,
+                )
                 return web.json_response({"error": "ref_image_required"}, status=400)
 
             engine = str(body.get("engine", "gptimage") or "gptimage").strip().lower()
             size = str(body.get("size", "") or "").strip()
+            if engine != "gptimage":
+                logger.warning(
+                    "Hermes image API call rejected: request=%s mode=image-to-image "
+                    "stage=validation error=engine_not_support_img2img",
+                    request_id,
+                )
+                return web.json_response({"error": "engine_not_support_img2img"}, status=400)
+
+            resolved_ref = self._resolve_reference_image(ref_image)
+            if not resolved_ref:
+                logger.warning(
+                    "Hermes image API call rejected: request=%s mode=image-to-image "
+                    "stage=validation error=invalid_ref_image",
+                    request_id,
+                )
+                return web.json_response({"error": "invalid_ref_image"}, status=400)
+            logger.info(
+                "Hermes image API call started: request=%s mode=image-to-image "
+                "engine=%s size=%s prompt_chars=%s ref=%s",
+                request_id,
+                engine,
+                size or "default",
+                len(prompt),
+                os.path.basename(resolved_ref),
+            )
             caption = self._request_caption(body)
             display_outfit = await self._normalize_hermes_display_description(
                 self._request_outfit_description(body),
                 prompt,
                 "图生图",
             )
-            if not caption:
-                caption = self._fallback_hermes_caption(display_outfit, prompt)
-
-            if engine != "gptimage":
-                return web.json_response({"error": "engine_not_support_img2img"}, status=400)
-
-            resolved_ref = self._resolve_reference_image(ref_image)
-            if not resolved_ref:
-                return web.json_response({"error": "invalid_ref_image"}, status=400)
 
             loop = asyncio.get_running_loop()
+            logger.info(
+                "Hermes image API call provider started: request=%s mode=image-to-image engine=%s",
+                request_id,
+                engine,
+            )
             result = await loop.run_in_executor(
                 None,
                 lambda: self._run_hermes_image_generation(engine, prompt, size=size, ref_image=resolved_ref, caption=caption, display_outfit=display_outfit),
             )
 
             if not result:
+                logger.error(
+                    "Hermes image API call failed: request=%s mode=image-to-image "
+                    "stage=provider error=generate_failed_no_result",
+                    request_id,
+                )
                 return web.json_response({"error": "generate_failed"}, status=500)
+            logger.info(
+                "Hermes image API call succeeded: request=%s mode=image-to-image "
+                "file=%s model=%s elapsed=%.2fs total_elapsed=%.2fs",
+                request_id,
+                result.get("filename", ""),
+                result.get("model_name", ""),
+                float(result.get("elapsed") or 0),
+                time.monotonic() - started,
+            )
             return web.json_response(result)
         except Exception as e:
-            logger.error(f"Hermes image-to-image error: {e}")
+            logger.error(
+                "Hermes image API call failed: request=%s mode=image-to-image "
+                "stage=exception error=%s",
+                request_id,
+                self._redact_log_text(str(e)),
+                exc_info=True,
+            )
             return web.json_response({"error": str(e)}, status=500)
 
     def run(self):

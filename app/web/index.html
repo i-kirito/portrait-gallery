@@ -386,11 +386,11 @@ textarea:focus-visible,
 .sk-modal {
   background: #fff;
   border-radius: 24px;
-  max-width: 500px;
+  max-width: 920px;
   width: 100%;
   max-height: 90vh;
   overflow-y: auto;
-  padding: 32px 36px;
+  padding: 28px 30px;
   box-shadow: 0 20px 60px rgba(0,0,0,0.2);
   animation: slideUp 0.25s ease;
 }
@@ -433,6 +433,168 @@ textarea:focus-visible,
 }
 .sk-panel.active {
   display: block;
+}
+.sk-model-panel {
+  display: grid;
+  gap: 14px;
+}
+.sk-engine-group {
+  display: grid;
+  gap: 12px;
+  padding: 15px 16px 16px;
+  border: 1px solid #eee4f2;
+  border-radius: 14px;
+  background: #fff;
+}
+.sk-engine-group--llm { border-color: #e5dcf5; background: #fdfbff; }
+.sk-engine-group--image { border-color: #f2dfe9; background: #fffdfd; }
+.sk-engine-group--video { border-color: #dce9f2; background: #fcfeff; }
+.sk-engine-group-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid #f0e9f3;
+}
+.sk-engine-group--image .sk-engine-group-head { border-color: #f5e8ed; }
+.sk-engine-group--video .sk-engine-group-head { border-color: #e6eff4; }
+.sk-engine-group-title {
+  display: block;
+  color: #3f3545;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.25;
+}
+.sk-engine-group-title i {
+  width: 18px;
+  margin-right: 5px;
+  color: #8b5cf6;
+  text-align: center;
+}
+.sk-engine-group--image .sk-engine-group-title i { color: #d9467a; }
+.sk-engine-group--video .sk-engine-group-title i { color: #256f9d; }
+.sk-engine-group-desc {
+  display: block;
+  margin-top: 3px;
+  color: #8d8292;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.sk-engine-group-status {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.4;
+  text-align: right;
+}
+.sk-engine-group-status.is-ready { color: #16805a; }
+.sk-engine-group-status.is-warning { color: #c27a16; }
+.sk-engine-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+}
+.sk-engine-grid--three {
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.96fr) minmax(0, 1fr);
+}
+.sk-engine-grid > .sk-field-wide {
+  grid-column: 1 / -1;
+}
+.sk-engine-group .sk-field {
+  margin-bottom: 0;
+}
+.sk-provider-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding-top: 2px;
+  color: #564a5d;
+  font-size: 12px;
+  font-weight: 900;
+}
+.sk-provider-label + .sk-engine-grid {
+  margin-top: -2px;
+}
+.sk-provider-label small {
+  min-width: 0;
+  overflow: hidden;
+  color: #9d909f;
+  font-size: 10px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sk-engine-group .sk-gitee-fallback-inline {
+  margin-top: 7px;
+}
+.sk-gpt-option-grid {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+}
+.sk-gpt-option-grid .sk-gitee-fallback-inline {
+  min-height: 62px;
+  margin-top: 0;
+}
+.sk-engine-option-field {
+  min-width: 0;
+}
+.sk-engine-option-field .sk-gitee-fallback-inline {
+  min-height: 100%;
+  margin-top: 0;
+  padding: 10px 12px;
+}
+.sk-engine-option-field .sk-status,
+.sk-gpt-option-grid .sk-status {
+  margin-top: 5px;
+  font-size: 10px;
+}
+.sk-engine-group .sk-endpoint-add-btn {
+  margin-top: 2px;
+}
+@media (max-width: 980px) {
+  .sk-modal {
+    max-width: calc(100vw - 32px);
+  }
+  .sk-engine-grid--three {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .sk-engine-grid--three > .sk-engine-option-field,
+  .sk-engine-group--video .sk-engine-grid--three > .sk-field:last-child {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 720px) {
+  .sk-modal {
+    max-width: calc(100vw - 24px);
+    padding: 22px 18px;
+  }
+  .sk-engine-grid {
+    grid-template-columns: 1fr;
+  }
+  .sk-engine-grid--three {
+    grid-template-columns: 1fr;
+  }
+  .sk-engine-grid > .sk-field-wide {
+    grid-column: auto;
+  }
+  .sk-gpt-option-grid {
+    grid-column: auto;
+    grid-template-columns: 1fr;
+  }
+  .sk-provider-label {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .sk-provider-label small {
+    white-space: normal;
+  }
 }
 .xhs-login-card {
   display: grid;
@@ -843,6 +1005,8 @@ textarea:focus-visible,
   justify-content: center;
 }
 .keyword-cloud-icon-btn:hover { background: #f7f2ff; border-color: rgba(139,92,246,0.36); }
+.keyword-cloud-icon-btn:disabled { cursor: wait; opacity: 0.72; }
+.keyword-cloud-icon-btn.is-refreshing { animation: keywordCloudSpin 0.72s linear infinite; }
 .keyword-cloud-canvas-wrap {
   position: relative;
   height: clamp(320px, 50vh, 460px);
@@ -859,9 +1023,41 @@ textarea:focus-visible,
   height: 100%;
   display: block;
 }
+.keyword-cloud-word-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.keyword-cloud-word-hit {
+  position: absolute;
+  min-width: 40px;
+  min-height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+  transform: translate(-50%, -50%) rotate(var(--keyword-cloud-rotation, 0rad));
+  transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+.keyword-cloud-word-hit:hover {
+  border-color: rgba(124,58,237,0.24);
+  background: rgba(255,255,255,0.34);
+  box-shadow: 0 5px 14px rgba(124,58,237,0.11);
+}
+.keyword-cloud-word-hit:focus-visible {
+  outline: 3px solid rgba(124,58,237,0.22);
+  outline-offset: 2px;
+  border-color: rgba(124,58,237,0.34);
+  background: rgba(255,255,255,0.42);
+}
 .keyword-cloud-loading,
 .keyword-cloud-empty {
   position: absolute;
+  z-index: 3;
   left: 50%;
   top: 50%;
   width: min(310px, calc(100% - 42px));
@@ -916,6 +1112,9 @@ textarea:focus-visible,
 @keyframes keywordCloudFloat {
   0%, 100% { transform: translateY(0); opacity: 0.9; }
   50% { transform: translateY(-4px); opacity: 1; }
+}
+@keyframes keywordCloudSpin {
+  to { transform: rotate(360deg); }
 }
 .egg-forbidden-input {
   width: 100%;
@@ -4943,12 +5142,16 @@ textarea:focus-visible,
 .meta-ref-tag.has-preview {
   cursor: zoom-in;
 }
+.meta-ref-tag.has-preview:focus-visible {
+  outline: 2px solid rgba(233, 30, 99, 0.32);
+  outline-offset: 2px;
+}
 .meta-ref-preview {
   position: fixed;
   left: 0;
   top: 0;
-  width: 120px;
-  height: 120px;
+  width: 168px;
+  height: 168px;
   padding: 2px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.98);
@@ -5922,7 +6125,11 @@ textarea:focus-visible,
   color: #302a35;
   letter-spacing: 0;
 }
-.egg-theme-day-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px; margin-bottom: 16px; }
+.egg-theme-day-controls:not(.is-enabled) .egg-theme-day-disclosure,
+.egg-theme-day-controls:not(.is-enabled) .egg-theme-day-manual-section {
+  display: none;
+}
+.egg-theme-day-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px; margin-bottom: 0; }
 .egg-theme-day-heading { display: flex; align-items: flex-start; gap: 11px; min-width: 0; }
 .egg-theme-day-icon { width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, #fce7f3, #ede9fe); color: #9d2471; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 36px; font-size: 15px; }
 .egg-theme-day-copy { min-width: 0; padding-top: 1px; }
@@ -5947,8 +6154,19 @@ textarea:focus-visible,
 .egg-theme-day-switch { width: 44px; height: 44px; margin: -4px -1px 0 0; }
 .egg-theme-day-switch .sk-switch-knob { position: relative; width: 42px; height: 24px; margin: auto; }
 .egg-theme-day-switch:has(input:focus-visible) .sk-switch-knob { box-shadow: 0 0 0 3px rgba(124,58,237,0.2); }
-.egg-theme-day-field-label { display: block; margin-bottom: 7px; color: #514a57; font-size: 12px; font-weight: 800; }
-.egg-theme-day-field-label i { margin-right: 5px; color: #8b5cf6; }
+.egg-theme-day-preview-nav { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; margin-top: 14px; }
+.egg-theme-day-preview-label { color: #655d6b; font-size: 12px; font-weight: 800; white-space: nowrap; }
+.egg-theme-day-preview-label i { margin-right: 5px; color: #8b5cf6; }
+.egg-theme-day-disclosure { width: 100%; min-height: 40px; margin-top: 14px; padding: 0 11px; border: 1px solid #e3d9e9; border-radius: 10px; background: #faf7fc; color: #514a57; font: inherit; font-size: 12px; font-weight: 800; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left; transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease; }
+.egg-theme-day-disclosure:hover:not(:disabled) { border-color: #c8b8d3; background: #f7f1fa; color: #6d28d9; }
+.egg-theme-day-disclosure:focus-visible { outline: 3px solid rgba(139,92,246,0.16); outline-offset: 2px; }
+.egg-theme-day-disclosure > span { display: inline-flex; align-items: center; min-width: 0; }
+.egg-theme-day-disclosure > span i { margin-right: 6px; color: #8b5cf6; }
+.egg-theme-day-disclosure-icon { color: #8d8194; transition: transform 0.16s ease; }
+.egg-theme-day-controls.is-manual-expanded .egg-theme-day-disclosure-icon { transform: rotate(180deg); }
+.egg-theme-day-disclosure:disabled { opacity: 0.55; cursor: default; }
+.egg-theme-day-manual-section { margin-top: 10px; }
+.egg-theme-day-manual-section[hidden] { display: none; }
 .egg-theme-day-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .egg-theme-day-input { min-width: 0; height: 42px; padding: 0 12px; border: 1px solid #ddd4e3; border-radius: 10px; background: #fff; color: #302a35; font: inherit; font-size: 13px; outline: none; transition: border-color 0.16s ease, box-shadow 0.16s ease; }
 .egg-theme-day-input::placeholder { color: #918997; }
@@ -5972,11 +6190,12 @@ textarea:focus-visible,
 .egg-theme-day-xhs-selected:empty { display: none; }
 .egg-theme-day-xhs-picker { margin-top: 10px; padding: 11px; border: 1px solid #e5d8ec; border-radius: 10px; background: #fcfafd; }
 .egg-theme-day-xhs-search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
-.egg-theme-day-xhs-results, .egg-theme-day-xhs-images { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; margin-top: 8px; }
-.egg-theme-day-xhs-result, .egg-theme-day-xhs-image { position: relative; min-height: 112px; border: 0; border-radius: 8px; padding: 0; overflow: hidden; background: #f3e8ff; cursor: pointer; }
-.egg-theme-day-xhs-result img, .egg-theme-day-xhs-image img { width: 100%; height: 112px; object-fit: cover; display: block; }
-.egg-theme-day-xhs-result span, .egg-theme-day-xhs-image span { position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 5px; color: #fff; background: rgba(76,29,149,0.82); font-size: 10px; line-height: 1.25; text-align: left; }
-.egg-theme-day-status { margin-top: 9px; padding: 8px 10px; border: 1px solid #e9e0ef; border-radius: 8px; background: #faf7fc; color: #6d28d9; font-size: 11px; line-height: 1.45; }
+.egg-theme-day-xhs-search-row:not(:last-child) { margin-bottom: 10px; }
+.egg-theme-day-xhs-results, .egg-theme-day-xhs-images { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 12px; margin-top: 12px; }
+.egg-theme-day-xhs-result, .egg-theme-day-xhs-image { position: relative; min-height: 128px; border: 0; border-radius: 10px; padding: 0; overflow: hidden; background: #f3e8ff; cursor: pointer; }
+.egg-theme-day-xhs-result img, .egg-theme-day-xhs-image img { width: 100%; height: 128px; object-fit: cover; display: block; }
+.egg-theme-day-xhs-result span, .egg-theme-day-xhs-image span { position: absolute; left: 0; right: 0; bottom: 0; padding: 5px 6px; color: #fff; background: rgba(76,29,149,0.82); font-size: 11px; line-height: 1.3; text-align: left; }
+.egg-theme-day-status { margin-top: 12px; padding: 8px 10px; border: 1px solid #e9e0ef; border-radius: 8px; background: #faf7fc; color: #6d28d9; font-size: 12px; line-height: 1.45; }
 .egg-theme-day-status:empty { display: none; }
 .egg-theme-day-controls.is-busy #eggThemeDayStatus:not(:empty) { display: flex; align-items: flex-start; gap: 7px; }
 .egg-theme-day-status.error { border-color: #fecdd3; background: #fff1f2; color: #be123c; }
@@ -6180,7 +6399,7 @@ textarea:focus-visible,
 .egg-slot-empty { opacity: 0.5; font-style: italic; }
 @media (max-width: 420px) {
   .egg-theme-day-controls { margin: 12px 12px -6px; padding: 14px; }
-  .egg-theme-day-head { gap: 8px; margin-bottom: 14px; }
+  .egg-theme-day-head { gap: 8px; margin-bottom: 0; }
   .egg-theme-day-heading { gap: 9px; }
   .egg-theme-day-icon { width: 32px; height: 32px; flex-basis: 32px; }
   .egg-theme-day-row { grid-template-columns: 1fr; }
@@ -7585,7 +7804,7 @@ textarea:focus-visible,
       <h2>🐷 今日日程彩蛋</h2>
       <div class="egg-date-row">
         <div class="egg-date" id="eggDate"></div>
-        <button class="egg-refresh-btn" title="重新生成日程">
+        <button class="egg-refresh-btn" title="重新生成当天日程" aria-label="重新生成当天日程">
           <svg class="egg-refresh-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         </button>
       </div>
@@ -7597,51 +7816,63 @@ textarea:focus-visible,
           <span class="egg-theme-day-icon" aria-hidden="true"><i class="fa-solid fa-wand-magic-sparkles"></i></span>
           <div class="egg-theme-day-copy">
             <div class="egg-theme-day-title-row">
-              <span class="egg-theme-day-title">主题日</span>
-              <span class="egg-theme-day-state" id="eggThemeDayState">已关闭</span>
+              <span class="egg-theme-day-title">主题模式</span>
+              <span class="egg-theme-day-state" id="eggThemeDayState">自动主题已开启</span>
             </div>
-            <div class="egg-theme-day-hint" id="eggThemeDayHint">关闭时按随机风格与日常日程生成；开启后可指定主题或手动选小红书穿搭</div>
+            <div class="egg-theme-day-hint" id="eggThemeDayHint">自动主题已开启，每天随机选择一条主题主线并生成完整日程；关闭开关后可手动指定主题或选择小红书穿搭</div>
           </div>
         </div>
-        <label class="sk-switch egg-theme-day-switch" for="eggThemeDayEnabled" aria-label="启用主题日" aria-describedby="eggThemeDayHint">
-          <input type="checkbox" id="eggThemeDayEnabled" onchange="setThemeDayEnabled(this.checked)">
+        <label class="sk-switch egg-theme-day-switch" for="eggThemeDayEnabled" aria-label="自动主题开关；关闭后进入手动主题" aria-describedby="eggThemeDayHint">
+          <input type="checkbox" id="eggThemeDayEnabled" checked onchange="setThemeDayAutomatic(this.checked)">
           <span class="sk-switch-knob"></span>
         </label>
       </div>
-      <label class="egg-theme-day-field-label" for="eggThemeDayInput"><i class="fa-solid fa-pen" aria-hidden="true"></i>主题设定</label>
-      <div class="egg-theme-day-row">
-        <input class="egg-theme-day-input" id="eggThemeDayInput" type="text" maxlength="160" placeholder="例如：穿越到霍格沃兹体验当学生的一天（留空可随机）">
-        <button class="egg-theme-day-action egg-theme-day-action--primary" id="eggThemeDayGenerateBtn" type="button" onclick="generateThemeDay(false)">
-          <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
-          <span id="eggThemeDayGenerateLabel">生成主题日</span>
-        </button>
-      </div>
-      <div class="egg-theme-day-buttons">
-        <div class="egg-theme-day-target-group" role="group" aria-label="生成日期">
+      <div class="egg-theme-day-preview-nav">
+        <span class="egg-theme-day-preview-label"><i class="fa-regular fa-calendar" aria-hidden="true"></i>日程预览</span>
+        <div class="egg-theme-day-target-group" role="group" aria-label="日程预览日期">
           <button class="egg-theme-day-target active" type="button" data-theme-target="today" aria-pressed="true" onclick="selectThemeDayTarget('today')">当天</button>
           <button class="egg-theme-day-target" type="button" data-theme-target="tomorrow" aria-pressed="false" onclick="selectThemeDayTarget('tomorrow')">第二天</button>
         </div>
-        <div class="egg-theme-day-action-pair">
-          <button class="egg-theme-day-action egg-theme-day-action--secondary" type="button" onclick="generateThemeDay(true)">
-            <i class="fa-solid fa-dice" aria-hidden="true"></i>
-            <span>随机主题</span>
-          </button>
-          <button class="egg-theme-day-action egg-theme-day-action--secondary" id="eggThemeDayManualBtn" type="button" aria-controls="eggThemeDayXhsPicker" aria-expanded="false" onclick="toggleThemeDayXhsPicker()">
-            <i class="fa-solid fa-shirt" aria-hidden="true"></i>
-            <span>指定小红书穿搭</span>
-          </button>
-        </div>
       </div>
-      <span class="egg-theme-day-xhs-selected" id="eggThemeDayXhsSelected"></span>
-      <div class="egg-theme-day-xhs-picker" id="eggThemeDayXhsPicker" hidden>
-        <div class="egg-theme-day-xhs-search-row">
-          <input class="egg-theme-day-input" id="eggThemeDayXhsKeyword" type="search" maxlength="80" placeholder="搜索霍格沃兹/魔法学院穿搭">
-          <button class="egg-theme-day-target" type="button" onclick="searchThemeDayXhs()"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><span>搜索</span></button>
+      <button class="egg-theme-day-disclosure" id="eggThemeDayManualToggle" type="button" aria-expanded="false" aria-controls="eggThemeDayManualSection" onclick="toggleThemeDayManualSection()">
+        <span><i class="fa-solid fa-pen" aria-hidden="true"></i>主题设定</span>
+        <i class="fa-solid fa-chevron-down egg-theme-day-disclosure-icon" aria-hidden="true"></i>
+      </button>
+      <div class="egg-theme-day-manual-section" id="eggThemeDayManualSection" hidden>
+        <div class="egg-theme-day-row">
+          <input class="egg-theme-day-input" id="eggThemeDayInput" type="text" maxlength="160" aria-label="主题设定" placeholder="例如：穿越到霍格沃兹体验当学生的一天（留空可随机）">
+          <button class="egg-theme-day-action egg-theme-day-action--primary" id="eggThemeDayGenerateBtn" type="button" onclick="generateThemeDay(false)">
+            <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
+            <span id="eggThemeDayGenerateLabel">生成主题日</span>
+          </button>
         </div>
-        <div class="egg-theme-day-status" id="eggThemeDayXhsStatus" role="status" aria-live="polite" aria-atomic="true"></div>
-        <div class="egg-theme-day-xhs-results" id="eggThemeDayXhsResults"></div>
-        <div class="egg-theme-day-xhs-images" id="eggThemeDayXhsImages"></div>
-        <button class="egg-theme-day-target" id="eggThemeDayXhsClear" type="button" onclick="clearThemeDayXhs()">清除手动指定</button>
+        <div class="egg-theme-day-buttons">
+          <div class="egg-theme-day-action-pair">
+            <button class="egg-theme-day-action egg-theme-day-action--secondary" type="button" onclick="generateThemeDay(true)">
+              <i class="fa-solid fa-dice" aria-hidden="true"></i>
+              <span>随机主题</span>
+            </button>
+            <button class="egg-theme-day-action egg-theme-day-action--secondary" id="eggThemeDayManualBtn" type="button" aria-controls="eggThemeDayXhsPicker" aria-expanded="false" onclick="toggleThemeDayXhsPicker()">
+              <i class="fa-solid fa-shirt" aria-hidden="true"></i>
+              <span>指定小红书穿搭</span>
+            </button>
+          </div>
+        </div>
+        <span class="egg-theme-day-xhs-selected" id="eggThemeDayXhsSelected"></span>
+        <div class="egg-theme-day-xhs-picker" id="eggThemeDayXhsPicker" hidden>
+          <div class="egg-theme-day-xhs-search-row">
+            <input class="egg-theme-day-input" id="eggThemeDayXhsKeyword" type="search" maxlength="80" placeholder="搜索霍格沃兹/魔法学院穿搭">
+            <button class="egg-theme-day-target" type="button" onclick="searchThemeDayXhs()"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><span>搜索</span></button>
+          </div>
+          <div class="egg-theme-day-xhs-search-row">
+            <input class="egg-theme-day-input" id="eggThemeDayXhsUrl" type="url" placeholder="或粘贴小红书笔记链接（绕过搜索风控）">
+            <button class="egg-theme-day-target" type="button" onclick="resolveThemeDayXhsUrl()"><i class="fa-solid fa-link" aria-hidden="true"></i><span>打开</span></button>
+          </div>
+          <div class="egg-theme-day-status" id="eggThemeDayXhsStatus" role="status" aria-live="polite" aria-atomic="true"></div>
+          <div class="egg-theme-day-xhs-results" id="eggThemeDayXhsResults"></div>
+          <div class="egg-theme-day-xhs-images" id="eggThemeDayXhsImages"></div>
+          <button class="egg-theme-day-target" id="eggThemeDayXhsClear" type="button" onclick="clearThemeDayXhs()">清除手动指定</button>
+        </div>
       </div>
       <div class="egg-theme-day-status" id="eggThemeDayStatus" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
@@ -7678,12 +7909,12 @@ textarea:focus-visible,
   </div>
 </div>
 
-<div class="egg-style-overlay" id="keywordCloudOverlay">
-  <div class="egg-style-modal keyword-cloud-modal">
+<div class="egg-style-overlay" id="keywordCloudOverlay" aria-hidden="true">
+  <div class="egg-style-modal keyword-cloud-modal" role="dialog" aria-modal="true" aria-labelledby="keywordCloudTitle" tabindex="-1">
     <div class="keyword-cloud-head">
       <div>
-        <h3>☁️ 词云系统</h3>
-        <div class="sk-desc">提取历史用户输入和收藏衣柜里的高频穿搭、发型与场景词，作为日程生成的软参考。</div>
+        <h3 id="keywordCloudTitle">☁️ 词云系统</h3>
+        <div class="sk-desc">提取历史用户输入和收藏衣柜里的高频穿搭、发型与场景词。点击任意词可手动隐藏；刷新会优先换入上一轮未显示的候选词。</div>
       </div>
       <div class="keyword-cloud-actions">
         <button class="keyword-cloud-icon-btn" type="button" data-keyword-cloud-refresh title="刷新词云" aria-label="刷新词云">↻</button>
@@ -7691,11 +7922,12 @@ textarea:focus-visible,
       </div>
     </div>
     <div class="keyword-cloud-canvas-wrap">
-      <canvas class="keyword-cloud-canvas" id="keywordCloudCanvas"></canvas>
+      <canvas class="keyword-cloud-canvas" id="keywordCloudCanvas" aria-hidden="true"></canvas>
+      <div class="keyword-cloud-word-layer" id="keywordCloudWordLayer"></div>
       <div class="keyword-cloud-loading" id="keywordCloudLoading">正在整理词云</div>
       <div class="keyword-cloud-empty" id="keywordCloudEmpty">还没有可绘制的偏好关键词</div>
     </div>
-    <div class="keyword-cloud-status" id="keywordCloudStatus"></div>
+    <div class="keyword-cloud-status" id="keywordCloudStatus" role="status" aria-live="polite"></div>
   </div>
 </div>
 
@@ -8117,134 +8349,204 @@ textarea:focus-visible,
     </div>
     </div>
     <div class="sk-panel" id="skPanelModel" data-settings-panel-content="model">
-    <div class="sk-field">
-      <label for="skLlmModel">🧠 日程生成模型</label>
-      <div class="sk-desc">用于每日日程生成和穿搭翻译的 LLM 模型</div>
-      <div class="sk-llm-row">
-        <select id="skLlmModel" onchange="syncLlmChainPrimary()">
-          <option value="">加载中...</option>
-        </select>
-        <button type="button" class="sk-llm-test-btn" id="skLlmTestBtn" onclick="testLlmModel()">测试</button>
-      </div>
-      <div class="sk-status" id="skLlmModelStatus">加载中...</div>
-      <details class="sk-llm-chain" id="skLlmChainDetails">
-        <summary>
-          <span>Fallback 链</span>
-          <span class="sk-llm-chain-count" id="skLlmChainCount">0 个备用</span>
-        </summary>
-        <div class="sk-llm-chain-body">
-          <div class="sk-llm-chain-preview" id="skLlmChainPreview">未配置备用模型</div>
-          <details class="sk-llm-chain-editor" id="skLlmChainEditor">
-            <summary>
-              <span>编辑链路</span>
-              <span class="sk-llm-chain-count">第三级</span>
-            </summary>
-            <div class="sk-llm-chain-editor-body">
-              <div class="sk-llm-chain-list" id="skLlmChainList"></div>
-              <div class="sk-llm-chain-add">
-                <select id="skLlmChainAddSelect"></select>
-                <button type="button" class="sk-llm-chain-btn" onclick="addLlmChainModel()" title="添加模型" aria-label="添加模型">+</button>
+      <div class="sk-model-panel">
+        <section class="sk-engine-group sk-engine-group--llm" aria-labelledby="skLlmGroupTitle">
+          <div class="sk-engine-group-head">
+            <div>
+              <span class="sk-engine-group-title" id="skLlmGroupTitle"><i class="fa-solid fa-brain" aria-hidden="true"></i>文本模型 / 日程 LLM</span>
+              <span class="sk-engine-group-desc">日程生成、穿搭翻译和 Hermes 文本任务使用的模型链路</span>
+            </div>
+            <span class="sk-engine-group-status" id="skLlmGroupStatus">加载中...</span>
+          </div>
+          <div class="sk-engine-grid sk-engine-grid--three">
+            <div class="sk-field sk-field-wide">
+              <label for="skLlmModel">主模型</label>
+              <div class="sk-llm-row">
+                <select id="skLlmModel" onchange="syncLlmChainPrimary()">
+                  <option value="">加载中...</option>
+                </select>
+                <button type="button" class="sk-llm-test-btn" id="skLlmTestBtn" onclick="testLlmModel()">测试</button>
+              </div>
+              <div class="sk-status" id="skLlmModelStatus">加载中...</div>
+              <details class="sk-llm-chain" id="skLlmChainDetails">
+                <summary>
+                  <span>Fallback 链</span>
+                  <span class="sk-llm-chain-count" id="skLlmChainCount">0 个备用</span>
+                </summary>
+                <div class="sk-llm-chain-body">
+                  <div class="sk-llm-chain-preview" id="skLlmChainPreview">未配置备用模型</div>
+                  <details class="sk-llm-chain-editor" id="skLlmChainEditor">
+                    <summary>
+                      <span>编辑链路</span>
+                      <span class="sk-llm-chain-count">第三级</span>
+                    </summary>
+                    <div class="sk-llm-chain-editor-body">
+                      <div class="sk-llm-chain-list" id="skLlmChainList"></div>
+                      <div class="sk-llm-chain-add">
+                        <select id="skLlmChainAddSelect"></select>
+                        <button type="button" class="sk-llm-chain-btn" onclick="addLlmChainModel()" title="添加模型" aria-label="添加模型">+</button>
+                      </div>
+                    </div>
+                  </details>
+                </div>
+              </details>
+            </div>
+            <div class="sk-field">
+              <label for="skCpaUrl">LLM Base URL</label>
+              <div class="sk-desc">兼容 OpenAI API 的 /v1 地址</div>
+              <input type="text" id="skCpaUrl" placeholder="必填：填写 LLM /v1 地址">
+              <div class="sk-status" id="skCpaUrlStatus">加载中...</div>
+            </div>
+            <div class="sk-field">
+              <label for="skCpaKey">LLM API Key</label>
+              <div class="sk-desc">LLM 接口认证密钥</div>
+              <input type="password" id="skCpaKey" placeholder="输入新密钥（留空则不修改）">
+              <div class="sk-status" id="skCpaKeyStatus">加载中...</div>
+            </div>
+            <div class="sk-field sk-engine-option-field">
+              <div class="sk-gitee-fallback-inline" id="skLlmStreamRow">
+                <div class="sk-gitee-fallback-copy">
+                  <span class="sk-gitee-fallback-title">流式响应</span>
+                  <span class="sk-gitee-fallback-hint">适合 Grok 等长请求，持续接收内容以避免代理等待超时</span>
+                  <div class="sk-status" id="skLlmStreamStatus">加载中...</div>
+                </div>
+                <label class="sk-switch" for="skLlmStream" aria-label="启用 LLM 流式响应">
+                  <input type="checkbox" id="skLlmStream" onchange="syncLlmStreamVisual(this.checked)">
+                  <span class="sk-switch-knob"></span>
+                </label>
               </div>
             </div>
-          </details>
-        </div>
-      </details>
-    </div>
-    <div class="sk-field">
-      <label for="skGiteeUrl">Gitee API URL</label>
-      <div class="sk-desc">Gitee 兼容生图接口地址，必须填写完整的 images/generations 端点</div>
-      <input type="text" id="skGiteeUrl" placeholder="必填：https://ai.gitee.com/v1/images/generations">
-      <div class="sk-status" id="skGiteeUrlStatus">加载中...</div>
-    </div>
-    <div class="sk-field">
-      <label for="skGiteeKey">Gitee API Key</label>
-      <div class="sk-desc">Gitee 生图密钥，必须填写</div>
-      <input type="password" id="skGiteeKey" placeholder="输入新密钥（留空则不修改）">
-      <div class="sk-inline-status sk-gitee-status-row">
-        <div class="sk-gitee-status-main">
-          <div class="sk-status" id="skGiteeStatus">加载中...</div>
-          <div class="sk-status" id="skGiteeFallbackStatus">加载中...</div>
-        </div>
+          </div>
+        </section>
+
+        <section class="sk-engine-group sk-engine-group--image" aria-labelledby="skImageGroupTitle">
+          <div class="sk-engine-group-head">
+            <div>
+              <span class="sk-engine-group-title" id="skImageGroupTitle"><i class="fa-regular fa-image" aria-hidden="true"></i>图片生成</span>
+              <span class="sk-engine-group-desc">GPT Image 主引擎、Gitee 备用引擎和多端点配置集中在这里</span>
+            </div>
+            <span class="sk-engine-group-status" id="skImageGroupStatus">加载中...</span>
+          </div>
+          <div class="sk-provider-label">
+            <span>GPT Image</span>
+            <small>主生图引擎</small>
+          </div>
+          <div class="sk-engine-grid">
+            <div class="sk-field">
+              <label for="skGptBaseUrl">Base URL</label>
+              <div class="sk-desc">OpenAI 兼容地址，填到 /v1 即可</div>
+              <input type="text" id="skGptBaseUrl" placeholder="必填：填写 GPT Image /v1 地址">
+              <div class="sk-inline-status sk-gitee-status-row">
+                <div class="sk-gitee-status-main">
+                  <div class="sk-status" id="skGptBaseUrlStatus">加载中...</div>
+                </div>
+              </div>
+            </div>
+            <div class="sk-field">
+              <label for="skGptKey">API Key</label>
+              <div class="sk-desc">认证密钥，必须填写</div>
+              <input type="password" id="skGptKey" placeholder="输入新密钥（留空则不修改）">
+              <div class="sk-status" id="skGptStatus">加载中...</div>
+            </div>
+            <div class="sk-gpt-option-grid">
+              <div class="sk-gitee-fallback-inline" id="skGptChatFallbackRow">
+                <div class="sk-gitee-fallback-copy">
+                  <span class="sk-gitee-fallback-title">Chat 端点回退</span>
+                  <span class="sk-gitee-fallback-hint">Images API 失败后改用 /chat/completions</span>
+                  <div class="sk-status" id="skGptChatFallbackStatus">加载中...</div>
+                </div>
+                <label class="sk-switch" for="skGptChatFallback" aria-label="允许 Images API 失败后回退到 Chat 端点">
+                  <input type="checkbox" id="skGptChatFallback" onchange="syncGptChatFallbackVisual(this.checked)">
+                  <span class="sk-switch-knob"></span>
+                </label>
+              </div>
+              <div class="sk-gitee-fallback-inline" id="skGptPromptCompactRow">
+                <div class="sk-gitee-fallback-copy">
+                  <span class="sk-gitee-fallback-title">提示词精简</span>
+                  <span class="sk-gitee-fallback-hint">生图前用画廊 LLM 精简普通描述，保护规则保持原样</span>
+                  <div class="sk-status" id="skGptPromptCompactStatus">加载中...</div>
+                </div>
+                <label class="sk-switch" for="skGptPromptCompact" aria-label="生图前精简 GPT Image 提示词">
+                  <input type="checkbox" id="skGptPromptCompact" onchange="syncGptPromptCompactVisual(this.checked)">
+                  <span class="sk-switch-knob"></span>
+                </label>
+              </div>
+            </div>
+            <div class="sk-field sk-field-wide">
+              <label>多端点（可选）</label>
+              <div class="sk-desc">每条都必须同时包含 Base URL 和 API Key；按列表顺序尝试</div>
+              <div id="skGptEndpointsList" class="sk-endpoints-list"></div>
+              <button type="button" class="sk-endpoint-add-btn" onclick="addGptEndpointRow()">+ 添加端点</button>
+              <div class="sk-status" id="skGptEndpointsStatus">加载中...</div>
+            </div>
+          </div>
+          <div class="sk-provider-label">
+            <span>Gitee</span>
+            <small>GPT Image 失败后的可选回退</small>
+          </div>
+          <div class="sk-engine-grid sk-engine-grid--three">
+            <div class="sk-field">
+              <label for="skGiteeUrl">API URL</label>
+              <div class="sk-desc">完整的 images/generations 端点</div>
+              <input type="text" id="skGiteeUrl" placeholder="必填：https://ai.gitee.com/v1/images/generations">
+              <div class="sk-status" id="skGiteeUrlStatus">加载中...</div>
+            </div>
+            <div class="sk-field">
+              <label for="skGiteeKey">API Key</label>
+              <div class="sk-desc">Gitee 生图密钥，必须填写</div>
+              <input type="password" id="skGiteeKey" placeholder="输入新密钥（留空则不修改）">
+              <div class="sk-inline-status sk-gitee-status-row">
+                <div class="sk-gitee-status-main">
+                  <div class="sk-status" id="skGiteeStatus">加载中...</div>
+                </div>
+              </div>
+            </div>
+            <div class="sk-field sk-engine-option-field">
+              <div class="sk-gitee-fallback-inline" id="skGiteeFallbackRow">
+                <div class="sk-gitee-fallback-copy">
+                  <span class="sk-gitee-fallback-title">失败回退</span>
+                  <span class="sk-gitee-fallback-hint">GPT Image 多次失败后使用 Gitee</span>
+                  <div class="sk-status" id="skGiteeFallbackStatus">加载中...</div>
+                </div>
+                <label class="sk-switch" for="skGiteeFallback" aria-label="允许 GPT 失败后回退到 Gitee">
+                  <input type="checkbox" id="skGiteeFallback" onchange="syncGiteeFallbackVisual(this.checked)">
+                  <span class="sk-switch-knob"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="sk-engine-group sk-engine-group--video" aria-labelledby="skVideoGroupTitle">
+          <div class="sk-engine-group-head">
+            <div>
+              <span class="sk-engine-group-title" id="skVideoGroupTitle"><i class="fa-solid fa-film" aria-hidden="true"></i>视频生成</span>
+              <span class="sk-engine-group-desc">Hermes 视频 skill 使用的 Grok2API 路由；默认连接本机 8100</span>
+            </div>
+            <span class="sk-engine-group-status" id="skGrokVideoGroupStatus">加载中...</span>
+          </div>
+          <div class="sk-engine-grid sk-engine-grid--three">
+            <div class="sk-field">
+              <label for="skGrokVideoUrl">Grok2API 地址</label>
+              <div class="sk-desc">例如 http://127.0.0.1:8100</div>
+              <input type="text" id="skGrokVideoUrl" placeholder="默认：http://127.0.0.1:8100" oninput="markGrokVideoInputEdited(this)">
+              <div class="sk-status" id="skGrokVideoUrlStatus">加载中...</div>
+            </div>
+            <div class="sk-field">
+              <label for="skGrokVideoModel">视频模型 ID</label>
+              <div class="sk-desc">例如 grok-imagine-video</div>
+              <input type="text" id="skGrokVideoModel" placeholder="默认：grok-imagine-video" autocomplete="off" oninput="markGrokVideoInputEdited(this)">
+              <div class="sk-status" id="skGrokVideoModelStatus">加载中...</div>
+            </div>
+            <div class="sk-field">
+              <label for="skGrokApiKey">Grok API Key</label>
+              <div class="sk-desc">视频 skill 的认证密钥；留空则继续使用环境变量或 Hermes/OpenClaw .env</div>
+              <input type="password" id="skGrokApiKey" placeholder="输入新密钥（留空则不修改）" autocomplete="new-password" oninput="markGrokVideoInputEdited(this)">
+              <div class="sk-status" id="skGrokApiKeyStatus">加载中...</div>
+            </div>
+          </div>
+        </section>
       </div>
-      <div class="sk-gitee-fallback-inline" id="skGiteeFallbackRow">
-        <div class="sk-gitee-fallback-copy">
-          <span class="sk-gitee-fallback-title">失败回退</span>
-          <span class="sk-gitee-fallback-hint">GPT Image 多次失败后使用 Gitee</span>
-        </div>
-        <label class="sk-switch" for="skGiteeFallback" aria-label="允许 GPT 失败后回退到 Gitee">
-          <input type="checkbox" id="skGiteeFallback" onchange="syncGiteeFallbackVisual(this.checked)">
-          <span class="sk-switch-knob"></span>
-        </label>
-      </div>
-    </div>
-    <div class="sk-field">
-      <label for="skGptBaseUrl">GPT Image Base URL</label>
-      <div class="sk-desc">OpenAI 兼容生图基础地址；必须填写，填到 /v1 即可</div>
-      <input type="text" id="skGptBaseUrl" placeholder="必填：填写你的 GPT Image /v1 地址">
-      <div class="sk-inline-status sk-gitee-status-row">
-        <div class="sk-gitee-status-main">
-          <div class="sk-status" id="skGptBaseUrlStatus">加载中...</div>
-          <div class="sk-status" id="skGptChatFallbackStatus">加载中...</div>
-          <div class="sk-status" id="skGptPromptCompactStatus">加载中...</div>
-        </div>
-      </div>
-      <div class="sk-gitee-fallback-inline" id="skGptChatFallbackRow">
-        <div class="sk-gitee-fallback-copy">
-          <span class="sk-gitee-fallback-title">Chat 端点回退</span>
-          <span class="sk-gitee-fallback-hint">Images API 失败后改用 /chat/completions</span>
-        </div>
-        <label class="sk-switch" for="skGptChatFallback" aria-label="允许 Images API 失败后回退到 Chat 端点">
-          <input type="checkbox" id="skGptChatFallback" onchange="syncGptChatFallbackVisual(this.checked)">
-          <span class="sk-switch-knob"></span>
-        </label>
-      </div>
-      <div class="sk-gitee-fallback-inline" id="skGptPromptCompactRow">
-        <div class="sk-gitee-fallback-copy">
-          <span class="sk-gitee-fallback-title">提示词精简</span>
-          <span class="sk-gitee-fallback-hint">生图前用画廊 LLM 精简普通描述，保护规则保持原样</span>
-        </div>
-        <label class="sk-switch" for="skGptPromptCompact" aria-label="生图前精简 GPT Image 提示词">
-          <input type="checkbox" id="skGptPromptCompact" onchange="syncGptPromptCompactVisual(this.checked)">
-          <span class="sk-switch-knob"></span>
-        </label>
-      </div>
-    </div>
-    <div class="sk-field">
-      <label for="skGptKey">GPT Image Key</label>
-      <div class="sk-desc">GPT Image 认证密钥，必须填写</div>
-      <input type="password" id="skGptKey" placeholder="输入新密钥（留空则不修改）">
-      <div class="sk-status" id="skGptStatus">加载中...</div>
-    </div>
-    <div class="sk-field">
-      <label>GPT Image 多端点（可选）</label>
-      <div class="sk-desc">填写后优先使用第一条完整端点；每条都必须同时包含 Base URL 和 API Key</div>
-      <div id="skGptEndpointsList" class="sk-endpoints-list"></div>
-      <button type="button" class="sk-endpoint-add-btn" onclick="addGptEndpointRow()">+ 添加端点</button>
-      <div class="sk-status" id="skGptEndpointsStatus">加载中...</div>
-    </div>
-    <div class="sk-field">
-      <label for="skCpaUrl">LLM Base URL</label>
-      <div class="sk-desc">LLM 调度使用，必须填写兼容 OpenAI API 的 /v1 地址</div>
-      <input type="text" id="skCpaUrl" placeholder="必填：填写 LLM /v1 地址">
-      <div class="sk-status" id="skCpaUrlStatus">加载中...</div>
-    </div>
-    <div class="sk-field">
-      <label for="skCpaKey">LLM API Key</label>
-      <div class="sk-desc">LLM 接口认证密钥，必须填写</div>
-      <input type="password" id="skCpaKey" placeholder="输入新密钥（留空则不修改）">
-      <div class="sk-status" id="skCpaKeyStatus">加载中...</div>
-      <div class="sk-gitee-fallback-inline" id="skLlmStreamRow">
-        <div class="sk-gitee-fallback-copy">
-          <span class="sk-gitee-fallback-title">流式响应</span>
-          <span class="sk-gitee-fallback-hint">适合 Grok 等长请求，持续接收内容以避免代理等待超时</span>
-        </div>
-        <label class="sk-switch" for="skLlmStream" aria-label="启用 LLM 流式响应">
-          <input type="checkbox" id="skLlmStream" onchange="syncLlmStreamVisual(this.checked)">
-          <span class="sk-switch-knob"></span>
-        </label>
-      </div>
-      <div class="sk-status" id="skLlmStreamStatus">加载中...</div>
-    </div>
     </div>
     <div class="sk-panel" id="skPanelXiaohongshu" data-settings-panel-content="xiaohongshu">
       <div class="sk-field">
@@ -8781,7 +9083,9 @@ let llmModelChain = [];
 let scheduleEggCache = { html: "", dateText: "", updatedAt: 0 };
 let selectedThemeDayTarget = "today";
 let themeDayBusy = false;
-let themeDayEnabled = false;
+let themeDayManualMode = false; // 后端兼容字段 enabled：false=自动主题，true=手动主题
+let themeDayManualExpanded = false;
+let themeDayStateBusy = false;
 let themeDayManualReferenceUrl = "";
 let themeDayXhsResults = [];
 let themeDayXhsActiveNote = null;
@@ -8806,6 +9110,7 @@ function closeAccessibleDialog(overlay) {
   else if (overlay.id === 'wardrobeVersionOverlay') closeWardrobeVersions();
   else if (overlay.id === 'modalOverlay') closeModal();
   else if (overlay.id === 'deleteConfirmOverlay') closeDeleteConfirm(false);
+  else if (overlay.id === 'keywordCloudOverlay') closeKeywordCloudDialog();
 }
 
 function handleAccessibleDialogKeydown(event) {
@@ -8873,6 +9178,8 @@ function deactivateAccessibleDialog(overlay) {
 }
 let scheduleEggRequest = null;
 let keywordCloudCache = { payload: null, updatedAt: 0 };
+let keywordCloudVisibleTerms = [];
+let keywordCloudLayoutRound = 0;
 const appDisplay = {
   title: "每日穿搭画廊",
   characterName: "角色",
@@ -9139,7 +9446,7 @@ function renderReferenceMetaTag(e, className = "meta-tag") {
   if (!src) {
     return `<span class="${escapeAttr(classes)}">${escapeHtml(label)}</span>`;
   }
-  return `<span class="${escapeAttr(classes)}" tabindex="0" aria-label="${escapeAttr(label)}" data-ref-preview="1"><span class="meta-ref-label">${escapeHtml(label)}</span><span class="meta-ref-preview" role="img" aria-label="参考像预览"><img src="${escapeAttr(src)}" alt="参考像预览" loading="lazy" decoding="async"></span></span>`;
+  return `<span class="${escapeAttr(classes)}" tabindex="0" role="button" aria-label="${escapeAttr(label)}，点击查看大图" title="悬停预览，点击查看大图" data-ref-preview="1" data-ref-src="${escapeAttr(src)}" onclick="openReferenceImage(event,this)"><span class="meta-ref-label">${escapeHtml(label)}</span></span>`;
 }
 
 function renderEntryTagsMeta(e, className = "meta-tag") {
@@ -9150,14 +9457,44 @@ function renderEntryTagsMeta(e, className = "meta-tag") {
   return tags.map(tag => `<span class="${escapeAttr(className)} meta-entry-tag">${escapeHtml(tag)}</span>`).join("");
 }
 
+let activeReferencePreviewTag = null;
+let referencePreviewNode = null;
+
+function ensureReferencePreviewNode() {
+  if (referencePreviewNode && document.contains(referencePreviewNode)) return referencePreviewNode;
+  const preview = document.createElement("span");
+  preview.className = "meta-ref-preview";
+  preview.setAttribute("role", "img");
+  preview.setAttribute("aria-label", "参考像预览");
+  preview.setAttribute("aria-hidden", "true");
+  const image = document.createElement("img");
+  image.alt = "参考像预览";
+  image.loading = "eager";
+  image.decoding = "async";
+  preview.appendChild(image);
+  document.body.appendChild(preview);
+  referencePreviewNode = preview;
+  return preview;
+}
+
+function isFullscreenImageOpen() {
+  return !!document.getElementById("imgFullscreen")?.classList.contains("open");
+}
+
 function positionReferencePreview(tag) {
-  if (!tag) return;
-  const preview = tag.querySelector(".meta-ref-preview");
-  if (!preview) return;
+  if (!tag || isFullscreenImageOpen()) return;
+  const src = String(tag.dataset.refSrc || "").trim();
+  if (!src) return;
+  const preview = ensureReferencePreviewNode();
+  const image = preview.querySelector("img");
+  if (image && image.dataset.refSrc !== src) {
+    image.dataset.refSrc = src;
+    image.src = src;
+  }
   const rect = tag.getBoundingClientRect();
   const gap = 12;
-  const width = preview.offsetWidth || 120;
-  const height = preview.offsetHeight || 120;
+  const width = preview.offsetWidth || 168;
+  const height = preview.offsetHeight || 168;
   let left = rect.left + rect.width / 2 - width / 2;
   left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
   // Always prefer above the tag.
@@ -9171,27 +9508,46 @@ function positionReferencePreview(tag) {
   preview.style.top = `${Math.round(top)}px`;
   const arrowX = rect.left + rect.width / 2 - left;
   preview.style.setProperty("--ref-arrow-x", `${Math.round(arrowX)}px`);
+  activeReferencePreviewTag = tag;
   preview.classList.add("is-open");
+  preview.setAttribute("aria-hidden", "false");
 }
 
 function hideReferencePreview(tag) {
-  if (!tag) return;
-  const preview = tag.querySelector(".meta-ref-preview");
+  if (tag && activeReferencePreviewTag && tag !== activeReferencePreviewTag) return;
+  const preview = referencePreviewNode;
   if (!preview) return;
   preview.classList.remove("is-open");
+  preview.setAttribute("aria-hidden", "true");
+  if (!tag || activeReferencePreviewTag === tag) activeReferencePreviewTag = null;
+}
+
+function closeActiveReferencePreview() {
+  hideReferencePreview(activeReferencePreviewTag);
+}
+
+function openReferenceImage(event, tag) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  const sourceTag = tag && tag.closest ? tag.closest(".meta-ref-tag.has-preview") : null;
+  const src = sourceTag ? String(sourceTag.dataset.refSrc || "").trim() : "";
+  if (!src) return;
+  closeActiveReferencePreview();
+  openFullscreenImg(src, sourceTag);
 }
 
 function bindReferencePreviewHover() {
   if (window.__refPreviewBound) return;
   window.__refPreviewBound = true;
-  let activeTag = null;
   const show = (event) => {
     const tag = event.target && event.target.closest
       ? event.target.closest(".meta-ref-tag.has-preview")
       : null;
     if (!tag) return;
-    if (activeTag && activeTag !== tag) hideReferencePreview(activeTag);
-    activeTag = tag;
+    if (isFullscreenImageOpen()) return;
+    if (activeReferencePreviewTag && activeReferencePreviewTag !== tag) hideReferencePreview(activeReferencePreviewTag);
     positionReferencePreview(tag);
   };
   const hide = (event) => {
@@ -9201,7 +9557,6 @@ function bindReferencePreviewHover() {
     if (!tag) return;
     const next = event.relatedTarget;
     if (next && tag.contains(next)) return;
-    if (activeTag === tag) activeTag = null;
     hideReferencePreview(tag);
   };
   // pointerover/out bubble; pointerenter/leave do not, so delegation needs over/out.
@@ -9209,12 +9564,24 @@ function bindReferencePreviewHover() {
   document.addEventListener("pointerout", hide, true);
   document.addEventListener("focusin", show, true);
   document.addEventListener("focusout", hide, true);
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const tag = event.target && event.target.closest
+      ? event.target.closest(".meta-ref-tag.has-preview")
+      : null;
+    if (!tag) return;
+    openReferenceImage(event, tag);
+  }, true);
   const reposition = () => {
-    if (!activeTag || !document.contains(activeTag)) {
-      activeTag = null;
+    if (isFullscreenImageOpen()) {
+      closeActiveReferencePreview();
       return;
     }
-    positionReferencePreview(activeTag);
+    if (!activeReferencePreviewTag || !document.contains(activeReferencePreviewTag)) {
+      closeActiveReferencePreview();
+      return;
+    }
+    positionReferencePreview(activeReferencePreviewTag);
   };
   window.addEventListener("scroll", reposition, true);
   window.addEventListener("resize", reposition);
@@ -12736,6 +13103,13 @@ function isHermesApiEntry(e) {
     || filename.startsWith("hermes_");
 }
 
+function canRecognizeHermesChatOutfit(e) {
+  if (!e) return false;
+  if (isHermesApiEntry(e)) return true;
+  const source = String(e.source || "").toLowerCase();
+  return source === "chat" && e.metadata_only === true;
+}
+
 function customGenerationModeLabel(e) {
   if (!e) return "";
   const mode = String(e.generation_mode || e.requested_generation_mode || e.custom_ref_mode || "").toLowerCase();
@@ -13345,6 +13719,8 @@ ms.textContent = `
 .outfit-magic-btn:hover { border-color:#e91e63;background:#fce4ec;transform:translateY(-1px);box-shadow:0 6px 16px rgba(233,30,99,0.14); }
 .outfit-magic-btn:disabled { opacity:0.58;cursor:default;transform:none; }
 .outfit-magic-btn.loading i { animation: modalMagicSpin 0.85s linear infinite; }
+.outfit-recognize-btn { color:#7c3aed;border-color:rgba(124,58,237,0.2); }
+.outfit-recognize-btn:hover { color:#6d28d9;border-color:#8b5cf6;background:#f5f3ff;box-shadow:0 6px 16px rgba(124,58,237,0.14); }
 @keyframes modalMagicSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .today-compact .modal-outfit .outfit-text,
 .modal-content .today-card-info .modal-outfit .outfit-text { white-space:normal;overflow:visible;text-overflow:clip;max-width:none;-webkit-line-clamp:unset;display:block; }
@@ -13425,6 +13801,49 @@ ms.textContent = `
 .modal-caption.tc-thought { padding:17px 16px;font-style:normal;line-height:1.55;color:#8a245d; }
 .modal-caption .tag-link { color: #7b1fa2; text-decoration: none; font-weight: 600; cursor: pointer; transition:color 0.15s; }
 .modal-caption .tag-link:hover { color: #e91e63; text-decoration: underline; }
+.modal-video-panel {
+  display:none;flex-direction:column;gap:9px;padding-top:12px;border-top:1px solid #eee7f0;
+}
+.modal-video-panel.visible { display:flex; }
+.modal-video-compose {
+  display:grid;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:8px;min-width:0;
+}
+.modal-video-icon {
+  width:32px;height:32px;border-radius:8px;background:#eef6ff;color:#2563eb;
+  display:inline-flex;align-items:center;justify-content:center;font-size:14px;
+}
+.modal-video-input {
+  width:100%;min-width:0;height:36px;padding:0 11px;border:1px solid #dce3ec;border-radius:8px;
+  background:#fff;color:#334155;font-size:13px;line-height:1;outline:0;box-sizing:border-box;
+}
+.modal-video-input:focus { border-color:#4f8fe8;box-shadow:0 0 0 3px rgba(37,99,235,0.1); }
+.modal-video-submit,
+.modal-video-regenerate {
+  height:36px;border:1px solid #2563eb;border-radius:8px;background:#2563eb;color:#fff;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 12px;
+  font-size:12px;font-weight:800;white-space:nowrap;cursor:pointer;transition:background .16s,border-color .16s;
+}
+.modal-video-submit:hover,
+.modal-video-regenerate:hover { background:#1d4ed8;border-color:#1d4ed8; }
+.modal-video-submit:disabled { opacity:.58;cursor:default; }
+.modal-video-status {
+  min-height:38px;display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;
+  background:#f8fafc;border:1px solid #e2e8f0;color:#526071;font-size:12px;line-height:1.45;
+}
+.modal-video-status > i { color:#2563eb;flex:0 0 auto; }
+.modal-video-status.error { background:#fff7f7;border-color:#fecaca;color:#a33a3a; }
+.modal-video-status.error > i { color:#dc2626; }
+.modal-video-player { display:flex;flex-direction:column;gap:7px;min-width:0; }
+.modal-video-player video {
+  display:block;width:100%;max-height:260px;border-radius:8px;background:#111;object-fit:contain;
+}
+.modal-video-player-head { display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0; }
+.modal-video-player-meta {
+  min-width:0;display:flex;align-items:center;gap:7px;color:#64748b;font-size:11px;font-weight:700;
+}
+.modal-video-player-meta strong { color:#334155;font-size:12px; }
+.modal-video-regenerate { height:30px;padding:0 9px;background:#fff;color:#2563eb;flex:0 0 auto; }
+.modal-video-regenerate:hover { color:#fff; }
 .modal-actions { display: flex; gap: 10px; margin-top: auto; padding-top: 16px; }
 .modal-actions .mbtn { flex: 1; min-height: 36px; padding: 7px 2px; border-radius: 12px; border: 1.5px solid #ede5f0; background: #fff; font-size: 15px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 5px; color: #777; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.02); line-height: 1.15; white-space: nowrap; }
 .modal-actions .mbtn:hover { border-color: #e91e63; color: #e91e63; background: #fce4ec; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(233,30,99,0.15); }
@@ -13675,7 +14094,7 @@ ms.textContent = `
   color:#7e22ce;
 }
 .delete-confirm-overlay {
-  position:fixed;inset:0;z-index:10020;display:flex;align-items:center;justify-content:center;
+  position:fixed;inset:0;z-index:10080;display:flex;align-items:center;justify-content:center;
   padding:24px;background:rgba(24,12,30,0.36);opacity:0;visibility:hidden;pointer-events:none;
   backdrop-filter:none;-webkit-backdrop-filter:none;transition:opacity 0.12s ease,visibility 0s linear 0.12s;contain:paint;
 }
@@ -13745,6 +14164,9 @@ ms.textContent = `
 	  .modal-content .today-card-info > * { flex-shrink:0; }
 		  .modal-content .today-card-info .modal-schedule { margin-top:4px;max-height:none;overflow:visible;padding:10px 12px; }
 		  .modal-content .today-card-info .modal-caption.tc-thought { margin-top:8px;padding:17px 16px; }
+		  .modal-video-compose { grid-template-columns:32px minmax(0,1fr); }
+		  .modal-video-submit { grid-column:1/-1;width:100%; }
+		  .modal-video-player video { max-height:56vh; }
 		  .modal-content .today-card-info .modal-actions { margin-top:0;grid-template-columns:repeat(3,minmax(0,1fr)); }
 	  .image-edit-overlay { padding:10px;align-items:flex-end; }
 	  .image-edit-dialog { width:100%;max-height:calc(100vh - 20px);overflow:auto;grid-template-columns:1fr;grid-template-rows:auto clamp(300px,52vh,500px) auto;border-radius:8px; }
@@ -13792,6 +14214,7 @@ modalOverlay.innerHTML = `
       <div class="modal-outfit" id="modalOutfit"></div>
       <div class="modal-schedule" id="modalSchedule"></div>
       <div class="modal-caption tc-thought" id="modalCaption"></div>
+      <div class="modal-video-panel" id="modalVideo"></div>
 	      <div class="modal-actions">
 	        <button class="mbtn" id="modalFav" onclick="modalToggleFav()"><i class="fa-regular fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
 	        <button class="mbtn" id="modalSocialPost" onclick="shareCurrentModalImageToSocial(event)"><i class="fa-solid fa-paper-plane btn-icon" aria-hidden="true"></i> 发推</button>
@@ -13898,17 +14321,48 @@ const imgFs = document.createElement("div");
 imgFs.className = "img-fullscreen";
 imgFs.id = "imgFullscreen";
 imgFs.tabIndex = -1;
-imgFs.onclick = () => { imgFs.classList.remove("open"); };
+imgFs.setAttribute("role", "dialog");
+imgFs.setAttribute("aria-modal", "true");
+imgFs.setAttribute("aria-label", "图片预览");
+imgFs.setAttribute("aria-hidden", "true");
+let imgFullscreenReturnFocus = null;
+let imgFullscreenPreviousOverflow = "";
+imgFs.onclick = (event) => {
+  if (event.target === imgFs || event.target instanceof HTMLImageElement) {
+    closeFullscreenImg();
+  }
+};
 document.body.appendChild(imgFs);
 
-function openFullscreenImg(src) {
+function closeFullscreenImg() {
+  if (!imgFs.classList.contains("open")) return;
+  imgFs.classList.remove("open");
+  imgFs.setAttribute("aria-hidden", "true");
+  document.body.style.overflow = imgFullscreenPreviousOverflow;
+  const returnFocus = imgFullscreenReturnFocus;
+  imgFullscreenReturnFocus = null;
+  if (returnFocus && returnFocus.isConnected && typeof returnFocus.focus === "function") {
+    returnFocus.focus({preventScroll:true});
+  }
+}
+
+function openFullscreenImg(src, returnFocusTarget = null) {
+  const safeSrc = String(src || "").trim();
+  if (!safeSrc) return;
+  closeActiveReferencePreview();
+  imgFullscreenReturnFocus = returnFocusTarget && typeof returnFocusTarget.focus === "function"
+    ? returnFocusTarget
+    : (document.activeElement && typeof document.activeElement.focus === "function" ? document.activeElement : null);
+  imgFullscreenPreviousOverflow = document.body.style.overflow;
   imgFs.replaceChildren();
   const img = document.createElement("img");
-  img.src = src;
+  img.src = safeSrc;
   img.alt = "放大查看";
   img.decoding = "async";
   imgFs.appendChild(img);
   imgFs.classList.add("open");
+  imgFs.setAttribute("aria-hidden", "false");
+  document.body.style.overflow = "hidden";
   imgFs.focus({preventScroll:true});
 }
 
@@ -14177,8 +14631,11 @@ function openModal(e, returnFocusTarget = null) {
   const outfitMagicBtn = e.image_filename
     ? `<button type="button" class="outfit-magic-btn" onclick="quickCustomImg2ImgFromModal(event,this)" title="用自定义输入框提示词图生图" aria-label="用自定义输入框提示词图生图"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i></button>`
     : "";
+  const outfitRecognizeBtn = canRecognizeHermesChatOutfit(e)
+    ? `<button type="button" class="outfit-magic-btn outfit-recognize-btn" onclick="recognizeOutfitFromModal(event,this)" title="识别穿搭" aria-label="识别穿搭"><i class="fa-solid fa-eye" aria-hidden="true"></i></button>`
+    : "";
   document.getElementById("modalOutfit").innerHTML = e.outfit
-    ? `<span class="outfit-label">${escapeHtml(modalOutfitLabel(e))}</span><span class="outfit-divider">|</span><span class="outfit-text">${escapeHtml(extractOutfitText(e.outfit))}</span>${outfitMagicBtn}`
+    ? `<span class="outfit-label">${escapeHtml(modalOutfitLabel(e))}</span><span class="outfit-divider">|</span><span class="outfit-text">${escapeHtml(extractOutfitText(e.outfit))}</span>${outfitRecognizeBtn}${outfitMagicBtn}`
     : '--';
   // Schedule
   const schedEl = document.getElementById("modalSchedule");
@@ -14221,6 +14678,7 @@ function openModal(e, returnFocusTarget = null) {
     capEl.innerHTML = '<span class="tc-thought-label" aria-hidden="true">💭</span><span class="tc-thought-text">正在根据图片生成小心思…</span>';
     capEl.style.display = "flex";
   } else { capEl.style.display = "none"; }
+	  renderModalVideo(e);
 	  // Fav button state
 	  updateModalFavBtn(e.favorite === true);
 	  updateModalWardrobeBtn(e);
@@ -14236,9 +14694,11 @@ function openModal(e, returnFocusTarget = null) {
   activateAccessibleDialog(modalOverlay, '#modalFav', returnFocusTarget);
   document.body.style.overflow = "hidden";
   syncModalDetailHeight();
+  refreshModalVideoStatus(e.image_filename);
 }
 function closeModal() {
   closeScheduleSendMenu();
+  stopModalVideoPolling();
   if (imageVersionOverlay.classList.contains('open')) closeImageVersions();
   modalOverlay.classList.remove("open");
   deactivateAccessibleDialog(modalOverlay);
@@ -14263,6 +14723,231 @@ window.addEventListener("resize", () => {
 	  return allEntries.find(x => x && x.image_filename === currentModalImg)
 	    || (todayData && Array.isArray(todayData.photos) ? todayData.photos.find(x => x && x.image_filename === currentModalImg) : null)
 	    || null;
+	}
+	let modalVideoPollTimer = 0;
+	let modalVideoPollToken = 0;
+	let modalVideoPollDeadline = 0;
+	function stopModalVideoPolling() {
+	  modalVideoPollToken += 1;
+	  modalVideoPollDeadline = 0;
+	  if (modalVideoPollTimer) {
+	    clearTimeout(modalVideoPollTimer);
+	    modalVideoPollTimer = 0;
+	  }
+	}
+	function mergeModalVideoPayload(filename, payload) {
+	  const fresh = Object.assign({}, payload || {}, {image_filename: filename});
+	  if (!replaceLocalImage(filename, fresh)) {
+	    const entry = currentModalEntry();
+	    if (entry && entry.image_filename === filename) Object.assign(entry, fresh);
+	  }
+	  return currentModalEntry();
+	}
+	function modalVideoStatus(entry) {
+	  return String((entry && entry.video_status) || 'idle').trim().toLowerCase() || 'idle';
+	}
+	function modalVideoUrl(entry) {
+	  const direct = String((entry && entry.video_url) || '').trim();
+	  if (direct) return direct;
+	  const filename = String((entry && entry.video_filename) || '').trim();
+	  return filename ? `/api/videos/${encodeURIComponent(filename)}` : '';
+	}
+	function modalVideoPlayerHtml(entry) {
+	  const videoUrl = modalVideoUrl(entry);
+	  if (!videoUrl) return '';
+	  const poster = generatedEntryImageUrl(entry) || `/images/${encodeURIComponent(entry.image_filename || '')}`;
+	  const durationValue = Number(entry.video_duration);
+	  const duration = Number.isFinite(durationValue) && durationValue > 0
+	    ? `${durationValue.toFixed(durationValue >= 10 ? 0 : 1)} 秒`
+	    : '';
+	  const resolution = String(entry.video_resolution || '').trim();
+	  const meta = [duration, resolution].filter(Boolean).map(escapeHtml).join(' · ');
+	  return `<div class="modal-video-player">
+	    <div class="modal-video-player-head">
+	      <span class="modal-video-player-meta"><i class="fa-solid fa-video" aria-hidden="true"></i><strong>视频</strong>${meta ? `<span>${meta}</span>` : ''}</span>
+	      <button class="modal-video-regenerate" type="button" onclick="showModalVideoComposer()"><i class="fa-solid fa-rotate" aria-hidden="true"></i><span>重新生成</span></button>
+	    </div>
+	    <video controls playsinline preload="metadata" poster="${escapeAttr(poster)}">
+	      <source src="${escapeAttr(videoUrl)}" type="video/mp4">
+	    </video>
+	  </div>`;
+	}
+	function modalVideoComposerHtml(entry, errorText = '') {
+	  const prompt = String((entry && entry.video_prompt) || '').trim();
+	  const errorHtml = errorText
+	    ? `<div class="modal-video-status error"><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i><span>${escapeHtml(errorText)}</span></div>`
+	    : '';
+	  return `${errorHtml}<div class="modal-video-compose">
+	    <span class="modal-video-icon" aria-hidden="true"><i class="fa-solid fa-clapperboard"></i></span>
+	    <input class="modal-video-input" id="modalVideoPrompt" type="text" maxlength="1000" autocomplete="off" value="${escapeAttr(prompt)}" placeholder="描述动作、镜头或氛围">
+	    <button class="modal-video-submit" id="modalVideoGenerateBtn" type="button" onclick="generateVideoFromModal(event)"><i class="fa-solid fa-video" aria-hidden="true"></i><span>生成视频</span></button>
+	  </div>`;
+	}
+	function renderModalVideo(entry, options = {}) {
+	  const panel = document.getElementById('modalVideo');
+	  if (!panel) return;
+	  panel.classList.add('visible');
+	  const status = modalVideoStatus(entry);
+	  const playerHtml = modalVideoPlayerHtml(entry);
+	  if (status === 'queued' || status === 'generating') {
+	    const label = status === 'queued' ? '视频任务已排队，正在连接本机 Grok…' : 'Grok 正在生成视频，完成后会自动显示。';
+	    panel.innerHTML = `${playerHtml}<div class="modal-video-status"><i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><span>${label}</span></div>`;
+	  } else if (status === 'ready' && playerHtml && !options.composer) {
+	    panel.innerHTML = playerHtml;
+	  } else {
+	    const errorText = status === 'error'
+	      ? String((entry && entry.video_error) || '视频生成失败，请查看 Hermes API 日志后重试。')
+	      : '';
+	    panel.innerHTML = `${playerHtml}${modalVideoComposerHtml(entry, errorText)}`;
+	    if (options.focus) requestAnimationFrame(() => document.getElementById('modalVideoPrompt')?.focus({preventScroll:true}));
+	  }
+	  syncModalDetailHeight();
+	}
+	function showModalVideoComposer() {
+	  const entry = currentModalEntry();
+	  if (!entry) return;
+	  renderModalVideo(entry, {composer: true, focus: true});
+	}
+	async function refreshModalVideoStatus(filename, options = {}) {
+	  const normalized = String(filename || '').trim();
+	  if (!normalized || currentModalImg !== normalized) return null;
+	  try {
+	    const response = await fetch(`${API}/api/images/${encodeURIComponent(normalized)}/video`, {cache:'no-store'});
+	    const payload = await response.json().catch(() => ({}));
+	    if (!response.ok || payload.error) throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
+	    if (currentModalImg !== normalized) return null;
+	    const entry = mergeModalVideoPayload(normalized, payload);
+	    renderModalVideo(entry || payload);
+	    const status = modalVideoStatus(payload);
+	    if (status === 'queued' || status === 'generating') {
+	      scheduleModalVideoPolling(normalized);
+	    } else if (options.announce && status === 'ready') {
+	      showToast('视频生成完成');
+	    } else if (options.announce && status === 'error') {
+	      showToast('视频生成失败：' + (payload.video_error || '请查看 Hermes API 日志'), 6500);
+	    }
+	    return payload;
+	  } catch (error) {
+	    if (options.announce) showToast('视频状态读取失败：' + (error && error.message ? error.message : '未知错误'));
+	    return null;
+	  }
+	}
+	function scheduleModalVideoPolling(filename) {
+	  const normalized = String(filename || '').trim();
+	  if (!normalized) return;
+	  if (!modalVideoPollDeadline) modalVideoPollDeadline = Date.now() + 21 * 60 * 1000;
+	  const token = ++modalVideoPollToken;
+	  if (modalVideoPollTimer) clearTimeout(modalVideoPollTimer);
+	  modalVideoPollTimer = setTimeout(async function pollVideo() {
+	    modalVideoPollTimer = 0;
+	    if (token !== modalVideoPollToken || currentModalImg !== normalized || !modalOverlay.classList.contains('open')) return;
+	    const payload = await refreshModalVideoStatus(normalized, {announce: true});
+	    if (!payload) {
+	      if (Date.now() < modalVideoPollDeadline) scheduleModalVideoPolling(normalized);
+	      return;
+	    }
+	    const status = modalVideoStatus(payload);
+	    if ((status === 'queued' || status === 'generating') && Date.now() < modalVideoPollDeadline) {
+	      scheduleModalVideoPolling(normalized);
+	    } else {
+	      modalVideoPollDeadline = 0;
+	    }
+	  }, 5000);
+	}
+	async function generateVideoFromModal(event) {
+	  if (event) {
+	    event.preventDefault();
+	    event.stopPropagation();
+	  }
+	  const entry = currentModalEntry();
+	  if (!entry || !entry.image_filename) {
+	    showToast('找不到当前图片');
+	    return;
+	  }
+	  const input = document.getElementById('modalVideoPrompt');
+	  const button = document.getElementById('modalVideoGenerateBtn');
+	  if (button && button.disabled) return;
+	  const prompt = String(input?.value || '').trim();
+	  if (button) {
+	    button.disabled = true;
+	    button.innerHTML = '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><span>提交中</span>';
+	  }
+	  try {
+	    const response = await fetchWithTimeout(
+	      `${API}/api/images/${encodeURIComponent(entry.image_filename)}/video`,
+	      {
+	        method:'POST',
+	        headers:{'Content-Type':'application/json'},
+	        body:JSON.stringify({prompt, resolution:'480p', aspect_ratio:'auto'})
+	      },
+	      30000,
+	      '视频任务提交超时，请查看 Hermes API 日志'
+	    );
+	    const payload = await response.json().catch(() => ({}));
+	    if (!response.ok || payload.error) throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
+	    const updated = mergeModalVideoPayload(entry.image_filename, payload);
+	    renderModalVideo(updated || payload);
+	    modalVideoPollDeadline = Date.now() + 21 * 60 * 1000;
+	    scheduleModalVideoPolling(entry.image_filename);
+	    openLiveLogs({filter:'hermes', scrollToBottom:true, status:'Hermes 已提交 Grok 视频任务，日志自动刷新中...'});
+	    showToast('视频任务已提交');
+	  } catch (error) {
+	    showToast('视频生成失败：' + (error && error.message ? error.message : '未知错误'), 6500);
+	    if (button && button.isConnected) {
+	      button.disabled = false;
+	      button.innerHTML = '<i class="fa-solid fa-video" aria-hidden="true"></i><span>生成视频</span>';
+	    }
+	  }
+	}
+	async function recognizeOutfitFromModal(event, button) {
+	  if (event) {
+	    event.preventDefault();
+	    event.stopPropagation();
+	  }
+	  const entry = currentModalEntry();
+	  if (!entry || !entry.image_filename || !canRecognizeHermesChatOutfit(entry)) {
+	    showToast('当前图片不支持识图写穿搭');
+	    return;
+	  }
+	  if (button && button.disabled) return;
+	  const filename = entry.image_filename;
+	  if (button) {
+	    button.disabled = true;
+	    button.classList.add('loading');
+	    button.setAttribute('aria-busy', 'true');
+	    button.innerHTML = '<i class="fa-solid fa-spinner" aria-hidden="true"></i>';
+	  }
+	  try {
+	    const response = await fetchWithTimeout(
+	      `${API}/api/images/${encodeURIComponent(filename)}/recognize-outfit`,
+	      {method:'POST'},
+	      180000,
+	      '识图超时，请稍后重试'
+	    );
+	    const data = await response.json().catch(() => ({}));
+	    if (!response.ok || data.error) {
+	      throw new Error(data.message || data.error || `HTTP ${response.status}`);
+	    }
+	    const updated = Object.assign({}, entry, data);
+	    if (!replaceLocalImage(filename, updated)) upsertGeneratedGalleryEntry(updated);
+	    renderActivePhotoView();
+	    updateBadges();
+	    const text = document.querySelector('#modalOutfit .outfit-text');
+	    if (text && currentModalImg === filename) {
+	      text.textContent = extractOutfitText(updated.outfit || data.recognized_outfit || '');
+	      syncModalDetailHeight();
+	    }
+	    showToast('已识别并写入穿搭');
+	  } catch (error) {
+	    showToast('识别失败：' + (error && error.message ? error.message : '未知错误'));
+	  } finally {
+	    if (button && button.isConnected) {
+	      button.disabled = false;
+	      button.classList.remove('loading');
+	      button.removeAttribute('aria-busy');
+	      button.innerHTML = '<i class="fa-solid fa-eye" aria-hidden="true"></i>';
+	    }
+	  }
 	}
 	function setImageEditTarget(target) {
 	  if (!Object.prototype.hasOwnProperty.call(imageEditPlaceholders, target) || imageEditBusy) return;
@@ -16601,8 +17286,24 @@ async function loadXiaohongshuStatus(
       expectedGeneration !== xhsLoginRequestGeneration
       || statusRequestGeneration !== xhsLoginStatusRequestGeneration
     ) return false;
+    if (data.service_state === "starting") {
+      setXiaohongshuLoginState("", "服务启动中");
+      if (message) message.textContent = data.message || "正在启动小红书服务";
+      if (refreshLoginState) {
+        window.setTimeout(() => {
+          if (
+            expectedGeneration === xhsLoginRequestGeneration
+            && isXiaohongshuLoginPanelActive()
+          ) void loadXiaohongshuStatus(true, expectedGeneration);
+        }, 0);
+      }
+      return false;
+    }
     if (!response.ok || data.error) {
-      setXiaohongshuLoginState("offline", "服务不可用");
+      setXiaohongshuLoginState(
+        "offline",
+        data.service_running === true ? "登录状态检测失败" : "服务不可用",
+      );
       if (message) message.textContent = data.message || data.error || `HTTP ${response.status}`;
       return false;
     }
@@ -16816,6 +17517,12 @@ function openSettings() {
   document.getElementById("skGiteeKey").value = "";
   document.getElementById("skGptKey").value = "";
   document.getElementById("skGptBaseUrl").value = "";
+  document.getElementById("skGrokVideoUrl").value = "";
+  document.getElementById("skGrokVideoModel").value = "";
+  document.getElementById("skGrokApiKey").value = "";
+  document.getElementById("skGrokVideoUrl").dataset.localValue = "";
+  document.getElementById("skGrokVideoModel").dataset.localValue = "";
+  document.getElementById("skGrokApiKey").dataset.configured = "false";
   document.getElementById("skCpaUrl").value = "";
   document.getElementById("skCpaKey").value = "";
   document.getElementById("skGithubProxy").value = "";
@@ -16982,6 +17689,39 @@ function syncLlmStreamVisual(enabled) {
   }
 }
 
+function markGrokVideoInputEdited(input) {
+  if (!input) return;
+  input.dataset.edited = "true";
+}
+
+function grokVideoSourceLabel(source) {
+  const labels = {
+    "环境变量": "环境变量覆盖",
+    "本机设置": "本机设置",
+    "Hermes/OpenClaw .env": "Hermes/OpenClaw .env",
+    "默认值": "默认值",
+  };
+  return labels[String(source || "").trim()] || "未配置";
+}
+
+function setGrokVideoStatus(elementId, value, source, options = {}) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  const configured = options.configured === true;
+  const required = options.required === true;
+  const sourceText = source ? ` · ${grokVideoSourceLabel(source)}` : "";
+  if (configured && value) {
+    el.textContent = `✓ ${value}${sourceText}`;
+    el.className = "sk-status set";
+  } else if (value && !required) {
+    el.textContent = `○ ${value}${sourceText}`;
+    el.className = "sk-status unset";
+  } else {
+    el.textContent = required ? "○ 未配置" : "○ 未设置";
+    el.className = "sk-status unset";
+  }
+}
+
 function renderOutfitStyleGrid(gridId, statusId, inputName, styles, enabledStyles) {
   const grid = document.getElementById(gridId);
   const status = document.getElementById(statusId);
@@ -17101,12 +17841,37 @@ function keywordCloudIntersects(box, placed) {
   return false;
 }
 
-function drawKeywordCloud(payload) {
+function keywordCloudCandidateOrder(items, previousTerms, round) {
+  const candidates = Array.isArray(items) ? items.slice() : [];
+  const previous = new Set(Array.isArray(previousTerms) ? previousTerms : []);
+  if (candidates.length < 2 || !previous.size) return candidates;
+
+  const pinnedCount = Math.min(4, candidates.length);
+  const pinned = candidates.slice(0, pinnedCount);
+  const rotating = candidates.slice(pinnedCount);
+  const byRound = function(a, b) {
+    const aText = String(a && a.text || "");
+    const bText = String(b && b.text || "");
+    const scoreDiff = keywordCloudHash(`${round}\0${aText}`) - keywordCloudHash(`${round}\0${bText}`);
+    return scoreDiff || aText.localeCompare(bText);
+  };
+  const fresh = rotating
+    .filter(item => !previous.has(String(item && item.text || "").trim()))
+    .sort(byRound);
+  const familiar = rotating
+    .filter(item => previous.has(String(item && item.text || "").trim()))
+    .sort(byRound);
+  return pinned.concat(fresh, familiar);
+}
+
+function drawKeywordCloud(payload, options = {}) {
   const canvas = document.getElementById("keywordCloudCanvas");
+  const wordLayer = document.getElementById("keywordCloudWordLayer");
   const loading = document.getElementById("keywordCloudLoading");
   const empty = document.getElementById("keywordCloudEmpty");
   const status = document.getElementById("keywordCloudStatus");
   if (!canvas) return;
+  if (wordLayer) wordLayer.replaceChildren();
   const wrap = canvas.parentElement;
   const rect = wrap ? wrap.getBoundingClientRect() : { width: 620, height: 420 };
   const width = Math.max(320, Math.floor(rect.width || 620));
@@ -17121,14 +17886,29 @@ function drawKeywordCloud(payload) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
 
-  const keywords = Array.isArray(payload && payload.keywords) ? payload.keywords.slice(0, 48) : [];
+  const rawKeywords = Array.isArray(payload && payload.keywords) ? payload.keywords.slice(0, 64) : [];
+  const previousVisibleTerms = keywordCloudVisibleTerms.slice();
+  const rotate = Boolean(options.rotate);
+  if (rotate) keywordCloudLayoutRound += 1;
+  const keywords = rotate
+    ? keywordCloudCandidateOrder(rawKeywords, previousVisibleTerms, keywordCloudLayoutRound)
+    : rawKeywords;
   if (!keywords.length) {
+    keywordCloudVisibleTerms = [];
+    const hiddenCount = Math.max(0, parseInt(payload && payload.hidden_count || 0, 10) || 0);
+    const entryCount = Math.max(0, parseInt(payload && payload.entry_count || 0, 10) || 0);
     if (loading) loading.style.display = "none";
     if (empty) {
-      empty.textContent = "还没有可绘制的偏好关键词";
+      empty.textContent = hiddenCount && entryCount
+        ? "当前偏好关键词已全部隐藏"
+        : "还没有可绘制的偏好关键词";
       empty.style.display = "flex";
     }
-    if (status) status.textContent = "等待更多用户输入或收藏衣柜记录。";
+    if (status) {
+      status.textContent = hiddenCount && entryCount
+        ? `已隐藏 ${hiddenCount} 个词。`
+        : "等待更多用户输入或收藏衣柜记录。";
+    }
     return;
   }
   if (loading) loading.style.display = "none";
@@ -17156,7 +17936,10 @@ function drawKeywordCloud(payload) {
   const placed = [];
   const centerX = width / 2;
   const centerY = height / 2;
-  const seedBase = keywordCloudHash(keywords.map(item => item.text).join("|"));
+  const seedBase = keywordCloudHash(
+    `${keywordCloudLayoutRound}|${keywords.map(item => item.text).join("|")}`
+  );
+  const drawnTerms = [];
   let drawn = 0;
 
   keywords.forEach(function(item, index) {
@@ -17209,13 +17992,39 @@ function drawKeywordCloud(payload) {
     ctx.textBaseline = "middle";
     ctx.fillText(text, 0, 0);
     ctx.restore();
+    if (wordLayer) {
+      const hitButton = document.createElement("button");
+      hitButton.className = "keyword-cloud-word-hit";
+      hitButton.type = "button";
+      hitButton.dataset.keywordCloudWord = text;
+      hitButton.setAttribute("aria-label", `移除关键词“${text}”`);
+      hitButton.title = `点击移除“${text}”`;
+      hitButton.style.left = `${target.x}px`;
+      hitButton.style.top = `${target.y}px`;
+      hitButton.style.width = `${Math.max(40, Math.ceil(rawW + 8))}px`;
+      hitButton.style.height = `${Math.max(32, Math.ceil(rawH + 6))}px`;
+      hitButton.style.setProperty("--keyword-cloud-rotation", `${rotation}rad`);
+      wordLayer.appendChild(hitButton);
+    }
+    drawnTerms.push(text);
     drawn += 1;
   });
+
+  const previousVisibleSet = new Set(previousVisibleTerms);
+  const newlyVisibleCount = drawnTerms.filter(term => !previousVisibleSet.has(term)).length;
+  keywordCloudVisibleTerms = drawnTerms;
 
   if (status) {
     const total = Math.max(0, parseInt(payload.total || keywords.length, 10) || keywords.length);
     const entryCount = Math.max(0, parseInt(payload.entry_count || 0, 10) || 0);
-    status.textContent = `已绘制 ${drawn} 个高频词 · 偏好记录 ${entryCount} 条 · 候选词 ${total} 个`;
+    const hiddenCount = Math.max(0, parseInt(payload.hidden_count || 0, 10) || 0);
+    const rotatedText = rotate && previousVisibleTerms.length
+      ? ` · 本轮换入 ${newlyVisibleCount} 个`
+      : "";
+    const poolText = total > rawKeywords.length
+      ? `已显示 ${drawn}/${rawKeywords.length} 个候选词（总计 ${total}）`
+      : `已显示 ${drawn}/${total} 个候选词`;
+    status.textContent = `${poolText} · 偏好记录 ${entryCount} 条${rotatedText}${hiddenCount ? ` · 已隐藏 ${hiddenCount} 个` : ""}`;
   }
 }
 
@@ -17230,13 +18039,68 @@ async function loadKeywordCloudPayload(force) {
   return data;
 }
 
-async function openKeywordCloudDialog(force) {
+async function hideKeywordCloudWord(keyword, trigger) {
+  const text = String(keyword || "").trim();
+  if (!text) return;
+  const confirmed = await confirmDeleteAction({
+    title: `从词云移除“${text}”？`,
+    description: "该词会被持久隐藏，不再出现在词云，也不再作为日程偏好参考。",
+    confirmLabel: "移除",
+    returnFocusTarget: trigger,
+  });
+  if (!confirmed) return;
+
+  const status = document.getElementById("keywordCloudStatus");
+  if (status) status.textContent = `正在移除“${text}”...`;
+  if (trigger) {
+    trigger.disabled = true;
+    trigger.setAttribute("aria-busy", "true");
+  }
+  try {
+    const res = await fetch("/api/keyword-cloud/hide", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({keyword: text}),
+    });
+    const data = await res.json().catch(function() { return {}; });
+    if (!res.ok || data.error) {
+      throw new Error(data.message || data.error || "移除关键词失败");
+    }
+    keywordCloudCache = { payload: data, updatedAt: Date.now() };
+    drawKeywordCloud(data, {rotate: true});
+    showToast(`已从词云移除“${text}”`);
+    requestAnimationFrame(function() {
+      const nextWord = document.querySelector("#keywordCloudWordLayer .keyword-cloud-word-hit");
+      const fallback = document.querySelector("#keywordCloudOverlay [data-keyword-cloud-refresh]");
+      const target = nextWord || fallback;
+      if (target && typeof target.focus === "function") target.focus({preventScroll: true});
+    });
+  } catch(e) {
+    if (trigger) {
+      trigger.disabled = false;
+      trigger.removeAttribute("aria-busy");
+      requestAnimationFrame(function() {
+        if (trigger.isConnected && typeof trigger.focus === "function") {
+          trigger.focus({preventScroll: true});
+        }
+      });
+    }
+    if (status) status.textContent = e && e.message ? e.message : "移除关键词失败";
+    showToast("移除关键词失败：" + (e && e.message ? e.message : "未知错误"));
+  }
+}
+
+async function openKeywordCloudDialog(force, rotate = false) {
   const overlay = document.getElementById("keywordCloudOverlay");
   const loading = document.getElementById("keywordCloudLoading");
   const empty = document.getElementById("keywordCloudEmpty");
   const status = document.getElementById("keywordCloudStatus");
   if (!overlay) return;
+  const wasOpen = overlay.classList.contains("open");
   overlay.classList.add("open");
+  if (!wasOpen) {
+    activateAccessibleDialog(overlay, "[data-keyword-cloud-close]");
+  }
   if (loading) {
     loading.style.display = "flex";
     loading.textContent = "正在整理词云";
@@ -17249,7 +18113,7 @@ async function openKeywordCloudDialog(force) {
   try {
     const payload = await loadKeywordCloudPayload(force);
     requestAnimationFrame(function() {
-      drawKeywordCloud(payload);
+      drawKeywordCloud(payload, {rotate});
     });
   } catch(e) {
     if (loading) loading.style.display = "none";
@@ -17263,7 +18127,9 @@ async function openKeywordCloudDialog(force) {
 
 function closeKeywordCloudDialog() {
   const overlay = document.getElementById("keywordCloudOverlay");
-  if (overlay) overlay.classList.remove("open");
+  if (!overlay) return;
+  overlay.classList.remove("open");
+  deactivateAccessibleDialog(overlay);
 }
 
 function bindOutfitStyleDialogEvents() {
@@ -17331,14 +18197,30 @@ function bindOutfitStyleDialogEvents() {
   if (keywordOverlay && keywordOverlay.dataset.bound !== "1") {
     keywordOverlay.dataset.bound = "1";
     keywordOverlay.addEventListener("click", e => {
+      const wordButton = e.target.closest("[data-keyword-cloud-word]");
+      if (wordButton) {
+        e.preventDefault();
+        e.stopPropagation();
+        hideKeywordCloudWord(wordButton.dataset.keywordCloudWord, wordButton);
+        return;
+      }
       if (e.target === keywordOverlay || e.target.closest("[data-keyword-cloud-close]")) {
         e.preventDefault();
         closeKeywordCloudDialog();
         return;
       }
-      if (e.target.closest("[data-keyword-cloud-refresh]")) {
+      const refreshButton = e.target.closest("[data-keyword-cloud-refresh]");
+      if (refreshButton) {
         e.preventDefault();
-        openKeywordCloudDialog(true);
+        if (refreshButton.disabled) return;
+        refreshButton.disabled = true;
+        refreshButton.classList.add("is-refreshing");
+        refreshButton.setAttribute("aria-busy", "true");
+        openKeywordCloudDialog(true, true).finally(function() {
+          refreshButton.disabled = false;
+          refreshButton.classList.remove("is-refreshing");
+          refreshButton.removeAttribute("aria-busy");
+        });
       }
     });
   }
@@ -17506,6 +18388,55 @@ async function loadSettingsStatus() {
       endpointsStatus.textContent = endpointCount ? `✓ ${endpointCount} 个端点` : "○ 未配置（使用单端点）";
       endpointsStatus.className = endpointCount ? "sk-status set" : "sk-status unset";
     }
+
+    const grokVideoUrlEl = document.getElementById("skGrokVideoUrl");
+    const grokVideoModelEl = document.getElementById("skGrokVideoModel");
+    const grokApiKeyEl = document.getElementById("skGrokApiKey");
+    if (grokVideoUrlEl) {
+      grokVideoUrlEl.value = data.grok_video_url || "";
+      grokVideoUrlEl.dataset.localValue = data.grok_video_url_local || "";
+      grokVideoUrlEl.dataset.defaultValue = data.grok_video_url_default || "";
+      grokVideoUrlEl.dataset.edited = "false";
+    }
+    if (grokVideoModelEl) {
+      grokVideoModelEl.value = data.grok_video_model || "";
+      grokVideoModelEl.dataset.localValue = data.grok_video_model_local || "";
+      grokVideoModelEl.dataset.defaultValue = data.grok_video_model_default || "";
+      grokVideoModelEl.dataset.edited = "false";
+    }
+    if (grokApiKeyEl) {
+      grokApiKeyEl.value = "";
+      grokApiKeyEl.dataset.configured = data.grok_api_key ? "true" : "false";
+      grokApiKeyEl.dataset.source = data.grok_api_key_source || "";
+      grokApiKeyEl.dataset.edited = "false";
+    }
+    setGrokVideoStatus(
+      "skGrokVideoUrlStatus",
+      data.grok_video_url || "",
+      data.grok_video_url_source || "",
+      {configured: !!data.grok_video_url}
+    );
+    setGrokVideoStatus(
+      "skGrokVideoModelStatus",
+      data.grok_video_model || "",
+      data.grok_video_model_source || "",
+      {configured: !!data.grok_video_model}
+    );
+    setGrokVideoStatus(
+      "skGrokApiKeyStatus",
+      data.grok_api_key ? "已配置" : "",
+      data.grok_api_key_source || "",
+      {configured: !!data.grok_api_key, required: true}
+    );
+    const grokVideoGroupStatus = document.getElementById("skGrokVideoGroupStatus");
+    if (grokVideoGroupStatus) {
+      const videoReady = data.grok_video_configured === true;
+      grokVideoGroupStatus.textContent = videoReady
+        ? "✓ 视频 skill 可用"
+        : (data.grok_api_key ? "⚠️ 地址或模型未完整" : "○ 缺少 API Key");
+      grokVideoGroupStatus.className = "sk-engine-group-status " + (videoReady ? "is-ready" : "is-warning");
+    }
+
     const cpaUrlEl = document.getElementById("skCpaUrl");
     const cpaUrlStatus = document.getElementById("skCpaUrlStatus");
     cpaUrlEl.value = data.cpa_url_local || data.cpa_url || "";
@@ -17616,6 +18547,20 @@ async function loadSettingsStatus() {
     } else {
       llmStatus.textContent = "○ 使用默认";
       llmStatus.className = "sk-status unset";
+    }
+    const llmGroupStatus = document.getElementById("skLlmGroupStatus");
+    if (llmGroupStatus) {
+      const llmReady = !!(primaryModel && data.cpa_url && data.cpa_key);
+      llmGroupStatus.textContent = llmReady ? "✓ 文本链路已配置" : "⚠️ 文本链路不完整";
+      llmGroupStatus.className = "sk-engine-group-status " + (llmReady ? "is-ready" : "is-warning");
+    }
+    const imageGroupStatus = document.getElementById("skImageGroupStatus");
+    if (imageGroupStatus) {
+      const imageReady = !!(data.gpt_base_url && data.gpt_key);
+      imageGroupStatus.textContent = imageReady
+        ? (data.gitee_fallback_enabled && data.gitee_key ? "✓ GPT Image + Gitee 回退" : "✓ GPT Image 可用")
+        : "⚠️ GPT Image 配置不完整";
+      imageGroupStatus.className = "sk-engine-group-status " + (imageReady ? "is-ready" : "is-warning");
     }
   } catch(e) {
     console.error("Load settings error:", e);
@@ -18047,6 +18992,12 @@ async function saveSettings() {
   const gptChatFallbackEnabled = document.getElementById("skGptChatFallback").checked;
   const gptPromptCompactEnabled = document.getElementById("skGptPromptCompact").checked;
   const llmStreamEnabled = document.getElementById("skLlmStream").checked;
+  const grokVideoUrlEl = document.getElementById("skGrokVideoUrl");
+  const grokVideoModelEl = document.getElementById("skGrokVideoModel");
+  const grokApiKeyEl = document.getElementById("skGrokApiKey");
+  const grokVideoUrl = grokVideoUrlEl.value.trim();
+  const grokVideoModel = grokVideoModelEl.value.trim();
+  const grokApiKey = grokApiKeyEl.value.trim();
   const missing = [];
   requireSettingsValue("Gitee API URL", giteeUrl, missing);
   if (!giteeKey && !hasSavedSecret("gitee_key")) missing.push("Gitee API Key");
@@ -18089,6 +19040,9 @@ async function saveSettings() {
     body.llm_model = llmModel;
     body.llm_models = llmModels;
     body.llm_stream_enabled = llmStreamEnabled;
+    if (grokVideoUrlEl.dataset.edited === "true") body.grok_video_url = grokVideoUrl;
+    if (grokVideoModelEl.dataset.edited === "true") body.grok_video_model = grokVideoModel;
+    if (grokApiKey) body.grok_api_key = grokApiKey;
 
     const res = await fetch(`${API}/api/config/keys`, {
       method: "POST",
@@ -18292,7 +19246,7 @@ document.addEventListener("keydown", e => {
     } else if (document.getElementById("eggStyleOverlay").classList.contains("open")) {
       closeOutfitStyleDialog();
     } else if (document.getElementById("imgFullscreen").classList.contains("open")) {
-      document.getElementById("imgFullscreen").classList.remove("open");
+      closeFullscreenImg();
     } else if (wardrobeVersionOverlay.classList.contains("open")) {
       closeWardrobeVersions();
     } else if (imageVersionOverlay.classList.contains("open")) {
@@ -18586,38 +19540,73 @@ function themeDayScheduleDate() {
   return yyyy + '-' + mm + '-' + dd;
 }
 
+function renderScheduleEggRefreshButton() {
+  var button = document.querySelector('.egg-refresh-btn');
+  if (!button) return;
+  var targetLabel = selectedThemeDayTarget === 'tomorrow' ? '第二天' : '当天';
+  var label = '重新生成' + targetLabel + '日程';
+  button.title = label;
+  button.setAttribute('aria-label', label);
+}
+
 function renderThemeDayEnabled() {
   var toggle = document.getElementById('eggThemeDayEnabled');
   var panel = document.getElementById('eggThemeDayControls');
   var state = document.getElementById('eggThemeDayState');
+  var manualToggle = document.getElementById('eggThemeDayManualToggle');
+  var manualSection = document.getElementById('eggThemeDayManualSection');
   var generateLabel = document.getElementById('eggThemeDayGenerateLabel');
-  var interactionLocked = themeDayBusy || themeDayManualReferenceBusy;
+  var interactionLocked = themeDayBusy || themeDayManualReferenceBusy || themeDayStateBusy;
+  if (!themeDayManualMode) themeDayManualExpanded = false;
+  var manualExpanded = themeDayManualMode && themeDayManualExpanded;
   var controls = [
+    'eggThemeDayManualToggle',
     'eggThemeDayInput',
     'eggThemeDayGenerateBtn',
     'eggThemeDayManualBtn',
     'eggThemeDayXhsKeyword',
+    'eggThemeDayXhsUrl',
     'eggThemeDayXhsClear'
   ];
   var targets = Array.prototype.slice.call(document.querySelectorAll('.egg-theme-day-target'));
   var actions = Array.prototype.slice.call(document.querySelectorAll('.egg-theme-day-action'));
   if (panel) {
-    panel.classList.toggle('is-enabled', themeDayEnabled);
+    panel.classList.toggle('is-enabled', themeDayManualMode);
+    panel.classList.toggle('is-manual-expanded', manualExpanded);
     panel.classList.toggle('is-busy', interactionLocked);
     panel.setAttribute('aria-busy', interactionLocked ? 'true' : 'false');
   }
-  if (state) state.textContent = interactionLocked ? '处理中' : (themeDayEnabled ? '已开启' : '已关闭');
+  if (manualToggle) {
+    manualToggle.setAttribute('aria-expanded', manualExpanded ? 'true' : 'false');
+  }
+  if (manualSection) manualSection.hidden = !manualExpanded;
+  if (state) state.textContent = interactionLocked ? '处理中' : (themeDayManualMode ? '手动主题' : '自动主题已开启');
   if (generateLabel) generateLabel.textContent = themeDayBusy ? '生成中…' : '生成主题日';
-  if (toggle) toggle.disabled = interactionLocked;
+  if (toggle) {
+    toggle.checked = !themeDayManualMode;
+    toggle.disabled = interactionLocked;
+    toggle.title = themeDayManualMode
+      ? '打开后恢复自动主题'
+      : '自动主题已开启；关闭后进入手动主题';
+  }
   targets.forEach(function(btn) {
-    if (btn.id === 'eggThemeDayEnabled') return;
-    btn.disabled = !themeDayEnabled || interactionLocked;
+    if (btn.hasAttribute('data-theme-target')) {
+      btn.disabled = interactionLocked;
+      return;
+    }
+    btn.disabled = !themeDayManualMode || interactionLocked;
   });
-  actions.forEach(function(btn) { btn.disabled = !themeDayEnabled || interactionLocked; });
+  actions.forEach(function(btn) { btn.disabled = !themeDayManualMode || interactionLocked; });
   controls.forEach(function(id) {
     var el = document.getElementById(id);
-    if (el) el.disabled = !themeDayEnabled || interactionLocked;
+    if (el) el.disabled = !themeDayManualMode || interactionLocked;
   });
+}
+
+function toggleThemeDayManualSection() {
+  if (!themeDayManualMode || themeDayBusy || themeDayManualReferenceBusy || themeDayStateBusy) return;
+  themeDayManualExpanded = !themeDayManualExpanded;
+  renderThemeDayEnabled();
 }
 
 async function loadThemeDayState() {
@@ -18625,13 +19614,12 @@ async function loadThemeDayState() {
     var response = await fetch('/api/theme-day/state', {cache: 'no-store'});
     var data = await response.json().catch(function() { return {}; });
     if (!response.ok) throw new Error(data.message || data.error || 'HTTP ' + response.status);
-    themeDayEnabled = data.enabled === true;
-    var toggle = document.getElementById('eggThemeDayEnabled');
-    if (toggle) toggle.checked = themeDayEnabled;
+    themeDayManualMode = data.mode === 'manual' || data.enabled === true;
+    themeDayManualExpanded = false;
     renderThemeDayEnabled();
     await loadThemeDayManualReference();
   } catch (error) {
-    themeDayEnabled = false;
+    themeDayManualMode = false;
     renderThemeDayEnabled();
     var status = document.getElementById('eggThemeDayStatus');
     if (status) {
@@ -18641,40 +19629,56 @@ async function loadThemeDayState() {
   }
 }
 
-async function setThemeDayEnabled(enabled) {
+async function setThemeDayAutomatic(automaticEnabled) {
   var toggle = document.getElementById('eggThemeDayEnabled');
-  if (themeDayBusy || themeDayManualReferenceBusy) {
-    if (toggle) toggle.checked = themeDayEnabled;
+  if (themeDayBusy || themeDayManualReferenceBusy || themeDayStateBusy) {
+    if (toggle) toggle.checked = !themeDayManualMode;
     return;
   }
-  themeDayEnabled = Boolean(enabled);
-  if (toggle) toggle.checked = themeDayEnabled;
+  var previousManualMode = themeDayManualMode;
+  var previousManualExpanded = themeDayManualExpanded;
+  themeDayManualMode = !Boolean(automaticEnabled);
+  themeDayManualExpanded = false;
+  themeDayStateBusy = true;
   renderThemeDayEnabled();
   var status = document.getElementById('eggThemeDayStatus');
   if (status) {
     status.classList.remove('error');
-    status.textContent = themeDayEnabled ? '主题日已开启，可以指定主题或小红书穿搭' : '主题日已关闭，自动日程恢复随机风格与日常日程';
+    status.textContent = themeDayManualMode
+      ? '正在进入手动主题…'
+      : '正在开启自动主题…';
   }
   try {
     var response = await fetch('/api/theme-day/state', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({enabled: themeDayEnabled})
+      body: JSON.stringify({
+        enabled: themeDayManualMode,
+        mode: themeDayManualMode ? 'manual' : 'auto'
+      })
     });
     var data = await response.json().catch(function() { return {}; });
     if (!response.ok) throw new Error(data.message || data.error || 'HTTP ' + response.status);
-    themeDayEnabled = data.enabled === true;
-    if (toggle) toggle.checked = themeDayEnabled;
+    themeDayManualMode = data.mode === 'manual' || data.enabled === true;
+    if (status) {
+      status.classList.remove('error');
+      status.textContent = themeDayManualMode
+        ? '已进入手动主题，可以指定主题或小红书穿搭'
+        : '自动主题已开启，之后会随机选择主题主线生成日程';
+    }
     renderThemeDayEnabled();
-    if (themeDayEnabled) await loadThemeDayManualReference();
+    if (themeDayManualMode) await loadThemeDayManualReference();
   } catch (error) {
-    themeDayEnabled = !themeDayEnabled;
-    if (toggle) toggle.checked = themeDayEnabled;
+    themeDayManualMode = previousManualMode;
+    themeDayManualExpanded = previousManualExpanded;
     renderThemeDayEnabled();
     if (status) {
       status.classList.add('error');
-      status.textContent = '主题日开关保存失败：' + error.message;
+      status.textContent = '主题模式保存失败：' + error.message;
     }
+  } finally {
+    themeDayStateBusy = false;
+    renderThemeDayEnabled();
   }
 }
 
@@ -18746,11 +19750,16 @@ async function searchThemeDayXhs() {
   themeDayXhsActiveNote = null;
   var status = document.getElementById('eggThemeDayXhsStatus');
   if (status) status.textContent = '正在搜索小红书图文笔记…';
+  var imagesBox = document.getElementById('eggThemeDayXhsImages');
+  if (imagesBox) imagesBox.innerHTML = '';
+  var controller = new AbortController();
+  var timeoutId = window.setTimeout(function() { controller.abort(); }, 90000);
   try {
     var response = await fetch('/api/xiaohongshu/search', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({keyword: keyword, max_results: 30})
+      body: JSON.stringify({keyword: keyword, max_results: 30}),
+      signal: controller.signal
     });
     var data = await response.json().catch(function() { return {}; });
     if (!response.ok || data.error) throw new Error(data.message || data.error || 'HTTP ' + response.status);
@@ -18762,10 +19771,24 @@ async function searchThemeDayXhs() {
   } catch (error) {
     themeDayXhsResults = [];
     renderThemeDayXhsResults();
-    if (status) status.textContent = '搜索失败：' + error.message;
+    if (status) status.textContent = error && error.name === 'AbortError'
+      ? '搜索超时：小红书风控较严，建议稍后再试，或直接粘贴笔记链接'
+      : '搜索失败：' + error.message;
   } finally {
+    window.clearTimeout(timeoutId);
     themeDayXhsBusy = false;
   }
+}
+
+function renderThemeDayXhsNoteImages(data) {
+  var container = document.getElementById('eggThemeDayXhsImages');
+  if (!container) return;
+  var images = Array.isArray(data.images) ? data.images : [];
+  container.innerHTML = images.map(function(image, imageIndex) {
+    return '<button type="button" class="egg-theme-day-xhs-image" onclick="chooseThemeDayXhsImage(' + imageIndex + ')" title="设为' + (selectedThemeDayTarget === 'tomorrow' ? '第二天' : '当天') + '日程穿搭">' +
+      '<img src="' + escapeAttr(image.url || '') + '" alt="' + escapeAttr(data.title || '小红书穿搭') + '" loading="lazy" referrerpolicy="no-referrer">' +
+      '<span>设为' + (selectedThemeDayTarget === 'tomorrow' ? '第二天' : '当天') + '穿搭</span></button>';
+  }).join('');
 }
 
 async function openThemeDayXhsNote(index) {
@@ -18773,6 +19796,7 @@ async function openThemeDayXhsNote(index) {
   var container = document.getElementById('eggThemeDayXhsImages');
   var status = document.getElementById('eggThemeDayXhsStatus');
   if (!item || !container) return;
+  container.innerHTML = '';
   document.querySelectorAll('.egg-theme-day-xhs-result').forEach(function(card, cardIndex) {
     card.classList.toggle('active', cardIndex === index);
   });
@@ -18787,14 +19811,55 @@ async function openThemeDayXhsNote(index) {
     if (!response.ok || data.error) throw new Error(data.message || data.error || 'HTTP ' + response.status);
     themeDayXhsActiveNote = data;
     var images = Array.isArray(data.images) ? data.images : [];
-    container.innerHTML = images.map(function(image, imageIndex) {
-      return '<button type="button" class="egg-theme-day-xhs-image" onclick="chooseThemeDayXhsImage(' + imageIndex + ')" title="设为' + (selectedThemeDayTarget === 'tomorrow' ? '第二天' : '当天') + '日程穿搭">' +
-        '<img src="' + escapeAttr(image.url || '') + '" alt="' + escapeAttr(data.title || '小红书穿搭') + '" loading="lazy" referrerpolicy="no-referrer">' +
-        '<span>设为' + (selectedThemeDayTarget === 'tomorrow' ? '第二天' : '当天') + '穿搭</span></button>';
-    }).join('');
+    renderThemeDayXhsNoteImages(data);
     if (status) status.textContent = images.length ? (data.title || item.title || '这条笔记') + ' · ' + images.length + ' 张图片' : '这条笔记没有可用图片';
   } catch (error) {
+    if (container) container.innerHTML = '';
     if (status) status.textContent = '读取笔记失败：' + error.message;
+  }
+}
+
+async function resolveThemeDayXhsUrl() {
+  if (themeDayXhsBusy) return;
+  var input = document.getElementById('eggThemeDayXhsUrl');
+  var url = input ? String(input.value || '').trim() : '';
+  if (!url) {
+    var status = document.getElementById('eggThemeDayXhsStatus');
+    if (status) status.textContent = '请粘贴小红书笔记链接';
+    return;
+  }
+  themeDayXhsBusy = true;
+  var status = document.getElementById('eggThemeDayXhsStatus');
+  if (status) status.textContent = '正在打开小红书笔记…';
+  var imagesBox = document.getElementById('eggThemeDayXhsImages');
+  if (imagesBox) imagesBox.innerHTML = '';
+  var controller = new AbortController();
+  var timeoutId = window.setTimeout(function() { controller.abort(); }, 100000);
+  try {
+    var response = await fetch('/api/xiaohongshu/note-url', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url: url}),
+      signal: controller.signal
+    });
+    var data = await response.json().catch(function() { return {}; });
+    if (!response.ok || data.error) throw new Error(data.message || data.error || 'HTTP ' + response.status);
+    themeDayXhsActiveNote = data;
+    themeDayXhsResults = [];
+    renderThemeDayXhsResults();
+    renderThemeDayXhsNoteImages(data);
+    var images = Array.isArray(data.images) ? data.images : [];
+    if (status) status.textContent = images.length
+      ? (data.title || '这条笔记') + ' · ' + images.length + ' 张图片，点击选择'
+      : '这条笔记没有可用图片';
+  } catch (error) {
+    if (imagesBox) imagesBox.innerHTML = '';
+    if (status) status.textContent = error && error.name === 'AbortError'
+      ? '打开超时：请稍后再试'
+      : '打开失败：' + error.message;
+  } finally {
+    window.clearTimeout(timeoutId);
+    themeDayXhsBusy = false;
   }
 }
 
@@ -18874,6 +19939,8 @@ async function clearThemeDayXhs() {
     themeDayXhsResults = [];
     renderThemeDayManualReference();
     renderThemeDayXhsResults();
+    var urlInput = document.getElementById('eggThemeDayXhsUrl');
+    if (urlInput) urlInput.value = '';
     var images = document.getElementById('eggThemeDayXhsImages');
     if (images) images.innerHTML = '';
     if (status) status.textContent = '已清除手动指定，之后将按主题自动搜索';
@@ -18894,17 +19961,18 @@ function selectThemeDayTarget(target) {
     button.classList.toggle('active', selected);
     button.setAttribute('aria-pressed', selected ? 'true' : 'false');
   });
+  renderScheduleEggRefreshButton();
   scheduleEggCache = { html: '', dateText: '', updatedAt: 0 };
   loadScheduleEggData({force: true});
-  loadThemeDayManualReference();
+  if (themeDayManualMode) loadThemeDayManualReference();
 }
 
 async function generateThemeDay(randomize) {
   var status = document.getElementById('eggThemeDayStatus');
-  if (!themeDayEnabled) {
+  if (!themeDayManualMode) {
     if (status) {
       status.classList.add('error');
-      status.textContent = '请先开启主题日开关，再生成主题日程。';
+      status.textContent = '请先关闭自动主题，进入手动主题后再指定内容。';
     }
     return;
   }
@@ -19011,6 +20079,8 @@ function loadScheduleEggData(options) {
   options = options || {};
   var body = document.getElementById('eggBody');
   var dateEl = document.getElementById('eggDate');
+  var target = selectedThemeDayTarget === 'tomorrow' ? 'tomorrow' : 'today';
+  var targetDate = themeDayScheduleDate();
   var force = options.force === true;
   var hasCache = !!(scheduleEggCache && scheduleEggCache.html);
   var cacheFresh = hasCache && (Date.now() - scheduleEggCache.updatedAt < 30000);
@@ -19029,13 +20099,8 @@ function loadScheduleEggData(options) {
 
   // 并行拉取目标日程详情、今日照片和真实待执行生图任务
   var scheduleDetailUrl = '/api/schedule-detail';
-  if (selectedThemeDayTarget === 'tomorrow') {
-    var tomorrowDate = new Date();
-    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-    var yyyy = tomorrowDate.getFullYear();
-    var mm = String(tomorrowDate.getMonth() + 1).padStart(2, '0');
-    var dd = String(tomorrowDate.getDate()).padStart(2, '0');
-    scheduleDetailUrl += '?date=' + yyyy + '-' + mm + '-' + dd;
+  if (target === 'tomorrow') {
+    scheduleDetailUrl += '?date=' + encodeURIComponent(targetDate);
   }
   scheduleEggRequest = Promise.all([
     fetch(scheduleDetailUrl).then(function(r){ return r.json(); }).catch(function(){ return null; }),
@@ -19045,7 +20110,8 @@ function loadScheduleEggData(options) {
     var detail = results[0];
     var today  = results[1];
     var jobsData = results[2];
-    var isFutureSchedule = !!(detail && today && detail.date && detail.date !== today.date);
+    if (selectedThemeDayTarget !== target) return;
+    var isFutureSchedule = target === 'tomorrow';
     var eggTitle = document.querySelector('#eggOverlay .egg-header h2');
     if (eggTitle) eggTitle.textContent = isFutureSchedule ? '✨ 第二天主题日日程' : '🌸 今日日程彩蛋';
     var maxDaily = Math.max(1, Math.min(9, parseInt((jobsData && jobsData.max_daily) || 6, 10) || 6));
@@ -19059,6 +20125,17 @@ function loadScheduleEggData(options) {
 
     if (!detail || (detail.status !== 'ok' && detail.status !== 'no_schedule')) {
       body.innerHTML = '<div class="egg-empty"><div class="icon">😴</div><p>今天还没有生成日程哦～<br>每天早上 7 点自动生成！</p></div>';
+      return;
+    }
+
+    if (detail.status === 'no_schedule') {
+      var emptyDateText = String(detail.date || targetDate || '').trim();
+      var emptyHtml = isFutureSchedule
+        ? '<div class="egg-empty"><div class="icon">✨</div><p>第二天还没有日程哦～<br>点击右上角刷新按钮生成 ' + escapeHtml(emptyDateText) + ' 的日程。</p></div>'
+        : '<div class="egg-empty"><div class="icon">😴</div><p>今天还没有生成日程哦～<br>点击右上角刷新按钮生成。</p></div>';
+      if (dateEl) dateEl.textContent = emptyDateText;
+      scheduleEggCache = { html: emptyHtml, dateText: emptyDateText, updatedAt: Date.now() };
+      body.innerHTML = emptyHtml;
       return;
     }
 
@@ -20537,21 +21614,34 @@ function openScheduleEgg() {
     closeScheduleEgg();
     return;
   }
+  themeDayManualExpanded = false;
+  renderThemeDayEnabled();
+  renderScheduleEggRefreshButton();
   overlay.classList.add('show');
   loadScheduleEggData({ force: true });
   loadThemeDayState();
 }
 
 function refreshScheduleEgg() {
+  var target = selectedThemeDayTarget === 'tomorrow' ? 'tomorrow' : 'today';
+  var targetDate = themeDayScheduleDate();
+  var targetLabel = target === 'tomorrow' ? '第二天' : '当天';
   var btn = document.querySelector('.egg-refresh-btn');
-  if (btn && !btn.classList.contains('spinning')) {
+  if (btn && btn.disabled) return;
+  if (btn) {
+    btn.disabled = true;
     btn.classList.add('spinning');
+    btn.setAttribute('aria-busy', 'true');
   }
   var body = document.getElementById('eggBody');
   if (body) {
-    body.innerHTML = '<div class="egg-loading">🔮 正在重新生成今天的日程...</div>';
+    body.innerHTML = '<div class="egg-loading">🔮 正在重新生成' + targetLabel + '的日程...</div>';
   }
-  fetch('/api/refresh-schedule', { method: 'POST' })
+  fetch('/api/refresh-schedule', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({target: target, target_date: targetDate})
+  })
     .then(function(r) {
       return r.json().then(function(data) {
         if (!r.ok) throw new Error(data.error || 'refresh_failed');
@@ -20560,23 +21650,33 @@ function refreshScheduleEgg() {
     })
     .then(function(data) {
       if (data && data.status === 'preserved') {
-        showToast(data.message || 'LLM 暂不可用，已保留原日程');
+        showToast((data && data.message) || (targetLabel + '：LLM 暂不可用，已保留原日程'));
       } else {
-        showToast((data && data.message) || '✨ 日程已刷新');
+        showToast((data && data.message) || (targetLabel + '：✨ 日程已刷新'));
       }
+      if (selectedThemeDayTarget !== target) return;
+      scheduleEggCache = { html: '', dateText: '', updatedAt: 0 };
       return loadScheduleEggData({ force: true });
     })
     .catch(function(err) {
       console.error('refresh schedule failed', err);
-      showToast('刷新日程失败，请检查 LLM 配置');
-      loadScheduleEggData({ force: true });
+      showToast(targetLabel + '日程刷新失败，请检查 LLM 配置');
+      if (selectedThemeDayTarget !== target) return;
+      scheduleEggCache = { html: '', dateText: '', updatedAt: 0 };
+      return loadScheduleEggData({ force: true });
     })
     .finally(function() {
-      if (btn) btn.classList.remove('spinning');
+      if (btn) {
+        btn.disabled = false;
+        btn.classList.remove('spinning');
+        btn.setAttribute('aria-busy', 'false');
+      }
     });
 }
 
 function closeScheduleEgg() {
+  themeDayManualExpanded = false;
+  renderThemeDayEnabled();
   document.getElementById('eggOverlay').classList.remove('show');
   closeOutfitStyleDialog();
   closeKeywordCloudDialog();
@@ -20724,6 +21824,7 @@ function ensureLiveLogOverlay() {
     '<div class="prompt-header"><span class="log-header-title"><i class="fa-regular fa-rectangle-list" aria-hidden="true"></i><span class="log-header-copy"><strong id="liveLogDialogTitle">运行日志</strong><small>只展示最近记录，重复内容会自动合并</small></span></span><button class="prompt-close" onclick="closeLiveLogs()" aria-label="关闭">✕</button></div>' +
     '<div class="log-toolbar" role="tablist" aria-label="日志级别筛选">' +
       '<button class="log-filter-btn active" type="button" data-log-filter="important" onclick="setLiveLogFilter(\'important\')">重点 <span class="log-filter-count">0</span></button>' +
+      '<button class="log-filter-btn" type="button" data-log-filter="hermes" onclick="setLiveLogFilter(\'hermes\')">Hermes <span class="log-filter-count">0</span></button>' +
       '<button class="log-filter-btn" type="button" data-log-filter="all" onclick="setLiveLogFilter(\'all\')">全部 <span class="log-filter-count">0</span></button>' +
       '<button class="log-filter-btn" type="button" data-log-filter="INFO" onclick="setLiveLogFilter(\'INFO\')">信息 <span class="log-filter-count">0</span></button>' +
       '<button class="log-filter-btn" type="button" data-log-filter="DEBUG" onclick="setLiveLogFilter(\'DEBUG\')">调试 <span class="log-filter-count">0</span></button>' +
@@ -20811,6 +21912,7 @@ function handleLiveLogScroll() {
 function getFilteredLiveLogEntries() {
   if (liveLogFilter === 'all') return liveLogEntries.slice();
   if (liveLogFilter === 'important') return liveLogEntries.filter(item => Boolean(item && item.important));
+  if (liveLogFilter === 'hermes') return liveLogEntries.filter(item => item && item.category === 'hermes_api');
   return liveLogEntries.filter(item => item && item.level === liveLogFilter);
 }
 
@@ -20821,6 +21923,8 @@ function updateLiveLogFilterCounts() {
       ? liveLogEntries.length
       : filter === 'important'
         ? liveLogEntries.filter(item => Boolean(item && item.important)).length
+        : filter === 'hermes'
+          ? liveLogEntries.filter(item => item && item.category === 'hermes_api').length
         : liveLogEntries.filter(item => item && item.level === filter).length;
     const countEl = button.querySelector('.log-filter-count');
     if (countEl) countEl.textContent = String(count);
@@ -20902,7 +22006,7 @@ function renderLiveLogEntries() {
 }
 
 function setLiveLogFilter(filter) {
-  liveLogFilter = ['important', 'all', 'INFO', 'DEBUG', 'WARN', 'ERROR'].includes(filter) ? filter : 'important';
+  liveLogFilter = ['important', 'hermes', 'all', 'INFO', 'DEBUG', 'WARN', 'ERROR'].includes(filter) ? filter : 'important';
   renderLiveLogEntries();
   if (liveLogFollowLatest) {
     const list = document.getElementById('liveLogList');
@@ -20988,7 +22092,7 @@ function openLiveLogs(options) {
   liveLogFollowLatest = opts.scrollToBottom !== false;
   clearLiveLogScrollResume();
   if (opts.filter) {
-    liveLogFilter = ['important', 'all', 'INFO', 'DEBUG', 'WARN', 'ERROR'].includes(opts.filter) ? opts.filter : 'important';
+    liveLogFilter = ['important', 'hermes', 'all', 'INFO', 'DEBUG', 'WARN', 'ERROR'].includes(opts.filter) ? opts.filter : 'important';
     updateLiveLogFilterCounts();
   }
   overlay.classList.add('show');

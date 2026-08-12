@@ -8,7 +8,11 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP_DIR))
 
-from keyword_cloud import build_keyword_cloud_payload, build_schedule_keyword_prompt_block  # noqa: E402
+from keyword_cloud import (  # noqa: E402
+    build_keyword_cloud_payload,
+    build_schedule_keyword_prompt_block,
+    hide_keyword_cloud_term,
+)
 
 
 class KeywordCloudTest(unittest.TestCase):
@@ -71,6 +75,87 @@ class KeywordCloudTest(unittest.TestCase):
             }
             self.assertIn("Hermes", source_labels)
             self.assertIn("自定义", source_labels)
+
+    def test_excludes_automatic_schedule_entries_including_manual_edits(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir)
+            (data_dir / "schedule_data.json").write_text(
+                json.dumps({
+                    "zhuzhu_custom_cron.png": {
+                        "status": "ok",
+                        "source": "cron",
+                        "image_filename": "zhuzhu_custom_cron.png",
+                        "custom_prompt": "改成繁华商业街，黑色皮夹克",
+                        "user_prompt": (
+                            "fair skin, balanced facial features, natural waistline, "
+                            "props, setting, mood, time of day"
+                        ),
+                        "prompt": "This image should look photorealistic. Background: generated cron scene.",
+                    },
+                    "schedule_web.png": {
+                        "status": "ok",
+                        "source": "web",
+                        "image_filename": "schedule_web.png",
+                        "user_prompt": (
+                            "fair skin, balanced facial features, natural waistline, "
+                            "props, setting, mood, time of day"
+                        ),
+                        "prompt": "Generated final web prompt.",
+                    },
+                }, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            payload = build_keyword_cloud_payload(str(data_dir), limit=20)
+            by_text = {item["text"]: item for item in payload["keywords"]}
+
+            self.assertEqual(2, payload["scanned_count"])
+            self.assertEqual(0, payload["entry_count"])
+            self.assertEqual([], payload["keywords"])
+            self.assertNotIn("改成繁华商业街", by_text)
+            self.assertNotIn("黑色皮夹克", by_text)
+            self.assertNotIn("fair skin", by_text)
+            self.assertNotIn("balanced facial features", by_text)
+            self.assertNotIn("natural waistline", by_text)
+            self.assertNotIn("props", by_text)
+            self.assertNotIn("setting", by_text)
+            self.assertNotIn("mood", by_text)
+            self.assertNotIn("time of day", by_text)
+
+    def test_prefers_explicit_hermes_input_and_filters_template_fragments(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir)
+            (data_dir / "image_metadata.json").write_text(
+                json.dumps({
+                    "hermes_custom.png": {
+                        "source": "hermes_api",
+                        "custom_prompt": (
+                            "silver bob haircut, amber eyes, freckled cheeks, rainy bookstore, "
+                            "fair skin, balanced facial features, highly detailed, best quality"
+                        ),
+                        "user_prompt": (
+                            "fair skin, balanced facial features, detailed fabric textures, "
+                            "same cut, do not crop the head"
+                        ),
+                    }
+                }, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            payload = build_keyword_cloud_payload(str(data_dir), limit=20)
+            by_text = {item["text"]: item for item in payload["keywords"]}
+
+            self.assertIn("silver bob haircut", by_text)
+            self.assertIn("amber eyes", by_text)
+            self.assertIn("freckled cheeks", by_text)
+            self.assertIn("rainy bookstore", by_text)
+            self.assertNotIn("fair skin", by_text)
+            self.assertNotIn("balanced facial features", by_text)
+            self.assertNotIn("highly detailed", by_text)
+            self.assertNotIn("best quality", by_text)
+            self.assertNotIn("detailed fabric textures", by_text)
+            self.assertNotIn("same cut", by_text)
+            self.assertNotIn("do not crop the head", by_text)
 
     def test_counts_favorite_wardrobe_without_wardrobe_prompt_template(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -169,6 +254,40 @@ class KeywordCloudTest(unittest.TestCase):
             self.assertNotIn("generated blue hoodie", block)
             self.assertNotIn("(1)", block)
 
+    def test_schedule_prompt_block_ignores_automatic_template_noise(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir)
+            (data_dir / "schedule_data.json").write_text(
+                json.dumps({
+                    "schedule_cron.png": {
+                        "status": "ok",
+                        "source": "cron",
+                        "image_filename": "schedule_cron.png",
+                        "user_prompt": (
+                            "fair skin, balanced facial features, natural waistline, "
+                            "props, setting, mood, outfit, hairstyle, time of day"
+                        ),
+                    },
+                    "custom_real.png": {
+                        "status": "ok",
+                        "source": "custom",
+                        "image_filename": "custom_real.png",
+                        "custom_prompt": "蓝色卫衣，帆布包，书店过道",
+                    },
+                }, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            block = build_schedule_keyword_prompt_block(str(data_dir), limit=5)
+
+            self.assertIn("蓝色卫衣", block)
+            self.assertIn("帆布包", block)
+            self.assertIn("书店过道", block)
+            self.assertNotIn("fair skin", block)
+            self.assertNotIn("balanced facial features", block)
+            self.assertNotIn("natural waistline", block)
+            self.assertNotIn("time of day", block)
+
     def test_schedule_prompt_rotates_and_caps_low_weight_candidates(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             data_dir = Path(tmpdir)
@@ -224,6 +343,88 @@ class KeywordCloudTest(unittest.TestCase):
             self.assertIn("amber eyes", by_text)
             self.assertIn("freckled cheeks", by_text)
             self.assertIn("original-character-alpha", by_text)
+
+    def test_hidden_keyword_persists_and_is_removed_from_schedule_hints(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir)
+            (data_dir / "schedule_data.json").write_text(
+                json.dumps({
+                    "custom_1.png": {
+                        "status": "ok",
+                        "source": "custom",
+                        "image_filename": "custom_1.png",
+                        "custom_prompt": "红色开衫，咖啡店",
+                    },
+                    "custom_2.png": {
+                        "status": "ok",
+                        "source": "custom",
+                        "image_filename": "custom_2.png",
+                        "custom_prompt": "红色开衫，书店过道",
+                    },
+                }, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            self.assertIn(
+                "红色开衫",
+                {item["text"] for item in build_keyword_cloud_payload(str(data_dir))["keywords"]},
+            )
+
+            hidden = hide_keyword_cloud_term(str(data_dir), "红色开衫")
+            payload = build_keyword_cloud_payload(str(data_dir))
+            prompt_block = build_schedule_keyword_prompt_block(str(data_dir), limit=5)
+            preferences = json.loads(
+                (data_dir / "keyword_cloud_preferences.json").read_text(encoding="utf-8")
+            )
+
+            self.assertEqual("红色开衫", hidden["hidden_keyword"])
+            self.assertEqual(1, hidden["hidden_count"])
+            self.assertEqual(1, payload["hidden_count"])
+            self.assertNotIn("红色开衫", {item["text"] for item in payload["keywords"]})
+            self.assertNotIn("红色开衫", prompt_block)
+            self.assertEqual(["红色开衫"], preferences["hidden_keywords"])
+
+    def test_hidden_keyword_is_exact_idempotent_and_backfills_ranked_limit(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir)
+            (data_dir / "schedule_data.json").write_text(
+                json.dumps({
+                    "custom_1.png": {
+                        "status": "ok",
+                        "source": "custom",
+                        "image_filename": "custom_1.png",
+                        "custom_prompt": "red coat, red coat belt, blue scarf",
+                    },
+                    "custom_2.png": {
+                        "status": "ok",
+                        "source": "custom",
+                        "image_filename": "custom_2.png",
+                        "custom_prompt": "red coat, red coat belt",
+                    },
+                    "custom_3.png": {
+                        "status": "ok",
+                        "source": "custom",
+                        "image_filename": "custom_3.png",
+                        "custom_prompt": "red coat",
+                    },
+                }, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            first = build_keyword_cloud_payload(str(data_dir), limit=1)
+            self.assertEqual("red coat", first["keywords"][0]["text"])
+
+            hide_keyword_cloud_term(str(data_dir), "  RED   COAT ")
+            hidden_again = hide_keyword_cloud_term(str(data_dir), "red coat")
+            payload = build_keyword_cloud_payload(str(data_dir), limit=1)
+            preferences = json.loads(
+                (data_dir / "keyword_cloud_preferences.json").read_text(encoding="utf-8")
+            )
+
+            self.assertEqual(1, hidden_again["hidden_count"])
+            self.assertEqual(["red coat"], preferences["hidden_keywords"])
+            self.assertEqual("red coat belt", payload["keywords"][0]["text"])
+            self.assertEqual(1, payload["hidden_count"])
 
 
 if __name__ == "__main__":

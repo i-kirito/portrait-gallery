@@ -7,6 +7,7 @@
 - 定时任务 (APScheduler)
 """
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -17,7 +18,7 @@ import sys
 import subprocess
 import time
 from logging.handlers import TimedRotatingFileHandler
-from datetime import datetime, time as dt_time, timedelta
+from datetime import date, datetime, time as dt_time, timedelta
 from typing import Optional
 
 from aiohttp import web
@@ -263,7 +264,7 @@ logger = logging.getLogger("portrait_gallery")
 logger.info("持久化日志已启用: %s，自动清理 %s 天前的轮转日志", PERSISTENT_LOG_PATH, LOG_RETENTION_DAYS)
 
 
-def save_schedule_entry(data_dir: str, entry: DailyEntry):
+def save_schedule_entry(data_dir: str, entry: DailyEntry, *, replace_guard=None) -> bool:
     """保存日程条目到持久化文件 (thread-safe via ScheduleStore)
 
     Key strategy:
@@ -278,9 +279,13 @@ def save_schedule_entry(data_dir: str, entry: DailyEntry):
       This archive is intentionally retained in full for auditability; prompt
       readers bound how many snapshots they consume instead of deleting plans
       the user has already seen.
+    - ``replace_guard`` may reject a replacement while the store's exclusive
+      lock is held. This closes the read-then-write race for schedule refreshes
+      that must not overwrite a newly saved manual theme.
     """
     store = ScheduleStore(data_dir)
     try:
+        save_result = {"saved": True}
         entry_dict = entry.to_dict()
         if "caption" in entry_dict:
             entry_dict["caption"] = repair_mojibake_text(entry_dict.get("caption", "")).strip()
@@ -294,6 +299,20 @@ def save_schedule_entry(data_dir: str, entry: DailyEntry):
             new_key = entry.date
 
         def _update(all_data):
+            existing_for_guard = all_data.get(new_key)
+            if existing_for_guard is None and not img_filename:
+                for legacy_entry in all_data.values():
+                    if (
+                        isinstance(legacy_entry, dict)
+                        and not legacy_entry.get("image_filename")
+                        and str(legacy_entry.get("date") or "") == entry.date
+                    ):
+                        existing_for_guard = legacy_entry
+                        break
+            if callable(replace_guard) and not replace_guard(existing_for_guard):
+                save_result["saved"] = False
+                return all_data
+
             # Deduplication: remove any OTHER key that already points to the same
             # image_filename so the gallery never shows the same photo twice.
             if img_filename:
@@ -385,7 +404,11 @@ def save_schedule_entry(data_dir: str, entry: DailyEntry):
             return all_data
 
         store.update(_update)
-        logger.info(f"日程已保存: key={new_key}, date={entry.date}")
+        if save_result["saved"]:
+            logger.info(f"日程已保存: key={new_key}, date={entry.date}")
+        else:
+            logger.info("日程保存被并发保护跳过: key=%s, date=%s", new_key, entry.date)
+        return save_result["saved"]
     except Exception as e:
         logger.error(f"保存日程失败: {e}")
         raise
@@ -453,6 +476,11 @@ class PortraitGalleryApp:
         self._hermes_send_cooldown_until = 0.0
         self._last_delivery_error = ""
         self._schedule_refresh_task: Optional[asyncio.Task] = None
+        self._schedule_refresh_task_date = ""
+        self._schedule_refresh_state: Optional[dict] = None
+        self._tomorrow_schedule_refresh_task: Optional[asyncio.Task] = None
+        self._tomorrow_schedule_refresh_task_date = ""
+        self._schedule_refresh_preserve_theme_day = False
         self._custom_caption_tasks: set[asyncio.Task] = set()
         self.web_server.app.on_cleanup.append(self._cleanup_custom_caption_tasks)
         self._recover_orphaned_generated_photos()
@@ -502,7 +530,7 @@ class PortraitGalleryApp:
         web_server = getattr(self, "web_server", None)
         ensure = getattr(web_server, "ensure_xiaohongshu_schedule_reference", None)
         identity_selector = getattr(web_server, "_preferred_xiaohongshu_identity_reference", None)
-        if not asyncio.iscoroutinefunction(ensure) or not callable(identity_selector):
+        if not inspect.iscoroutinefunction(ensure) or not callable(identity_selector):
             return {}, []
         reference = dict(prepared_reference or {})
         if not reference:
@@ -531,20 +559,35 @@ class PortraitGalleryApp:
         ensure = getattr(web_server, "ensure_xiaohongshu_schedule_reference", None)
         existing_selector = getattr(web_server, "_xiaohongshu_schedule_reference", None)
         keyword_generator = getattr(self.scheduler_gen, "generate_xiaohongshu_search_query", None)
-        if not callable(enabled) or not enabled():
-            if not manual_reference_url:
-                return {}, ""
-        if not asyncio.iscoroutinefunction(ensure) or not asyncio.iscoroutinefunction(keyword_generator):
-            logger.warning("小红书日程前置选图接口不可用，回退原日程生成")
-            return {}, ""
         existing = dict(existing_selector(schedule_date) or {}) if callable(existing_selector) else {}
+        if manual_reference_url:
+            manual_name = os.path.basename(str(manual_reference_url).split("?", 1)[0])
+            existing_name = str(existing.get("filename") or "").strip()
+            matches_manual_reference = (
+                bool(existing.get("path"))
+                and str(existing.get("selection_source") or "").strip() == "manual"
+                and (
+                    str(existing.get("url") or "").strip() == str(manual_reference_url).strip()
+                    or (manual_name and manual_name == existing_name)
+                )
+            )
+            # A specifically requested image must either match the persisted
+            # manual daily reference or fail hard in generate_theme_day().
+            # Never replace it with an automatic search result.
+            if matches_manual_reference:
+                return existing, str(existing.get("query") or "").strip()
+            return {}, ""
         if (
             existing.get("path")
             and str(existing.get("selection_source") or "").strip() == "manual"
             and (theme_day or theme_description)
-            and not manual_reference_url
         ):
             return existing, str(existing.get("query") or "").strip()
+        if not callable(enabled) or not enabled():
+            return {}, ""
+        if not inspect.iscoroutinefunction(ensure) or not inspect.iscoroutinefunction(keyword_generator):
+            logger.warning("小红书日程前置选图接口不可用，回退原日程生成")
+            return {}, ""
         if not force and callable(existing_selector):
             if existing.get("path"):
                 existing_query = str(existing.get("query") or "").strip()
@@ -1075,6 +1118,8 @@ class PortraitGalleryApp:
         description: str = "",
         manual_reference_url: str = "",
         progress_callback=None,
+        persist: bool = True,
+        schedule_photos: bool = True,
     ) -> Optional[DailyEntry]:
         """Generate a themed schedule for today or tomorrow.
 
@@ -1158,9 +1203,14 @@ class PortraitGalleryApp:
         entry.theme_day = theme
         entry.theme_day_mode = mode
         entry.theme_description = theme_description
-        save_schedule_entry(self.data_dir, entry)
-        notify("日程已保存，正在安排当天的生图任务…")
-        if schedule_date == today:
+        if persist:
+            save_schedule_entry(self.data_dir, entry)
+        notify(
+            "日程已保存，正在安排当天的生图任务…"
+            if persist
+            else "主题日日程已生成，正在完成刷新…"
+        )
+        if schedule_photos and schedule_date == today:
             await self._schedule_dynamic_photos(entry.schedule)
         logger.info(
             "主题日日程生成成功: date=%s theme=%s mode=%s xhs_query=%s",
@@ -3187,42 +3237,366 @@ class PortraitGalleryApp:
                 else:
                     self._schedule_retry_or_next_daily_job()
 
-    async def refresh_schedule(self, *, preserve_theme_day: bool = False):
-        """Share one schedule refresh across every app-level caller."""
-        task = getattr(self, "_schedule_refresh_task", None)
-        if task is None or task.done():
-            if preserve_theme_day:
-                task = asyncio.create_task(self._refresh_schedule_impl(preserve_theme_day=True))
-            else:
-                task = asyncio.create_task(self._refresh_schedule_impl())
-            self._schedule_refresh_task = task
-        else:
-            logger.info("日程刷新已在进行，复用当前任务")
-        try:
-            return await asyncio.shield(task)
-        finally:
-            if task.done() and getattr(self, "_schedule_refresh_task", None) is task:
-                self._schedule_refresh_task = None
-
-    async def _refresh_schedule_impl(self, *, preserve_theme_day: bool = False):
-        """Regenerate today's schedule and rebuild dynamic photo jobs."""
-        # 小红书模式先选真人穿搭，再让视觉 LLM 依据图片重写日程。
-        schedule_date = self._today().isoformat()
-        prepared_xiaohongshu_reference, xiaohongshu_search_query = (
-            await self._prepare_xiaohongshu_schedule_reference(schedule_date, force=False)
+    def _resolve_schedule_refresh_target(
+        self,
+        target: str = "today",
+        target_date: str = "",
+    ) -> tuple[str, str]:
+        """Resolve a refresh target to exactly today or tomorrow."""
+        target_key = str(target or "today").strip().lower()
+        if target_key not in {"today", "tomorrow"}:
+            raise ValueError("target 只能是 today 或 tomorrow")
+        expected_date = self._today() + (
+            timedelta(days=1) if target_key == "tomorrow" else timedelta()
         )
-        schedule_kwargs = {}
-        if prepared_xiaohongshu_reference.get("path"):
-            schedule_kwargs = {
-                "outfit_reference_path": prepared_xiaohongshu_reference["path"],
-                "xiaohongshu_search_query": xiaohongshu_search_query,
+        requested_date = str(target_date or "").strip()
+        if requested_date:
+            try:
+                parsed_date = date.fromisoformat(requested_date)
+            except ValueError:
+                raise ValueError("target_date 必须是 YYYY-MM-DD") from None
+            if parsed_date.isoformat() != requested_date:
+                raise ValueError("target_date 必须是 YYYY-MM-DD")
+            if parsed_date != expected_date:
+                raise ValueError(
+                    f"target_date 必须与 target={target_key} 对应：{expected_date.isoformat()}"
+                )
+        return target_key, expected_date.isoformat()
+
+    async def refresh_schedule(
+        self,
+        *,
+        preserve_theme_day: bool = False,
+        target: str = "today",
+        target_date: str = "",
+    ):
+        """Share one date-scoped schedule refresh across every app-level caller."""
+        target_key, schedule_date = self._resolve_schedule_refresh_target(
+            target,
+            target_date,
+        )
+        if target_key == "tomorrow":
+            task = getattr(self, "_tomorrow_schedule_refresh_task", None)
+            task_date = str(
+                getattr(self, "_tomorrow_schedule_refresh_task_date", "") or ""
+            )
+            if task is None or task.done() or task_date != schedule_date:
+                task = asyncio.create_task(
+                    self._refresh_tomorrow_schedule_impl(schedule_date)
+                )
+                self._tomorrow_schedule_refresh_task = task
+                self._tomorrow_schedule_refresh_task_date = schedule_date
+                task.add_done_callback(self._tomorrow_schedule_refresh_finished)
+            else:
+                logger.info("第二天日程刷新已在进行，复用当前任务")
+            await asyncio.wait({task})
+            return task.result()
+
+        task = getattr(self, "_schedule_refresh_task", None)
+        task_date = str(
+            getattr(self, "_schedule_refresh_task_date", "") or ""
+        )
+        refresh_state = getattr(self, "_schedule_refresh_state", None)
+        if task is None or task.done() or task_date != schedule_date:
+            refresh_state = {
+                "preserve_theme_day": bool(preserve_theme_day),
             }
-        entry = await self.scheduler_gen.generate_today(**schedule_kwargs)
-        
+            self._schedule_refresh_preserve_theme_day = bool(preserve_theme_day)
+            refresh_impl = self._refresh_schedule_impl
+            try:
+                refresh_parameters = inspect.signature(refresh_impl).parameters
+                accepts_extra_kwargs = any(
+                    parameter.kind == inspect.Parameter.VAR_KEYWORD
+                    for parameter in refresh_parameters.values()
+                )
+            except (TypeError, ValueError):
+                refresh_parameters = {}
+                accepts_extra_kwargs = True
+            refresh_kwargs = {}
+            if "schedule_date" in refresh_parameters or accepts_extra_kwargs:
+                refresh_kwargs["schedule_date"] = schedule_date
+            if "preserve_theme_day" in refresh_parameters or accepts_extra_kwargs:
+                refresh_kwargs["preserve_theme_day"] = bool(preserve_theme_day)
+            if "refresh_state" in refresh_parameters or accepts_extra_kwargs:
+                refresh_kwargs["refresh_state"] = refresh_state
+            task = asyncio.create_task(refresh_impl(**refresh_kwargs))
+            self._schedule_refresh_task = task
+            self._schedule_refresh_task_date = schedule_date
+            self._schedule_refresh_state = refresh_state
+            task.add_done_callback(self._schedule_refresh_finished)
+        else:
+            if preserve_theme_day:
+                # A midnight daily job may join a manual refresh that is
+                # already waiting on the LLM. Promote the shared refresh so
+                # its eventual candidate cannot overwrite a planned theme day.
+                if isinstance(refresh_state, dict):
+                    refresh_state["preserve_theme_day"] = True
+                self._schedule_refresh_preserve_theme_day = True
+            logger.info("日程刷新已在进行，复用当前任务")
+        await asyncio.wait({task})
+        return task.result()
+
+    def _schedule_refresh_finished(self, task: asyncio.Task) -> None:
+        """Clear singleflight state even when every waiting caller is cancelled."""
+        if getattr(self, "_schedule_refresh_task", None) is task:
+            self._schedule_refresh_task = None
+            self._schedule_refresh_task_date = ""
+            self._schedule_refresh_state = None
+            self._schedule_refresh_preserve_theme_day = False
+        if task.cancelled():
+            return
+        try:
+            task.exception()
+        except asyncio.CancelledError:
+            pass
+
+    def _tomorrow_schedule_refresh_finished(self, task: asyncio.Task) -> None:
+        """Clear tomorrow's singleflight task without touching today's refresh."""
+        if getattr(self, "_tomorrow_schedule_refresh_task", None) is task:
+            self._tomorrow_schedule_refresh_task = None
+            self._tomorrow_schedule_refresh_task_date = ""
+        if task.cancelled():
+            return
+        try:
+            task.exception()
+        except asyncio.CancelledError:
+            pass
+
+    async def _refresh_tomorrow_schedule_impl(self, schedule_date: str):
+        """Regenerate tomorrow without changing today's plan or photo jobs."""
+        target_key, expected_date = self._resolve_schedule_refresh_target(
+            "tomorrow",
+            schedule_date,
+        )
+        if target_key != "tomorrow":
+            raise ValueError("第二天日程刷新目标无效")
+
+        existing_entry = self._today_schedule_entry(expected_date)
+
+        def usable_entry(raw_entry: Optional[dict]) -> bool:
+            return self._is_usable_schedule_entry(raw_entry or {})
+
+        def custom_theme_changed(
+            raw_entry: Optional[dict],
+            expected_entry: Optional[dict],
+        ) -> bool:
+            return (
+                usable_entry(raw_entry)
+                and str((raw_entry or {}).get("theme_day_mode") or "").strip() == "custom"
+                and (raw_entry or {}) != (expected_entry or {})
+            )
+
+        def preserved_entry(raw_entry: dict, message: str) -> DailyEntry:
+            preserved = DailyEntry.from_dict(raw_entry)
+            preserved.source = "preserved"
+            logger.info(
+                "%s: date=%s theme=%s",
+                message,
+                preserved.date,
+                preserved.theme_day,
+            )
+            return preserved
+
+        entry = await self.generate_theme_day(
+            target="tomorrow",
+            target_date=expected_date,
+            mode="random",
+            persist=False,
+            schedule_photos=False,
+        )
+
+        # A manual theme can finish while the random LLM request is running.
+        # Prefer it before attempting any write.
+        latest_entry = self._today_schedule_entry(expected_date)
+        if custom_theme_changed(latest_entry, existing_entry):
+            return preserved_entry(
+                latest_entry,
+                "检测到并发保存的第二天手动主题，丢弃随机候选",
+            )
+
+        if (
+            not entry
+            or entry.source == "fallback"
+            or entry.status != "ok"
+            or entry.date != expected_date
+        ):
+            if entry and entry.date != expected_date:
+                logger.error(
+                    "第二天日程候选日期不匹配: expected=%s actual=%s",
+                    expected_date,
+                    entry.date,
+                )
+            preserve_candidate = (
+                latest_entry
+                if usable_entry(latest_entry)
+                else existing_entry
+                if usable_entry(existing_entry)
+                else None
+            )
+            if preserve_candidate:
+                return preserved_entry(
+                    preserve_candidate,
+                    "第二天日程刷新失败，保留原日程",
+                )
+            if entry and entry.date != expected_date:
+                return DailyEntry(
+                    date=expected_date,
+                    status="failed",
+                    source="refresh_target_mismatch",
+                )
+            return entry
+
+        expected_before_save = latest_entry or existing_entry
+
+        def replace_guard(current_entry) -> bool:
+            return not custom_theme_changed(current_entry, expected_before_save)
+
+        saved = save_schedule_entry(
+            self.data_dir,
+            entry,
+            replace_guard=replace_guard,
+        )
+        if not saved:
+            concurrent_entry = self._today_schedule_entry(expected_date)
+            if usable_entry(concurrent_entry):
+                return preserved_entry(
+                    concurrent_entry,
+                    "提交时检测到第二天手动主题，保留手动主题",
+                )
+            logger.error("第二天随机日程被并发保护拒绝，但未能重新读取现有日程")
+            return DailyEntry(
+                date=expected_date,
+                status="failed",
+                source="refresh_conflict",
+            )
+
+        # A manual save after our atomic commit is authoritative as well.
+        committed_entry = self._today_schedule_entry(expected_date)
+        if custom_theme_changed(committed_entry, entry.to_dict()):
+            return preserved_entry(
+                committed_entry,
+                "第二天随机日程提交后检测到手动主题，以手动主题为准",
+            )
+
+        logger.info(
+            "第二天自动主题日刷新成功: date=%s theme=%s",
+            expected_date,
+            entry.theme_day,
+        )
+        return entry
+
+    async def _refresh_schedule_impl(
+        self,
+        schedule_date: str = "",
+        *,
+        preserve_theme_day: bool = False,
+        refresh_state: Optional[dict] = None,
+    ):
+        """Regenerate today's schedule and rebuild dynamic photo jobs."""
+        has_explicit_schedule_date = bool(str(schedule_date or "").strip())
+        locked_schedule_date = (
+            str(schedule_date or "").strip()
+            or self._today().isoformat()
+        )
+        existing_entry = self._today_schedule_entry(locked_schedule_date)
+        existing_missing = (
+            self._schedule_missing_required_periods(existing_entry.get("schedule", ""))
+            if existing_entry
+            else []
+        )
+
+        def should_preserve_theme_day() -> bool:
+            if isinstance(refresh_state, dict):
+                return preserve_theme_day or bool(
+                    refresh_state.get("preserve_theme_day")
+                )
+            return preserve_theme_day or bool(
+                getattr(self, "_schedule_refresh_preserve_theme_day", False)
+            )
+
+        def usable_theme_entry(raw_entry: Optional[dict]) -> bool:
+            if not raw_entry or not str(raw_entry.get("theme_day") or "").strip():
+                return False
+            return not self._schedule_missing_required_periods(
+                raw_entry.get("schedule", "")
+            )
+
+        def custom_theme_changed(
+            raw_entry: Optional[dict],
+            expected_entry: Optional[dict],
+        ) -> bool:
+            return (
+                usable_theme_entry(raw_entry)
+                and str((raw_entry or {}).get("theme_day_mode") or "").strip() == "custom"
+                and (raw_entry or {}) != (expected_entry or {})
+            )
+
+        async def use_preserved_entry(raw_entry: dict, message: str) -> DailyEntry:
+            preserved_entry = DailyEntry.from_dict(raw_entry)
+            logger.info(
+                "%s: date=%s theme=%s mode=%s",
+                message,
+                preserved_entry.date,
+                preserved_entry.theme_day,
+                preserved_entry.theme_day_mode,
+            )
+            await self._schedule_dynamic_photos(
+                preserved_entry.schedule,
+                preserved_entry.date,
+            )
+            return preserved_entry
+
+        if (
+            should_preserve_theme_day()
+            and existing_entry
+            and not existing_missing
+            and str(existing_entry.get("theme_day") or "").strip()
+        ):
+            return await use_preserved_entry(
+                existing_entry,
+                "保留已计划的主题日",
+            )
+
+        # 自动模式不再生成三点一线的普通日程，而是直接复用主题日链路，
+        # 从现有主题池随机选择一条主线。持久化和任务重建仍留在本方法，
+        # 以保留刷新失败时不覆盖现有日程的保护。
+        theme_day_kwargs = {
+            "target": "today",
+            "mode": "random",
+            "persist": False,
+            "schedule_photos": False,
+        }
+        if has_explicit_schedule_date:
+            theme_day_kwargs["target_date"] = locked_schedule_date
+        entry = await self.generate_theme_day(**theme_day_kwargs)
+
+        # Both a preserve request and a newly saved custom theme can arrive
+        # while the shared refresh is awaiting the LLM. Re-read storage before
+        # the generated candidate reaches disk instead of trusting the initial
+        # snapshot.
+        latest_entry = self._today_schedule_entry(locked_schedule_date)
+        latest_custom_theme = custom_theme_changed(latest_entry, existing_entry)
+        if latest_custom_theme:
+            return await use_preserved_entry(
+                latest_entry,
+                "检测到并发保存的手动主题，丢弃随机候选",
+            )
+        if should_preserve_theme_day():
+            preserve_candidate = (
+                latest_entry
+                if usable_theme_entry(latest_entry)
+                else existing_entry
+                if usable_theme_entry(existing_entry)
+                else None
+            )
+            if preserve_candidate:
+                return await use_preserved_entry(
+                    preserve_candidate,
+                    "日程刷新期间收到保留请求，丢弃随机候选",
+                )
+
         # LLM 不通时 scheduler 会返回 fallback；刷新按钮不应因此覆盖已有可用日程。
         if not entry or entry.source == "fallback" or entry.status != "ok":
-            existing_entry = self._today_schedule_entry()
-            existing_missing = self._schedule_missing_required_periods(existing_entry.get("schedule", "")) if existing_entry else []
             if existing_entry and not existing_missing:
                 logger.warning("日程生成使用兜底结果，保留现有今日日程")
                 preserved = DailyEntry.from_dict(existing_entry)
@@ -3238,10 +3612,87 @@ class PortraitGalleryApp:
                 save_schedule_entry(self.data_dir, entry)
             return entry
 
-        # save_schedule_entry performs the replacement under one exclusive lock.
-        save_schedule_entry(self.data_dir, entry)
-        logger.info(f"日程生成成功: {entry.outfit_style}")
+        expected_before_save = latest_entry or existing_entry
+
+        def replace_guard(current_entry) -> bool:
+            if should_preserve_theme_day() and usable_theme_entry(current_entry):
+                return False
+            return not custom_theme_changed(current_entry, expected_before_save)
+
+        # Compare and replace under the same exclusive lock so a manual theme
+        # saved after the preflight read cannot be overwritten by this random
+        # candidate.
+        saved = save_schedule_entry(
+            self.data_dir,
+            entry,
+            replace_guard=replace_guard,
+        )
+        if not saved:
+            concurrent_entry = self._today_schedule_entry(locked_schedule_date)
+            preserve_candidate = (
+                concurrent_entry
+                if usable_theme_entry(concurrent_entry)
+                else existing_entry
+                if usable_theme_entry(existing_entry)
+                else None
+            )
+            if preserve_candidate:
+                return await use_preserved_entry(
+                    preserve_candidate,
+                    "提交时检测到手动主题或保留请求，丢弃随机候选",
+                )
+            return DailyEntry(
+                date=locked_schedule_date,
+                status="failed",
+                source="refresh_conflict",
+            )
+        logger.info("自动主题日生成成功: %s | %s", entry.theme_day, entry.outfit_style)
         await self._schedule_dynamic_photos(entry.schedule, entry.date)
+
+        # A preserve request can arrive after the save while photo jobs are
+        # being rebuilt. Restore the original plan before completing the
+        # shared task, and also repair jobs if a custom theme was saved by
+        # another request during that await.
+        committed_entry = self._today_schedule_entry(locked_schedule_date)
+        concurrent_custom_theme = custom_theme_changed(
+            committed_entry,
+            entry.to_dict(),
+        )
+        restore_candidate = None
+        restore_message = ""
+        if concurrent_custom_theme:
+            restore_candidate = committed_entry
+            restore_message = "检测到生图任务重建期间保存的手动主题，恢复其任务"
+        elif should_preserve_theme_day() and usable_theme_entry(existing_entry):
+            restore_candidate = existing_entry
+            restore_message = "提交后收到保留请求，回滚为原主题日"
+
+        if restore_candidate:
+            restored = DailyEntry.from_dict(restore_candidate)
+            if committed_entry != restore_candidate:
+                restored_saved = save_schedule_entry(
+                    self.data_dir,
+                    restored,
+                    replace_guard=lambda current_entry: (
+                        (current_entry or {}) == (committed_entry or {})
+                    ),
+                )
+                if not restored_saved:
+                    latest_entry = self._today_schedule_entry(locked_schedule_date)
+                    if usable_theme_entry(latest_entry):
+                        restored = DailyEntry.from_dict(latest_entry)
+                        restore_message = (
+                            "回滚提交时检测到更新的手动主题，以最新主题为准"
+                        )
+            logger.info(
+                "%s: date=%s theme=%s mode=%s",
+                restore_message,
+                restored.date,
+                restored.theme_day,
+                restored.theme_day_mode,
+            )
+            await self._schedule_dynamic_photos(restored.schedule, restored.date)
+            return restored
 
         return entry
 

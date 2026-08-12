@@ -276,6 +276,50 @@ class LogViewFormattingTest(unittest.TestCase):
         self.assertEqual("Gitee", normalized["model_name"])
         self.assertEqual("1536x2048", normalized["requested_size"])
 
+    def test_hermes_display_does_not_leak_prompt_or_synthetic_caption(self):
+        server = GalleryServer.__new__(GalleryServer)
+        server._image_file_info = lambda _filename: {}
+        prompt = (
+            "18-year-old Chinese girl, fair skin, delicate features, "
+            "wearing a blue gingham dress at a sunny beach"
+        )
+        normalized = server._normalize_entry_display(
+            {
+                "image_filename": "hermes.png",
+                "source": "hermes_api",
+                "generation_mode": "img2img",
+                "outfit": f"风格：自定义 视角：自拍 穿搭：{prompt[:80]}…",
+                "caption": "看着「18-year-old Chinese girl, fa」这一刻，心里忽然有点想把它留住。",
+            },
+            {
+                "hermes.png": {
+                    "source": "hermes_api",
+                    "prompt": prompt,
+                    "display_outfit": prompt[:80] + "…",
+                    "caption": "看着「18-year-old Chinese girl, fa」这一刻，心里忽然有点想把它留住。",
+                    "generation_mode": "img2img",
+                }
+            },
+        )
+
+        self.assertNotIn("18-year-old", normalized["outfit"])
+        self.assertIn("Hermes图生图", normalized["outfit"])
+        self.assertEqual("", normalized["caption"])
+        self.assertEqual("", normalized["caption_status"])
+
+    def test_hermes_mixed_language_prompt_does_not_become_display_description(self):
+        server = GalleryServer.__new__(GalleryServer)
+        prompt = (
+            "18-year-old Chinese girl, fair skin, dusty rose pink hair "
+            "tied in a high bun (丸子头), wispy air bangs, wearing a blue dress"
+        )
+
+        fallback = server._fallback_hermes_display_description(prompt, "图生图")
+
+        self.assertNotIn("18-year-old", fallback)
+        self.assertNotIn("dusty rose pink", fallback)
+        self.assertIn("Hermes", fallback)
+
 
 class ManualSendFailureHandlingTest(unittest.IsolatedAsyncioTestCase):
     async def test_context_failure_stops_after_one_attempt(self):

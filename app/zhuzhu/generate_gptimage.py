@@ -1590,15 +1590,16 @@ def generate(theme: str, send: bool = False, caption: bool = False,
             )
 
     if not result and ref_image and not precise_edit and not _LAST_TERMINAL_IMAGE_FAILURE:
+        # 2026-08-06 猪猪: 禁用 img2img→text2img 降级！
+        # 降级会丢弃参考图，导致衣服/脸型全被模型自由发挥(主人原话:让你土生土，你降级什么干嘛呢)。
+        # 图生图必须保参考图，宁可失败也不丢图重生成。
         print(
             f"{engine_label} img2img failed via {endpoint_label}; "
-            f"retrying text2img without reference image",
+            f"text2img downgrade DISABLED - reference image must be preserved, "
+            f"failing instead of regenerating without ref",
             file=sys.stderr,
         )
-        fallback_used = True
-        final_mode = "text2img"
-        used_ref_image = ""
-        result = _generate_via_direct_gpt(prompt, None, size, request_info=request_info)
+        result = None
     elif not result and _LAST_TERMINAL_IMAGE_FAILURE:
         print(
             f"{engine_label} stopped without more retries: {_LAST_TERMINAL_IMAGE_FAILURE}",

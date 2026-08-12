@@ -83,6 +83,7 @@ class ScheduleRecoveryTest(unittest.IsolatedAsyncioTestCase):
     async def test_app_schedule_refresh_is_singleflight_for_concurrent_callers(self):
         app = PortraitGalleryApp.__new__(PortraitGalleryApp)
         app._schedule_refresh_task = None
+        app._schedule_refresh_preserve_theme_day = False
         started = asyncio.Event()
         release = asyncio.Event()
         entry = DailyEntry(date="2026-07-15", schedule="08:00 买早餐", status="ok")
@@ -108,6 +109,228 @@ class ScheduleRecoveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(entry, second_result)
         self.assertEqual(1, calls)
         self.assertIsNone(app._schedule_refresh_task)
+        self.assertFalse(app._schedule_refresh_preserve_theme_day)
+
+    async def test_preserving_caller_promotes_inflight_regular_refresh(self):
+        app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+        app._schedule_refresh_task = None
+        app._schedule_refresh_preserve_theme_day = False
+        started = asyncio.Event()
+        release = asyncio.Event()
+        planned = DailyEntry(
+            date="2026-07-15",
+            schedule="08:00 进入魔法学院大礼堂",
+            status="ok",
+            source="theme_day",
+            theme_day="霍格沃兹体验日",
+            theme_day_mode="custom",
+        )
+        random_candidate = DailyEntry(
+            date="2026-07-15",
+            schedule="08:00 去旧城寻找壁画",
+            status="ok",
+            source="theme_day",
+            theme_day="旧城寻宝日",
+            theme_day_mode="random",
+        )
+
+        async def generate_theme_day(**_kwargs):
+            started.set()
+            await release.wait()
+            return random_candidate
+
+        app.generate_theme_day = AsyncMock(side_effect=generate_theme_day)
+        app._today_schedule_entry = Mock(return_value=planned.to_dict())
+        app._schedule_missing_required_periods = Mock(return_value=[])
+        app._schedule_dynamic_photos = AsyncMock()
+        app.data_dir = "unused"
+
+        with patch.object(main_module, "save_schedule_entry") as save_entry:
+            regular_refresh = asyncio.create_task(app.refresh_schedule())
+            await started.wait()
+            preserving_refresh = asyncio.create_task(
+                app.refresh_schedule(preserve_theme_day=True)
+            )
+            await asyncio.sleep(0)
+            release.set()
+            regular_result, preserving_result = await asyncio.gather(
+                regular_refresh,
+                preserving_refresh,
+            )
+
+        self.assertEqual("霍格沃兹体验日", regular_result.theme_day)
+        self.assertEqual("霍格沃兹体验日", preserving_result.theme_day)
+        app.generate_theme_day.assert_awaited_once_with(
+            target="today",
+            target_date=app._today().isoformat(),
+            mode="random",
+            persist=False,
+            schedule_photos=False,
+        )
+        save_entry.assert_not_called()
+        app._schedule_dynamic_photos.assert_awaited_once_with(
+            planned.schedule,
+            planned.date,
+        )
+        self.assertIsNone(app._schedule_refresh_task)
+        self.assertFalse(app._schedule_refresh_preserve_theme_day)
+
+    async def test_inflight_refresh_does_not_overwrite_new_custom_theme(self):
+        app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+        app._schedule_refresh_preserve_theme_day = False
+        started = asyncio.Event()
+        release = asyncio.Event()
+        stored_entry = {}
+        planned = DailyEntry(
+            date="2026-07-15",
+            schedule="08:00 进入魔法学院大礼堂",
+            status="ok",
+            source="theme_day",
+            theme_day="霍格沃兹体验日",
+            theme_day_mode="custom",
+        )
+        random_candidate = DailyEntry(
+            date="2026-07-15",
+            schedule="08:00 去旧城寻找壁画",
+            status="ok",
+            source="theme_day",
+            theme_day="旧城寻宝日",
+            theme_day_mode="random",
+        )
+
+        async def generate_theme_day(**_kwargs):
+            started.set()
+            await release.wait()
+            return random_candidate
+
+        app.generate_theme_day = AsyncMock(side_effect=generate_theme_day)
+        app._today_schedule_entry = Mock(
+            side_effect=lambda _schedule_date="": dict(stored_entry)
+        )
+        app._schedule_missing_required_periods = Mock(return_value=[])
+        app._schedule_dynamic_photos = AsyncMock()
+        app.data_dir = "unused"
+
+        with patch.object(main_module, "save_schedule_entry") as save_entry:
+            refresh = asyncio.create_task(app._refresh_schedule_impl())
+            await started.wait()
+            stored_entry = planned.to_dict()
+            release.set()
+            result = await refresh
+
+        self.assertEqual("霍格沃兹体验日", result.theme_day)
+        save_entry.assert_not_called()
+        app._schedule_dynamic_photos.assert_awaited_once_with(
+            planned.schedule,
+            planned.date,
+        )
+
+    async def test_late_preserve_request_rolls_back_committed_candidate(self):
+        app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+        app._schedule_refresh_task = None
+        app._schedule_refresh_preserve_theme_day = False
+        jobs_started = asyncio.Event()
+        release_jobs = asyncio.Event()
+        planned = DailyEntry(
+            date="2026-07-15",
+            schedule="08:00 进入魔法学院大礼堂",
+            status="ok",
+            source="theme_day",
+            theme_day="霍格沃兹体验日",
+            theme_day_mode="custom",
+        )
+        random_candidate = DailyEntry(
+            date="2026-07-15",
+            schedule="08:00 去旧城寻找壁画",
+            status="ok",
+            source="theme_day",
+            theme_day="旧城寻宝日",
+            theme_day_mode="random",
+        )
+        stored_entry = planned.to_dict()
+
+        async def rebuild_jobs(schedule, _date):
+            if schedule == random_candidate.schedule:
+                jobs_started.set()
+                await release_jobs.wait()
+
+        def save_entry(_data_dir, entry, **_kwargs):
+            nonlocal stored_entry
+            stored_entry = entry.to_dict()
+            return True
+
+        app.generate_theme_day = AsyncMock(return_value=random_candidate)
+        app._today_schedule_entry = Mock(
+            side_effect=lambda _schedule_date="": dict(stored_entry)
+        )
+        app._schedule_missing_required_periods = Mock(return_value=[])
+        app._schedule_dynamic_photos = AsyncMock(side_effect=rebuild_jobs)
+        app.data_dir = "unused"
+
+        with patch.object(
+            main_module,
+            "save_schedule_entry",
+            side_effect=save_entry,
+        ) as save_schedule:
+            regular_refresh = asyncio.create_task(app.refresh_schedule())
+            await jobs_started.wait()
+            preserving_refresh = asyncio.create_task(
+                app.refresh_schedule(preserve_theme_day=True)
+            )
+            await asyncio.sleep(0)
+            release_jobs.set()
+            regular_result, preserving_result = await asyncio.gather(
+                regular_refresh,
+                preserving_refresh,
+            )
+
+        self.assertEqual("霍格沃兹体验日", regular_result.theme_day)
+        self.assertEqual("霍格沃兹体验日", preserving_result.theme_day)
+        self.assertEqual(
+            [random_candidate, planned],
+            [call.args[1] for call in save_schedule.call_args_list],
+        )
+        self.assertEqual(planned.to_dict(), stored_entry)
+        self.assertEqual(
+            [
+                (random_candidate.schedule, random_candidate.date),
+                (planned.schedule, planned.date),
+            ],
+            [call.args for call in app._schedule_dynamic_photos.await_args_list],
+        )
+
+    async def test_cancelled_waiter_does_not_leave_refresh_state_behind(self):
+        app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+        app._schedule_refresh_task = None
+        app._schedule_refresh_preserve_theme_day = False
+        started = asyncio.Event()
+        release = asyncio.Event()
+        completed = asyncio.Event()
+        entry = DailyEntry(date="2026-07-15", schedule="08:00 买早餐", status="ok")
+
+        async def refresh_impl(*, preserve_theme_day=False):
+            self.assertTrue(preserve_theme_day)
+            started.set()
+            try:
+                await release.wait()
+                return entry
+            finally:
+                completed.set()
+
+        app._refresh_schedule_impl = refresh_impl
+        waiter = asyncio.create_task(
+            app.refresh_schedule(preserve_theme_day=True)
+        )
+        await started.wait()
+        waiter.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await waiter
+        release.set()
+        await completed.wait()
+        await asyncio.sleep(0)
+
+        self.assertIsNone(app._schedule_refresh_task)
+        self.assertFalse(app._schedule_refresh_preserve_theme_day)
 
     async def test_refresh_stops_before_photo_job_rebuild_when_save_fails(self):
         app = PortraitGalleryApp.__new__(PortraitGalleryApp)
@@ -115,8 +338,12 @@ class ScheduleRecoveryTest(unittest.IsolatedAsyncioTestCase):
             date="2026-07-15",
             schedule="08:00 买早餐",
             status="ok",
+            source="theme_day",
+            theme_day="城市漫游日",
+            theme_day_mode="random",
         )
-        app.scheduler_gen = SimpleNamespace(generate_today=AsyncMock(return_value=entry))
+        app.generate_theme_day = AsyncMock(return_value=entry)
+        app._today_schedule_entry = Mock(return_value={})
         app.data_dir = "unused"
         app._schedule_dynamic_photos = AsyncMock()
 
@@ -128,7 +355,14 @@ class ScheduleRecoveryTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(OSError, "disk full"):
                 await app._refresh_schedule_impl()
 
-        save_entry.assert_called_once_with(app.data_dir, entry)
+        app.generate_theme_day.assert_awaited_once_with(
+            target="today",
+            mode="random",
+            persist=False,
+            schedule_photos=False,
+        )
+        self.assertEqual((app.data_dir, entry), save_entry.call_args.args)
+        self.assertTrue(callable(save_entry.call_args.kwargs.get("replace_guard")))
         app._schedule_dynamic_photos.assert_not_awaited()
 
     async def test_startup_missing_schedule_always_starts_background_generation(self):

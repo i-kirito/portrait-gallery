@@ -138,6 +138,63 @@ class SchedulerRetryTest(unittest.IsolatedAsyncioTestCase):
             post.call_args.kwargs["json"]["thinking"],
         )
 
+    async def test_stream_first_event_timeout_retries_buffered_request(self):
+        timed_out = FakeResponse(500, {
+            "error": {
+                "message": "failed to stream request: stream first event timeout",
+                "type": "internal_server_error",
+            },
+        })
+        accepted = FakeResponse(200, {
+            "choices": [{"message": {"content": '{"ok": true}'}}],
+        })
+        request_config = {
+            "chat_url": "https://example.test/v1/chat/completions",
+            "api_key": "secret",
+            "models": ["grok-4.5"],
+            "stream": True,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = DailyScheduler({}, tmpdir)
+            with (
+                patch.object(scheduler_module, "llm_request_config", return_value=request_config),
+                patch("requests.post", side_effect=[timed_out, accepted]) as post,
+            ):
+                result = await scheduler._call_llm("probe", timeout=1, json_mode=True)
+
+        self.assertEqual('{"ok": true}', result)
+        self.assertEqual(2, post.call_count)
+        self.assertTrue(post.call_args_list[0].kwargs["stream"])
+        self.assertTrue(post.call_args_list[0].kwargs["json"]["stream"])
+        self.assertFalse(post.call_args_list[1].kwargs["stream"])
+        self.assertFalse(post.call_args_list[1].kwargs["json"]["stream"])
+
+    async def test_empty_stream_retries_buffered_request(self):
+        empty_stream = requests.Response()
+        empty_stream.status_code = 200
+        empty_stream.iter_lines = lambda decode_unicode=False: iter([b"data: [DONE]"])
+        accepted = FakeResponse(200, {
+            "choices": [{"message": {"content": '{"ok": true}'}}],
+        })
+        request_config = {
+            "chat_url": "https://example.test/v1/chat/completions",
+            "api_key": "secret",
+            "models": ["grok-4.5"],
+            "stream": True,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = DailyScheduler({}, tmpdir)
+            with (
+                patch.object(scheduler_module, "llm_request_config", return_value=request_config),
+                patch("requests.post", side_effect=[empty_stream, accepted]) as post,
+            ):
+                result = await scheduler._call_llm("probe", timeout=1, json_mode=True)
+
+        self.assertEqual('{"ok": true}', result)
+        self.assertEqual(2, post.call_count)
+        self.assertTrue(post.call_args_list[0].kwargs["json"]["stream"])
+        self.assertFalse(post.call_args_list[1].kwargs["json"]["stream"])
+
     async def test_streaming_upstream_mojibake_is_repaired(self):
         mojibake = '{"文字":"中文"}'.encode("utf-8").decode("latin-1")
         streamed = requests.Response()

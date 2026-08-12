@@ -421,6 +421,69 @@ def analyze_reference_image(config: dict, data_dir: str, image_path: str, fallba
     }
 
 
+def analyze_image_outfit(config: dict, data_dir: str, image_path: str) -> dict:
+    """Recognize only the visible outfit in one gallery image."""
+    try:
+        with open(image_path, "rb") as file_obj:
+            image_b64 = base64.b64encode(file_obj.read()).decode("ascii")
+    except Exception as exc:
+        return {
+            "outfit": "",
+            "analysis_status": "failed",
+            "analysis_error": str(exc),
+        }
+
+    mime = mimetypes.guess_type(image_path)[0] or "image/png"
+    content = _post_llm(
+        config,
+        data_dir,
+        [
+            {
+                "role": "system",
+                "content": (
+                    "You identify clothing from images. Return only compact JSON. "
+                    "Describe visible garments, colors, materials, layering, accessories, "
+                    "and footwear when visible. Do not describe identity, face, body shape, "
+                    "pose, scene, or image quality. Do not infer hidden items."
+                ),
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            'Return {"outfit_cn":"..."} using one natural Chinese sentence, '
+                            "20-100 Chinese characters. If no clothing is visible, return "
+                            '{"outfit_cn":""}.'
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{image_b64}"},
+                    },
+                ],
+            },
+        ],
+        max_tokens=260,
+        temperature=0.1,
+    )
+    data = _extract_json_object(content)
+    outfit = re.sub(r"\s+", " ", str(data.get("outfit_cn") or "").strip())
+    outfit = outfit.strip(" \t\n\r\"'“”‘’，,。.!！?；;、")[:160]
+    if outfit:
+        return {
+            "outfit": outfit,
+            "analysis_status": "ok",
+            "analysis_error": "",
+        }
+    return {
+        "outfit": "",
+        "analysis_status": "failed",
+        "analysis_error": "LLM did not return a visible outfit",
+    }
+
+
 def _score_profile(context: str, profile: dict) -> int:
     haystack = " ".join([
         str(profile.get("label") or ""),

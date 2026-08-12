@@ -122,7 +122,7 @@ docker compose up -d
 Published image run:
 
 ```bash
-PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.4.1 docker compose up -d
+PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.4.2 docker compose up -d
 ```
 
 ### 3. Configure Keys

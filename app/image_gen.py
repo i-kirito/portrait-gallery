@@ -216,7 +216,7 @@ class ImageGenerator:
                 logger.info(f"生图成功: {filename}")
                 return filename
             else:
-                logger.error(f"生图失败: stdout={result.stdout[:300]}, stderr={result.stderr[:300]}")
+                logger.error(f"生图失败: stdout={result.stdout[:2000]}, stderr={result.stderr[:2000]}")
                 return None
 
         except subprocess.TimeoutExpired:

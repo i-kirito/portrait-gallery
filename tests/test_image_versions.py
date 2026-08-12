@@ -374,6 +374,93 @@ class ImageVersionEndpointTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual("", item["requested_ref_image"])
             self.assertEqual("", item["requested_ref_image_path"])
 
+    async def test_legacy_reference_basename_is_exposed_from_local_refs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            current_filename = "hermes_current.png"
+            Image.new("RGB", (24, 32), (180, 170, 160)).save(
+                Path(server.image_dir) / current_filename
+            )
+            reference_path = Path(server.reference_dir) / "master_outfit_ref.jpg"
+            reference_path.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (40, 50), (90, 100, 110)).save(reference_path)
+            ScheduleStore(server.data_dir).save({
+                "card": {
+                    "image_filename": current_filename,
+                    "image_path": f"/images/{current_filename}",
+                    "status": "ok",
+                    "source": "hermes_api",
+                    "generation_mode": "img2img",
+                    "ref_image": reference_path.name,
+                    "ref_image_path": reference_path.name,
+                    "requested_ref_image": reference_path.name,
+                    "requested_ref_image_path": reference_path.name,
+                },
+            })
+
+            test_server = TestServer(server.app)
+            await test_server.start_server(access_log=None)
+            client = TestClient(test_server)
+            try:
+                response = await client.get("/api/gallery?limit=10")
+                payload = await response.json()
+                item = payload["items"][0]
+                preview_url = item["ref_image_path"]
+                preview_response = await client.get(preview_url)
+            finally:
+                await client.close()
+
+            self.assertEqual(200, response.status)
+            self.assertEqual("/local-refs/master_outfit_ref.jpg", preview_url)
+            self.assertEqual(200, preview_response.status)
+            self.assertEqual("/local-refs/master_outfit_ref.jpg", item["requested_ref_image_path"])
+
+    async def test_xiaohongshu_reference_basename_is_exposed_from_nested_local_refs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            current_filename = "hermes_xiaohongshu.png"
+            Image.new("RGB", (24, 32), (180, 170, 160)).save(
+                Path(server.image_dir) / current_filename
+            )
+            reference_path = Path(server.xiaohongshu_reference_dir) / "outfit_ref.jpg"
+            reference_path.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (40, 50), (90, 100, 110)).save(reference_path)
+            ScheduleStore(server.data_dir).save({
+                "card": {
+                    "image_filename": current_filename,
+                    "image_path": f"/images/{current_filename}",
+                    "status": "ok",
+                    "source": "hermes_api",
+                    "generation_mode": "img2img",
+                    "ref_image": reference_path.name,
+                    "ref_image_path": reference_path.name,
+                    "requested_ref_image": reference_path.name,
+                    "requested_ref_image_path": reference_path.name,
+                },
+            })
+
+            test_server = TestServer(server.app)
+            await test_server.start_server(access_log=None)
+            client = TestClient(test_server)
+            try:
+                response = await client.get("/api/gallery?limit=10")
+                payload = await response.json()
+                item = payload["items"][0]
+                preview_url = item["ref_image_path"]
+                preview_response = await client.get(preview_url)
+            finally:
+                await client.close()
+
+            self.assertEqual(200, response.status)
+            self.assertEqual("/local-refs/xiaohongshu/outfit_ref.jpg", preview_url)
+            self.assertEqual(200, preview_response.status)
+            self.assertEqual(
+                "/local-refs/xiaohongshu/outfit_ref.jpg",
+                item["requested_ref_image_path"],
+            )
+
     async def test_versions_can_switch_back_and_forth_without_creating_a_new_card(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
