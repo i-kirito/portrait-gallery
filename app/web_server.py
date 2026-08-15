@@ -280,6 +280,13 @@ MAX_VIDEO_PROMPT_CHARS = 1000
 GROK_VIDEO_ROUTE = "http://127.0.0.1:8100"
 GROK_VIDEO_MODEL = "grok-imagine-video"
 GROK_VIDEO_TIMEOUT_SECONDS = 20 * 60
+GROK_VIDEO_DEFAULT_DURATION = 5
+GROK_VIDEO_DURATION_OPTIONS = tuple(range(5, 16))
+GROK_VIDEO_DEFAULT_RESOLUTION = "720p"
+GROK_VIDEO_RESOLUTIONS = ("480p", "720p")
+MAX_VIDEO_HISTORY = 8
+GROK_VIDEO_RETRY_ATTEMPTS = 3
+GROK_VIDEO_RETRY_DELAYS_SECONDS = (8, 20, 45)
 VIDEO_METADATA_FIELDS = (
     "video_filename",
     "video_url",
@@ -297,6 +304,7 @@ VIDEO_METADATA_FIELDS = (
     "video_file_size_bytes",
     "video_created_at",
     "video_updated_at",
+    "video_history",
 )
 CLEANUP_PRESET_DAYS = {
     "3d": 3,
@@ -1439,7 +1447,7 @@ class GalleryServer:
             if action == "queued":
                 return f"Hermes 视频任务已加入队列：{display_image}，请求 {request_id[:8]}。"
             if action == "started":
-                resolution = cls._extract_log_field(detail, "resolution") or "480p"
+                resolution = cls._extract_log_field(detail, "resolution") or "720p"
                 return (
                     f"Hermes 已调用本机 8100 Grok 视频 API：{display_image}，"
                     f"请求 {request_id[:8]}，清晰度 {resolution}。"
@@ -3896,6 +3904,11 @@ class GalleryServer:
             if isinstance(previous_metadata, dict)
             else ""
         )
+        previous_video_history = (
+            previous_metadata.get("video_history")
+            if isinstance(previous_metadata, dict)
+            else []
+        )
 
         removed_entry_count = 0
         version_records = []
@@ -3931,14 +3944,24 @@ class GalleryServer:
 
         ImageMetadataStore(self.data_dir).update(_delete_metadata)
         deleted_video_count = 0
-        if previous_video:
-            previous_video_path = self._video_file_path(previous_video)
-            if previous_video_path:
-                try:
-                    os.unlink(previous_video_path)
-                    deleted_video_count = 1
-                except OSError as e:
-                    errors.append(f"{previous_video_path}: {e}")
+        history_names = []
+        if isinstance(previous_video_history, list):
+            history_names = [
+                str((item or {}).get("video_filename") or "").strip()
+                for item in previous_video_history
+                if isinstance(item, dict)
+            ]
+        for name in [previous_video, *history_names]:
+            if not name:
+                continue
+            previous_video_path = self._video_file_path(name)
+            if not previous_video_path:
+                continue
+            try:
+                os.unlink(previous_video_path)
+                deleted_video_count += 1
+            except OSError as e:
+                errors.append(f"{previous_video_path}: {e}")
         deleted_version_count, version_errors = delete_image_versions(
             self.data_dir,
             version_records,
@@ -3971,10 +3994,20 @@ class GalleryServer:
         if rel is None:
             raise web.HTTPNotFound()
         metadata = self._load_image_metadata()
-        registered = any(
-            isinstance(entry, dict) and entry.get("video_filename") == rel.name
-            for entry in metadata.values()
-        )
+        registered = False
+        for entry in metadata.values():
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("video_filename") == rel.name:
+                registered = True
+                break
+            history = entry.get("video_history")
+            if isinstance(history, list) and any(
+                isinstance(item, dict) and item.get("video_filename") == rel.name
+                for item in history
+            ):
+                registered = True
+                break
         if not registered:
             raise web.HTTPNotFound()
         path = self._video_file_path(rel.name)
@@ -5824,13 +5857,23 @@ class GalleryServer:
             "grok_video_model_local": video_settings["local_model"],
             "grok_video_model_default": video_settings["default_model"],
             "grok_video_model_source": video_settings["model_source"],
+            "grok_video_duration": int(video_settings["duration"]),
+            "grok_video_duration_local": int(video_settings.get("local_duration") or 0) or None,
+            "grok_video_duration_default": int(video_settings["default_duration"]),
+            "grok_video_duration_source": video_settings["duration_source"],
+            "grok_video_duration_options": list(GROK_VIDEO_DURATION_OPTIONS),
+            "grok_video_resolution": video_settings["resolution"],
+            "grok_video_resolution_local": video_settings.get("local_resolution") or "",
+            "grok_video_resolution_default": video_settings["default_resolution"],
+            "grok_video_resolution_source": video_settings["resolution_source"],
+            "grok_video_resolution_options": list(GROK_VIDEO_RESOLUTIONS),
             "grok_api_key": self._mask_key(video_settings["api_key"]),
             "grok_api_key_source": video_settings["key_source"],
             "grok_video_configured": bool(
                 video_settings["url"]
                 and video_settings["model"]
-                and video_settings["api_key"]
             ),
+            "grok_video_api_key_configured": bool(video_settings["api_key"]),
             "push_channel": push_channel,
             "push_channel_local": normalize_push_channel(local_push_channel_raw) if local_push_channel_raw else "",
             "push_agent": push_agent,
@@ -6841,6 +6884,42 @@ class GalleryServer:
                             keys_config["grok_video_model"] = normalized_video_model
                         else:
                             keys_config.pop("grok_video_model", None)
+                    if "grok_video_duration" in body:
+                        raw_video_duration = str(body.get("grok_video_duration") or "").strip()
+                        if raw_video_duration:
+                            try:
+                                parsed_duration = int(raw_video_duration)
+                            except (TypeError, ValueError):
+                                parsed_duration = None
+                            if parsed_duration not in GROK_VIDEO_DURATION_OPTIONS:
+                                return web.json_response(
+                                    {
+                                        "error": "invalid_grok_video_duration",
+                                        "message": "Grok 视频秒数仅支持 5-15 秒。",
+                                    },
+                                    status=400,
+                                )
+                            keys_config["grok_video_duration"] = parsed_duration
+                        else:
+                            keys_config.pop("grok_video_duration", None)
+                    if "grok_video_resolution" in body:
+                        raw_video_resolution = str(body.get("grok_video_resolution") or "").strip()
+                        if raw_video_resolution:
+                            normalized_video_resolution = self._normalize_grok_video_resolution(
+                                raw_video_resolution,
+                                default="",
+                            )
+                            if not normalized_video_resolution:
+                                return web.json_response(
+                                    {
+                                        "error": "invalid_grok_video_resolution",
+                                        "message": "Grok 视频分辨率仅支持 480p 或 720p。",
+                                    },
+                                    status=400,
+                                )
+                            keys_config["grok_video_resolution"] = normalized_video_resolution
+                        else:
+                            keys_config.pop("grok_video_resolution", None)
                     if body.get("grok_api_key") and not self._looks_masked_key(body.get("grok_api_key")):
                         keys_config["grok_api_key"] = str(body["grok_api_key"]).strip()
                     if "appearance" in body:
@@ -10456,6 +10535,74 @@ class GalleryServer:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._video_generation_tasks.clear()
 
+    @staticmethod
+    def _video_history_item_from_entry(entry: dict) -> dict:
+        entry = entry if isinstance(entry, dict) else {}
+        filename = str(entry.get("video_filename") or "").strip()
+        if not filename:
+            return {}
+        item = {
+            "id": str(entry.get("id") or Path(filename).stem),
+            "video_filename": filename,
+            "video_url": f"/api/videos/{quote(filename, safe='')}",
+            "video_prompt": str(entry.get("video_prompt") or "").strip(),
+            "video_source": str(entry.get("video_source") or "").strip(),
+            "video_model": str(entry.get("video_model") or "").strip(),
+            "video_resolution": str(entry.get("video_resolution") or "").strip(),
+            "video_aspect_ratio": str(entry.get("video_aspect_ratio") or "").strip(),
+        }
+        for field in (
+            "video_duration",
+            "video_width",
+            "video_height",
+            "video_file_size_bytes",
+            "video_created_at",
+            "video_updated_at",
+        ):
+            value = entry.get(field)
+            if value not in ("", None):
+                item[field] = value
+        return item
+
+    def _normalize_video_history(self, history, *, exclude_filename: str = "") -> list[dict]:
+        exclude = str(exclude_filename or "").strip()
+        items: list[dict] = []
+        seen: set[str] = set()
+        for raw in history if isinstance(history, list) else []:
+            item = self._video_history_item_from_entry(raw if isinstance(raw, dict) else {})
+            filename = str(item.get("video_filename") or "").strip()
+            if not filename or filename == exclude or filename in seen:
+                continue
+            path = self._video_file_path(filename)
+            if not path:
+                continue
+            try:
+                item["video_file_size_bytes"] = os.path.getsize(path)
+            except OSError:
+                pass
+            item["video_url"] = f"/api/videos/{quote(filename, safe='')}"
+            items.append(item)
+            seen.add(filename)
+            if len(items) >= MAX_VIDEO_HISTORY:
+                break
+        return items
+
+    def _delete_video_files(self, filenames) -> int:
+        deleted = 0
+        for filename in filenames or []:
+            name = str(filename or "").strip()
+            if not name:
+                continue
+            path = self._video_file_path(name)
+            if not path:
+                continue
+            try:
+                os.unlink(path)
+                deleted += 1
+            except OSError:
+                pass
+        return deleted
+
     def _video_status_payload(
         self,
         img_id: str,
@@ -10469,6 +10616,8 @@ class GalleryServer:
             "video_status": str(entry.get("video_status") or "idle").strip().lower() or "idle",
         }
         for field in VIDEO_METADATA_FIELDS:
+            if field == "video_history":
+                continue
             value = entry.get(field)
             if value not in ("", None):
                 payload[field] = value
@@ -10487,6 +10636,14 @@ class GalleryServer:
             payload["video_status"] = "error"
             payload["video_error"] = "视频文件不存在，请重新生成。"
             payload.pop("video_url", None)
+
+        history = self._normalize_video_history(
+            entry.get("video_history"),
+            exclude_filename=filename,
+        )
+        payload["video_history"] = history
+        payload["video_history_count"] = len(history)
+        payload["has_video_history"] = bool(history)
         return payload
 
     def _set_video_metadata(self, img_id: str, values: dict) -> dict:
@@ -10557,6 +10714,50 @@ class GalleryServer:
                 return value, str(env_path)
         return "", ""
 
+
+    @staticmethod
+    def _normalize_grok_video_duration(value, *, default: int = GROK_VIDEO_DEFAULT_DURATION) -> int:
+        try:
+            duration = int(value)
+        except (TypeError, ValueError):
+            duration = None
+        if duration in GROK_VIDEO_DURATION_OPTIONS:
+            return int(duration)
+        if duration is None:
+            fallback = int(default)
+            return fallback if fallback in GROK_VIDEO_DURATION_OPTIONS else GROK_VIDEO_DEFAULT_DURATION
+        # Legacy configs / free-form values snap to the nearest supported preset.
+        return min(GROK_VIDEO_DURATION_OPTIONS, key=lambda item: abs(item - duration))
+
+    @staticmethod
+    def _grok_api_duration(duration: int) -> int:
+        """Map gallery presets to Grok2API-accepted seconds (6-30)."""
+        try:
+            value = int(duration)
+        except (TypeError, ValueError):
+            value = GROK_VIDEO_DEFAULT_DURATION
+        if value <= 5:
+            return 6
+        if value >= 30:
+            return 30
+        return value
+
+    @staticmethod
+    def _normalize_grok_video_resolution(
+        value,
+        *,
+        default: str = GROK_VIDEO_DEFAULT_RESOLUTION,
+    ) -> str:
+        resolution = str(value or "").strip().lower()
+        if resolution in GROK_VIDEO_RESOLUTIONS:
+            return resolution
+        fallback = str(default or "").strip().lower()
+        if fallback in GROK_VIDEO_RESOLUTIONS:
+            return fallback
+        if default == "":
+            return ""
+        return GROK_VIDEO_DEFAULT_RESOLUTION
+
     def _effective_grok_video_settings(
         self,
         keys_config: Optional[dict] = None,
@@ -10572,11 +10773,27 @@ class GalleryServer:
 
         local_url = self._normalize_grok_video_url(keys_config.get("grok_video_url", ""))
         local_model = self._normalize_grok_video_model(keys_config.get("grok_video_model", ""))
+        local_duration_raw = keys_config.get("grok_video_duration", "")
+        local_duration = (
+            self._normalize_grok_video_duration(local_duration_raw)
+            if str(local_duration_raw or "").strip()
+            else 0
+        )
+        local_resolution = self._normalize_grok_video_resolution(
+            keys_config.get("grok_video_resolution", ""),
+            default="",
+        )
         local_key = str(keys_config.get("grok_api_key") or "").strip()
 
         env_url_raw = str(os.environ.get("GROK2API_URL") or os.environ.get("CLIPROXY_URL") or "").strip()
         env_url = self._normalize_grok_video_url(env_url_raw)
         env_model = self._normalize_grok_video_model(os.environ.get("GROK_VIDEO_MODEL", ""))
+        env_duration_raw = str(os.environ.get("GROK_VIDEO_DURATION") or "").strip()
+        env_duration = self._normalize_grok_video_duration(env_duration_raw) if env_duration_raw else 0
+        env_resolution = self._normalize_grok_video_resolution(
+            os.environ.get("GROK_VIDEO_RESOLUTION", ""),
+            default="",
+        )
         env_key = str(os.environ.get("GROK_API_KEY") or "").strip()
 
         dotenv_url_raw, dotenv_url_source = self._grok_video_dotenv_value("GROK2API_URL")
@@ -10585,37 +10802,90 @@ class GalleryServer:
         dotenv_url = self._normalize_grok_video_url(dotenv_url_raw)
         dotenv_model_raw, dotenv_model_source = self._grok_video_dotenv_value("GROK_VIDEO_MODEL")
         dotenv_model = self._normalize_grok_video_model(dotenv_model_raw)
+        dotenv_duration_raw, dotenv_duration_source = self._grok_video_dotenv_value("GROK_VIDEO_DURATION")
+        dotenv_duration = (
+            self._normalize_grok_video_duration(dotenv_duration_raw)
+            if str(dotenv_duration_raw or "").strip()
+            else 0
+        )
+        dotenv_resolution_raw, dotenv_resolution_source = self._grok_video_dotenv_value(
+            "GROK_VIDEO_RESOLUTION"
+        )
+        dotenv_resolution = self._normalize_grok_video_resolution(
+            dotenv_resolution_raw,
+            default="",
+        )
         dotenv_key, dotenv_key_source = self._grok_video_dotenv_value("GROK_API_KEY")
 
         default_url = GROK_VIDEO_ROUTE
         default_model = GROK_VIDEO_MODEL
+        default_duration = GROK_VIDEO_DEFAULT_DURATION
+        default_resolution = GROK_VIDEO_DEFAULT_RESOLUTION
         effective_url = env_url or local_url or dotenv_url or default_url
         effective_model = env_model or local_model or dotenv_model or default_model
+        effective_duration = env_duration or local_duration or dotenv_duration or default_duration
+        effective_resolution = (
+            env_resolution or local_resolution or dotenv_resolution or default_resolution
+        )
         effective_key = env_key or local_key or dotenv_key
+        duration_source = (
+            "环境变量"
+            if env_duration
+            else "本机设置"
+            if local_duration
+            else "Hermes/OpenClaw .env"
+            if dotenv_duration
+            else "默认值"
+        )
+        resolution_source = (
+            "环境变量"
+            if env_resolution
+            else "本机设置"
+            if local_resolution
+            else "Hermes/OpenClaw .env"
+            if dotenv_resolution
+            else "默认值"
+        )
         if require_key and not effective_key:
             return {
                 "url": effective_url,
                 "model": effective_model,
+                "duration": int(effective_duration),
+                "resolution": effective_resolution,
                 "api_key": "",
                 "default_url": default_url,
                 "default_model": default_model,
+                "default_duration": default_duration,
+                "default_resolution": default_resolution,
                 "local_url": local_url,
                 "local_model": local_model,
+                "local_duration": int(local_duration or 0),
+                "local_resolution": local_resolution,
                 "url_source": "环境变量" if env_url else "本机设置" if local_url else "Hermes/OpenClaw .env" if dotenv_url else "默认值",
                 "model_source": "环境变量" if env_model else "本机设置" if local_model else "Hermes/OpenClaw .env" if dotenv_model else "默认值",
+                "duration_source": duration_source,
+                "resolution_source": resolution_source,
                 "key_source": "",
             }
 
         return {
             "url": effective_url,
             "model": effective_model,
+            "duration": int(effective_duration),
+            "resolution": effective_resolution,
             "api_key": effective_key,
             "default_url": default_url,
             "default_model": default_model,
+            "default_duration": default_duration,
+            "default_resolution": default_resolution,
             "local_url": local_url,
             "local_model": local_model,
+            "local_duration": int(local_duration or 0),
+            "local_resolution": local_resolution,
             "url_source": "环境变量" if env_url else "本机设置" if local_url else "Hermes/OpenClaw .env" if dotenv_url else "默认值",
             "model_source": "环境变量" if env_model else "本机设置" if local_model else "Hermes/OpenClaw .env" if dotenv_model else "默认值",
+            "duration_source": duration_source,
+            "resolution_source": resolution_source,
             "key_source": "环境变量" if env_key else "本机设置" if local_key else dotenv_key and "Hermes/OpenClaw .env" or "",
         }
 
@@ -10747,6 +11017,40 @@ class GalleryServer:
             raise
 
         now = int(time.time())
+        metadata = self._load_image_metadata()
+        previous_entry = metadata.get(img_id) if isinstance(metadata.get(img_id), dict) else {}
+        history = self._normalize_video_history(
+            previous_entry.get("video_history"),
+            exclude_filename=destination_name,
+        )
+        if previous_filename and previous_filename != destination_name:
+            archived = self._video_history_item_from_entry(
+                {
+                    **previous_entry,
+                    "video_filename": previous_filename,
+                    "video_prompt": previous_entry.get("video_prompt") or previous.get("video_prompt") or "",
+                    "video_source": previous_entry.get("video_source") or previous.get("video_source") or "",
+                    "video_model": previous_entry.get("video_model") or previous.get("video_model") or "",
+                    "video_resolution": previous_entry.get("video_resolution") or previous.get("video_resolution") or resolution,
+                    "video_aspect_ratio": previous_entry.get("video_aspect_ratio") or previous.get("video_aspect_ratio") or aspect_ratio,
+                    "video_duration": previous_entry.get("video_duration") or previous.get("video_duration"),
+                    "video_width": previous_entry.get("video_width") or previous.get("video_width"),
+                    "video_height": previous_entry.get("video_height") or previous.get("video_height"),
+                    "video_file_size_bytes": previous_entry.get("video_file_size_bytes") or previous.get("video_file_size_bytes"),
+                    "video_created_at": previous_entry.get("video_created_at") or previous.get("video_created_at") or now,
+                    "video_updated_at": previous_entry.get("video_updated_at") or previous.get("video_updated_at") or now,
+                }
+            )
+            if archived and self._video_file_path(previous_filename):
+                history = [archived] + [
+                    item for item in history
+                    if item.get("video_filename") != previous_filename
+                ]
+        overflow = history[MAX_VIDEO_HISTORY:]
+        history = history[:MAX_VIDEO_HISTORY]
+        if overflow:
+            self._delete_video_files(item.get("video_filename") for item in overflow)
+
         payload = self._set_video_metadata(
             img_id,
             {
@@ -10764,20 +11068,9 @@ class GalleryServer:
                 "video_height": info["height"],
                 "video_file_size_bytes": info["file_size_bytes"],
                 "video_created_at": now,
+                "video_history": history,
             },
         )
-        if previous_filename and previous_filename != destination_name:
-            previous_path = self._video_file_path(previous_filename)
-            if previous_path:
-                try:
-                    os.unlink(previous_path)
-                except OSError as exc:
-                    logger.warning(
-                        "Hermes video API cleanup warning: image=%s video=%s error=%s",
-                        img_id,
-                        previous_filename,
-                        exc,
-                    )
         return payload
 
     @staticmethod
@@ -10796,6 +11089,100 @@ class GalleryServer:
         message = (preferred[-1] if preferred else (lines[-1] if lines else "video process failed"))
         return GalleryServer._redact_log_text(message)[:500]
 
+    @classmethod
+    def _user_facing_video_error(cls, message: str) -> str:
+        raw = cls._redact_log_text(str(message or "")).strip()
+        low = raw.lower()
+        if not raw:
+            return "视频生成失败，请稍后重试。"
+        if "自动重试" in raw or "上游繁忙" in raw:
+            return raw
+        if "gallery image is missing" in low:
+            return "原图不存在，无法生成视频。"
+        if "grok_api_key" in low or "invalid_api_key" in low or "401" in low or "unauthorized" in low:
+            return "Grok 视频鉴权失败，请检查 API Key 或 Hermes/OpenClaw .env。"
+        if "403" in low or "forbidden" in low:
+            return "Grok 视频接口拒绝访问，请检查权限或额度。"
+        if "429" in low or "too many requests" in low or "rate limit" in low or "rate_limit" in low:
+            return "Grok 视频请求过于频繁，请稍后再试。"
+        if "internal_error" in low or "500" in low:
+            return "Grok 视频服务暂时异常，请稍后重试。"
+        if any(token in low for token in ("502", "503", "504", "upstream", "overloaded", "temporarily unavailable")):
+            return "Grok 视频上游暂时不可用，请稍后重试。"
+        if "timed out" in low or "timeout" in low:
+            return "视频生成超时，请稍后重试。"
+        if raw.startswith("Input Error:") or "input error:" in low:
+            return "视频输入无效，请检查原图后重试。"
+        if "generate.py not found" in low or "grok-video-gen" in low and "not found" in low:
+            return "未找到本机视频 skill，请检查 Hermes/OpenClaw 安装。"
+        # Avoid dumping raw API payloads into the gallery UI.
+        if raw.startswith("API Error:") or "video task failed" in low or "{'error'" in raw or '{"error"' in raw:
+            return cls._diagnose_error_text(raw)
+        if len(raw) > 120:
+            return cls._diagnose_error_text(raw)
+        return raw
+
+    @classmethod
+    def _is_retryable_video_error(cls, message: str) -> bool:
+        text = str(message or "").strip().lower()
+        if not text:
+            return False
+        non_retryable = (
+            "input error:",
+            "invalid_",
+            "unauthorized",
+            "authentication",
+            "invalid api key",
+            "api key",
+            "permission",
+            "forbidden",
+            "not found",
+            "gallery image is missing",
+            "prompt",
+        )
+        # Auth/config failures should fail fast.
+        if any(token in text for token in ("401", "403", "invalid_api_key", "grok_api_key is not")):
+            return False
+        if text.startswith("input error:"):
+            return False
+        retryable_tokens = (
+            "429",
+            "too many requests",
+            "rate limit",
+            "rate_limit",
+            "internal_error",
+            "temporarily unavailable",
+            "timeout",
+            "timed out",
+            "connection reset",
+            "connection refused",
+            "broken pipe",
+            "502",
+            "503",
+            "504",
+            "500",
+            "upstream",
+            "server error",
+            "try again",
+            "overloaded",
+        )
+        return any(token in text for token in retryable_tokens)
+
+    @staticmethod
+    def _video_retry_delay_seconds(attempt_idx: int, message: str = "") -> float:
+        delays = GROK_VIDEO_RETRY_DELAYS_SECONDS
+        if attempt_idx < 0:
+            return float(delays[0])
+        if attempt_idx >= len(delays):
+            base = float(delays[-1])
+        else:
+            base = float(delays[attempt_idx])
+        text = str(message or "").lower()
+        # Rate-limit errors benefit from a slightly longer backoff.
+        if any(token in text for token in ("429", "too many requests", "rate limit", "rate_limit")):
+            return max(base, base * 1.5)
+        return base
+
     async def _run_image_video_generation(
         self,
         img_id: str,
@@ -10807,117 +11194,9 @@ class GalleryServer:
         job_id: str,
     ) -> None:
         started = time.monotonic()
-        output_path = os.path.join(
-            self.video_dir,
-            f".pending-{job_id}-{uuid.uuid4().hex[:8]}.mp4",
-        )
-        proc = None
-        try:
-            image_path = self._image_file_path(img_id)
-            if not image_path:
-                raise FileNotFoundError("gallery image is missing")
-            script = self._grok_video_script()
-            video_settings = self._effective_grok_video_settings(require_key=True)
-            env = self._grok_video_environment(video_settings)
-            self._set_video_metadata(
-                img_id,
-                {
-                    "video_status": "generating",
-                    "video_prompt": prompt,
-                    "video_error": "",
-                    "video_job_id": job_id,
-                    "video_source": "gallery",
-                    "video_model": video_settings["model"],
-                    "video_resolution": resolution,
-                    "video_aspect_ratio": aspect_ratio,
-                },
-            )
-            logger.info(
-                "Hermes video API call started: request=%s image=%s route=%s model=%s "
-                "prompt_chars=%s duration=%s resolution=%s aspect_ratio=%s",
-                job_id,
-                img_id,
-                video_settings["url"],
-                video_settings["model"],
-                len(prompt),
-                duration,
-                resolution,
-                aspect_ratio,
-            )
-            proc = await asyncio.create_subprocess_exec(
-                self._python_executable(),
-                script,
-                "--prompt",
-                prompt,
-                "--image",
-                image_path,
-                "--output",
-                output_path,
-                "--duration",
-                str(duration),
-                "--aspect-ratio",
-                aspect_ratio,
-                "--resolution",
-                resolution,
-                "--skip-gallery-register",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=os.path.dirname(script),
-                env=env,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=GROK_VIDEO_TIMEOUT_SECONDS,
-            )
-            if proc.returncode != 0:
-                raise RuntimeError(self._video_process_error(stdout, stderr))
-            payload = await asyncio.to_thread(
-                self._store_ready_video,
-                img_id,
-                output_path,
-                prompt=prompt,
-                source="gallery",
-                resolution=resolution,
-                aspect_ratio=aspect_ratio,
-                video_model=video_settings["model"],
-                move_source=True,
-            )
-            logger.info(
-                "Hermes video API call succeeded: request=%s image=%s video=%s "
-                "elapsed=%.2fs duration=%s size=%s",
-                job_id,
-                img_id,
-                payload.get("video_filename", ""),
-                time.monotonic() - started,
-                payload.get("video_duration", ""),
-                payload.get("video_file_size_bytes", ""),
-            )
-        except asyncio.CancelledError:
-            if proc and proc.returncode is None:
-                proc.kill()
-                await proc.wait()
-            raise
-        except asyncio.TimeoutError:
-            if proc and proc.returncode is None:
-                proc.kill()
-                await proc.wait()
-            message = f"Grok 视频生成等待超过 {GROK_VIDEO_TIMEOUT_SECONDS // 60} 分钟。"
-            self._set_video_metadata(
-                img_id,
-                {
-                    "video_status": "error",
-                    "video_error": message,
-                    "video_job_id": job_id,
-                },
-            )
-            logger.error(
-                "Hermes video API call failed: request=%s image=%s stage=timeout error=%s",
-                job_id,
-                img_id,
-                message,
-            )
-        except Exception as exc:
-            message = self._redact_log_text(str(exc) or "video generation failed")[:500]
+        image_path = self._image_file_path(img_id)
+        if not image_path:
+            message = self._user_facing_video_error("gallery image is missing")
             self._set_video_metadata(
                 img_id,
                 {
@@ -10932,12 +11211,237 @@ class GalleryServer:
                 img_id,
                 message,
             )
-        finally:
+            return
+
+        try:
+            script = self._grok_video_script()
+            video_settings = self._effective_grok_video_settings(require_key=True)
+            env = self._grok_video_environment(video_settings)
+        except Exception as exc:
+            raw_message = self._redact_log_text(str(exc) or "video generation failed")[:500]
+            message = self._user_facing_video_error(raw_message)
+            self._set_video_metadata(
+                img_id,
+                {
+                    "video_status": "error",
+                    "video_error": message,
+                    "video_job_id": job_id,
+                },
+            )
+            logger.error(
+                "Hermes video API call failed: request=%s image=%s stage=generate error=%s",
+                job_id,
+                img_id,
+                raw_message,
+            )
+            return
+
+        api_duration = self._grok_api_duration(duration)
+        attempts = max(1, int(GROK_VIDEO_RETRY_ATTEMPTS))
+        last_message = ""
+
+        self._set_video_metadata(
+            img_id,
+            {
+                "video_status": "generating",
+                "video_prompt": prompt,
+                "video_error": "",
+                "video_job_id": job_id,
+                "video_source": "gallery",
+                "video_model": video_settings["model"],
+                "video_resolution": resolution,
+                "video_aspect_ratio": aspect_ratio,
+            },
+        )
+
+        for attempt_idx in range(attempts):
+            attempt_no = attempt_idx + 1
+            output_path = os.path.join(
+                self.video_dir,
+                f".pending-{job_id}-{attempt_no}-{uuid.uuid4().hex[:8]}.mp4",
+            )
+            proc = None
             try:
-                if os.path.exists(output_path):
-                    os.unlink(output_path)
-            except OSError:
-                pass
+                if attempt_idx:
+                    delay = self._video_retry_delay_seconds(attempt_idx - 1, last_message)
+                    logger.warning(
+                        "Hermes video API call retrying: request=%s image=%s attempt=%s/%s "
+                        "delay=%.1fs error=%s",
+                        job_id,
+                        img_id,
+                        attempt_no,
+                        attempts,
+                        delay,
+                        last_message,
+                    )
+                    self._set_video_metadata(
+                        img_id,
+                        {
+                            "video_status": "generating",
+                            "video_error": (
+                                f"上游繁忙，{delay:.0f}s 后自动重试（{attempt_no}/{attempts}）…"
+                            ),
+                            "video_job_id": job_id,
+                        },
+                    )
+                    await asyncio.sleep(delay)
+
+                logger.info(
+                    "Hermes video API call started: request=%s image=%s route=%s model=%s "
+                    "prompt_chars=%s duration=%s api_duration=%s resolution=%s aspect_ratio=%s "
+                    "attempt=%s/%s",
+                    job_id,
+                    img_id,
+                    video_settings["url"],
+                    video_settings["model"],
+                    len(prompt),
+                    duration,
+                    api_duration,
+                    resolution,
+                    aspect_ratio,
+                    attempt_no,
+                    attempts,
+                )
+                self._set_video_metadata(
+                    img_id,
+                    {
+                        "video_status": "generating",
+                        "video_error": (
+                            ""
+                            if attempt_no == 1
+                            else f"正在自动重试（{attempt_no}/{attempts}）…"
+                        ),
+                        "video_job_id": job_id,
+                    },
+                )
+                proc = await asyncio.create_subprocess_exec(
+                    self._python_executable(),
+                    script,
+                    "--prompt",
+                    prompt,
+                    "--image",
+                    image_path,
+                    "--output",
+                    output_path,
+                    "--duration",
+                    str(api_duration),
+                    "--aspect-ratio",
+                    aspect_ratio,
+                    "--resolution",
+                    resolution,
+                    "--skip-gallery-register",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=os.path.dirname(script),
+                    env=env,
+                )
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(),
+                    timeout=GROK_VIDEO_TIMEOUT_SECONDS,
+                )
+                if proc.returncode != 0:
+                    raise RuntimeError(self._video_process_error(stdout, stderr))
+                payload = await asyncio.to_thread(
+                    self._store_ready_video,
+                    img_id,
+                    output_path,
+                    prompt=prompt,
+                    source="gallery",
+                    resolution=resolution,
+                    aspect_ratio=aspect_ratio,
+                    video_model=video_settings["model"],
+                    move_source=True,
+                )
+                logger.info(
+                    "Hermes video API call succeeded: request=%s image=%s video=%s "
+                    "elapsed=%.2fs duration=%s size=%s attempt=%s/%s",
+                    job_id,
+                    img_id,
+                    payload.get("video_filename", ""),
+                    time.monotonic() - started,
+                    payload.get("video_duration", ""),
+                    payload.get("video_file_size_bytes", ""),
+                    attempt_no,
+                    attempts,
+                )
+                return
+            except asyncio.CancelledError:
+                if proc and proc.returncode is None:
+                    proc.kill()
+                    await proc.wait()
+                raise
+            except asyncio.TimeoutError:
+                if proc and proc.returncode is None:
+                    proc.kill()
+                    await proc.wait()
+                last_message = f"Grok 视频生成等待超过 {GROK_VIDEO_TIMEOUT_SECONDS // 60} 分钟。"
+                retryable = attempt_no < attempts
+            except Exception as exc:
+                if proc and proc.returncode is None:
+                    try:
+                        proc.kill()
+                        await proc.wait()
+                    except Exception:
+                        pass
+                last_message = self._redact_log_text(str(exc) or "video generation failed")[:500]
+                retryable = attempt_no < attempts and self._is_retryable_video_error(last_message)
+            finally:
+                try:
+                    if os.path.exists(output_path):
+                        os.unlink(output_path)
+                except OSError:
+                    pass
+
+            if retryable:
+                logger.warning(
+                    "Hermes video API call failed: request=%s image=%s stage=generate "
+                    "attempt=%s/%s retryable=true error=%s",
+                    job_id,
+                    img_id,
+                    attempt_no,
+                    attempts,
+                    last_message,
+                )
+                continue
+
+            user_message = self._user_facing_video_error(last_message)
+            self._set_video_metadata(
+                img_id,
+                {
+                    "video_status": "error",
+                    "video_error": user_message,
+                    "video_job_id": job_id,
+                },
+            )
+            logger.error(
+                "Hermes video API call failed: request=%s image=%s stage=generate "
+                "attempt=%s/%s retryable=false error=%s",
+                job_id,
+                img_id,
+                attempt_no,
+                attempts,
+                last_message,
+            )
+            return
+
+        user_message = self._user_facing_video_error(last_message or "video generation failed")
+        self._set_video_metadata(
+            img_id,
+            {
+                "video_status": "error",
+                "video_error": user_message,
+                "video_job_id": job_id,
+            },
+        )
+        logger.error(
+            "Hermes video API call failed: request=%s image=%s stage=generate "
+            "attempt=%s/%s retryable=false error=%s",
+            job_id,
+            img_id,
+            attempts,
+            attempts,
+            last_message or "video generation failed",
+        )
 
     def _video_task_finished(self, img_id: str, task: asyncio.Task) -> None:
         if self._video_generation_tasks.get(img_id) is task:
@@ -10978,13 +11482,32 @@ class GalleryServer:
                 },
                 status=400,
             )
-        resolution = str(body.get("resolution") or "480p").strip().lower()
-        if resolution not in {"480p", "720p"}:
-            return web.json_response({"error": "invalid_resolution"}, status=400)
+        video_defaults = self._effective_grok_video_settings()
+        raw_resolution = body.get("resolution")
+        if raw_resolution is None or str(raw_resolution).strip() == "":
+            resolution = video_defaults["resolution"]
+        else:
+            resolution = self._normalize_grok_video_resolution(raw_resolution, default="")
+            if not resolution:
+                return web.json_response({"error": "invalid_resolution"}, status=400)
         aspect_ratio = str(body.get("aspect_ratio") or "auto").strip().lower()
         if aspect_ratio not in {"auto", "1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3"}:
             return web.json_response({"error": "invalid_aspect_ratio"}, status=400)
-        duration = 6
+        if "duration" not in body or str(body.get("duration") or "").strip() == "":
+            duration = int(video_defaults["duration"])
+        else:
+            try:
+                duration = int(body.get("duration"))
+            except (TypeError, ValueError):
+                return web.json_response({"error": "invalid_duration"}, status=400)
+            if duration not in GROK_VIDEO_DURATION_OPTIONS:
+                return web.json_response(
+                    {
+                        "error": "invalid_duration",
+                        "message": "视频秒数仅支持 5-15 秒。",
+                    },
+                    status=400,
+                )
         current_task = self._video_generation_tasks.get(img_id)
         if current_task and not current_task.done():
             return web.json_response(
@@ -11075,9 +11598,9 @@ class GalleryServer:
             )
         prompt = re.sub(r"\s+", " ", str(body.get("prompt") or "")).strip()
         prompt = prompt[:MAX_VIDEO_PROMPT_CHARS]
-        resolution = str(body.get("resolution") or "480p").strip().lower()
-        if resolution not in {"480p", "720p"}:
-            resolution = "480p"
+        resolution = self._normalize_grok_video_resolution(
+            body.get("resolution") or self._effective_grok_video_settings()["resolution"]
+        )
         aspect_ratio = str(body.get("aspect_ratio") or "auto").strip().lower()
         source = str(body.get("source") or "hermes_skill").strip()[:80] or "hermes_skill"
         request_id = uuid.uuid4().hex

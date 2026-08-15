@@ -163,12 +163,198 @@ class VideoGenerationEndpointTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn("服务重启", stored["video_error"])
 
 
+    async def test_new_video_archives_previous_instead_of_deleting(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            filename = self._register_image(server)
+
+            first = root / "first.mp4"
+            second = root / "second.mp4"
+            first.write_bytes(b"first-video")
+            second.write_bytes(b"second-video")
+
+            async def register(client, source, prompt, resolution, duration):
+                with patch.object(
+                    server,
+                    "_allowed_video_import_path",
+                    return_value=str(source),
+                ), patch.object(
+                    server,
+                    "_probe_video_file",
+                    return_value={
+                        "duration": duration,
+                        "width": 720 if resolution == "720p" else 480,
+                        "height": 1280 if resolution == "720p" else 720,
+                        "codec": "h264",
+                        "file_size_bytes": source.stat().st_size,
+                    },
+                ):
+                    response = await client.post(
+                        f"/api/images/{filename}/video/register",
+                        json={
+                            "source_path": str(source),
+                            "prompt": prompt,
+                            "resolution": resolution,
+                            "aspect_ratio": "auto",
+                            "source": "hermes_skill",
+                        },
+                    )
+                    return response, await response.json()
+
+            test_server = TestServer(server.app)
+            await test_server.start_server(access_log=None)
+            client = TestClient(test_server)
+            try:
+                first_response, first_payload = await register(
+                    client, first, "第一次", "480p", 5.0
+                )
+                second_response, second_payload = await register(
+                    client, second, "第二次", "720p", 10.0
+                )
+                status_response = await client.get(f"/api/images/{filename}/video")
+                status_payload = await status_response.json()
+                first_video_response = await client.get(first_payload["video_url"])
+                first_video_bytes = await first_video_response.read()
+                second_video_response = await client.get(second_payload["video_url"])
+                second_video_bytes = await second_video_response.read()
+            finally:
+                await client.close()
+
+            self.assertEqual(201, first_response.status, first_payload)
+            self.assertEqual(201, second_response.status, second_payload)
+            self.assertEqual("ready", second_payload["video_status"])
+            self.assertEqual(second_payload["video_filename"], status_payload["video_filename"])
+            self.assertEqual(1, status_payload["video_history_count"])
+            self.assertTrue(status_payload["has_video_history"])
+            self.assertEqual(
+                first_payload["video_filename"],
+                status_payload["video_history"][0]["video_filename"],
+            )
+            self.assertEqual("第一次", status_payload["video_history"][0]["video_prompt"])
+            self.assertEqual(200, first_video_response.status)
+            self.assertEqual(b"first-video", first_video_bytes)
+            self.assertEqual(200, second_video_response.status)
+            self.assertEqual(b"second-video", second_video_bytes)
+
+            stored = ImageMetadataStore(server.data_dir).load()[filename]
+            self.assertEqual(1, len(stored.get("video_history") or []))
+            self.assertEqual(first_payload["video_filename"], stored["video_history"][0]["video_filename"])
+
+    async def test_video_generation_retries_retryable_failures(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            filename = self._register_image(server)
+            script = root / "fake_generate.py"
+            script.write_text("# fake\n", encoding="utf-8")
+            calls = {"count": 0}
+            states = []
+            output_path = {"value": ""}
+
+            class FakeFailProc:
+                returncode = 1
+                async def communicate(self):
+                    return (
+                        b"",
+                        b"API Error: video task failed: internal_error 429 Too many requests",
+                    )
+                def kill(self):
+                    return None
+                async def wait(self):
+                    return 1
+
+            class FakeOkProc:
+                returncode = 0
+                async def communicate(self):
+                    Path(output_path["value"]).write_bytes(b"ok-mp4")
+                    return b"ok", b""
+                def kill(self):
+                    return None
+                async def wait(self):
+                    return 0
+
+            async def fake_exec(*args, **kwargs):
+                calls["count"] += 1
+                args_list = list(args)
+                if "--output" in args_list:
+                    output_path["value"] = args_list[args_list.index("--output") + 1]
+                if calls["count"] == 1:
+                    return FakeFailProc()
+                return FakeOkProc()
+
+            original_set = server._set_video_metadata
+
+            def tracking_set(img_id, values):
+                states.append(dict(values))
+                return original_set(img_id, values)
+
+            async def immediate_sleep(_delay):
+                return None
+
+            async def immediate_wait_for(coro, timeout=None):
+                return await coro
+
+            with patch.object(server, "_grok_video_script", return_value=str(script)), patch.object(
+                server,
+                "_effective_grok_video_settings",
+                return_value={
+                    "url": "http://127.0.0.1:8100",
+                    "model": "grok-imagine-video",
+                    "api_key": "secret",
+                },
+            ), patch.object(
+                server,
+                "_grok_video_environment",
+                return_value={"GROK_API_KEY": "secret"},
+            ), patch.object(
+                server,
+                "_python_executable",
+                return_value="python3",
+            ), patch.object(
+                server,
+                "_set_video_metadata",
+                side_effect=tracking_set,
+            ), patch.object(
+                server,
+                "_store_ready_video",
+                return_value={
+                    "video_filename": "ok.mp4",
+                    "video_duration": 5.0,
+                    "video_file_size_bytes": 12,
+                },
+            ), patch(
+                "web_server.asyncio.create_subprocess_exec",
+                side_effect=fake_exec,
+            ), patch(
+                "web_server.asyncio.sleep",
+                side_effect=immediate_sleep,
+            ), patch(
+                "web_server.asyncio.wait_for",
+                side_effect=immediate_wait_for,
+            ):
+                await server._run_image_video_generation(
+                    filename,
+                    "轻微点头",
+                    duration=5,
+                    resolution="480p",
+                    aspect_ratio="auto",
+                    job_id="job-retry-1",
+                )
+
+            self.assertEqual(2, calls["count"])
+            self.assertTrue(any("自动重试" in str(item.get("video_error") or "") for item in states))
+
+
+
 class VideoGenerationHelpersTest(unittest.TestCase):
     def test_grok_video_settings_follow_environment_local_dotenv_default_priority(self):
         server = GalleryServer.__new__(GalleryServer)
         dotenv_values = {
             "GROK2API_URL": ("https://dotenv.example", "/tmp/hermes.env"),
             "GROK_VIDEO_MODEL": ("dotenv-video-model", "/tmp/hermes.env"),
+            "GROK_VIDEO_DURATION": ("10", "/tmp/hermes.env"),
+            "GROK_VIDEO_RESOLUTION": ("720p", "/tmp/hermes.env"),
             "GROK_API_KEY": ("dotenv-secret", "/tmp/hermes.env"),
         }
 
@@ -180,6 +366,8 @@ class VideoGenerationHelpersTest(unittest.TestCase):
             {
                 "GROK2API_URL": "",
                 "GROK_VIDEO_MODEL": "",
+                "GROK_VIDEO_DURATION": "",
+                "GROK_VIDEO_RESOLUTION": "",
                 "GROK_API_KEY": "",
             },
             clear=False,
@@ -188,15 +376,21 @@ class VideoGenerationHelpersTest(unittest.TestCase):
                 {
                     "grok_video_url": "https://local.example",
                     "grok_video_model": "local-video-model",
+                    "grok_video_duration": 10,
+                    "grok_video_resolution": "480p",
                     "grok_api_key": "local-secret",
                 }
             )
 
         self.assertEqual("https://local.example", dotenv_settings["url"])
         self.assertEqual("local-video-model", dotenv_settings["model"])
+        self.assertEqual(10, dotenv_settings["duration"])
+        self.assertEqual("480p", dotenv_settings["resolution"])
         self.assertEqual("local-secret", dotenv_settings["api_key"])
         self.assertEqual("本机设置", dotenv_settings["url_source"])
         self.assertEqual("本机设置", dotenv_settings["model_source"])
+        self.assertEqual("本机设置", dotenv_settings["duration_source"])
+        self.assertEqual("本机设置", dotenv_settings["resolution_source"])
         self.assertEqual("本机设置", dotenv_settings["key_source"])
 
         with patch.object(server, "_grok_video_dotenv_value", side_effect=dotenv_value), patch.dict(
@@ -204,6 +398,8 @@ class VideoGenerationHelpersTest(unittest.TestCase):
             {
                 "GROK2API_URL": "https://env.example",
                 "GROK_VIDEO_MODEL": "env-video-model",
+                "GROK_VIDEO_DURATION": "15",
+                "GROK_VIDEO_RESOLUTION": "720p",
                 "GROK_API_KEY": "env-secret",
             },
             clear=False,
@@ -212,15 +408,21 @@ class VideoGenerationHelpersTest(unittest.TestCase):
                 {
                     "grok_video_url": "https://local.example",
                     "grok_video_model": "local-video-model",
+                    "grok_video_duration": 10,
+                    "grok_video_resolution": "480p",
                     "grok_api_key": "local-secret",
                 }
             )
 
         self.assertEqual("https://env.example", env_settings["url"])
         self.assertEqual("env-video-model", env_settings["model"])
+        self.assertEqual(15, env_settings["duration"])
+        self.assertEqual("720p", env_settings["resolution"])
         self.assertEqual("env-secret", env_settings["api_key"])
         self.assertEqual("环境变量", env_settings["url_source"])
         self.assertEqual("环境变量", env_settings["model_source"])
+        self.assertEqual("环境变量", env_settings["duration_source"])
+        self.assertEqual("环境变量", env_settings["resolution_source"])
         self.assertEqual("环境变量", env_settings["key_source"])
 
         with patch.object(server, "_grok_video_dotenv_value", side_effect=dotenv_value), patch.dict(
@@ -228,6 +430,8 @@ class VideoGenerationHelpersTest(unittest.TestCase):
             {
                 "GROK2API_URL": "",
                 "GROK_VIDEO_MODEL": "",
+                "GROK_VIDEO_DURATION": "",
+                "GROK_VIDEO_RESOLUTION": "",
                 "GROK_API_KEY": "",
             },
             clear=False,
@@ -236,9 +440,13 @@ class VideoGenerationHelpersTest(unittest.TestCase):
 
         self.assertEqual("https://dotenv.example", dotenv_only["url"])
         self.assertEqual("dotenv-video-model", dotenv_only["model"])
+        self.assertEqual(10, dotenv_only["duration"])
+        self.assertEqual("720p", dotenv_only["resolution"])
         self.assertEqual("dotenv-secret", dotenv_only["api_key"])
         self.assertEqual("Hermes/OpenClaw .env", dotenv_only["url_source"])
         self.assertEqual("Hermes/OpenClaw .env", dotenv_only["model_source"])
+        self.assertEqual("Hermes/OpenClaw .env", dotenv_only["duration_source"])
+        self.assertEqual("Hermes/OpenClaw .env", dotenv_only["resolution_source"])
         self.assertEqual("Hermes/OpenClaw .env", dotenv_only["key_source"])
 
     def test_grok_environment_uses_existing_process_secret_without_logging_it(self):
@@ -295,6 +503,32 @@ class VideoGenerationHelpersTest(unittest.TestCase):
         self.assertIn("仅支持 gptimage 或 gitee", engine_entry["message"])
         self.assertNotEqual(prompt_entry["message"], engine_entry["message"])
 
+
+
+    def test_user_facing_video_error_hides_raw_api_payload(self):
+        raw = (
+            "API Error: video task failed: {'error': {'code': 'internal_error', "
+            "'message': 'Console 媒体上游返回 429: Too many requests for team ...'}}"
+        )
+        message = GalleryServer._user_facing_video_error(raw)
+        self.assertNotIn("API Error", message)
+        self.assertNotIn("internal_error", message)
+        self.assertNotIn("team", message)
+        self.assertTrue("频繁" in message or "稍后" in message)
+
+    def test_retryable_video_errors_cover_rate_limit_and_internal(self):
+        self.assertTrue(
+            GalleryServer._is_retryable_video_error(
+                "API Error: video task failed: {'error': {'code': 'internal_error', "
+                "'message': 'Console 媒体上游返回 429: Too many requests'}}"
+            )
+        )
+        self.assertTrue(GalleryServer._is_retryable_video_error("Timed out waiting for video task."))
+        self.assertTrue(GalleryServer._is_retryable_video_error("API Error: HTTP 503: upstream"))
+        self.assertFalse(GalleryServer._is_retryable_video_error("API Error: HTTP 401 Unauthorized"))
+        self.assertFalse(GalleryServer._is_retryable_video_error("Input Error: image missing"))
+        self.assertGreaterEqual(GalleryServer._video_retry_delay_seconds(0, "429 too many requests"), 8)
+
     def test_hermes_video_failure_exposes_8100_auth_diagnosis(self):
         message = GalleryServer._translate_log_message(
             "Hermes video API call failed: request=video123456 image=hermes.png "
@@ -312,7 +546,7 @@ class VideoGenerationHelpersTest(unittest.TestCase):
 
         self.assertIn('id="modalVideo"', html)
         self.assertIn("generateVideoFromModal(event)", html)
-        self.assertIn("<video controls playsinline", html)
+        self.assertIn('id="videoPlayCardPlayer" controls playsinline', html)
         skill_script = (
             Path.home()
             / ".hermes"
@@ -332,7 +566,34 @@ class VideoGenerationHelpersTest(unittest.TestCase):
         self.assertIn('id="skVideoGroupTitle"', html)
         self.assertIn('id="skGrokVideoUrl"', html)
         self.assertIn('id="skGrokVideoModel"', html)
-        self.assertIn('id="skGrokApiKey"', html)
+        self.assertNotIn('id="skGrokApiKey"', html)
+        self.assertNotIn('Grok API Key', html)
+        self.assertIn('id="skGrokVideoDuration"', html)
+        self.assertIn('id="skGrokVideoResolution"', html)
+        self.assertIn("body.grok_video_duration", html)
+        self.assertIn("body.grok_video_resolution", html)
+        self.assertIn("cachedGrokVideoDefaults", html)
+        self.assertIn("modal-video-history", html)
+        self.assertIn("modal-video-stage", html)
+        self.assertIn("modal-video-history-empty", html)
+        self.assertIn("aspect-ratio:3/4", html)
+        self.assertIn("openVideoHistory", html)
+        self.assertIn("videoHistoryOverlay", html)
+        self.assertIn("modal-video-side", html)
+        self.assertIn(">重新生成</span>", html)
+        self.assertIn("118px", html)
+        self.assertIn("playModalHistoryVideo", html)
+        self.assertIn("entry.video_error", html)
+        self.assertIn("formatModalVideoMessage", html)
+        self.assertIn("height:220px", html)
+        self.assertIn("video-play-overlay", html)
+        self.assertIn("playModalVideoPreview", html)
+        self.assertIn("modal-video-player-preview", html)
+        self.assertIn("object-fit:contain", html)
+        self.assertIn("object-fit:cover", html)
+        self.assertIn("align-items:start", html)
+        self.assertIn("GROK_VIDEO_DURATION_OPTIONS = [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]", html)
+        self.assertIn("可选 5-15 秒", html)
         self.assertIn('class="sk-gpt-option-grid"', html)
         self.assertGreaterEqual(html.count("sk-engine-grid--three"), 3)
         self.assertIn('class="sk-field sk-engine-option-field"', html)
@@ -368,6 +629,8 @@ class VideoConfigurationEndpointTest(unittest.IsolatedAsyncioTestCase):
                         "GALLERY_PASSWORD": "",
                         "GROK2API_URL": "",
                         "GROK_VIDEO_MODEL": "",
+                        "GROK_VIDEO_DURATION": "",
+                        "GROK_VIDEO_RESOLUTION": "",
                         "GROK_API_KEY": "",
                     },
                     clear=False,
@@ -379,6 +642,8 @@ class VideoConfigurationEndpointTest(unittest.IsolatedAsyncioTestCase):
                         json={
                             "grok_video_url": "https://video.example/v1",
                             "grok_video_model": "grok-imagine-video",
+                            "grok_video_duration": 10,
+                            "grok_video_resolution": "720p",
                             "grok_api_key": "video-secret",
                         },
                     )
@@ -391,13 +656,23 @@ class VideoConfigurationEndpointTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(200, initial_response.status)
             self.assertEqual("http://127.0.0.1:8100", initial["grok_video_url"])
             self.assertEqual("grok-imagine-video", initial["grok_video_model"])
-            self.assertFalse(initial["grok_video_configured"])
+            self.assertEqual(5, initial["grok_video_duration"])
+            self.assertEqual("720p", initial["grok_video_resolution"])
+            self.assertEqual(list(range(5, 16)), initial["grok_video_duration_options"])
+            self.assertEqual(["480p", "720p"], initial["grok_video_resolution_options"])
+            self.assertTrue(initial["grok_video_configured"])
+            self.assertFalse(initial["grok_video_api_key_configured"])
             self.assertEqual(200, save_response.status, saved)
             self.assertTrue(saved.get("success"))
             self.assertEqual(200, current_response.status)
             self.assertEqual("https://video.example", current["grok_video_url"])
             self.assertEqual("grok-imagine-video", current["grok_video_model"])
+            self.assertEqual(10, current["grok_video_duration"])
+            self.assertEqual("720p", current["grok_video_resolution"])
+            self.assertEqual("本机设置", current["grok_video_duration_source"])
+            self.assertEqual("本机设置", current["grok_video_resolution_source"])
             self.assertTrue(current["grok_video_configured"])
+            self.assertTrue(current["grok_video_api_key_configured"])
             self.assertTrue(current["grok_api_key"])
             self.assertNotEqual("video-secret", current["grok_api_key"])
 
@@ -406,7 +681,69 @@ class VideoConfigurationEndpointTest(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual("https://video.example", stored["grok_video_url"])
             self.assertEqual("grok-imagine-video", stored["grok_video_model"])
+            self.assertEqual(10, stored["grok_video_duration"])
+            self.assertEqual("720p", stored["grok_video_resolution"])
             self.assertEqual("video-secret", stored["grok_api_key"])
+
+
+    async def test_video_generation_uses_configured_duration_and_resolution_defaults(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server = self._make_server(Path(tmpdir))
+            filename = VideoGenerationEndpointTest._register_image(server, "clip.png")
+            keys_path = Path(server.data_dir) / "api_keys_config.json"
+            keys_path.write_text(
+                json.dumps(
+                    {
+                        "grok_video_duration": 15,
+                        "grok_video_resolution": "720p",
+                        "grok_api_key": "video-secret",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            captured = {}
+
+            async def fake_run(img_id, prompt, *, duration, resolution, aspect_ratio, job_id):
+                captured.update(
+                    {
+                        "img_id": img_id,
+                        "prompt": prompt,
+                        "duration": duration,
+                        "resolution": resolution,
+                        "aspect_ratio": aspect_ratio,
+                        "job_id": job_id,
+                    }
+                )
+
+            test_server = TestServer(server.app)
+            await test_server.start_server(access_log=None)
+            client = TestClient(test_server)
+            try:
+                with patch.object(server, "_run_image_video_generation", side_effect=fake_run), patch.dict(
+                    os.environ,
+                    {
+                        "GALLERY_PASSWORD": "",
+                        "GROK2API_URL": "",
+                        "GROK_VIDEO_MODEL": "",
+                        "GROK_VIDEO_DURATION": "",
+                        "GROK_VIDEO_RESOLUTION": "",
+                        "GROK_API_KEY": "",
+                    },
+                    clear=False,
+                ):
+                    response = await client.post(
+                        f"/api/images/{filename}/video",
+                        json={"prompt": "轻微点头"},
+                    )
+                    payload = await response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(202, response.status, payload)
+            self.assertEqual(15, captured["duration"])
+            self.assertEqual("720p", captured["resolution"])
+            self.assertEqual("720p", payload["video_resolution"])
 
 
 if __name__ == "__main__":

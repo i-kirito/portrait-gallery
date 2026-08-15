@@ -253,6 +253,7 @@ class GalleryPaginationFrontendContractTest(unittest.TestCase):
         self.assertIn("new IntersectionObserver", html)
         self.assertIn("rootMargin: '320px 0px'", html)
         self.assertIn("loadMoreGallery(entry.target)", html)
+        self.assertIn("getGalleryPageSize(4)", html)
         self.assertIn("window.addEventListener('scroll', maybeAutoLoadGallery", html)
         self.assertIn("function scheduleGalleryLoadMoreRetry()", html)
         self.assertIn("galleryNextCursor !== previousCursor", html)

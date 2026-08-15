@@ -499,6 +499,13 @@ textarea:focus-visible,
 .sk-engine-grid--three {
   grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.96fr) minmax(0, 1fr);
 }
+.sk-engine-grid--video-main {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.sk-engine-grid--video-options {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 14px;
+}
 .sk-engine-grid > .sk-field-wide {
   grid-column: 1 / -1;
 }
@@ -567,6 +574,10 @@ textarea:focus-visible,
   .sk-engine-grid--three > .sk-engine-option-field,
   .sk-engine-group--video .sk-engine-grid--three > .sk-field:last-child {
     grid-column: 1 / -1;
+  }
+  .sk-engine-grid--video-main,
+  .sk-engine-grid--video-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 @media (max-width: 720px) {
@@ -1423,6 +1434,14 @@ textarea:focus-visible,
 }
 .sk-switch input:checked + .sk-switch-knob::after {
   transform: translateX(18px);
+}
+#skLlmStreamRow .sk-switch input:checked + .sk-switch-knob {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28);
+}
+#skLlmStreamRow .sk-switch input:checked + .sk-switch-knob::after {
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.24);
 }
 .sk-toggle {
   display: flex;
@@ -8525,7 +8544,7 @@ textarea:focus-visible,
             </div>
             <span class="sk-engine-group-status" id="skGrokVideoGroupStatus">加载中...</span>
           </div>
-          <div class="sk-engine-grid sk-engine-grid--three">
+          <div class="sk-engine-grid sk-engine-grid--video-main">
             <div class="sk-field">
               <label for="skGrokVideoUrl">Grok2API 地址</label>
               <div class="sk-desc">例如 http://127.0.0.1:8100</div>
@@ -8538,11 +8557,22 @@ textarea:focus-visible,
               <input type="text" id="skGrokVideoModel" placeholder="默认：grok-imagine-video" autocomplete="off" oninput="markGrokVideoInputEdited(this)">
               <div class="sk-status" id="skGrokVideoModelStatus">加载中...</div>
             </div>
+          </div>
+          <div class="sk-engine-grid sk-engine-grid--video-options">
             <div class="sk-field">
-              <label for="skGrokApiKey">Grok API Key</label>
-              <div class="sk-desc">视频 skill 的认证密钥；留空则继续使用环境变量或 Hermes/OpenClaw .env</div>
-              <input type="password" id="skGrokApiKey" placeholder="输入新密钥（留空则不修改）" autocomplete="new-password" oninput="markGrokVideoInputEdited(this)">
-              <div class="sk-status" id="skGrokApiKeyStatus">加载中...</div>
+              <label for="skGrokVideoDuration">视频秒数</label>
+              <div class="sk-desc">可选 5-15 秒；生成视频时默认使用这里的设置</div>
+              <select id="skGrokVideoDuration" onchange="markGrokVideoInputEdited(this)"></select>
+              <div class="sk-status" id="skGrokVideoDurationStatus">加载中...</div>
+            </div>
+            <div class="sk-field">
+              <label for="skGrokVideoResolution">分辨率</label>
+              <div class="sk-desc">可选 480p 或 720p；生成视频时默认使用这里的设置</div>
+              <select id="skGrokVideoResolution" onchange="markGrokVideoInputEdited(this)">
+                <option value="480p">480p</option>
+                <option value="720p">720p</option>
+              </select>
+              <div class="sk-status" id="skGrokVideoResolutionStatus">加载中...</div>
             </div>
           </div>
         </section>
@@ -9107,6 +9137,7 @@ function closeAccessibleDialog(overlay) {
   else if (overlay.id === 'promptOverlay') closePrompt();
   else if (overlay.id === 'liveLogOverlay') closeLiveLogs();
   else if (overlay.id === 'imageVersionOverlay') closeImageVersions();
+  else if (overlay.id === 'videoHistoryOverlay') closeVideoHistory();
   else if (overlay.id === 'wardrobeVersionOverlay') closeWardrobeVersions();
   else if (overlay.id === 'modalOverlay') closeModal();
   else if (overlay.id === 'deleteConfirmOverlay') closeDeleteConfirm(false);
@@ -9258,7 +9289,105 @@ function updateText(id, value) {
   if (el) el.textContent = value;
 }
 
+const DEFAULT_GROK_VIDEO_DURATION = 5;
+const DEFAULT_GROK_VIDEO_RESOLUTION = "720p";
+const GROK_VIDEO_DURATION_OPTIONS = [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+const GROK_VIDEO_RESOLUTION_OPTIONS = ["480p", "720p"];
+let cachedGrokVideoDefaults = {
+  duration: DEFAULT_GROK_VIDEO_DURATION,
+  resolution: DEFAULT_GROK_VIDEO_RESOLUTION
+};
+
+function ensureGrokVideoSelectOptions(selectEl, options, formatter) {
+  if (!selectEl) return;
+  const values = Array.isArray(options) && options.length ? options : [];
+  const current = Array.from(selectEl.options).map(option => option.value);
+  const next = values.map(value => String(value));
+  if (current.length === next.length && current.every((value, index) => value === next[index])) {
+    return;
+  }
+  selectEl.innerHTML = "";
+  next.forEach(value => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = typeof formatter === "function" ? formatter(value) : value;
+    selectEl.appendChild(option);
+  });
+}
+
+function fillGrokVideoOptionControls(data = {}) {
+  const durationEl = document.getElementById("skGrokVideoDuration");
+  const resolutionEl = document.getElementById("skGrokVideoResolution");
+  const durationOptions = Array.isArray(data.grok_video_duration_options) && data.grok_video_duration_options.length
+    ? data.grok_video_duration_options
+    : GROK_VIDEO_DURATION_OPTIONS;
+  const resolutionOptions = Array.isArray(data.grok_video_resolution_options) && data.grok_video_resolution_options.length
+    ? data.grok_video_resolution_options
+    : GROK_VIDEO_RESOLUTION_OPTIONS;
+  ensureGrokVideoSelectOptions(durationEl, durationOptions, value => `${value} 秒`);
+  ensureGrokVideoSelectOptions(resolutionEl, resolutionOptions);
+  const durationValue = String(
+    data.grok_video_duration ||
+    data.grok_video_duration_default ||
+    DEFAULT_GROK_VIDEO_DURATION
+  );
+  const resolutionValue = String(
+    data.grok_video_resolution ||
+    data.grok_video_resolution_default ||
+    DEFAULT_GROK_VIDEO_RESOLUTION
+  ).toLowerCase();
+  if (durationEl) {
+    if (![...durationEl.options].some(option => option.value === durationValue)) {
+      const option = document.createElement("option");
+      option.value = durationValue;
+      option.textContent = `${durationValue} 秒`;
+      durationEl.appendChild(option);
+    }
+    durationEl.value = durationValue;
+    durationEl.dataset.localValue = data.grok_video_duration_local ? String(data.grok_video_duration_local) : "";
+    durationEl.dataset.defaultValue = String(
+      data.grok_video_duration_default || DEFAULT_GROK_VIDEO_DURATION
+    );
+    durationEl.dataset.edited = "false";
+  }
+  if (resolutionEl) {
+    if (![...resolutionEl.options].some(option => option.value === resolutionValue)) {
+      const option = document.createElement("option");
+      option.value = resolutionValue;
+      option.textContent = resolutionValue;
+      resolutionEl.appendChild(option);
+    }
+    resolutionEl.value = resolutionValue;
+    resolutionEl.dataset.localValue = data.grok_video_resolution_local || "";
+    resolutionEl.dataset.defaultValue = data.grok_video_resolution_default || DEFAULT_GROK_VIDEO_RESOLUTION;
+    resolutionEl.dataset.edited = "false";
+  }
+  setGrokVideoStatus(
+    "skGrokVideoDurationStatus",
+    durationValue ? `${durationValue} 秒` : "",
+    data.grok_video_duration_source || "",
+    {configured: !!durationValue}
+  );
+  setGrokVideoStatus(
+    "skGrokVideoResolutionStatus",
+    resolutionValue || "",
+    data.grok_video_resolution_source || "",
+    {configured: !!resolutionValue}
+  );
+  cachedGrokVideoDefaults = {
+    duration: Number(durationValue) || DEFAULT_GROK_VIDEO_DURATION,
+    resolution: resolutionValue || DEFAULT_GROK_VIDEO_RESOLUTION
+  };
+}
+
 function applyDisplayConfig(data) {
+  if (data && (data.grok_video_duration || data.grok_video_resolution)) {
+    cachedGrokVideoDefaults = {
+      duration: Number(data.grok_video_duration) || DEFAULT_GROK_VIDEO_DURATION,
+      resolution: data.grok_video_resolution || DEFAULT_GROK_VIDEO_RESOLUTION
+    };
+  }
+
   const name = resolvedCharacterName(data || {});
   const title = resolvedGalleryTitle(data || {});
   appDisplay.characterName = name || "角色";
@@ -9281,6 +9410,13 @@ async function loadDisplayConfig() {
   try {
     const res = await fetch(`${API}/api/config/keys`);
     const data = await res.json();
+    if (data) {
+      cachedGrokVideoDefaults = {
+        duration: Number(data.grok_video_duration) || DEFAULT_GROK_VIDEO_DURATION,
+        resolution: data.grok_video_resolution || DEFAULT_GROK_VIDEO_RESOLUTION
+      };
+    }
+
     if (res.ok) applyDisplayConfig(data);
   } catch(e) {
     console.warn("load display config:", e);
@@ -13746,17 +13882,24 @@ ms.textContent = `
   border-radius: 999px;
   background: #fff;
   color: #e91e63;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  display: inline-grid;
+  place-items: center;
   flex: 0 0 24px;
   padding: 0;
-  margin-top: 2px;
+  margin-top: 0;
   cursor: pointer;
   font-size: 12px;
-  line-height: 1;
+  line-height: 0;
   box-shadow: 0 2px 8px rgba(233,30,99,0.08);
   transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+.schedule-send-btn i {
+  display: block;
+  width: 1em;
+  height: 1em;
+  line-height: 1;
+  font-size: 11px;
+  transform: translateY(0.5px);
 }
 .schedule-send-btn:hover,
 .schedule-send-btn.active {
@@ -13802,48 +13945,304 @@ ms.textContent = `
 .modal-caption .tag-link { color: #7b1fa2; text-decoration: none; font-weight: 600; cursor: pointer; transition:color 0.15s; }
 .modal-caption .tag-link:hover { color: #e91e63; text-decoration: underline; }
 .modal-video-panel {
-  display:none;flex-direction:column;gap:9px;padding-top:12px;border-top:1px solid #eee7f0;
+  display:none;flex-direction:column;gap:10px;padding:12px;margin-top:2px;
+  border:1px solid #f0e4ef;border-radius:16px;
+  background:
+    radial-gradient(circle at top right, rgba(233,30,99,0.08), transparent 42%),
+    linear-gradient(180deg, #fffafd 0%, #f8f4fb 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.85);
 }
 .modal-video-panel.visible { display:flex; }
 .modal-video-compose {
-  display:grid;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:8px;min-width:0;
+  display:grid;grid-template-columns:36px minmax(0,1fr) auto;align-items:center;gap:8px;min-width:0;
+  padding:8px;border:1px solid rgba(233,30,99,0.10);border-radius:14px;background:rgba(255,255,255,0.82);
 }
 .modal-video-icon {
-  width:32px;height:32px;border-radius:8px;background:#eef6ff;color:#2563eb;
+  width:36px;height:36px;border-radius:12px;
+  background:linear-gradient(135deg,#fff0f6,#f3e8ff);color:#d81b60;
   display:inline-flex;align-items:center;justify-content:center;font-size:14px;
+  box-shadow:inset 0 0 0 1px rgba(233,30,99,0.08);
 }
 .modal-video-input {
-  width:100%;min-width:0;height:36px;padding:0 11px;border:1px solid #dce3ec;border-radius:8px;
-  background:#fff;color:#334155;font-size:13px;line-height:1;outline:0;box-sizing:border-box;
+  width:100%;min-width:0;height:38px;padding:0 12px;border:1px solid #eadfea;border-radius:12px;
+  background:#fff;color:#4a3b50;font-size:13px;line-height:1;outline:0;box-sizing:border-box;
 }
-.modal-video-input:focus { border-color:#4f8fe8;box-shadow:0 0 0 3px rgba(37,99,235,0.1); }
-.modal-video-submit,
-.modal-video-regenerate {
-  height:36px;border:1px solid #2563eb;border-radius:8px;background:#2563eb;color:#fff;
-  display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 12px;
-  font-size:12px;font-weight:800;white-space:nowrap;cursor:pointer;transition:background .16s,border-color .16s;
+.modal-video-input:focus {
+  border-color:#e91e63;box-shadow:0 0 0 3px rgba(233,30,99,0.10);
 }
-.modal-video-submit:hover,
-.modal-video-regenerate:hover { background:#1d4ed8;border-color:#1d4ed8; }
-.modal-video-submit:disabled { opacity:.58;cursor:default; }
+.modal-video-submit {
+  height:38px;border:0;border-radius:12px;
+  background:linear-gradient(135deg,#e91e63,#9c27b0);color:#fff;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 14px;
+  font-size:12px;font-weight:800;white-space:nowrap;cursor:pointer;
+  box-shadow:0 8px 18px rgba(233,30,99,0.18);
+  transition:transform .16s,box-shadow .16s,opacity .16s;
+}
+.modal-video-submit:hover { transform:translateY(-1px);box-shadow:0 10px 22px rgba(233,30,99,0.24); }
+.modal-video-submit:disabled { opacity:.58;cursor:default;transform:none;box-shadow:none; }
 .modal-video-status {
-  min-height:38px;display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;
-  background:#f8fafc;border:1px solid #e2e8f0;color:#526071;font-size:12px;line-height:1.45;
+  min-height:40px;display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;
+  background:rgba(255,255,255,0.78);border:1px solid rgba(156,39,176,0.10);color:#6b5b72;
+  font-size:12px;line-height:1.45;
 }
-.modal-video-status > i { color:#2563eb;flex:0 0 auto; }
-.modal-video-status.error { background:#fff7f7;border-color:#fecaca;color:#a33a3a; }
-.modal-video-status.error > i { color:#dc2626; }
-.modal-video-player { display:flex;flex-direction:column;gap:7px;min-width:0; }
+.modal-video-status > i { color:#c2185b;flex:0 0 auto; }
+.modal-video-status.error {
+  background:linear-gradient(180deg,#fff8f8,#fff1f3);
+  border-color:rgba(233,30,99,0.16);color:#b4234d;
+}
+.modal-video-status.error > i { color:#e91e63; }
+.modal-video-stage {
+  display:grid;grid-template-columns:minmax(0,1fr) 118px;gap:10px;align-items:start;min-width:0;
+}
+.modal-video-stage.has-history,
+.modal-video-stage.has-side {
+  grid-template-columns:minmax(0,1fr) 118px;
+}
+.modal-video-main {
+  min-width:0;display:flex;flex-direction:column;gap:8px;
+}
+.modal-video-player {
+  height:220px;box-sizing:border-box;
+  display:flex;flex-direction:column;gap:8px;min-width:0;
+  padding:8px;border-radius:14px;border:1px solid rgba(233,30,99,0.08);
+  background:linear-gradient(180deg, rgba(255,255,255,0.92), rgba(255,248,252,0.88));
+  box-shadow:0 10px 24px rgba(92,48,84,0.06);
+}
+.modal-video-player-preview {
+  position:relative;flex:1 1 auto;min-height:0;border-radius:12px;overflow:hidden;
+  background:
+    radial-gradient(circle at center, #2a2030 0%, #151018 72%);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,0.04);
+  cursor:pointer;border:0;padding:0;width:100%;display:block;color:inherit;
+}
+.modal-video-player-preview:focus-visible {
+  outline:2px solid rgba(233,30,99,0.55);outline-offset:2px;
+}
+.modal-video-player-preview video,
+.modal-video-player-preview img {
+  display:block;width:100%;height:100%;object-fit:cover;object-position:center;
+  pointer-events:none;
+}
+.modal-video-player-play {
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:46px;height:46px;border-radius:999px;border:0;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:rgba(20,10,28,0.62);color:#fff;font-size:16px;
+  box-shadow:0 10px 24px rgba(0,0,0,0.28);backdrop-filter:blur(6px);
+  pointer-events:none;
+}
+.modal-video-player-preview:hover .modal-video-player-play {
+  background:rgba(233,30,99,0.88);transform:translate(-50%,-50%) scale(1.04);
+}
 .modal-video-player video {
-  display:block;width:100%;max-height:260px;border-radius:8px;background:#111;object-fit:contain;
+  display:block;width:100%;flex:1 1 auto;min-height:0;height:auto;max-height:none;
+  border-radius:12px;background:
+    radial-gradient(circle at center, #2a2030 0%, #151018 72%);
+  object-fit:cover;object-position:center;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.04);
 }
-.modal-video-player-head { display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0; }
+.video-play-overlay {
+  position:fixed;inset:0;z-index:10050;display:none;align-items:center;justify-content:center;
+  padding:24px;background:rgba(18,10,24,0.48);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+}
+.video-play-overlay.open { display:flex; }
+.video-play-card {
+  width:min(360px,calc(100vw - 40px));
+  display:flex;flex-direction:column;gap:10px;padding:12px;
+  border-radius:18px;border:1px solid rgba(233,30,99,0.12);
+  background:linear-gradient(180deg,#fffafd 0%,#fff 100%);
+  box-shadow:0 28px 80px rgba(24,10,34,0.34);
+  animation:slideUp .2s cubic-bezier(.16,1,.3,1);
+}
+.video-play-card-head {
+  display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;padding:0 2px;
+}
+.video-play-card-meta {
+  min-width:0;display:flex;align-items:center;gap:8px;color:#8a7388;font-size:12px;font-weight:700;
+}
+.video-play-card-meta > i {
+  width:24px;height:24px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#ffe4f0,#f2e4ff);color:#d81b60;font-size:11px;
+}
+.video-play-card-meta strong { color:#4d3a52;font-size:13px;font-weight:900; }
+.video-play-card-meta span {
+  display:inline-flex;align-items:center;min-height:22px;padding:0 8px;border-radius:999px;
+  background:rgba(233,30,99,0.08);color:#c2185b;font-size:11px;font-weight:800;
+}
+.video-play-card-close {
+  width:32px;height:32px;border:0;border-radius:50%;background:#f4eff5;color:#756778;
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex:0 0 auto;
+}
+.video-play-card-close:hover { background:#fce4ec;color:#d81b60; }
+.video-play-card-stage {
+  border-radius:14px;overflow:hidden;background:#120d14;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,0.04);
+}
+.video-play-card-stage video {
+  display:block;width:100%;max-height:min(62vh,520px);background:#120d14;
+  object-fit:contain;object-position:center;
+}
+.modal-video-player-head {
+  display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;padding:0 2px;
+}
 .modal-video-player-meta {
-  min-width:0;display:flex;align-items:center;gap:7px;color:#64748b;font-size:11px;font-weight:700;
+  min-width:0;display:flex;align-items:center;gap:8px;color:#8a7388;font-size:11px;font-weight:700;
 }
-.modal-video-player-meta strong { color:#334155;font-size:12px; }
-.modal-video-regenerate { height:30px;padding:0 9px;background:#fff;color:#2563eb;flex:0 0 auto; }
-.modal-video-regenerate:hover { color:#fff; }
+.modal-video-player-meta > i {
+  width:22px;height:22px;border-radius:8px;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#ffe4f0,#f2e4ff);color:#d81b60;font-size:11px;
+}
+.modal-video-player-meta strong { color:#4d3a52;font-size:12px;font-weight:900; }
+.modal-video-player-meta span {
+  display:inline-flex;align-items:center;min-height:22px;padding:0 8px;border-radius:999px;
+  background:rgba(233,30,99,0.08);color:#c2185b;font-size:10px;font-weight:800;
+}
+.modal-video-side {
+  min-width:0;display:flex;flex-direction:column;gap:8px;
+}
+.modal-video-regenerate {
+  width:100%;min-height:36px;height:auto;padding:7px 8px;flex:0 0 auto;
+  border:0;border-radius:12px;color:#fff;
+  background:linear-gradient(135deg,#e91e63,#9c27b0);
+  display:inline-flex;align-items:center;justify-content:center;gap:5px;
+  font-size:12px;font-weight:900;white-space:nowrap;line-height:1.15;cursor:pointer;
+  box-shadow:0 8px 16px rgba(233,30,99,0.18);
+  transition:transform .16s,box-shadow .16s,opacity .16s;
+}
+.modal-video-regenerate:hover {
+  transform:translateY(-1px);box-shadow:0 10px 20px rgba(233,30,99,0.24);
+}
+.modal-video-regenerate span { display:inline; }
+.modal-video-history {
+  min-width:0;display:flex;flex-direction:column;gap:7px;
+  padding:8px;border:1px solid rgba(156,39,176,0.10);border-radius:14px;
+  background:linear-gradient(180deg, rgba(255,255,255,0.94), rgba(250,246,252,0.96));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.9);
+}
+.modal-video-history.is-button {
+  width:100%;cursor:pointer;text-align:left;color:inherit;font:inherit;
+  transition:transform .16s, box-shadow .16s, border-color .16s, background .16s;
+}
+.modal-video-history.is-button:hover {
+  border-color:rgba(233,30,99,0.22);
+  background:linear-gradient(180deg, #fff, #fff7fb);
+  box-shadow:0 8px 18px rgba(233,30,99,0.10);
+  transform:translateY(-1px);
+}
+.modal-video-history-empty {
+  width:100%;aspect-ratio:3/4;min-height:0;flex:0 0 auto;
+  display:flex;align-items:center;justify-content:center;
+  padding:10px 6px;border:1px dashed rgba(233,30,99,0.18);border-radius:12px;
+  background:rgba(255,255,255,0.72);color:#b59bb0;font-size:10px;font-weight:700;line-height:1.4;text-align:center;
+  box-sizing:border-box;
+}
+.modal-video-history-head {
+  display:flex;align-items:center;justify-content:space-between;gap:4px;
+  color:#8d7691;font-size:10px;font-weight:800;line-height:1.2;padding:0 1px;
+}
+.modal-video-history-head strong { color:#4d3a52;font-size:11px;font-weight:900; }
+.modal-video-history-head span {
+  min-width:18px;height:18px;padding:0 6px;border-radius:999px;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:rgba(156,39,176,0.10);color:#9c27b0;font-size:10px;font-weight:900;
+}
+.modal-video-history-preview {
+  min-width:0;display:flex;
+}
+.modal-video-history-preview-thumb {
+  width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:10px;background:#1c141d;display:block;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,0.04);
+}
+.video-history-overlay {
+  position:fixed;inset:0;z-index:10045;display:none;align-items:center;justify-content:center;
+  padding:24px;background:rgba(24,12,30,0.52);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+}
+.video-history-overlay.open { display:flex; }
+.video-history-dialog {
+  width:min(420px,calc(100vw - 40px));max-height:min(720px,calc(100vh - 48px));overflow:hidden;
+  display:flex;flex-direction:column;background:#fff;border:1px solid rgba(233,30,99,.12);border-radius:18px;
+  box-shadow:0 28px 90px rgba(31,12,39,.32);animation:slideUp .22s cubic-bezier(.16,1,.3,1);
+}
+.video-history-head {
+  display:flex;align-items:center;justify-content:space-between;gap:14px;padding:16px 18px;
+  border-bottom:1px solid #f0e8f1;background:linear-gradient(180deg,#fffafd,#fff);
+}
+.video-history-title {
+  min-width:0;display:flex;align-items:center;gap:10px;color:#302633;
+}
+.video-history-title-icon {
+  width:34px;height:34px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;
+  color:#fff;background:linear-gradient(135deg,#e91e63,#9c27b0);box-shadow:0 8px 18px rgba(233,30,99,.22);
+}
+.video-history-title-copy { min-width:0;display:flex;flex-direction:column;gap:1px; }
+.video-history-title-copy strong { font-size:16px;line-height:1.3; }
+.video-history-title-copy span { color:#918394;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.video-history-close {
+  width:34px;height:34px;border:0;border-radius:50%;background:#f4eff5;color:#756778;
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex:0 0 auto;
+}
+.video-history-close:hover { background:#fce4ec;color:#d81b60; }
+.video-history-list {
+  min-height:180px;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:10px;
+}
+.video-history-empty {
+  min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+  color:#8b7c8e;text-align:center;padding:28px;
+}
+.video-history-empty i { font-size:28px;color:#d7c4d4; }
+.video-history-empty strong { color:#5d4d61;font-size:15px; }
+.video-history-empty span { max-width:280px;font-size:13px;line-height:1.6; }
+.video-history-item {
+  width:100%;display:grid;grid-template-columns:84px minmax(0,1fr);gap:12px;align-items:center;
+  padding:10px;border:1px solid rgba(233,30,99,0.08);border-radius:14px;background:#fff;
+  box-shadow:0 6px 16px rgba(92,48,84,0.05);cursor:pointer;text-align:left;color:inherit;
+  transition:transform .16s, border-color .16s, box-shadow .16s, background .16s;
+}
+.video-history-item:hover {
+  border-color:rgba(233,30,99,0.22);background:#fff7fb;
+  box-shadow:0 10px 22px rgba(233,30,99,0.10);transform:translateY(-1px);
+}
+.video-history-item.active {
+  border-color:rgba(233,30,99,0.34);
+  background:linear-gradient(180deg,#fff7fb,#f8efff);
+  box-shadow:0 0 0 2px rgba(233,30,99,0.08), 0 10px 22px rgba(156,39,176,0.08);
+}
+.video-history-thumb {
+  width:84px;aspect-ratio:3/4;object-fit:cover;border-radius:10px;background:#1c141d;display:block;
+}
+.video-history-copy { min-width:0;display:flex;flex-direction:column;gap:5px; }
+.video-history-meta-row { display:flex;align-items:center;gap:8px;flex-wrap:wrap; }
+.video-history-badge {
+  display:inline-flex;align-items:center;min-height:22px;padding:0 8px;border-radius:999px;
+  background:rgba(233,30,99,0.08);color:#c2185b;font-size:11px;font-weight:900;
+}
+.video-history-time { color:#918394;font-size:12px;font-weight:700; }
+.video-history-prompt {
+  color:#5d4d61;font-size:13px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}
+@media (max-width: 768px) {
+  .modal-video-stage,
+  .modal-video-stage.has-history,
+  .modal-video-stage.has-side {
+    grid-template-columns:minmax(0,1fr);
+  }
+  .modal-video-side {
+    flex-direction:row;align-items:stretch;gap:8px;
+  }
+  .modal-video-regenerate {
+    width:auto;flex:0 0 auto;padding:0 12px;
+  }
+  .modal-video-history {
+    max-height:none;flex:1 1 auto;
+  }
+  .video-history-overlay { padding:10px;align-items:flex-end; }
+  .video-history-dialog { width:100%;max-height:min(78vh,720px);border-radius:18px 18px 12px 12px; }
+  .modal-video-player { height:auto;min-height:0; }
+  .modal-video-player-preview { min-height:160px;max-height:28vh; }
+  .modal-video-player video { flex:0 1 auto;max-height:28vh;object-fit:cover; }
+  .video-play-card { width:min(100%,420px); }
+  .video-play-card-stage video { max-height:min(58vh,460px); }
+}
 .modal-actions { display: flex; gap: 10px; margin-top: auto; padding-top: 16px; }
 .modal-actions .mbtn { flex: 1; min-height: 36px; padding: 7px 2px; border-radius: 12px; border: 1.5px solid #ede5f0; background: #fff; font-size: 15px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 5px; color: #777; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.02); line-height: 1.15; white-space: nowrap; }
 .modal-actions .mbtn:hover { border-color: #e91e63; color: #e91e63; background: #fce4ec; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(233,30,99,0.15); }
@@ -14166,7 +14565,11 @@ ms.textContent = `
 		  .modal-content .today-card-info .modal-caption.tc-thought { margin-top:8px;padding:17px 16px; }
 		  .modal-video-compose { grid-template-columns:32px minmax(0,1fr); }
 		  .modal-video-submit { grid-column:1/-1;width:100%; }
-		  .modal-video-player video { max-height:56vh; }
+		  .modal-video-player { height:auto;min-height:0; }
+		  .modal-video-player-preview { min-height:160px;max-height:28vh; }
+		  .modal-video-player video { flex:0 1 auto;max-height:28vh;object-fit:cover; }
+		  .video-play-card { width:min(100%,420px); }
+		  .video-play-card-stage video { max-height:min(58vh,460px); }
 		  .modal-content .today-card-info .modal-actions { margin-top:0;grid-template-columns:repeat(3,minmax(0,1fr)); }
 	  .image-edit-overlay { padding:10px;align-items:flex-end; }
 	  .image-edit-dialog { width:100%;max-height:calc(100vh - 20px);overflow:auto;grid-template-columns:1fr;grid-template-rows:auto clamp(300px,52vh,500px) auto;border-radius:8px; }
@@ -14247,6 +14650,50 @@ imageVersionOverlay.innerHTML = `
     <div class="image-version-list" id="imageVersionList" aria-live="polite"></div>
   </div>`;
 document.body.appendChild(imageVersionOverlay);
+
+const videoHistoryOverlay = document.createElement("div");
+videoHistoryOverlay.className = "video-history-overlay";
+videoHistoryOverlay.id = "videoHistoryOverlay";
+videoHistoryOverlay.setAttribute("aria-hidden", "true");
+videoHistoryOverlay.onclick = (event) => { if (event.target === videoHistoryOverlay) closeVideoHistory(); };
+videoHistoryOverlay.innerHTML = `
+  <div class="video-history-dialog" role="dialog" aria-modal="true" aria-labelledby="videoHistoryTitle" tabindex="-1">
+    <div class="video-history-head">
+      <div class="video-history-title">
+        <span class="video-history-title-icon"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i></span>
+        <span class="video-history-title-copy">
+          <strong id="videoHistoryTitle">视频历史</strong>
+          <span id="videoHistorySubtitle">查看这张图的历史生成</span>
+        </span>
+      </div>
+      <button class="video-history-close" id="videoHistoryCloseBtn" type="button" onclick="closeVideoHistory()" aria-label="关闭"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+    </div>
+    <div class="video-history-list" id="videoHistoryList"></div>
+  </div>
+`;
+document.body.appendChild(videoHistoryOverlay);
+
+const videoPlayOverlay = document.createElement("div");
+videoPlayOverlay.className = "video-play-overlay";
+videoPlayOverlay.id = "videoPlayOverlay";
+videoPlayOverlay.setAttribute("aria-hidden", "true");
+videoPlayOverlay.onclick = (event) => { if (event.target === videoPlayOverlay) closeVideoPlayCard(); };
+videoPlayOverlay.innerHTML = `
+  <div class="video-play-card" role="dialog" aria-modal="true" aria-labelledby="videoPlayTitle" tabindex="-1" onclick="event.stopPropagation()">
+    <div class="video-play-card-head">
+      <span class="video-play-card-meta" id="videoPlayMeta">
+        <i class="fa-solid fa-clapperboard" aria-hidden="true"></i>
+        <strong id="videoPlayTitle">视频</strong>
+      </span>
+      <button class="video-play-card-close" id="videoPlayCloseBtn" type="button" onclick="closeVideoPlayCard()" aria-label="关闭"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+    </div>
+    <div class="video-play-card-stage">
+      <video id="videoPlayCardPlayer" controls playsinline preload="metadata"></video>
+    </div>
+  </div>
+`;
+document.body.appendChild(videoPlayOverlay);
+
 
 const imageEditOverlay = document.createElement("div");
 imageEditOverlay.className = "image-edit-overlay";
@@ -14697,9 +15144,12 @@ function openModal(e, returnFocusTarget = null) {
   refreshModalVideoStatus(e.image_filename);
 }
 function closeModal() {
+  try { closeVideoPlayCard(); } catch (_) {}
+  try { closeVideoHistory(); } catch (_) {}
   closeScheduleSendMenu();
   stopModalVideoPolling();
   if (imageVersionOverlay.classList.contains('open')) closeImageVersions();
+  if (typeof closeVideoHistory === 'function') closeVideoHistory();
   modalOverlay.classList.remove("open");
   deactivateAccessibleDialog(modalOverlay);
   document.body.style.overflow = "";
@@ -14746,30 +15196,222 @@ window.addEventListener("resize", () => {
 	function modalVideoStatus(entry) {
 	  return String((entry && entry.video_status) || 'idle').trim().toLowerCase() || 'idle';
 	}
+	function formatModalVideoMessage(message, fallback = '视频生成失败，请稍后重试。') {
+	  const raw = String(message || '').trim();
+	  if (!raw) return fallback;
+	  if (raw.includes('自动重试') || raw.includes('上游繁忙') || raw.includes('正在自动重试')) return raw;
+	  const low = raw.toLowerCase();
+	  if (low.includes('429') || low.includes('too many requests') || low.includes('rate limit')) {
+	    return 'Grok 视频请求过于频繁，请稍后再试。';
+	  }
+	  if (low.includes('internal_error') || low.includes('video task failed') || low.includes('api error:')) {
+	    if (low.includes('401') || low.includes('unauthorized') || low.includes('api key')) {
+	      return 'Grok 视频鉴权失败，请检查 API Key。';
+	    }
+	    if (low.includes('timeout') || low.includes('timed out')) {
+	      return '视频生成超时，请稍后重试。';
+	    }
+	    return 'Grok 视频服务暂时异常，请稍后重试。';
+	  }
+	  if (raw.startsWith('原始错误：') || raw.includes("{'error'") || raw.includes('{"error"')) {
+	    return '视频生成失败，请稍后重试。';
+	  }
+	  if (raw.length > 90) return fallback;
+	  return raw;
+	}
 	function modalVideoUrl(entry) {
 	  const direct = String((entry && entry.video_url) || '').trim();
 	  if (direct) return direct;
 	  const filename = String((entry && entry.video_filename) || '').trim();
 	  return filename ? `/api/videos/${encodeURIComponent(filename)}` : '';
 	}
+	function modalVideoHistoryItems(entry) {
+	  const currentName = String((entry && entry.video_filename) || '').trim();
+	  const items = Array.isArray(entry && entry.video_history) ? entry.video_history : [];
+	  return items
+	    .filter(item => item && typeof item === 'object')
+	    .map(item => Object.assign({}, item))
+	    .filter(item => {
+	      const name = String(item.video_filename || '').trim();
+	      return name && name !== currentName;
+	    });
+	}
+	function modalVideoMetaLabel(entry) {
+	  const durationValue = Number(entry && entry.video_duration);
+	  const duration = Number.isFinite(durationValue) && durationValue > 0
+	    ? `${durationValue.toFixed(durationValue >= 10 ? 0 : 1)} 秒`
+	    : '';
+	  const resolution = String((entry && entry.video_resolution) || '').trim();
+	  return [duration, resolution].filter(Boolean).join(' · ');
+	}
+	function modalVideoHistoryTimeLabel(item, index = 0) {
+	  const created = Number((item && (item.video_created_at || item.video_updated_at)) || 0);
+	  if (Number.isFinite(created) && created > 0) {
+	    const d = new Date(created * 1000);
+	    if (!Number.isNaN(d.getTime())) {
+	      return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+	    }
+	  }
+	  return `第 ${index + 1} 条`;
+	}
+	function modalVideoHistoryHtml(entry) {
+	  const history = modalVideoHistoryItems(entry);
+	  const count = history.length;
+	  const poster = generatedEntryImageUrl(entry) || `/images/${encodeURIComponent(entry.image_filename || '')}`;
+	  if (!count) {
+	    return `<div class="modal-video-history" aria-label="历史生成记录">
+	      <div class="modal-video-history-head"><strong>历史</strong><span>0</span></div>
+	      <div class="modal-video-history-empty">暂无历史<br>重新生成后会出现在这里</div>
+	    </div>`;
+	  }
+	  const latest = history[0] || {};
+	  const latestUrl = modalVideoUrl(latest);
+	  return `<button type="button" class="modal-video-history is-button" onclick="openVideoHistory(event)" aria-label="查看视频历史" title="查看全部历史">
+	    <div class="modal-video-history-head"><strong>历史</strong><span>${count}</span></div>
+	    <div class="modal-video-history-preview">
+	      <video class="modal-video-history-preview-thumb" muted playsinline preload="metadata" poster="${escapeAttr(poster)}"${latestUrl ? ` src="${escapeAttr(latestUrl)}"` : ''}></video>
+	    </div>
+	  </button>`;
+	}
+	function closeVideoPlayCard() {
+	  const overlay = document.getElementById('videoPlayOverlay');
+	  const player = document.getElementById('videoPlayCardPlayer');
+	  if (player) {
+	    try { player.pause(); } catch (_) {}
+	    player.removeAttribute('src');
+	    while (player.firstChild) player.removeChild(player.firstChild);
+	    player.load();
+	  }
+	  if (!overlay || !overlay.classList.contains('open')) return;
+	  overlay.classList.remove('open');
+	  overlay.setAttribute('aria-hidden', 'true');
+	  deactivateAccessibleDialog(overlay);
+	}
+	function openVideoPlayCard(event, videoUrl, metaLabel = '', options = {}) {
+	  if (event) {
+	    event.preventDefault();
+	    event.stopPropagation();
+	  }
+	  const url = String(videoUrl || '').trim();
+	  if (!url) return;
+	  const overlay = document.getElementById('videoPlayOverlay');
+	  const player = document.getElementById('videoPlayCardPlayer');
+	  const meta = document.getElementById('videoPlayMeta');
+	  if (!overlay || !player) return;
+	  const label = String(metaLabel || '').trim();
+	  if (meta) {
+	    meta.innerHTML = `<i class="fa-solid fa-clapperboard" aria-hidden="true"></i><strong id="videoPlayTitle">视频</strong>${label ? `<span>${escapeHtml(label)}</span>` : ''}`;
+	  }
+	  while (player.firstChild) player.removeChild(player.firstChild);
+	  const source = document.createElement('source');
+	  source.src = url;
+	  source.type = 'video/mp4';
+	  player.appendChild(source);
+	  player.poster = String(options.poster || '').trim();
+	  player.src = url;
+	  player.load();
+	  overlay.classList.add('open');
+	  overlay.setAttribute('aria-hidden', 'false');
+	  activateAccessibleDialog(overlay, '#videoPlayCloseBtn', event && event.currentTarget);
+	  const playPromise = player.play();
+	  if (playPromise && typeof playPromise.catch === 'function') playPromise.catch(() => {});
+	  document.querySelectorAll('#videoHistoryList .video-history-item').forEach(item => {
+	    item.classList.toggle('active', item === event?.currentTarget);
+	  });
+	  if (options.closeHistory) closeVideoHistory();
+	}
+	function playModalHistoryVideo(event, videoUrl, metaLabel, options = {}) {
+	  openVideoPlayCard(event, videoUrl, metaLabel, {
+	    closeHistory: !!(options && options.closeOverlay),
+	    poster: options && options.poster
+	  });
+	}
+	function playModalVideoPreview(event) {
+	  if (event) {
+	    event.preventDefault();
+	    event.stopPropagation();
+	  }
+	  const entry = currentModalEntry();
+	  if (!entry) return;
+	  const videoUrl = modalVideoUrl(entry);
+	  if (!videoUrl) return;
+	  const poster = generatedEntryImageUrl(entry) || `/images/${encodeURIComponent(entry.image_filename || '')}`;
+	  openVideoPlayCard(event, videoUrl, modalVideoMetaLabel(entry), { poster });
+	}
+	function renderVideoHistoryList(entry) {
+	  const list = document.getElementById('videoHistoryList');
+	  const subtitle = document.getElementById('videoHistorySubtitle');
+	  if (!list) return;
+	  const history = modalVideoHistoryItems(entry);
+	  const poster = generatedEntryImageUrl(entry) || `/images/${encodeURIComponent((entry && entry.image_filename) || '')}`;
+	  if (subtitle) {
+	    subtitle.textContent = history.length ? `共 ${history.length} 条历史生成` : '暂无历史生成';
+	  }
+	  if (!history.length) {
+	    list.innerHTML = `<div class="video-history-empty"><i class="fa-solid fa-clapperboard" aria-hidden="true"></i><strong>暂无历史</strong><span>重新生成后，旧视频会出现在这里。</span></div>`;
+	    return;
+	  }
+	  list.innerHTML = history.map((item, index) => {
+	    const videoUrl = modalVideoUrl(item);
+	    if (!videoUrl) return '';
+	    const meta = modalVideoMetaLabel(item) || '历史视频';
+	    const prompt = String(item.video_prompt || '').trim() || '无描述';
+	    const timeLabel = modalVideoHistoryTimeLabel(item, index);
+	    return `<button type="button" class="video-history-item" onclick="playModalHistoryVideo(event, ${jsStringArg(videoUrl)}, ${jsStringArg(meta)}, {closeOverlay:true})" title="${escapeAttr(prompt)}">
+	      <video class="video-history-thumb" muted playsinline preload="metadata" poster="${escapeAttr(poster)}" src="${escapeAttr(videoUrl)}"></video>
+	      <span class="video-history-copy">
+	        <span class="video-history-meta-row">
+	          <span class="video-history-badge">${escapeHtml(meta)}</span>
+	          <span class="video-history-time">${escapeHtml(timeLabel)}</span>
+	        </span>
+	        <span class="video-history-prompt">${escapeHtml(prompt)}</span>
+	      </span>
+	    </button>`;
+	  }).filter(Boolean).join('');
+	}
+	function openVideoHistory(event) {
+	  if (event) {
+	    event.preventDefault();
+	    event.stopPropagation();
+	  }
+	  const entry = currentModalEntry();
+	  if (!entry) return;
+	  const overlay = document.getElementById('videoHistoryOverlay');
+	  if (!overlay) return;
+	  renderVideoHistoryList(entry);
+	  overlay.classList.add('open');
+	  overlay.setAttribute('aria-hidden', 'false');
+	  activateAccessibleDialog(overlay, '#videoHistoryCloseBtn', event && event.currentTarget);
+	}
+	function closeVideoHistory() {
+	  const overlay = document.getElementById('videoHistoryOverlay');
+	  if (!overlay || !overlay.classList.contains('open')) return;
+	  overlay.classList.remove('open');
+	  overlay.setAttribute('aria-hidden', 'true');
+	  deactivateAccessibleDialog(overlay);
+	}
 	function modalVideoPlayerHtml(entry) {
 	  const videoUrl = modalVideoUrl(entry);
 	  if (!videoUrl) return '';
 	  const poster = generatedEntryImageUrl(entry) || `/images/${encodeURIComponent(entry.image_filename || '')}`;
-	  const durationValue = Number(entry.video_duration);
-	  const duration = Number.isFinite(durationValue) && durationValue > 0
-	    ? `${durationValue.toFixed(durationValue >= 10 ? 0 : 1)} 秒`
-	    : '';
-	  const resolution = String(entry.video_resolution || '').trim();
-	  const meta = [duration, resolution].filter(Boolean).map(escapeHtml).join(' · ');
-	  return `<div class="modal-video-player">
-	    <div class="modal-video-player-head">
-	      <span class="modal-video-player-meta"><i class="fa-solid fa-video" aria-hidden="true"></i><strong>视频</strong>${meta ? `<span>${meta}</span>` : ''}</span>
-	      <button class="modal-video-regenerate" type="button" onclick="showModalVideoComposer()"><i class="fa-solid fa-rotate" aria-hidden="true"></i><span>重新生成</span></button>
+	  const meta = modalVideoMetaLabel(entry);
+	  const historyHtml = modalVideoHistoryHtml(entry);
+	  return `<div class="modal-video-stage has-side">
+	    <div class="modal-video-main">
+	      <div class="modal-video-player">
+	        <div class="modal-video-player-head">
+	          <span class="modal-video-player-meta"><i class="fa-solid fa-clapperboard" aria-hidden="true"></i><strong>视频</strong>${meta ? `<span>${escapeHtml(meta)}</span>` : ''}</span>
+	        </div>
+	        <button type="button" class="modal-video-player-preview" onclick="playModalVideoPreview(event)" title="播放完整视频" aria-label="播放完整视频">
+	          <video muted playsinline preload="metadata" poster="${escapeAttr(poster)}" src="${escapeAttr(videoUrl)}"></video>
+	          <span class="modal-video-player-play" aria-hidden="true"><i class="fa-solid fa-play"></i></span>
+	        </button>
+	      </div>
 	    </div>
-	    <video controls playsinline preload="metadata" poster="${escapeAttr(poster)}">
-	      <source src="${escapeAttr(videoUrl)}" type="video/mp4">
-	    </video>
+	    <div class="modal-video-side">
+	      <button class="modal-video-regenerate" type="button" onclick="showModalVideoComposer()" title="重新生成" aria-label="重新生成"><i class="fa-solid fa-rotate" aria-hidden="true"></i><span>重新生成</span></button>
+	      ${historyHtml}
+	    </div>
 	  </div>`;
 	}
 	function modalVideoComposerHtml(entry, errorText = '') {
@@ -14790,19 +15432,28 @@ window.addEventListener("resize", () => {
 	  const status = modalVideoStatus(entry);
 	  const playerHtml = modalVideoPlayerHtml(entry);
 	  if (status === 'queued' || status === 'generating') {
-	    const label = status === 'queued' ? '视频任务已排队，正在连接本机 Grok…' : 'Grok 正在生成视频，完成后会自动显示。';
-	    panel.innerHTML = `${playerHtml}<div class="modal-video-status"><i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><span>${label}</span></div>`;
+	    const retryText = formatModalVideoMessage((entry && entry.video_error) || '', '');
+	    const label = status === 'queued'
+	      ? '视频任务已排队，正在连接本机 Grok…'
+	      : (retryText || 'Grok 正在生成视频，完成后会自动显示。');
+	    panel.innerHTML = `${playerHtml}<div class="modal-video-status"><i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><span>${escapeHtml(label)}</span></div>`;
 	  } else if (status === 'ready' && playerHtml && !options.composer) {
 	    panel.innerHTML = playerHtml;
 	  } else {
 	    const errorText = status === 'error'
-	      ? String((entry && entry.video_error) || '视频生成失败，请查看 Hermes API 日志后重试。')
+	      ? formatModalVideoMessage((entry && entry.video_error) || '', '视频生成失败，请稍后重试。')
 	      : '';
 	    panel.innerHTML = `${playerHtml}${modalVideoComposerHtml(entry, errorText)}`;
 	    if (options.focus) requestAnimationFrame(() => document.getElementById('modalVideoPrompt')?.focus({preventScroll:true}));
 	  }
 	  syncModalDetailHeight();
 	}
+	window.playModalHistoryVideo = playModalHistoryVideo;
+	window.playModalVideoPreview = playModalVideoPreview;
+	window.openVideoPlayCard = openVideoPlayCard;
+	window.closeVideoPlayCard = closeVideoPlayCard;
+	window.openVideoHistory = openVideoHistory;
+	window.closeVideoHistory = closeVideoHistory;
 	function showModalVideoComposer() {
 	  const entry = currentModalEntry();
 	  if (!entry) return;
@@ -14824,7 +15475,7 @@ window.addEventListener("resize", () => {
 	    } else if (options.announce && status === 'ready') {
 	      showToast('视频生成完成');
 	    } else if (options.announce && status === 'error') {
-	      showToast('视频生成失败：' + (payload.video_error || '请查看 Hermes API 日志'), 6500);
+	      showToast('视频生成失败：' + formatModalVideoMessage(payload.video_error || '', '请稍后重试'), 6500);
 	    }
 	    return payload;
 	  } catch (error) {
@@ -14878,7 +15529,12 @@ window.addEventListener("resize", () => {
 	      {
 	        method:'POST',
 	        headers:{'Content-Type':'application/json'},
-	        body:JSON.stringify({prompt, resolution:'480p', aspect_ratio:'auto'})
+	        body:JSON.stringify({
+	          prompt,
+	          duration: Number(cachedGrokVideoDefaults?.duration) || DEFAULT_GROK_VIDEO_DURATION,
+	          resolution: cachedGrokVideoDefaults?.resolution || DEFAULT_GROK_VIDEO_RESOLUTION,
+	          aspect_ratio:'auto'
+	        })
 	      },
 	      30000,
 	      '视频任务提交超时，请查看 Hermes API 日志'
@@ -15547,10 +16203,16 @@ async function sendScheduleImage(channel, btn) {
   }
 }
 
+// Use capture so clicks inside modal-content (stopPropagation) still dismiss the menu.
 document.addEventListener("click", function(event) {
-  if (event.target.closest(".schedule-send-btn") || event.target.closest("#scheduleSendMenu")) return;
+  const target = event.target;
+  if (!(target instanceof Element)) {
+    closeScheduleSendMenu();
+    return;
+  }
+  if (target.closest(".schedule-send-btn") || target.closest("#scheduleSendMenu")) return;
   closeScheduleSendMenu();
-});
+}, true);
 
 window.addEventListener("resize", function() {
   if (scheduleSendAnchor) positionScheduleSendMenu(scheduleSendAnchor);
@@ -16912,8 +17574,11 @@ async function loadGallery(options = {}) {
   const requestedTagFilter = currentTagFilter;
   galleryPageLoading = true;
   try {
+    const pageSize = typeof window.getGalleryPageSize === 'function'
+      ? window.getGalleryPageSize(4)
+      : 20;
     const galleryParams = new URLSearchParams({
-      limit: '48',
+      limit: String(pageSize),
       include_prompt: 'false'
     });
     if (append) galleryParams.set('cursor', galleryNextCursor);
@@ -17519,12 +18184,6 @@ function openSettings() {
   document.getElementById("skGptBaseUrl").value = "";
   document.getElementById("skGrokVideoUrl").value = "";
   document.getElementById("skGrokVideoModel").value = "";
-  document.getElementById("skGrokApiKey").value = "";
-  document.getElementById("skGrokVideoUrl").dataset.localValue = "";
-  document.getElementById("skGrokVideoModel").dataset.localValue = "";
-  document.getElementById("skGrokApiKey").dataset.configured = "false";
-  document.getElementById("skCpaUrl").value = "";
-  document.getElementById("skCpaKey").value = "";
   document.getElementById("skGithubProxy").value = "";
   document.getElementById("skImageDir").value = "";
   document.getElementById("skAppearance").value = "";
@@ -18391,7 +19050,6 @@ async function loadSettingsStatus() {
 
     const grokVideoUrlEl = document.getElementById("skGrokVideoUrl");
     const grokVideoModelEl = document.getElementById("skGrokVideoModel");
-    const grokApiKeyEl = document.getElementById("skGrokApiKey");
     if (grokVideoUrlEl) {
       grokVideoUrlEl.value = data.grok_video_url || "";
       grokVideoUrlEl.dataset.localValue = data.grok_video_url_local || "";
@@ -18404,12 +19062,7 @@ async function loadSettingsStatus() {
       grokVideoModelEl.dataset.defaultValue = data.grok_video_model_default || "";
       grokVideoModelEl.dataset.edited = "false";
     }
-    if (grokApiKeyEl) {
-      grokApiKeyEl.value = "";
-      grokApiKeyEl.dataset.configured = data.grok_api_key ? "true" : "false";
-      grokApiKeyEl.dataset.source = data.grok_api_key_source || "";
-      grokApiKeyEl.dataset.edited = "false";
-    }
+    fillGrokVideoOptionControls(data);
     setGrokVideoStatus(
       "skGrokVideoUrlStatus",
       data.grok_video_url || "",
@@ -18422,18 +19075,12 @@ async function loadSettingsStatus() {
       data.grok_video_model_source || "",
       {configured: !!data.grok_video_model}
     );
-    setGrokVideoStatus(
-      "skGrokApiKeyStatus",
-      data.grok_api_key ? "已配置" : "",
-      data.grok_api_key_source || "",
-      {configured: !!data.grok_api_key, required: true}
-    );
     const grokVideoGroupStatus = document.getElementById("skGrokVideoGroupStatus");
     if (grokVideoGroupStatus) {
       const videoReady = data.grok_video_configured === true;
       grokVideoGroupStatus.textContent = videoReady
         ? "✓ 视频 skill 可用"
-        : (data.grok_api_key ? "⚠️ 地址或模型未完整" : "○ 缺少 API Key");
+        : "⚠️ 地址或模型未完整";
       grokVideoGroupStatus.className = "sk-engine-group-status " + (videoReady ? "is-ready" : "is-warning");
     }
 
@@ -18994,10 +19641,12 @@ async function saveSettings() {
   const llmStreamEnabled = document.getElementById("skLlmStream").checked;
   const grokVideoUrlEl = document.getElementById("skGrokVideoUrl");
   const grokVideoModelEl = document.getElementById("skGrokVideoModel");
-  const grokApiKeyEl = document.getElementById("skGrokApiKey");
+  const grokVideoDurationEl = document.getElementById("skGrokVideoDuration");
+  const grokVideoResolutionEl = document.getElementById("skGrokVideoResolution");
   const grokVideoUrl = grokVideoUrlEl.value.trim();
   const grokVideoModel = grokVideoModelEl.value.trim();
-  const grokApiKey = grokApiKeyEl.value.trim();
+  const grokVideoDuration = grokVideoDurationEl ? grokVideoDurationEl.value.trim() : "";
+  const grokVideoResolution = grokVideoResolutionEl ? grokVideoResolutionEl.value.trim() : "";
   const missing = [];
   requireSettingsValue("Gitee API URL", giteeUrl, missing);
   if (!giteeKey && !hasSavedSecret("gitee_key")) missing.push("Gitee API Key");
@@ -19042,7 +19691,12 @@ async function saveSettings() {
     body.llm_stream_enabled = llmStreamEnabled;
     if (grokVideoUrlEl.dataset.edited === "true") body.grok_video_url = grokVideoUrl;
     if (grokVideoModelEl.dataset.edited === "true") body.grok_video_model = grokVideoModel;
-    if (grokApiKey) body.grok_api_key = grokApiKey;
+    if (grokVideoDurationEl && grokVideoDurationEl.dataset.edited === "true") {
+      body.grok_video_duration = grokVideoDuration;
+    }
+    if (grokVideoResolutionEl && grokVideoResolutionEl.dataset.edited === "true") {
+      body.grok_video_resolution = grokVideoResolution;
+    }
 
     const res = await fetch(`${API}/api/config/keys`, {
       method: "POST",
@@ -19251,6 +19905,7 @@ document.addEventListener("keydown", e => {
       closeWardrobeVersions();
     } else if (imageVersionOverlay.classList.contains("open")) {
       closeImageVersions();
+      if (typeof closeVideoHistory === "function") closeVideoHistory();
     } else if (modalOverlay.classList.contains("open")) {
       closeModal();
     } else if (document.getElementById("manualCharacterOverlay").classList.contains("open")) {
@@ -19356,6 +20011,27 @@ document.addEventListener("keydown", e => {
   }
 
   window.applyGalleryColumns = () => applyCols(preferredCols, false);
+  window.getGalleryColumnCount = function() {
+    const grid = document.querySelector('.gallery-grid');
+    if (grid) {
+      for (let i = 8; i >= 1; i--) {
+        if (grid.classList.contains('cols-' + i)) return i;
+      }
+      // default CSS is 5 columns when no cols-* class is applied
+      const styleCols = getComputedStyle(grid).gridTemplateColumns || '';
+      const parts = styleCols.split(' ').filter(Boolean);
+      if (parts.length > 0) return Math.max(1, Math.min(8, parts.length));
+    }
+    const savedCols = parseInt(window.galleryStorageGet('gallery_cols', '5'), 10);
+    return Math.max(1, Math.min(8, savedCols || 5));
+  };
+  window.getGalleryPageSize = function(rows = 4) {
+    const cols = typeof window.getGalleryColumnCount === 'function'
+      ? window.getGalleryColumnCount()
+      : 5;
+    const safeRows = Math.max(1, Math.min(12, Number(rows) || 4));
+    return Math.max(4, Math.min(48, cols * safeRows));
+  };
 
   // Apply saved value on load
   applyCols(preferredCols, false);
@@ -22140,7 +22816,7 @@ function copyLiveLogs() {
 }
 
 // ESC 关闭
-document.addEventListener('keydown', function(e) { if (e.key === 'Escape') { closeScheduleSendMenu(); closeScheduleEgg(); closeCharacterGalleryPicker(); closeCharacterDetail(); closePrompt(); closeLiveLogs(); } });
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') { closeScheduleSendMenu(); closeScheduleEgg(); closeCharacterGalleryPicker(); closeCharacterDetail(); closePrompt(); closeLiveLogs(); if (typeof closeVideoPlayCard === 'function') closeVideoPlayCard(); if (typeof closeVideoHistory === 'function') closeVideoHistory(); } });
 </script>
 </body>
 </html>
