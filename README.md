@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.4.2**
+当前版本：**v1.4.5**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -96,7 +96,7 @@ curl http://localhost:18889/api/health
 如果要使用已经发布到 Docker Hub/GHCR 的镜像，通过 `PORTRAIT_GALLERY_IMAGE` 指定：
 
 ```bash
-PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.4.2 docker compose up -d
+PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.4.5 docker compose up -d
 curl http://localhost:18889/api/health
 ```
 
@@ -147,7 +147,7 @@ docker compose up -d
    如使用已发布镜像而不是在服务器上构建源码，可指定与画廊版本相同的镜像标签：
 
    ```bash
-   SOCIAL_HUB_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery-social-hub:1.4.2 \
+   SOCIAL_HUB_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery-social-hub:1.4.5 \
      docker compose -f docker-compose.social-hub.yaml up -d
    ```
 
@@ -422,6 +422,13 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥、三级 LLM 模型链、Gitee 回退、日程风格和升级选项
 
 ## 🧾 Release Notes
+
+### v1.4.5
+
+- Grok 视频秒数可选 5-15 秒，默认分辨率改为 720p。
+- 视频预览改为点击弹出小卡片完整播放，避免封面裁切。
+- 历史空状态固定为有缩略图时的高度，避免布局跳动。
+- 补齐视频设置、重试与播放相关回归测试。
 
 ### v1.4.2
 
