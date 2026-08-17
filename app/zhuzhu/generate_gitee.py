@@ -93,7 +93,13 @@ def generate(theme: str, send: bool = False, caption: bool = False,
 
     caption_text = None
     if caption:
-        caption_text = build_caption_for_image(theme, path, schedule_time=schedule_time)
+        caption_text = build_caption_for_image(
+            theme,
+            path,
+            schedule_time=schedule_time,
+            require_image=True,
+            allow_fallback=False,
+        )
     if send:
         send_photo(path, caption_text)
 

@@ -1659,7 +1659,13 @@ def generate(theme: str, send: bool = False, caption: bool = False,
 
     cap_text = None
     if caption:
-        cap_text = build_caption_for_image(theme, path, schedule_time=schedule_time)
+        cap_text = build_caption_for_image(
+            theme,
+            path,
+            schedule_time=schedule_time,
+            require_image=True,
+            allow_fallback=False,
+        )
     if send:
         send_photo(path, cap_text)
 

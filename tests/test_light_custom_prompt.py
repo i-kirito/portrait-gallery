@@ -130,11 +130,9 @@ class CustomImageCaptionTests(unittest.IsolatedAsyncioTestCase):
     async def test_custom_caption_failure_never_uses_generic_fallback(self) -> None:
         app = PortraitGalleryApp.__new__(PortraitGalleryApp)
         app.image_gen = SimpleNamespace(output_dir="/missing")
-        with patch("main.build_caption_fallback") as fallback:
-            caption = await app._generate_custom_image_caption("missing.png")
+        caption = await app._generate_custom_image_caption("missing.png")
 
         self.assertEqual("", caption)
-        fallback.assert_not_called()
 
     async def test_background_caption_persists_ready_only_after_visual_success(self) -> None:
         app = PortraitGalleryApp.__new__(PortraitGalleryApp)

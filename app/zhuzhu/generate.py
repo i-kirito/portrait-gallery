@@ -1131,7 +1131,15 @@ def generate(
 
     caption_text = None
     if path and caption:
-        caption_text = build_caption_for_image(theme, path, schedule_time=schedule_raw, schedule_date=schedule_date)
+        caption_schedule_time = schedule_raw or schedule_time
+        caption_text = build_caption_for_image(
+            theme,
+            path,
+            schedule_time=caption_schedule_time,
+            schedule_date=schedule_date,
+            require_image=True,
+            allow_fallback=False,
+        )
         if caption_text:
             update_metadata_caption(os.path.basename(path), caption_text)
             if send:

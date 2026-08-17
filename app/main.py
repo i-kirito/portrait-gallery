@@ -61,7 +61,7 @@ from outfit_plan_edit import (
 from web_server import GalleryServer
 from store import ImageMetadataStore, ScheduleStore
 from text_repair import repair_mojibake_text
-from zhuzhu.core import build_caption_fallback, build_caption_for_image
+from zhuzhu.core import build_caption_for_image
 from characters import (
     LOCAL_CHARACTER_SOURCE,
     build_character_image_prompt,
@@ -3928,16 +3928,6 @@ class PortraitGalleryApp:
                     failed.get("theme") or self._theme_for_hour(int(time_text[:2]))
                 )
                 recovered_caption = repair_mojibake_text(meta.get("caption") or "").strip()
-                if not recovered_caption:
-                    recovered_caption = build_caption_fallback(
-                        recovered_theme,
-                        recovered_schedule_time,
-                        load_runtime_persona(self.config, self.data_dir),
-                    )
-                if not recovered_caption:
-                    recovered_caption = repair_mojibake_text(
-                        daily_entry.get("caption") or ""
-                    ).strip()
                 entry = {
                     "date": date_text,
                     "time": datetime.fromtimestamp(
@@ -5472,6 +5462,8 @@ class PortraitGalleryApp:
                 caption_text = ""
                 for line in f"{result.stdout}\n{result.stderr}".split("\n"):
                     line = line.strip()
+                    if line.startswith("[caption]"):
+                        logger.warning("定时小心思生成诊断: %s", line)
                     if line.startswith("SUCCESS:"):
                         image_path = line.split("SUCCESS:", 1)[1].strip()
                     if "Synced to gallery" in line:

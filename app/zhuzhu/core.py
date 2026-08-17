@@ -710,74 +710,12 @@ def _caption_repeats_schedule(caption: str, schedule_time: str = "") -> bool:
 
 def _personalized_caption_fallback(theme: str, persona: dict, schedule_time: str = "", schedule_date: str = "") -> str:
     character = persona.get("name") or "角色"
-    user_name = persona.get("user_name") or "你"
     activity = _caption_activity(schedule_time)
     if activity:
-        activity_key = re.sub(r"\s+", "", activity)
-        specific_templates = []
-        if any(word in activity_key for word in ("歌会", "唱歌", "情歌", "练歌", "歌曲", "吉他曲", "曲目")):
-            specific_templates.extend([
-                f"{character}先把这一段唱顺，眼前这首不留含糊。",
-                "节拍和换气再对一遍，这会儿只管把歌练稳。",
-                f"{character}把耳返听清楚，先专心处理这一首。",
-            ])
-        if any(word in activity_key for word in ("直播", "开播", "设备", "妆容", "灯光", "麦克风", "麦")):
-            specific_templates.extend([
-                f"{character}把灯光和麦逐项确认，先把手上的准备做稳。",
-                "口红、眼妆和镜头位置再看一遍，眼前的小细节别漏。",
-                f"{character}先专心试设备，把当前这一步检查清楚。",
-            ])
-        if any(word in activity_key for word in ("厨房", "牛排", "奶茶", "做饭", "晚餐", "甜点", "午餐", "早餐", "牛奶", "松饼")):
-            specific_templates.extend([
-                f"{character}先盯紧火候，把手上这一份认真做好。",
-                "味道再确认一下，这会儿先不让锅里的节奏乱掉。",
-                f"{character}把眼前的步骤做完，别在关键火候上分心。",
-            ])
-        if any(word in activity_key for word in ("电脑", "游戏", "速通", "Live2D", "平板", "建模", "耳机")):
-            specific_templates.extend([
-                f"{character}先把卡住的地方拆开处理，注意力放在这一屏。",
-                "这个细节再核对一遍，当前这一步不能含糊。",
-                f"{character}盯着屏幕理清思路，先解决眼前最麻烦的部分。",
-            ])
-        if any(word in activity_key for word in ("动漫", "新番", "追番", "电视", "沙发", "抱枕")):
-            specific_templates.extend([
-                f"{character}把抱枕放顺手，安静看完眼前这一段。",
-                "这一集正看到关键处，先把注意力留在剧情里。",
-                f"{character}暂时不分心，认真把当前进度看下去。",
-            ])
-        if any(word in activity_key for word in ("床", "睡", "护肤", "洗澡", "被窝", "枕头", "晚安")):
-            specific_templates.extend([
-                f"{character}把眼前的洗漱和护理慢慢做好，让身体放松下来。",
-                "这会儿不赶时间，先把当前的休息节奏安顿好。",
-                f"{character}把枕头和被子整理舒服，专心让自己静下来。",
-            ])
-        if any(word in activity_key for word in ("街", "散步", "路灯", "公园", "出门", "逛")):
-            specific_templates.extend([
-                f"{character}放慢脚步看看周围，把这段路走得自在一点。",
-                "人多的地方先绕开，按自己的节奏继续走。",
-                f"{character}边走边留意脚下，先享受眼前这段路。",
-            ])
-        if any(word in activity_key for word in ("阳台", "摇椅", "小憩", "打盹", "薄毯", "沙发", "抱枕", "发呆")):
-            specific_templates.extend([
-                f"{character}把毯子盖好，先安心享受眼前这段休息。",
-                "呼吸慢下来，这会儿只需要让自己放松一点。",
-                f"{character}靠稳一点，专心把这一小段空闲留给自己。",
-            ])
-        if any(word in activity_key for word in ("整理房间", "房间", "浇水", "多肉", "植物")):
-            specific_templates.extend([
-                f"{character}先把眼前这盆照顾好，水量和叶片都看仔细。",
-                "手边这一块慢慢整理，先让眼前清爽起来。",
-                f"{character}专心收好正在处理的东西，不让桌面越理越乱。",
-            ])
-
-        generic_templates = [
-            f"{character}先把眼前这件事认真做好，不急着想别的。",
-            "现在只管手上这一项，按自己的节奏慢慢来。",
-            f"{character}把注意力放回当前动作，先不让思绪跑远。",
-            "眼前这一步做稳就好，不需要把自己催得太紧。",
-        ]
-        templates = specific_templates or generic_templates
-        return _shorten_caption(_caption_pick(templates, theme, schedule_time, character, user_name), 72)
+        # A schedule describes intent, not necessarily what the generated image
+        # actually contains. Fabricating copy from it can create a mismatched
+        # gallery card, so scheduled captions fail closed when vision is absent.
+        return ""
     templates = {
         "morning": f"{character}想先把早餐和出门前的小事处理好，别一早就手忙脚乱。",
         "noon": f"{character}准备先吃点东西，再看看下午还有哪些安排。",
@@ -837,7 +775,11 @@ def _caption_is_mostly_chinese(caption: str) -> bool:
     return True
 
 
-def _caption_rejection_reason(caption: str, schedule_time: str = "") -> str:
+def _caption_rejection_reason(
+    caption: str,
+    schedule_time: str = "",
+    image_grounded: bool = False,
+) -> str:
     caption = repair_mojibake_text(caption)
     if not caption:
         return "empty"
@@ -848,7 +790,10 @@ def _caption_rejection_reason(caption: str, schedule_time: str = "") -> str:
         ("instruction_leak", _caption_has_instruction_leak(caption)),
         ("reader_address", _caption_addresses_reader(caption, schedule_time)),
         ("tone_problem", _caption_has_tone_problem(caption, schedule_time)),
-        ("schedule_conflict", _caption_conflicts_with_schedule(caption, schedule_time)),
+        (
+            "schedule_conflict",
+            not image_grounded and _caption_conflicts_with_schedule(caption, schedule_time),
+        ),
         ("gallery_record", _caption_is_gallery_record(caption)),
         ("repeat_schedule", _caption_repeats_schedule(caption, schedule_time)),
         ("generic_template", _caption_is_generic_template(caption)),
@@ -984,6 +929,16 @@ def _caption_has_tone_problem(caption: str, schedule_time: str = "") -> bool:
 
 def _caption_is_generic_template(caption: str) -> bool:
     text = re.sub(r"\s+", "", str(caption or ""))
+    vague_markers = (
+        "先把眼前这件事",
+        "现在只管手上这一项",
+        "把注意力放回当前动作",
+        "眼前这一步做稳",
+        "不让思绪跑远",
+        "按自己的节奏慢慢来",
+    )
+    if any(marker in text for marker in vague_markers):
+        return True
     markers = ("刚刚", "拍下这一刻", "穿搭和心情", "分享给")
     return sum(1 for marker in markers if marker in text) >= 3
 
@@ -1825,26 +1780,22 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
     persona = _runtime_persona()
     character = persona.get("name") or "角色"
     user_name = persona.get("user_name") or "用户"
-    caption_voice = (
-        "自然、口语、具体，像自己此刻心里的真实念头；只讲当下正在做的事，不安排、不预告下一步，不撒娇、不营业、不对任何人说话"
-        if activity
-        else _caption_voice_hint(persona)
-    )
+    caption_voice = _caption_voice_hint(persona)
     address_rule = (
         "这是她自己的心里小计划，不是在对读者说话；不要称呼读者，不要写“主人/你/他/等你来看/给你看”等互动句，也不要写性感、诱惑、勾人、被谁看见。"
         if activity
         else f"读者称呼“{user_name}”，可以自然亲近但不要写成固定营业话术。"
     )
-    next_schedule_rule = "只写当下正在做的事和此刻心里的想法，不要安排、预告或编造接下来的计划。"
     system_msg = (
         f"你正在以“{character}”的口吻，为刚拍的照片写一句自然的小心思。{address_rule}"
-        f"下面的口吻只作为说话习惯参考，不要为了风格写得文艺或矫饰：{caption_voice}。"
-        "小心思要像她当时脑子里冒出来的普通念头：手上这件事怎么安排、有什么小担心或小期待。"
-        "可以自然带一点语气词，但整体要口语、具体、轻松，不要故意可爱、不要像朋友圈文案。"
+        f"说话习惯参考：{caption_voice}。"
+        "先观察照片，再写她当时脑子里自然冒出来的一句念头。"
+        "正文必须落到至少一个照片中清楚可见的具体细节，例如物体、动作、姿态、食物或环境。"
+        "日程只用于辅助理解场景；如果日程与照片不一致，以照片为准，不要补写照片中看不见的东西。"
+        "在可见细节上带一点具体感受、在意或期待，保持口语、轻松，不要故意可爱、不要像朋友圈文案。"
         "但不要直接复述、罗列或解释 SOUL、人设、身份、关系定义或性格设定原文，只用它来决定说话的口吻。"
-        "如果提供了具体日程，必须严格贴合该时间、地点和活动，不要写与日程冲突的起床、被窝、睡前等内容。"
-        f"{next_schedule_rule}"
-        "内容只聚焦当下正在做的动作和此刻心里的想法，不要安排下一步计划，也不要只写景物、光线、心情或穿搭点评。"
+        "不要写下一项日程，也不要只写抽象心情或穿搭点评。"
+        "禁止写“先把眼前这件事”“只管手上这一项”“当前动作”“不让思绪跑远”“按自己的节奏慢慢来”等空泛套话。"
         "不要复述当前日程原句，不要写“刚刚X时拍下这一刻，想把穿搭和心情分享给Y”这类模板句。"
         "禁止使用“留了一张”“放进画廊”“收进画廊”“现场感”“不能不存”等记录/收藏话术。"
         "禁止文艺腔、散文腔和景物隐喻；不要写“水珠、叶尖、心情被擦亮、像被阳光揉、温柔照顾、书签、光落下来”等表达。"
@@ -1855,7 +1806,7 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
         "绝对不要在末尾加「网页版」「查看详情」「点击查看」等任何引导性后缀。"
     )
 
-    if img_b64 and not activity:
+    if img_b64:
         try:
             img_data = base64.b64decode(img_b64)
             img = Image.open(io.BytesIO(img_data))
@@ -1871,11 +1822,11 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
             img_b64 = None
 
     text_user_content = (
-        f"当前日程：{scene}。请写一条短小心思，像当时心里真实想的一句话，"
-        "具体到正在做的事和此刻的感受；不要提下一步安排，不要文艺比喻。只给最终中文正文，不要复述本条指令。"
+        f"日程背景：{scene}。请先观察照片，以照片中明确可见的细节为依据写小心思；"
+        "日程与照片冲突时以照片为准。只给最终中文正文，不要复述本条指令。"
     )
     request_variants: list[tuple[str, object]] = []
-    if img_b64 and not activity:
+    if img_b64:
         request_variants.append((
             "image",
             [
@@ -1883,6 +1834,9 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
                 {"type": "text", "text": f"这是{character}刚拍的照片。{text_user_content}"},
             ],
         ))
+    if require_image and not img_b64:
+        print("[caption] visual caption unavailable: image required", file=sys.stderr)
+        return ""
     if not require_image:
         request_variants.append(("text", text_user_content))
 
@@ -1948,7 +1902,11 @@ def build_caption(theme: str, img_b64: Optional[str] = None, img_mime: str = "im
                             file=sys.stderr,
                         )
                         continue
-                    rejection_reason = _caption_rejection_reason(caption, schedule_time)
+                    rejection_reason = _caption_rejection_reason(
+                        caption,
+                        schedule_time,
+                        image_grounded=mode == "image",
+                    )
                     if rejection_reason:
                         print(
                             f"[caption] llm caption rejected: model={model} mode={mode} attempt={attempt}/{attempts} reason={rejection_reason} text={caption[:100]}",
