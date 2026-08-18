@@ -15,6 +15,9 @@ sys.path.insert(0, str(APP_DIR))
 sys.path.insert(0, str(ZHUZHU_DIR))
 
 import core as zhuzhu_core  # noqa: E402
+import generate as unified_generate  # noqa: E402
+import generate_gitee  # noqa: E402
+import generate_gptimage  # noqa: E402
 
 
 def _image_b64() -> str:
@@ -99,6 +102,107 @@ class CaptionGroundingTest(unittest.TestCase):
                         image_grounded=True,
                     ),
                 )
+
+    def test_gitee_backend_persists_visual_caption_metadata(self):
+        with patch.object(
+            generate_gitee,
+            "generate_image_bytes",
+            return_value=(b"image", 1.0),
+        ), patch.object(
+            generate_gitee,
+            "save_image",
+            return_value=("/tmp/gitee.png", "gitee.png", 1787040000),
+        ), patch.object(
+            generate_gitee,
+            "update_metadata",
+        ), patch.object(
+            generate_gitee,
+            "build_caption_for_image",
+            return_value="饭团旁边的味噌汤还冒着热气。",
+        ), patch.object(
+            generate_gitee,
+            "update_metadata_caption",
+        ) as persist_caption:
+            result = generate_gitee.generate(
+                "custom",
+                caption=True,
+                prompt_override="portrait",
+                prompt_is_final=True,
+                sync_gallery=False,
+            )
+
+        self.assertEqual("/tmp/gitee.png", result)
+        persist_caption.assert_called_once_with(
+            "gitee.png",
+            "饭团旁边的味噌汤还冒着热气。",
+        )
+
+    def test_gptimage_backend_persists_visual_caption_metadata(self):
+        with patch.object(
+            generate_gptimage,
+            "_generate_via_direct_gpt",
+            return_value=(b"image", 1.0),
+        ), patch.object(
+            generate_gptimage,
+            "save_image",
+            return_value=("/tmp/gptimage.png", "gptimage.png", 1787040000),
+        ), patch.object(
+            generate_gptimage,
+            "update_metadata",
+        ), patch.object(
+            generate_gptimage,
+            "build_caption_for_image",
+            return_value="玻璃杯里的柠檬片正贴着杯壁。",
+        ), patch.object(
+            generate_gptimage,
+            "update_metadata_caption",
+        ) as persist_caption:
+            result = generate_gptimage.generate(
+                "custom",
+                caption=True,
+                prompt_override="portrait",
+                prompt_is_final=True,
+                sync_gallery=False,
+            )
+
+        self.assertEqual("/tmp/gptimage.png", result)
+        persist_caption.assert_called_once_with(
+            "gptimage.png",
+            "玻璃杯里的柠檬片正贴着杯壁。",
+        )
+
+    def test_unified_generation_sends_image_when_visual_caption_is_empty(self):
+        with patch.object(
+            unified_generate,
+            "generate_with_gptimage",
+            return_value="/tmp/generated.png",
+        ), patch.object(
+            unified_generate,
+            "build_caption_for_image",
+            return_value="",
+        ), patch.object(
+            unified_generate,
+            "update_metadata_caption",
+        ) as persist_caption, patch.object(
+            unified_generate,
+            "send_photo",
+        ) as send_photo, patch.object(
+            zhuzhu_core,
+            "sync_to_gallery",
+        ):
+            result = unified_generate.generate(
+                "custom",
+                engine="gptimage",
+                caption=True,
+                prompt_override="portrait",
+                prompt_final=True,
+                no_auto_style=True,
+                send=True,
+            )
+
+        self.assertEqual("/tmp/generated.png", result)
+        persist_caption.assert_not_called()
+        send_photo.assert_called_once_with("/tmp/generated.png", "")
 
 
 if __name__ == "__main__":

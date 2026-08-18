@@ -1567,7 +1567,12 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
         style_name = str(daily_context.get("outfit_style") or style_name).strip() or style_name
     full_outfit = str(daily_context.get("outfit") or "").strip()
     outfit_value = full_outfit or f"风格：{style_name} 穿搭：{outfit_desc}"
-    caption_value = _best_caption(caption, daily_context.get("caption"))
+    caption_fallback = (
+        ""
+        if source in {"cron", "web"}
+        else daily_context.get("caption")
+    )
+    caption_value = _best_caption(caption, caption_fallback)
 
     entry = {
         "id": filename,

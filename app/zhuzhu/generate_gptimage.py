@@ -32,6 +32,7 @@ from core import (
     save_image,
     send_photo,
     update_metadata,
+    update_metadata_caption,
     CONFIG_PATH,
     _API_KEYS_CONFIG_PATH,
 )
@@ -1666,6 +1667,8 @@ def generate(theme: str, send: bool = False, caption: bool = False,
             require_image=True,
             allow_fallback=False,
         )
+        if cap_text:
+            update_metadata_caption(filename, cap_text)
     if send:
         send_photo(path, cap_text)
 

@@ -20,6 +20,7 @@ from core import (
     save_image,
     send_photo,
     update_metadata,
+    update_metadata_caption,
 )
 
 ENGINE_URL = get_image_model("gitee_url")
@@ -100,6 +101,8 @@ def generate(theme: str, send: bool = False, caption: bool = False,
             require_image=True,
             allow_fallback=False,
         )
+        if caption_text:
+            update_metadata_caption(filename, caption_text)
     if send:
         send_photo(path, caption_text)
 

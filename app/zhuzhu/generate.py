@@ -1142,9 +1142,9 @@ def generate(
         )
         if caption_text:
             update_metadata_caption(os.path.basename(path), caption_text)
-            if send:
-                send_photo(path, caption_text)
             print(f"CAPTION:{caption_text}")
+    if path and send:
+        send_photo(path, caption_text)
 
     # Precision edits are merged by the app after reference-mode validation.
     if path and not precise_edit:
