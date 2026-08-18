@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, patch
+from unittest.mock import AsyncMock, patch
 
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
@@ -132,12 +132,15 @@ class PhotoDeliveryRetryTest(unittest.IsolatedAsyncioTestCase):
                 [],
                 0,
                 stdout=f"SUCCESS:{image_path}\nCAPTION:原图文案\n",
-                stderr="",
+                stderr="[caption] llm caption rejected: reason=generic_template\n",
             )
 
-            with patch.object(main_module.subprocess, "run", return_value=process):
-                with self.assertRaises(PhotoDeliveryError):
-                    await app.photo_job("noon", "15:12 测试活动")
+            with self.assertLogs("portrait_gallery", level="WARNING") as logs:
+                with patch.object(main_module.subprocess, "run", return_value=process):
+                    with self.assertRaises(PhotoDeliveryError):
+                        await app.photo_job("noon", "15:12 测试活动")
+
+            self.assertTrue(any("reason=generic_template" in line for line in logs.output))
 
             slot_key = f"{app._today().isoformat()} 15:12"
             self.assertEqual("delivery_failed", app._failed_photo_jobs[slot_key].get("reason"))
@@ -195,25 +198,15 @@ class PhotoDeliveryRetryTest(unittest.IsolatedAsyncioTestCase):
             }
             app._check_photo_exists_for_slot = lambda *_args: False
 
-            with patch.object(
-                main_module,
-                "build_caption_fallback",
-                return_value="恢复生成的小心思",
-            ) as caption_fallback:
-                app._recover_orphaned_generated_photos()
+            app._recover_orphaned_generated_photos()
 
             recovered = app._failed_photo_jobs[slot_key]
             self.assertEqual("delivery_failed", recovered.get("reason"))
             self.assertEqual(filename, recovered.get("image_filename"))
             entry = ScheduleStore(app.data_dir).load()[filename]
             self.assertTrue(entry.get("recovered_from_metadata"))
-            self.assertEqual("恢复生成的小心思", entry.get("caption"))
+            self.assertEqual("", entry.get("caption"))
             self.assertEqual("failed", entry.get("delivery_status"))
-            caption_fallback.assert_called_once_with(
-                "noon",
-                "15:12 测试活动",
-                ANY,
-            )
 
     async def test_startup_recovery_turns_interrupted_send_into_manual_resend(self):
         with tempfile.TemporaryDirectory() as tmpdir:

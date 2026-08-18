@@ -1131,12 +1131,20 @@ def generate(
 
     caption_text = None
     if path and caption:
-        caption_text = build_caption_for_image(theme, path, schedule_time=schedule_raw, schedule_date=schedule_date)
+        caption_schedule_time = schedule_raw or schedule_time
+        caption_text = build_caption_for_image(
+            theme,
+            path,
+            schedule_time=caption_schedule_time,
+            schedule_date=schedule_date,
+            require_image=True,
+            allow_fallback=False,
+        )
         if caption_text:
             update_metadata_caption(os.path.basename(path), caption_text)
-            if send:
-                send_photo(path, caption_text)
             print(f"CAPTION:{caption_text}")
+    if path and send:
+        send_photo(path, caption_text)
 
     # Precision edits are merged by the app after reference-mode validation.
     if path and not precise_edit:

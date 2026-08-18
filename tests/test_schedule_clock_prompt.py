@@ -293,7 +293,7 @@ class ScheduleClockPromptTest(unittest.TestCase):
             unified_generate,
             "build_caption_for_image",
             return_value="运动装备再检查一遍。",
-        ), patch.object(
+        ) as build_caption, patch.object(
             unified_generate,
             "update_metadata_caption",
         ) as persist_caption, patch.object(
@@ -316,6 +316,14 @@ class ScheduleClockPromptTest(unittest.TestCase):
         persist_caption.assert_called_once_with(
             "generated.png",
             "运动装备再检查一遍。",
+        )
+        build_caption.assert_called_once_with(
+            "noon",
+            "/tmp/generated.png",
+            schedule_time="12:36 在健身房更衣室整理运动装备",
+            schedule_date="",
+            require_image=True,
+            allow_fallback=False,
         )
 
     def test_next_caption_activity_comes_only_from_persisted_schedule(self):
@@ -422,16 +430,14 @@ class ScheduleClockPromptTest(unittest.TestCase):
             bad,
             schedule,
         )
-        self.assertFalse(zhuzhu_core._caption_rejection_reason(cleaned, schedule))
-        self.assertTrue(zhuzhu_core._caption_is_mostly_chinese(cleaned))
-        self.assertNotIn('The user wants', cleaned)
+        self.assertEqual('', cleaned)
 
     def test_best_caption_rejects_instruction_leak(self):
         bad = 'The user wants me to write a short little thought in the tone of 猪猪 for a photo.'
         good = '猪猪先把冷盘摆整齐，别在火候上分心。'
         self.assertEqual(zhuzhu_core._best_caption(bad, good), good)
 
-    def test_caption_fallback_does_not_invent_a_future_task(self):
+    def test_scheduled_caption_fallback_fails_closed_without_an_image(self):
         with patch.object(zhuzhu_core, "_next_schedule_activity", return_value=""):
             caption = zhuzhu_core._personalized_caption_fallback(
                 "noon",
@@ -439,10 +445,7 @@ class ScheduleClockPromptTest(unittest.TestCase):
                 "12:36 在厨房做午餐",
             )
 
-        self.assertNotIn("等会儿", caption)
-        self.assertNotIn("开播", caption)
-        self.assertNotIn("下午", caption)
-        self.assertNotIn("明天", caption)
+        self.assertEqual("", caption)
 
     def test_filename_timestamp_uses_configured_timezone(self):
         timestamp = 1784176761

@@ -129,6 +129,40 @@ class StoreConcurrencyTest(unittest.TestCase):
             self.assertEqual("2026-07-14", entry["date"])
             self.assertEqual("00:30 昨日尾部活动", entry["schedule_time"])
 
+    def test_scheduled_gallery_sync_does_not_reuse_daily_plan_caption(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "source.jpg"
+            source.write_bytes(b"image")
+            schedule_path = root / "schedule_data.json"
+            schedule_path.write_text(
+                json.dumps({
+                    "2026-08-18": {
+                        "date": "2026-08-18",
+                        "schedule": "12:36 在露天庭院吃饭团配味噌汤",
+                        "caption": "今天想按自己的节奏完成几件事。",
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            with (
+                patch.object(core, "SECRETARY_GALLERY_DIR", str(root / "images")),
+                patch.object(core, "SECRETARY_SCHEDULE_PATH", str(schedule_path)),
+            ):
+                core.sync_to_gallery(
+                    str(source),
+                    "scheduled.jpg",
+                    "noon",
+                    caption="",
+                    source="cron",
+                    schedule_time="12:36 在露天庭院吃饭团配味噌汤",
+                    schedule_date="2026-08-18",
+                )
+
+            entry = json.loads(schedule_path.read_text(encoding="utf-8"))["scheduled.jpg"]
+            self.assertEqual("", entry.get("caption"))
+
     def test_gallery_sync_persistence_failure_is_propagated(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
