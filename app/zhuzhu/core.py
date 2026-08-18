@@ -1567,12 +1567,10 @@ def sync_to_gallery(path: str, filename: str, theme: str, style: Optional[str] =
         style_name = str(daily_context.get("outfit_style") or style_name).strip() or style_name
     full_outfit = str(daily_context.get("outfit") or "").strip()
     outfit_value = full_outfit or f"风格：{style_name} 穿搭：{outfit_desc}"
-    caption_fallback = (
-        ""
-        if source in {"cron", "web"}
-        else daily_context.get("caption")
-    )
-    caption_value = _best_caption(caption, caption_fallback)
+    # A whole-day plan caption is not evidence of what this individual image
+    # contains. If visual captioning failed (or was not requested), keep the
+    # image caption empty for every source instead of fabricating a match.
+    caption_value = _best_caption(caption)
 
     entry = {
         "id": filename,
