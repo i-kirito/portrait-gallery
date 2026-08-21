@@ -41,6 +41,7 @@ import aiohttp
 from aiohttp import web
 from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
+from delivery import is_ambiguous_delivery_timeout
 from characters import (
     LOCAL_CHARACTER_SOURCE,
     delete_manual_character,
@@ -4465,6 +4466,7 @@ class GalleryServer:
                 f"MEDIA:{image_path}",
                 f"{label}图片",
                 required=True,
+                assume_delivered_on_timeout=channel == "telegram",
             )
             if not image_ok:
                 logger.error("%s手动发送失败: 图片未送达，跳过文案发送", label)
@@ -4536,6 +4538,12 @@ class GalleryServer:
             )
         except subprocess.TimeoutExpired:
             logger.warning("OpenClaw %s手动发送超时", label)
+            if channel == "telegram":
+                logger.warning(
+                    "OpenClaw TG手动发送结果未知；为避免重复图片，"
+                    "停止 fallback 并按已送达处理"
+                )
+                return True
             return False
         except Exception as e:
             logger.warning("OpenClaw %s手动发送异常: %s", label, e)
@@ -4544,6 +4552,13 @@ class GalleryServer:
         output = self._manual_send_output(result.stdout, result.stderr)
         if result.returncode == 0:
             logger.info("OpenClaw %s手动发送成功", label)
+            return True
+        if channel == "telegram" and is_ambiguous_delivery_timeout(output):
+            logger.warning(
+                "OpenClaw TG手动发送结果未知；为避免重复图片，"
+                "停止 fallback 并按已送达处理: output=%s",
+                output,
+            )
             return True
         logger.warning("OpenClaw %s手动发送失败: exit=%s output=%s", label, result.returncode, output)
         return False
@@ -4555,6 +4570,7 @@ class GalleryServer:
         message: str,
         label: str,
         required: bool = True,
+        assume_delivered_on_timeout: bool = False,
     ) -> bool:
         attempts = 1 + len(SEND_RETRY_DELAYS_SECONDS)
         last_output = ""
@@ -4580,6 +4596,13 @@ class GalleryServer:
             except subprocess.TimeoutExpired:
                 last_output = f"hermes send timed out after {SEND_TIMEOUT_SECONDS}s"
                 logger.warning("%s发送超时: attempt=%s/%s", label, attempt_no, attempts)
+                if assume_delivered_on_timeout:
+                    logger.warning(
+                        "%s发送结果未知；为避免重复图片，"
+                        "停止自动重试并按已送达处理",
+                        label,
+                    )
+                    return True
                 continue
             except Exception as e:
                 last_output = str(e)
@@ -4591,6 +4614,14 @@ class GalleryServer:
                 logger.info("%s发送成功", label)
                 return True
             last_output = output or f"exit code {result.returncode}"
+            if assume_delivered_on_timeout and is_ambiguous_delivery_timeout(last_output):
+                logger.warning(
+                    "%s发送结果未知；为避免重复图片，"
+                    "停止自动重试并按已送达处理: output=%s",
+                    label,
+                    last_output,
+                )
+                return True
             if self._is_wechat_context_error(last_output):
                 self._manual_send_last_error = (
                     "微信会话上下文已失效。请先在微信里给 Hermes 发任意一条消息，"
