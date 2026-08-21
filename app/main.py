@@ -26,6 +26,7 @@ from apscheduler.events import EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from data import DailyEntry
+from delivery import is_ambiguous_delivery_timeout
 from scheduler import DailyScheduler
 from image_gen import ImageGenerator
 from image_editing import (
@@ -5765,6 +5766,7 @@ class PortraitGalleryApp:
                 f"MEDIA:{image_path}",
                 f"{label}图片",
                 required=True,
+                assume_delivered_on_timeout=channel == "telegram",
             )
             if not image_ok:
                 logger.error(f"{label}发送失败: 图片未送达，跳过文案发送")
@@ -5856,6 +5858,13 @@ class PortraitGalleryApp:
             )
         except subprocess.TimeoutExpired:
             logger.warning(f"OpenClaw {label}推送超时")
+            if channel == "telegram":
+                logger.warning(
+                    "OpenClaw TG推送结果未知；为避免重复图片，"
+                    "停止 fallback 并按已送达处理"
+                )
+                self._last_delivery_error = ""
+                return True
             self._last_delivery_error = "openclaw_delivery_timeout"
             return False
         except Exception as e:
@@ -5866,6 +5875,14 @@ class PortraitGalleryApp:
         output = self._hermes_send_output(result.stdout, result.stderr)
         if result.returncode == 0:
             logger.info(f"OpenClaw {label}推送成功")
+            self._last_delivery_error = ""
+            return True
+        if channel == "telegram" and is_ambiguous_delivery_timeout(output):
+            logger.warning(
+                "OpenClaw TG推送结果未知；为避免重复图片，"
+                "停止 fallback 并按已送达处理: output=%s",
+                output,
+            )
             self._last_delivery_error = ""
             return True
         logger.warning(f"OpenClaw {label}推送失败: exit={result.returncode}, output={output}")
@@ -5879,6 +5896,7 @@ class PortraitGalleryApp:
         message: str,
         label: str,
         required: bool = True,
+        assume_delivered_on_timeout: bool = False,
     ) -> bool:
         """Run `hermes send` with outer retry/backoff for Weixin rate limits."""
         attempts = 1 + len(WECHAT_RETRY_DELAYS_SECONDS)
@@ -5908,6 +5926,13 @@ class PortraitGalleryApp:
             except subprocess.TimeoutExpired:
                 last_output = f"hermes send timed out after {WECHAT_SEND_TIMEOUT_SECONDS}s"
                 logger.warning(f"{label}发送超时: attempt={attempt_no}/{attempts}")
+                if assume_delivered_on_timeout:
+                    logger.warning(
+                        f"{label}发送结果未知；为避免重复图片，"
+                        "停止自动重试并按已送达处理"
+                    )
+                    self._last_delivery_error = ""
+                    return True
                 continue
             except Exception as e:
                 last_output = str(e)
@@ -5921,6 +5946,13 @@ class PortraitGalleryApp:
                 return True
 
             last_output = output or f"exit code {result.returncode}"
+            if assume_delivered_on_timeout and is_ambiguous_delivery_timeout(last_output):
+                logger.warning(
+                    f"{label}发送结果未知；为避免重复图片，"
+                    f"停止自动重试并按已送达处理: output={last_output}"
+                )
+                self._last_delivery_error = ""
+                return True
             if self._is_wechat_context_error(last_output):
                 log_fn = logger.error if required else logger.warning
                 log_fn(
