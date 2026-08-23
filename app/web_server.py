@@ -41,6 +41,11 @@ import aiohttp
 from aiohttp import web
 from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
+from delivery import (
+    DELIVERY_UNCERTAIN_ERROR,
+    is_ambiguous_delivery_timeout,
+    is_delivery_uncertain_error,
+)
 from characters import (
     LOCAL_CHARACTER_SOURCE,
     delete_manual_character,
@@ -4411,6 +4416,16 @@ class GalleryServer:
                 "agent": delivery.get("agent", ""),
                 "message": f"已发送到{label}",
             })
+        if is_delivery_uncertain_error(self._manual_send_last_error):
+            return web.json_response({
+                "status": "uncertain",
+                "channel": channel,
+                "agent": delivery.get("agent", ""),
+                "message": (
+                    "TG 返回超时，图片是否送达尚不确定；为避免重复已停止自动重试，"
+                    "请先在 TG 确认。"
+                ),
+            }, status=202)
         return web.json_response({
             "error": "send_failed",
             "channel": channel,
@@ -4427,6 +4442,11 @@ class GalleryServer:
             openclaw_ok = await self._send_existing_openclaw(channel, image_path, caption, delivery)
             if openclaw_ok:
                 return True
+            if is_delivery_uncertain_error(self._manual_send_last_error):
+                logger.warning(
+                    "手动 OpenClaw TG 发送结果未知；为避免重复，不执行 Hermes fallback"
+                )
+                return False
             logger.warning("手动 OpenClaw 发送失败，尝试 Hermes fallback: channel=%s", channel)
         return await self._send_existing_hermes(channel, image_path, caption, delivery)
 
@@ -4465,9 +4485,16 @@ class GalleryServer:
                 f"MEDIA:{image_path}",
                 f"{label}图片",
                 required=True,
+                stop_retry_on_ambiguous_timeout=channel == "telegram",
             )
             if not image_ok:
-                logger.error("%s手动发送失败: 图片未送达，跳过文案发送", label)
+                if is_delivery_uncertain_error(self._manual_send_last_error):
+                    logger.warning(
+                        "%s手动发送结果未知；为避免重复已停止自动重试，跳过文案发送",
+                        label,
+                    )
+                else:
+                    logger.error("%s手动发送失败: 图片未送达，跳过文案发送", label)
                 return False
             caption_ok = True
             if caption:
@@ -4536,6 +4563,13 @@ class GalleryServer:
             )
         except subprocess.TimeoutExpired:
             logger.warning("OpenClaw %s手动发送超时", label)
+            if channel == "telegram":
+                logger.warning(
+                    "OpenClaw TG手动发送结果未知；为避免重复图片，"
+                    "停止 fallback 并记录为待确认"
+                )
+                self._manual_send_last_error = DELIVERY_UNCERTAIN_ERROR
+                return False
             return False
         except Exception as e:
             logger.warning("OpenClaw %s手动发送异常: %s", label, e)
@@ -4545,6 +4579,14 @@ class GalleryServer:
         if result.returncode == 0:
             logger.info("OpenClaw %s手动发送成功", label)
             return True
+        if channel == "telegram" and is_ambiguous_delivery_timeout(output):
+            logger.warning(
+                "OpenClaw TG手动发送结果未知；为避免重复图片，"
+                "停止 fallback 并记录为待确认: output=%s",
+                output,
+            )
+            self._manual_send_last_error = DELIVERY_UNCERTAIN_ERROR
+            return False
         logger.warning("OpenClaw %s手动发送失败: exit=%s output=%s", label, result.returncode, output)
         return False
 
@@ -4555,6 +4597,7 @@ class GalleryServer:
         message: str,
         label: str,
         required: bool = True,
+        stop_retry_on_ambiguous_timeout: bool = False,
     ) -> bool:
         attempts = 1 + len(SEND_RETRY_DELAYS_SECONDS)
         last_output = ""
@@ -4580,6 +4623,14 @@ class GalleryServer:
             except subprocess.TimeoutExpired:
                 last_output = f"hermes send timed out after {SEND_TIMEOUT_SECONDS}s"
                 logger.warning("%s发送超时: attempt=%s/%s", label, attempt_no, attempts)
+                if stop_retry_on_ambiguous_timeout:
+                    logger.warning(
+                        "%s发送结果未知；为避免重复图片，"
+                        "停止自动重试并记录为待确认",
+                        label,
+                    )
+                    self._manual_send_last_error = DELIVERY_UNCERTAIN_ERROR
+                    return False
                 continue
             except Exception as e:
                 last_output = str(e)
@@ -4591,6 +4642,15 @@ class GalleryServer:
                 logger.info("%s发送成功", label)
                 return True
             last_output = output or f"exit code {result.returncode}"
+            if stop_retry_on_ambiguous_timeout and is_ambiguous_delivery_timeout(last_output):
+                logger.warning(
+                    "%s发送结果未知；为避免重复图片，"
+                    "停止自动重试并记录为待确认: output=%s",
+                    label,
+                    last_output,
+                )
+                self._manual_send_last_error = DELIVERY_UNCERTAIN_ERROR
+                return False
             if self._is_wechat_context_error(last_output):
                 self._manual_send_last_error = (
                     "微信会话上下文已失效。请先在微信里给 Hermes 发任意一条消息，"
@@ -5074,7 +5134,7 @@ class GalleryServer:
                     continue
                 if str(entry.get("source") or "").strip() not in SCHEDULED_PHOTO_SOURCES:
                     continue
-                if entry.get("delivery_status") in {"sending", "failed"}:
+                if entry.get("delivery_status") in {"sending", "failed", "uncertain"}:
                     continue
                 img_file = entry.get("image_filename", "")
                 if not img_file or img_file in seen:
@@ -5111,7 +5171,8 @@ class GalleryServer:
                 1 for job in jobs if job.get("status") in ("scheduled", "running", "sending")
             )
             failed_today = sum(
-                1 for job in jobs if job.get("status") in ("failed", "delivery_failed")
+                1 for job in jobs
+                if job.get("status") in ("failed", "delivery_failed", "delivery_uncertain")
             )
             planned_today = completed_today + len(jobs)
             return web.json_response({

@@ -26,6 +26,11 @@ from apscheduler.events import EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from data import DailyEntry
+from delivery import (
+    DELIVERY_UNCERTAIN_ERROR,
+    is_ambiguous_delivery_timeout,
+    is_delivery_uncertain_error,
+)
 from scheduler import DailyScheduler
 from image_gen import ImageGenerator
 from image_editing import (
@@ -3766,7 +3771,7 @@ class PortraitGalleryApp:
         if status == "sent":
             patch["delivery_sent_at"] = now_text
             patch["delivery_error"] = ""
-        elif status == "failed":
+        elif status in {"failed", "uncertain"}:
             patch["delivery_error"] = str(error or "delivery_failed")[:600]
 
         def _update(all_data):
@@ -3807,11 +3812,16 @@ class PortraitGalleryApp:
     ) -> None:
         filename = os.path.basename(str(image_path or ""))
         detail = str(error or "delivery_failed").strip() or "delivery_failed"
-        self._set_gallery_delivery_status(filename, "failed", error=detail)
+        uncertain = is_delivery_uncertain_error(detail)
+        self._set_gallery_delivery_status(
+            filename,
+            "uncertain" if uncertain else "failed",
+            error=detail,
+        )
         if not slot_key:
             return
         self._failed_photo_jobs[slot_key] = {
-            "reason": "delivery_failed",
+            "reason": "delivery_uncertain" if uncertain else "delivery_failed",
             "theme": theme,
             "time": time_text,
             "activity": activity,
@@ -3820,7 +3830,12 @@ class PortraitGalleryApp:
             "image_path": image_path,
             "caption": caption,
             "error": detail[-1200:],
-            "error_summary": "图片已生成，但发送失败；重试只会重发原图，不会重新生图",
+            "error_summary": (
+                "TG 返回超时，图片是否送达尚不确定；为避免重复已停止自动重试，"
+                "请先在 TG 确认，必要时再手动重发原图"
+                if uncertain
+                else "图片已生成，但发送失败；重试只会重发原图，不会重新生图"
+            ),
         }
         self._save_failed_photo_jobs()
 
@@ -4160,7 +4175,7 @@ class PortraitGalleryApp:
                     continue
                 if str(entry.get("source") or "").strip() not in SCHEDULED_PHOTO_SOURCES:
                     continue
-                if entry.get("delivery_status") in {"sending", "failed"}:
+                if entry.get("delivery_status") in {"sending", "failed", "uncertain"}:
                     continue
                 img_file = entry.get("image_filename", "")
                 if img_file and self._photo_image_exists(img_file):
@@ -4221,7 +4236,7 @@ class PortraitGalleryApp:
         for slot_key, failed in self._failed_photo_jobs.items():
             date_text, _, time_text = slot_key.partition(" ")
             if date_text == today_str and re.match(r'^\d{2}:\d{2}$', time_text):
-                if failed.get("reason") == "delivery_failed" or not self._check_photo_exists_for_slot(today_str, time_text):
+                if failed.get("reason") in {"delivery_failed", "delivery_uncertain"} or not self._check_photo_exists_for_slot(today_str, time_text):
                     times.add(time_text)
         return times
 
@@ -4928,22 +4943,37 @@ class PortraitGalleryApp:
             if send_ok:
                 self._set_gallery_delivery_status(filename, "sent")
                 current = self._failed_photo_jobs.get(slot_key)
-                if isinstance(current, dict) and current.get("reason") == "delivery_failed":
+                if isinstance(current, dict) and current.get("reason") in {
+                    "delivery_failed",
+                    "delivery_uncertain",
+                }:
                     self._failed_photo_jobs.pop(slot_key, None)
                     self._save_failed_photo_jobs()
                 logger.info("原图重发成功: %s image=%s", slot_key, filename)
                 return
 
             error = self._last_delivery_error or "delivery_failed"
-            self._set_gallery_delivery_status(filename, "failed", error=error)
+            uncertain = is_delivery_uncertain_error(error)
+            self._set_gallery_delivery_status(
+                filename,
+                "uncertain" if uncertain else "failed",
+                error=error,
+            )
             failed.update({
+                "reason": "delivery_uncertain" if uncertain else "delivery_failed",
                 "failed_at": self._now().isoformat(),
                 "error": error[-1200:],
-                "error_summary": "图片重发仍未送达；请恢复会话或等待限流解除后再试",
+                "error_summary": (
+                    "本次 TG 重发仍返回超时，是否送达不确定；请先在 TG 确认，"
+                    "不要连续点击重发"
+                    if uncertain
+                    else "图片重发仍未送达；请恢复会话或等待限流解除后再试"
+                ),
             })
             self._failed_photo_jobs[slot_key] = failed
             self._save_failed_photo_jobs()
-            logger.error("原图重发失败: %s image=%s error=%s", slot_key, filename, error)
+            log_fn = logger.warning if uncertain else logger.error
+            log_fn("原图重发未确认成功: %s image=%s error=%s", slot_key, filename, error)
         except Exception as exc:
             error = str(exc) or "delivery_retry_failed"
             self._set_gallery_delivery_status(filename, "failed", error=error)
@@ -5081,7 +5111,10 @@ class PortraitGalleryApp:
             running_seconds = max(0, int(time.time() - started_at))
             stale_after = self._photo_job_stale_seconds()
             failed = self._failed_photo_jobs.get(slot_key) or {}
-            delivery_retry = failed.get("reason") == "delivery_failed"
+            delivery_retry = failed.get("reason") in {
+                "delivery_failed",
+                "delivery_uncertain",
+            }
             jobs.append({
                 "id": f"photo_backfill_{time_text.replace(':', '_')}",
                 "type": "photo",
@@ -5104,8 +5137,10 @@ class PortraitGalleryApp:
             if date_text != today_str or not re.match(r'^\d{2}:\d{2}$', time_text):
                 continue
             delivery_failed = failed.get("reason") == "delivery_failed"
+            delivery_uncertain = failed.get("reason") == "delivery_uncertain"
+            delivery_issue = delivery_failed or delivery_uncertain
             if time_text in seen_times or (
-                not delivery_failed and self._check_photo_exists_for_slot(today_str, time_text)
+                not delivery_issue and self._check_photo_exists_for_slot(today_str, time_text)
             ):
                 continue
             seen_times.add(time_text)
@@ -5114,18 +5149,30 @@ class PortraitGalleryApp:
             jobs.append({
                 "id": f"photo_failed_{time_text.replace(':', '_')}",
                 "type": "photo",
-                "status": "delivery_failed" if delivery_failed else ("missed" if expired else "failed"),
+                "status": (
+                    "delivery_uncertain"
+                    if delivery_uncertain
+                    else ("delivery_failed" if delivery_failed else ("missed" if expired else "failed"))
+                ),
                 "theme": failed.get("theme") or self._theme_for_hour(hour),
                 "period_label": self._schedule_period_label(hour, int(time_text.split(':', 1)[1])),
                 "time": time_text,
                 "run_at": failed.get("failed_at") or self._now().isoformat(),
                 "activity": failed.get("activity") or activity_by_time.get(time_text, ""),
-                "source": "delivery_failed" if delivery_failed else ("expired" if expired else "failed"),
+                "source": (
+                    "delivery_uncertain"
+                    if delivery_uncertain
+                    else ("delivery_failed" if delivery_failed else ("expired" if expired else "failed"))
+                ),
                 "error": failed.get("error", ""),
                 "error_summary": failed.get("error_summary", "")
                 or self._summarize_photo_failure(failed.get("error", "")),
                 "image_filename": failed.get("image_filename", ""),
-                "retry_label": "重发" if delivery_failed else "重试",
+                "retry_label": (
+                    "确认重发"
+                    if delivery_uncertain
+                    else ("重发" if delivery_failed else "重试")
+                ),
             })
 
         jobs.sort(key=lambda item: item["time"])
@@ -5239,7 +5286,7 @@ class PortraitGalleryApp:
         if not slot_key:
             return {"status": "error", "message": "invalid_time"}
         failed = self._failed_photo_jobs.get(slot_key) or {}
-        if failed.get("reason") == "delivery_failed":
+        if failed.get("reason") in {"delivery_failed", "delivery_uncertain"}:
             image_path = self._photo_image_path(
                 failed.get("image_path") or failed.get("image_filename") or ""
             )
@@ -5625,6 +5672,11 @@ class PortraitGalleryApp:
             if openclaw_ok:
                 self._last_delivery_error = ""
                 return True
+            if is_delivery_uncertain_error(self._last_delivery_error):
+                logger.warning(
+                    "OpenClaw TG 推送结果未知；为避免重复图片，不执行 Hermes fallback"
+                )
+                return False
             logger.warning(f"OpenClaw 推送失败，尝试 Hermes fallback: channel={channel}")
 
         delivered = await self._send_to_hermes_channel(channel, image_path, caption, delivery)
@@ -5765,9 +5817,15 @@ class PortraitGalleryApp:
                 f"MEDIA:{image_path}",
                 f"{label}图片",
                 required=True,
+                stop_retry_on_ambiguous_timeout=channel == "telegram",
             )
             if not image_ok:
-                logger.error(f"{label}发送失败: 图片未送达，跳过文案发送")
+                if is_delivery_uncertain_error(self._last_delivery_error):
+                    logger.warning(
+                        f"{label}发送结果未知；为避免重复已停止自动重试，跳过文案发送"
+                    )
+                else:
+                    logger.error(f"{label}发送失败: 图片未送达，跳过文案发送")
                 if not self._last_delivery_error:
                     self._last_delivery_error = f"{channel}_image_delivery_failed"
                 return False
@@ -5856,6 +5914,13 @@ class PortraitGalleryApp:
             )
         except subprocess.TimeoutExpired:
             logger.warning(f"OpenClaw {label}推送超时")
+            if channel == "telegram":
+                logger.warning(
+                    "OpenClaw TG推送结果未知；为避免重复图片，"
+                    "停止 fallback 并记录为待确认"
+                )
+                self._last_delivery_error = DELIVERY_UNCERTAIN_ERROR
+                return False
             self._last_delivery_error = "openclaw_delivery_timeout"
             return False
         except Exception as e:
@@ -5868,6 +5933,14 @@ class PortraitGalleryApp:
             logger.info(f"OpenClaw {label}推送成功")
             self._last_delivery_error = ""
             return True
+        if channel == "telegram" and is_ambiguous_delivery_timeout(output):
+            logger.warning(
+                "OpenClaw TG推送结果未知；为避免重复图片，"
+                "停止 fallback 并记录为待确认: output=%s",
+                output,
+            )
+            self._last_delivery_error = DELIVERY_UNCERTAIN_ERROR
+            return False
         logger.warning(f"OpenClaw {label}推送失败: exit={result.returncode}, output={output}")
         self._last_delivery_error = output or f"openclaw_exit_{result.returncode}"
         return False
@@ -5879,6 +5952,7 @@ class PortraitGalleryApp:
         message: str,
         label: str,
         required: bool = True,
+        stop_retry_on_ambiguous_timeout: bool = False,
     ) -> bool:
         """Run `hermes send` with outer retry/backoff for Weixin rate limits."""
         attempts = 1 + len(WECHAT_RETRY_DELAYS_SECONDS)
@@ -5908,6 +5982,13 @@ class PortraitGalleryApp:
             except subprocess.TimeoutExpired:
                 last_output = f"hermes send timed out after {WECHAT_SEND_TIMEOUT_SECONDS}s"
                 logger.warning(f"{label}发送超时: attempt={attempt_no}/{attempts}")
+                if stop_retry_on_ambiguous_timeout:
+                    logger.warning(
+                        f"{label}发送结果未知；为避免重复图片，"
+                        "停止自动重试并记录为待确认"
+                    )
+                    self._last_delivery_error = DELIVERY_UNCERTAIN_ERROR
+                    return False
                 continue
             except Exception as e:
                 last_output = str(e)
@@ -5921,6 +6002,13 @@ class PortraitGalleryApp:
                 return True
 
             last_output = output or f"exit code {result.returncode}"
+            if stop_retry_on_ambiguous_timeout and is_ambiguous_delivery_timeout(last_output):
+                logger.warning(
+                    f"{label}发送结果未知；为避免重复图片，"
+                    f"停止自动重试并记录为待确认: output={last_output}"
+                )
+                self._last_delivery_error = DELIVERY_UNCERTAIN_ERROR
+                return False
             if self._is_wechat_context_error(last_output):
                 log_fn = logger.error if required else logger.warning
                 log_fn(

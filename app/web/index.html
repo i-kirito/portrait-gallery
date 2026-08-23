@@ -16187,6 +16187,10 @@ async function sendScheduleImage(channel, btn) {
     if (!res.ok || data.error) {
       throw new Error(data.message || data.error || `HTTP ${res.status}`);
     }
+    if (data.status === "uncertain") {
+      showToast(`⚠️ ${data.message || `${label}发送结果未知，请先确认是否送达`}`, 8000);
+      return;
+    }
     showToast(`✅ ${data.message || `已发送到${label}`}`, 4500);
   } catch(e) {
     showToast(`❌ ${label}发送失败：${e && e.message ? e.message : "未知错误"}`, 7000);
@@ -21036,19 +21040,20 @@ function loadScheduleEggData(options) {
         var planPast = (nowH > planH) || (nowH === planH && nowM >= planM);
         var planPhoto = plan.photo;
         var planDeliveryFailed = plan.status === 'delivery_failed';
+        var planDeliveryUncertain = plan.status === 'delivery_uncertain';
         var planSending = plan.status === 'sending';
-        var planDone = !planDeliveryFailed && !planSending && (!!planPhoto || plan.status === 'done');
+        var planDone = !planDeliveryFailed && !planDeliveryUncertain && !planSending && (!!planPhoto || plan.status === 'done');
         var planTheme = plan.theme || inferTheme(plan.time);
         var planScheduled = plan.status === 'scheduled';
         var planRunning = plan.status === 'running' || planSending;
-        var planFailed = plan.status === 'failed' || planDeliveryFailed;
+        var planFailed = plan.status === 'failed' || planDeliveryFailed || planDeliveryUncertain;
         var planSkipped = plan.status === 'skipped' || plan.status === 'missed';
         var planRunningRetryable = !planSending && planRunning && !!(plan.job && plan.job.retryable);
         var planErrorText = planFailed ? summarizePhotoJobError(plan.job || plan) : (planRunningRetryable ? '生成状态卡住，可以重试' : '');
 
         var planRetryable = !planDone && !planScheduled && !planSending && (!planRunning || planRunningRetryable) && (planSkipped || planFailed || planPast || planRunningRetryable);
         var planStatusCls = planDone ? 'done' : (planRunningRetryable ? 'failed' : (planRunning ? 'running' : (planFailed ? 'failed' : ((planSkipped || (planPast && !planScheduled)) ? 'past' : 'pending'))));
-        var planStatusText = planDone ? '✅ 已完成' : (planDeliveryFailed ? '⚠️ 发送失败' : (planSending ? '⏳ 发送中' : (planRunningRetryable ? '⚠️ 卡住' : (planRunning ? '⏳ 生成中' : (planFailed ? '⚠️ 失败' : (planSkipped ? '⌛ 已过未排' : (planScheduled ? '⏳ 待执行' : (planPast ? '⏳ 已过' : '⏳ 待执行'))))))));
+        var planStatusText = planDone ? '✅ 已完成' : (planDeliveryUncertain ? '⚠️ 发送待确认' : (planDeliveryFailed ? '⚠️ 发送失败' : (planSending ? '⏳ 发送中' : (planRunningRetryable ? '⚠️ 卡住' : (planRunning ? '⏳ 生成中' : (planFailed ? '⚠️ 失败' : (planSkipped ? '⌛ 已过未排' : (planScheduled ? '⏳ 待执行' : (planPast ? '⏳ 已过' : '⏳ 待执行')))))))));
 
         html += '<div class="egg-photo-item">';
         html += '<span class="egg-photo-status-badge ' + planStatusCls + '">' + planStatusText + '</span>';
@@ -21060,7 +21065,7 @@ function loadScheduleEggData(options) {
         if (planOutfitStyle) html += '<span class="egg-photo-style">' + escapeHtml(planOutfitStyle) + '</span>';
         if (planRetryable) {
           html += '<span class="egg-photo-actions">';
-          html += '<button class="egg-photo-action-btn egg-photo-retry-btn" data-time="' + escapeAttr(plan.time) + '" onclick="retryPhotoJob(this.dataset.time, this)">' + (planDeliveryFailed ? '重发' : '重试') + '</button>';
+          html += '<button class="egg-photo-action-btn egg-photo-retry-btn" data-time="' + escapeAttr(plan.time) + '" onclick="retryPhotoJob(this.dataset.time, this)">' + (planDeliveryUncertain ? '确认重发' : (planDeliveryFailed ? '重发' : '重试')) + '</button>';
           html += '</span>';
         }
         else if (plan.scheduleOnly) html += '<span class="egg-photo-style">刷新时已过</span>';
@@ -22009,9 +22014,14 @@ function startPhotoRetryPolling(timeText) {
         loadGallery();
         return;
       }
-      if (status === 'failed') {
+      if (status === 'failed' || status === 'delivery_failed' || status === 'delivery_uncertain') {
         photoRetryPollTimer = null;
-        showToast('补拍失败：' + summarizePhotoJobError(state), 6000);
+        showToast(
+          status === 'delivery_uncertain'
+            ? 'TG 发送结果仍待确认：' + summarizePhotoJobError(state)
+            : '补拍失败：' + summarizePhotoJobError(state),
+          7000
+        );
         return;
       }
       if (attempts >= maxAttempts) {
@@ -22205,11 +22215,12 @@ function retryPhotoJob(timeText, btn) {
   if (!timeText) return;
   var keepDisabled = false;
   var originalLabel = btn ? (btn.textContent || '重试') : '重试';
+  var isResend = originalLabel.indexOf('重发') >= 0;
   if (btn) {
     btn.disabled = true;
     btn.textContent = '排队中';
   }
-  showToast('已提交' + (originalLabel === '重发' ? '重发' : '重试') + '：' + timeText);
+  showToast('已提交' + (isResend ? '重发' : '重试') + '：' + timeText);
 
   fetch('/api/photo-jobs/retry', {
     method: 'POST',

@@ -14,6 +14,7 @@ APP_DIR = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP_DIR))
 
 import main as main_module  # noqa: E402
+from delivery import DELIVERY_UNCERTAIN_ERROR  # noqa: E402
 from main import PhotoDeliveryError, PortraitGalleryApp  # noqa: E402
 from store import ImageMetadataStore, ScheduleStore  # noqa: E402
 from web_server import GalleryServer  # noqa: E402
@@ -152,6 +153,33 @@ class PhotoDeliveryRetryTest(unittest.IsolatedAsyncioTestCase):
             entry = ScheduleStore(app.data_dir).load()["scheduled.png"]
             self.assertEqual("failed", entry.get("delivery_status"))
 
+    async def test_uncertain_telegram_delivery_is_persisted_for_confirmed_manual_resend(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app = self._make_app(Path(tmpdir))
+            app.aps = SimpleNamespace(get_jobs=lambda: [])
+            app.scheduler_gen = SimpleNamespace(_required_periods=lambda: [])
+            image_path = self._seed_image(app, "uncertain.png", "15:12")
+            slot_key = f"{app._today().isoformat()} 15:12"
+
+            app._record_photo_delivery_failure(
+                slot_key,
+                theme="noon",
+                time_text="15:12",
+                activity="测试活动",
+                image_path=str(image_path),
+                caption="原图文案",
+                error=DELIVERY_UNCERTAIN_ERROR,
+            )
+
+            failed = app._failed_photo_jobs[slot_key]
+            self.assertEqual("delivery_uncertain", failed.get("reason"))
+            self.assertIn("先在 TG 确认", failed.get("error_summary", ""))
+            entry = ScheduleStore(app.data_dir).load()[image_path.name]
+            self.assertEqual("uncertain", entry.get("delivery_status"))
+            jobs = app.list_photo_jobs()
+            self.assertEqual("delivery_uncertain", jobs[0].get("status"))
+            self.assertEqual("确认重发", jobs[0].get("retry_label"))
+
     async def test_startup_recovery_turns_pending_delivery_into_manual_resend(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             app = self._make_app(Path(tmpdir))
@@ -246,6 +274,7 @@ class PhotoDeliveryRetryTest(unittest.IsolatedAsyncioTestCase):
             image_dir.mkdir(parents=True, exist_ok=True)
             (image_dir / "sent.png").write_bytes(b"sent")
             (image_dir / "delivery-failed.png").write_bytes(b"failed")
+            (image_dir / "delivery-uncertain.png").write_bytes(b"uncertain")
             (image_dir / "sending.png").write_bytes(b"sending")
             today = server._today().isoformat()
             ScheduleStore(server.data_dir).save({
@@ -265,6 +294,14 @@ class PhotoDeliveryRetryTest(unittest.IsolatedAsyncioTestCase):
                     "source": "cron",
                     "delivery_status": "failed",
                 },
+                "delivery-uncertain.png": {
+                    "date": today,
+                    "schedule_time": "13:24 待确认",
+                    "image_filename": "delivery-uncertain.png",
+                    "status": "ok",
+                    "source": "cron",
+                    "delivery_status": "uncertain",
+                },
                 "sending.png": {
                     "date": today,
                     "schedule_time": "14:12 正在发送",
@@ -276,6 +313,7 @@ class PhotoDeliveryRetryTest(unittest.IsolatedAsyncioTestCase):
             })
             server.on_list_photo_jobs = lambda: [
                 {"status": "delivery_failed", "time": "12:36"},
+                {"status": "delivery_uncertain", "time": "13:24"},
                 {"status": "sending", "time": "14:12"},
                 {"status": "scheduled", "time": "15:12"},
             ]
@@ -284,9 +322,9 @@ class PhotoDeliveryRetryTest(unittest.IsolatedAsyncioTestCase):
             payload = json.loads(response.text)
 
             self.assertEqual(1, payload["completed_today"])
-            self.assertEqual(1, payload["failed_today"])
+            self.assertEqual(2, payload["failed_today"])
             self.assertEqual(2, payload["active_today"])
-            self.assertEqual(4, payload["planned_today"])
+            self.assertEqual(5, payload["planned_today"])
 
 
 if __name__ == "__main__":
