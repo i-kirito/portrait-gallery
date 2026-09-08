@@ -117,6 +117,89 @@ class ThemeDayTests(unittest.IsolatedAsyncioTestCase):
     def test_random_theme_comes_from_curated_pool(self):
         self.assertIn(DailyScheduler.random_theme_day(), THEME_DAY_POOL)
 
+    def test_random_theme_excludes_recent_values(self):
+        remaining_theme = "太空探索主题日"
+        excluded = [
+            theme for theme in THEME_DAY_POOL
+            if theme != remaining_theme
+        ]
+
+        selected = DailyScheduler.random_theme_day(excluded)
+
+        self.assertEqual(remaining_theme, selected)
+
+    def test_recent_theme_days_reads_only_usable_date_keyed_plans(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            schedule_data = {
+                "2026-08-19": {
+                    "date": "2026-08-19",
+                    "status": "ok",
+                    "source": "theme_day",
+                    "schedule": "08:00 在林间准备野餐",
+                    "theme_day": " 森林野餐日 ",
+                },
+                "2026-08-18": {
+                    "date": "2026-08-18",
+                    "status": "ok",
+                    "source": "theme_day",
+                    "schedule": "08:00 在林间散步",
+                    "theme_day": "森林野餐日",
+                },
+                "2026-08-17": {
+                    "date": "2026-08-17",
+                    "status": "ok",
+                    "source": "theme_day",
+                    "schedule": "08:00 去海边",
+                    "theme_day": "海边度假日",
+                },
+                "2026-08-16": {
+                    "date": "2026-08-16",
+                    "status": "failed",
+                    "source": "fallback",
+                    "schedule": "生成失败",
+                    "theme_day": "日式夏祭日",
+                },
+                "2026-08-13": {
+                    "date": "2026-08-13",
+                    "status": "ok",
+                    "source": "theme_day",
+                    "schedule": "08:00 去书店",
+                    "theme_day": "雨天书店日",
+                },
+                "2026-08-12": {
+                    "date": "2026-08-12",
+                    "status": "ok",
+                    "source": "theme_day",
+                    "schedule": "08:00 参观天文馆",
+                    "theme_day": "太空探索主题日",
+                },
+                "schedule_1514_photo.png": {
+                    "date": "2026-08-15",
+                    "status": "ok",
+                    "source": "theme_day",
+                    "schedule": "15:14 参加祭典",
+                    "theme_day": "日式夏祭日",
+                },
+            }
+            (Path(tmpdir) / "schedule_data.json").write_text(
+                json.dumps(schedule_data, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            scheduler = DailyScheduler(
+                {"config": {"timezone": "Asia/Shanghai"}},
+                tmpdir,
+            )
+
+            themes = scheduler.recent_theme_days(
+                date(2026, 8, 19),
+                days=7,
+            )
+
+        self.assertEqual(
+            ["森林野餐日", "海边度假日", "雨天书店日"],
+            themes,
+        )
+
     async def test_generate_today_passes_random_theme_source_to_semantic_reviewer(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scheduler = DailyScheduler({"config": {"timezone": "Asia/Shanghai"}}, tmpdir)
@@ -357,6 +440,138 @@ class ThemeDayTests(unittest.IsolatedAsyncioTestCase):
             final_prompt = scheduler._call_llm.await_args_list[-1].args[0]
             self.assertIn("整稿策略", final_prompt)
             self.assertIn("核心体验从空白重新设计", final_prompt)
+
+    async def test_random_theme_day_accepts_within_day_feedback_after_revision_budget(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = DailyScheduler({"config": {"timezone": "Asia/Shanghai"}}, tmpdir)
+            payload = self._valid_theme_day_data()
+            scheduler._call_llm = AsyncMock(
+                return_value=json.dumps(payload, ensure_ascii=False)
+            )
+            review = AsyncMock(return_value={
+                "available": True,
+                "needs_revision": True,
+                "cross_day_repeat": False,
+                "within_day_homogeneous": True,
+                "theme_drift": False,
+                "theme_connection": "主题成立但核心活动仍偏同质",
+                "dominant_themes": ["单一主题工作流"],
+                "candidate_clusters": [],
+                "novel_anchor": "",
+                "matches": [],
+                "revision_guidance": "补充不同参与方式和新锚点",
+                "reason": "仅有当天内部同质化建议",
+            })
+            scheduler._review_schedule_similarity_with_llm = review
+
+            entry = await scheduler.generate_today(
+                target_date=date(2026, 8, 19),
+                theme_day="博物馆灵感日",
+                theme_day_mode="random",
+            )
+
+            self.assertEqual("ok", entry.status)
+            self.assertEqual(4, scheduler._call_llm.await_count)
+            self.assertEqual(4, review.await_count)
+
+    async def test_custom_theme_day_keeps_strict_fallback_after_revision_budget(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler = DailyScheduler({"config": {"timezone": "Asia/Shanghai"}}, tmpdir)
+            payload = self._valid_theme_day_data()
+            scheduler._call_llm = AsyncMock(
+                return_value=json.dumps(payload, ensure_ascii=False)
+            )
+            review = AsyncMock(return_value={
+                "available": True,
+                "needs_revision": True,
+                "cross_day_repeat": False,
+                "within_day_homogeneous": True,
+                "theme_drift": False,
+                "theme_connection": "主题成立但核心活动仍偏同质",
+                "dominant_themes": ["单一主题工作流"],
+                "candidate_clusters": [],
+                "novel_anchor": "",
+                "matches": [],
+                "revision_guidance": "补充不同参与方式和新锚点",
+                "reason": "仅有当天内部同质化建议",
+            })
+            scheduler._review_schedule_similarity_with_llm = review
+
+            with self.assertLogs("scheduler", level="ERROR") as logs:
+                entry = await scheduler.generate_today(
+                    target_date=date(2026, 8, 19),
+                    theme_day="博物馆灵感日",
+                    theme_day_mode="custom",
+                )
+
+            self.assertEqual("failed", entry.status)
+            self.assertEqual("fallback", entry.source)
+            self.assertEqual(4, scheduler._call_llm.await_count)
+            self.assertEqual(4, review.await_count)
+            self.assertTrue(any("实际生成尝试 4 次" in message for message in logs.output))
+
+    async def test_random_theme_day_fail_soft_requires_explicit_within_day_only_review(self):
+        cases = (
+            (
+                "incomplete_review",
+                {
+                    "cross_day_repeat": None,
+                    "within_day_homogeneous": True,
+                    "theme_drift": None,
+                },
+            ),
+            (
+                "theme_drift",
+                {
+                    "cross_day_repeat": False,
+                    "within_day_homogeneous": True,
+                    "theme_drift": True,
+                },
+            ),
+            (
+                "unexplained_revision",
+                {
+                    "cross_day_repeat": False,
+                    "within_day_homogeneous": False,
+                    "theme_drift": False,
+                },
+            ),
+        )
+        for case_name, review_flags in cases:
+            with self.subTest(case=case_name), tempfile.TemporaryDirectory() as tmpdir:
+                scheduler = DailyScheduler(
+                    {"config": {"timezone": "Asia/Shanghai"}},
+                    tmpdir,
+                )
+                payload = self._valid_theme_day_data()
+                scheduler._call_llm = AsyncMock(
+                    return_value=json.dumps(payload, ensure_ascii=False)
+                )
+                review_payload = {
+                    "available": True,
+                    "needs_revision": True,
+                    "theme_connection": "审查结果仍有阻塞项",
+                    "dominant_themes": ["待确认主题"],
+                    "candidate_clusters": [],
+                    "novel_anchor": "",
+                    "matches": [],
+                    "revision_guidance": "继续重构候选",
+                    "reason": "不能确认为纯日内同质化建议",
+                    **review_flags,
+                }
+                review = AsyncMock(return_value=review_payload)
+                scheduler._review_schedule_similarity_with_llm = review
+
+                entry = await scheduler.generate_today(
+                    target_date=date(2026, 8, 19),
+                    theme_day="博物馆灵感日",
+                    theme_day_mode="random",
+                )
+
+                self.assertEqual("failed", entry.status)
+                self.assertEqual("fallback", entry.source)
+                self.assertEqual(4, scheduler._call_llm.await_count)
+                self.assertEqual(4, review.await_count)
 
     async def test_theme_day_gets_one_extra_targeted_revision_for_isolated_repeat(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -644,6 +859,7 @@ class ThemeDayTests(unittest.IsolatedAsyncioTestCase):
         )
         app.scheduler_gen = SimpleNamespace(
             _normalize_theme_day=lambda value: value,
+            recent_theme_days=Mock(),
             random_theme_day=Mock(return_value="不应使用的随机主题"),
             generate_today=AsyncMock(return_value=entry),
         )
@@ -665,6 +881,7 @@ class ThemeDayTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("未来都市通勤日", generated.theme_day)
         self.assertEqual("custom", generated.theme_day_mode)
+        app.scheduler_gen.recent_theme_days.assert_not_called()
         app.scheduler_gen.random_theme_day.assert_not_called()
         kwargs = app.scheduler_gen.generate_today.await_args.kwargs
         self.assertEqual("未来都市通勤日", kwargs["theme_day"])
@@ -681,6 +898,9 @@ class ThemeDayTests(unittest.IsolatedAsyncioTestCase):
         )
         app.scheduler_gen = SimpleNamespace(
             _normalize_theme_day=lambda value: value,
+            recent_theme_days=Mock(
+                return_value=["海边度假日", "森林野餐日"]
+            ),
             random_theme_day=Mock(return_value="旧城寻宝日"),
             generate_today=AsyncMock(return_value=entry),
         )
@@ -699,7 +919,13 @@ class ThemeDayTests(unittest.IsolatedAsyncioTestCase):
             schedule_photos=False,
         )
 
-        app.scheduler_gen.random_theme_day.assert_called_once_with()
+        app.scheduler_gen.recent_theme_days.assert_called_once_with(
+            date(2026, 8, 1),
+            days=7,
+        )
+        app.scheduler_gen.random_theme_day.assert_called_once_with(
+            ["海边度假日", "森林野餐日"]
+        )
         self.assertEqual("旧城寻宝日", generated.theme_day)
         self.assertEqual("random", generated.theme_day_mode)
         kwargs = app.scheduler_gen.generate_today.await_args.kwargs

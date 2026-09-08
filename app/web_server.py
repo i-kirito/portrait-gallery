@@ -1051,6 +1051,16 @@ class GalleryServer:
         return response
 
     async def handle_auth_login(self, request: web.Request):
+        # Shared-password service: bound total attempts, including concurrent ones.
+        now = time.monotonic()
+        attempts = [t for t in getattr(self, "_login_attempts", []) if now - t < 60]
+        self._login_attempts = attempts
+        if len(attempts) >= 10:
+            return web.json_response(
+                {"error": "rate_limited", "message": "登录尝试过于频繁，请一分钟后重试。"},
+                status=429, headers={"Retry-After": "60"},
+            )
+        attempts.append(now)
         if not self._gallery_password_configured():
             return web.json_response(
                 {
@@ -1063,7 +1073,7 @@ class GalleryServer:
 
         body = await self._read_json_body(request)
         password = str(body.get("password") or "")
-        if not self._verify_gallery_password(password):
+        if not await asyncio.to_thread(self._verify_gallery_password, password):
             return web.json_response(
                 {"error": "invalid_password", "message": "访问密码不正确。"},
                 status=401,
@@ -8015,22 +8025,33 @@ class GalleryServer:
             return False
 
     def _preferred_xiaohongshu_identity_reference(self, current_path: str = "") -> str:
-        """Prefer the face-only crop for built-in/default XHS identity references."""
+        """Prefer the face-only crop for built-in/default XHS identity references.
+
+        Identity must stay on the character face ref. Never fall back to random
+        style bases (sweet/girly/cool) — those are outfit mood refs, not faces.
+        """
         current_path = str(current_path or "").strip()
         default_filenames = set(DEFAULT_STYLE_REFERENCE_FILES.values())
         should_use_face_crop = not current_path or os.path.basename(current_path) in default_filenames
         if not should_use_face_crop:
             return current_path
 
+        # 1) dedicated face-only crop
         for base_dir in (self.reference_dir, self.app_reference_dir):
             candidate = self._safe_reference_path(base_dir, XIAOHONGSHU_DEFAULT_FACE_REFERENCE_FILE)
             if candidate and os.path.isfile(candidate) and self._is_reference_image_file(candidate):
                 return candidate
 
-        if current_path:
+        # 2) stable character face (reference_face.jpg), not style bases
+        for base_dir in (self.reference_dir, self.app_reference_dir):
+            candidate = self._safe_reference_path(base_dir, "reference_face.jpg")
+            if candidate and os.path.isfile(candidate) and self._is_reference_image_file(candidate):
+                return candidate
+
+        # 3) keep an explicit non-style current path if caller already provided one
+        if current_path and os.path.basename(current_path) not in default_filenames:
             return current_path
-        fallback = self._select_default_custom_reference_sync()
-        return str(fallback.get("path") or "").strip()
+        return ""
 
     def _iter_uploaded_refs(self) -> list[dict]:
         refs = []
@@ -9349,8 +9370,7 @@ class GalleryServer:
         except XiaohongshuError as exc:
             return self._xiaohongshu_error_response(exc)
 
-        previous_enabled = self.xiaohongshu_schedule_enabled()
-        enabled = previous_enabled
+        enabled = self.xiaohongshu_schedule_enabled()
         if "enabled" in body:
             enabled_raw = body.get("enabled")
             enabled = (
@@ -9373,9 +9393,22 @@ class GalleryServer:
                     else str(prefer_raw or "").strip().lower() in {"1", "true", "yes", "on"}
                 )
             state["updated_at"] = now_text
-            if not enabled:
-                state["last_error"] = ""
-                state["last_error_at"] = ""
+            # Preference-only saves should not keep showing a stale selection error.
+            # Fresh selection errors are written later by ensure_xiaohongshu_schedule_reference.
+            if (not enabled) or ("enabled" in body) or ("prefer_creators" in body):
+                if not (
+                    str(body.get("manual_reference_url") or "").strip()
+                    or (
+                        (
+                            body.get("refresh")
+                            if isinstance(body.get("refresh"), bool)
+                            else str(body.get("refresh") or "").strip().lower() in {"1", "true", "yes", "on"}
+                        )
+                        or str(body.get("keyword") or "").strip()
+                    )
+                ):
+                    state["last_error"] = ""
+                    state["last_error_at"] = ""
             return state
 
         self.xiaohongshu_schedule_store.update(_update)
@@ -9404,16 +9437,26 @@ class GalleryServer:
                 return self._xiaohongshu_error_response(exc)
             return web.json_response(self.xiaohongshu_schedule_state(schedule_date))
 
-        if enabled:
+        # Settings only persists the global default. Real XHS outfit selection
+        # happens later during schedule / theme-day generation, so the toggle
+        # stays snappy and never hangs the settings UI.
+        # Optional explicit refresh remains available for day-scoped callers.
+        refresh_raw = body.get("refresh")
+        refresh = (
+            refresh_raw
+            if isinstance(refresh_raw, bool)
+            else str(refresh_raw or "").strip().lower() in {"1", "true", "yes", "on"}
+        )
+        manual_query = str(body.get("keyword") or "").strip()
+        if enabled and (refresh or manual_query):
             daily = self._xiaohongshu_schedule_daily_entry(schedule_date)
-            manual_query = str(body.get("keyword") or "").strip()
             if manual_query:
                 daily = dict(daily or {})
                 daily["xiaohongshu_search_query"] = manual_query[:80]
             await self.ensure_xiaohongshu_schedule_reference(
                 schedule_date,
                 daily,
-                force=bool(body.get("refresh")) or not previous_enabled,
+                force=True,
             )
         return web.json_response(self.xiaohongshu_schedule_state(schedule_date))
 
@@ -16482,9 +16525,18 @@ JSON 格式：
                     identity_paths[0] if identity_paths else ""
                 )
                 if identity_paths:
-                    identity_paths[0] = preferred_identity or identity_paths[0]
+                    identity_paths = [preferred_identity] + [
+                        self._preferred_xiaohongshu_identity_reference(path)
+                        for path in identity_paths[1:]
+                    ]
                 elif preferred_identity:
                     identity_paths.append(preferred_identity)
+
+                if not any(identity_paths):
+                    return web.json_response(
+                        {"error": "missing_identity_reference", "message": "请先上传角色身份参考图。"},
+                        status=400,
+                    )
 
                 resolved_refs = [xhs_path]
                 for identity_path in identity_paths:

@@ -3994,9 +3994,61 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             "让建筑、家具、工具和道具共同建立主题，不要在现代住宅里摆主题模型。"
         )
 
+    def recent_theme_days(
+        self,
+        target_date: Optional[date | str] = None,
+        *,
+        days: int = 7,
+    ) -> list[str]:
+        """Return unique themes from usable date-keyed plans in a recent window."""
+        if target_date is None:
+            current_date = self._configured_today()
+        elif isinstance(target_date, date):
+            current_date = target_date
+        else:
+            try:
+                current_date = date.fromisoformat(str(target_date).strip())
+            except (TypeError, ValueError):
+                current_date = self._configured_today()
+        try:
+            window_days = max(1, int(days))
+        except (TypeError, ValueError):
+            window_days = 7
+
+        all_data = self._load_schedule_data()
+        themes = []
+        seen = set()
+        for offset in range(window_days):
+            date_str = (current_date - timedelta(days=offset)).isoformat()
+            entry = all_data.get(date_str)
+            if (
+                not isinstance(entry, dict)
+                or entry.get("status") != "ok"
+                or entry.get("source") == "fallback"
+                or not str(entry.get("schedule") or "").strip()
+            ):
+                continue
+            theme = self._normalize_theme_day(entry.get("theme_day", ""))
+            key = theme.casefold()
+            if theme and key not in seen:
+                themes.append(theme)
+                seen.add(key)
+        return themes
+
     @classmethod
-    def random_theme_day(cls) -> str:
-        return random.choice(THEME_DAY_POOL)
+    def random_theme_day(cls, exclude: Optional[list[str]] = None) -> str:
+        raw_exclusions = [exclude] if isinstance(exclude, str) else (exclude or [])
+        excluded = {
+            cls._normalize_theme_day(value).casefold()
+            for value in raw_exclusions
+            if cls._normalize_theme_day(value)
+        }
+        candidates = [
+            theme
+            for theme in THEME_DAY_POOL
+            if cls._normalize_theme_day(theme).casefold() not in excluded
+        ]
+        return random.choice(candidates or THEME_DAY_POOL)
 
     @classmethod
     def _theme_day_prompt_block(cls, theme_day: str, theme_description: str = "") -> str:
@@ -4331,6 +4383,7 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
         extra_targeted_revision_used = False
         max_extra_targeted_revisions = 1 if theme_day else 0
         forbidden_rejection_feedback = False
+        generation_attempts = 0
         self._last_llm_model = ""
 
         # Extra loop slots are unlocked only when the semantic reviewer asks
@@ -4404,6 +4457,7 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             elif attempt == 2:
                 logger.warning("压缩日程 prompt 未生成可用 JSON，切换极简日程 prompt 重试")
             image_kwargs = {"image_path": outfit_reference_path} if outfit_reference_path else {}
+            generation_attempts += 1
             text = await self._call_llm(
                 current_prompt,
                 timeout=180,
@@ -4655,18 +4709,35 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
                     )
                     continue
                 if theme_day:
-                    logger.warning(
-                        "主题日完成 %s 次语义改稿后仍未通过多样性审查，拒绝该候选: %s",
-                        max_similarity_revisions,
+                    if (
+                        theme_day_mode == "random"
+                        and similarity_review.get("available")
+                        and similarity_review.get("needs_revision")
+                        and similarity_review.get("cross_day_repeat") is False
+                        and similarity_review.get("within_day_homogeneous") is True
+                        and similarity_review.get("theme_drift") is False
+                    ):
+                        logger.warning(
+                            "随机主题日完成 %s 次语义改稿后仍有非硬性多样性建议，"
+                            "接受当前候选（实际生成尝试 %s 次）: %s",
+                            max_similarity_revisions,
+                            generation_attempts,
+                            detail[:500],
+                        )
+                    else:
+                        logger.warning(
+                            "主题日完成 %s 次语义改稿后仍未通过多样性审查，拒绝该候选: %s",
+                            max_similarity_revisions,
+                            detail[:500],
+                        )
+                        break
+                else:
+                    logger.info(
+                        "日程完成有界语义改稿后仍有相似建议，避免审查循环导致整日生成失败 "
+                        "(attempt %s): %s",
+                        attempt + 1,
                         detail[:500],
                     )
-                    break
-                logger.info(
-                    "日程完成有界语义改稿后仍有相似建议，避免审查循环导致整日生成失败 "
-                    "(attempt %s): %s",
-                    attempt + 1,
-                    detail[:500],
-                )
             elif not similarity_review.get("available"):
                 logger.info(
                     "日程语义相似审查未完成（不使用本地硬编码替代） (attempt %s): %s",
@@ -4708,8 +4779,10 @@ outfit_style, reference_query, outfit, schedule, schedule_prompt, schedule_detai
             )
             return entry
 
-        total_attempts = attempt_count + similarity_revision_count
-        logger.error(f"日程生成失败: 重试 {total_attempts} 次均未成功")
+        logger.error(
+            "日程生成失败: 实际生成尝试 %s 次，均未成功",
+            generation_attempts,
+        )
         return self._build_fallback_entry(
             today,
             theme_day=theme_day,

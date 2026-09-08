@@ -188,3 +188,30 @@ class ThemeDayUiContractTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class XiaohongshuSettingsUiContractTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")
+
+    def test_settings_keeps_global_xhs_defaults_without_daily_preview(self):
+        start = self.html.index('id="skPanelXiaohongshu"')
+        end = self.html.index('id="skPanelMaintain"', start)
+        panel = self.html[start:end]
+        self.assertIn("日程默认使用小红书穿搭", panel)
+        self.assertIn('id="xhsScheduleMode"', panel)
+        self.assertIn('id="xhsCreatorPriority"', panel)
+        self.assertIn("某一天临时指定参考图，请到日程彩蛋的主题日里操作", panel)
+        self.assertNotIn('id="xhsScheduleReference"', panel)
+        self.assertNotIn("refreshXiaohongshuScheduleReference()", panel)
+        self.assertNotIn("重新选择今日穿搭", panel)
+
+    def test_theme_day_keeps_day_scoped_manual_reference_entry(self):
+        start = self.html.index('<div class="egg-theme-day-controls"')
+        end = self.html.index('<div class="egg-body"', start)
+        controls = self.html[start:end]
+        self.assertIn("指定当天参考图", controls)
+        self.assertIn('id="eggThemeDayXhsPicker"', controls)
+        self.assertIn("小红书全局默认在设置页", self.html)

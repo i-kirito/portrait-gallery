@@ -1154,8 +1154,28 @@ class PortraitGalleryApp:
         theme = self.scheduler_gen._normalize_theme_day(theme_day)
         mode = str(mode or "custom").strip().lower()
         if mode == "random" or not theme:
-            theme = self.scheduler_gen.random_theme_day()
+            recent_theme_loader = getattr(
+                self.scheduler_gen,
+                "recent_theme_days",
+                None,
+            )
+            recent_themes = (
+                recent_theme_loader(schedule_date, days=7)
+                if callable(recent_theme_loader)
+                else []
+            )
+            theme = (
+                self.scheduler_gen.random_theme_day(recent_themes)
+                if recent_themes
+                else self.scheduler_gen.random_theme_day()
+            )
             mode = "random"
+            logger.info(
+                "随机主题日选择完成: date=%s selected=%s excluded_recent=%s",
+                schedule_date.isoformat(),
+                theme,
+                "、".join(recent_themes) or "-",
+            )
         else:
             mode = "custom"
 

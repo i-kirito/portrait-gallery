@@ -7838,7 +7838,7 @@ textarea:focus-visible,
               <span class="egg-theme-day-title">主题模式</span>
               <span class="egg-theme-day-state" id="eggThemeDayState">自动主题已开启</span>
             </div>
-            <div class="egg-theme-day-hint" id="eggThemeDayHint">自动主题已开启，每天随机选择一条主题主线并生成完整日程；关闭开关后可手动指定主题或选择小红书穿搭</div>
+            <div class="egg-theme-day-hint" id="eggThemeDayHint">自动主题已开启，每天随机选择一条主题主线并生成完整日程；关闭开关后可手动指定主题。小红书全局默认在设置页；这里只负责某一天的主题生成与可选指定参考图</div>
           </div>
         </div>
         <label class="sk-switch egg-theme-day-switch" for="eggThemeDayEnabled" aria-label="自动主题开关；关闭后进入手动主题" aria-describedby="eggThemeDayHint">
@@ -7873,7 +7873,7 @@ textarea:focus-visible,
             </button>
             <button class="egg-theme-day-action egg-theme-day-action--secondary" id="eggThemeDayManualBtn" type="button" aria-controls="eggThemeDayXhsPicker" aria-expanded="false" onclick="toggleThemeDayXhsPicker()">
               <i class="fa-solid fa-shirt" aria-hidden="true"></i>
-              <span>指定小红书穿搭</span>
+              <span>指定当天参考图</span>
             </button>
           </div>
         </div>
@@ -8582,12 +8582,13 @@ textarea:focus-visible,
       <div class="sk-field">
         <div class="xhs-schedule-card">
           <div class="xhs-schedule-head">
-            <span class="xhs-schedule-title"><i class="fa-regular fa-calendar" aria-hidden="true"></i> 日程使用小红书穿搭</span>
-            <label class="sk-switch" for="xhsScheduleMode" aria-label="日程使用小红书穿搭">
+            <span class="xhs-schedule-title"><i class="fa-regular fa-calendar" aria-hidden="true"></i> 日程默认使用小红书穿搭</span>
+            <label class="sk-switch" for="xhsScheduleMode" aria-label="日程默认使用小红书穿搭">
               <input type="checkbox" id="xhsScheduleMode" onchange="setXiaohongshuScheduleMode(this.checked)">
               <span class="sk-switch-knob"></span>
             </label>
           </div>
+          <div class="sk-desc" id="xhsScheduleModeHint">全局默认策略：开启后，日常日程与主题日生成会先尝试小红书真人穿搭参考。某一天临时指定参考图，请到日程彩蛋的主题日里操作。</div>
           <div class="sk-status" id="xhsScheduleStatus">加载中...</div>
           <div class="xhs-schedule-preference">
             <span class="xhs-schedule-preference-copy">
@@ -8598,14 +8599,6 @@ textarea:focus-visible,
               <input type="checkbox" id="xhsCreatorPriority" onchange="setXiaohongshuCreatorPriority(this.checked)">
               <span class="sk-switch-knob"></span>
             </label>
-          </div>
-          <div class="xhs-schedule-reference" id="xhsScheduleReference" hidden>
-            <img class="xhs-schedule-image" id="xhsScheduleImage" alt="今日小红书穿搭参考图">
-            <div class="xhs-schedule-copy">
-              <div class="xhs-schedule-name" id="xhsScheduleName"></div>
-              <div class="xhs-schedule-query" id="xhsScheduleQuery"></div>
-            </div>
-            <button type="button" class="xhs-schedule-refresh" id="xhsScheduleRefresh" onclick="refreshXiaohongshuScheduleReference()" title="重新选择今日穿搭" aria-label="重新选择今日穿搭"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
           </div>
         </div>
       </div>
@@ -17710,16 +17703,8 @@ let xhsScheduleModeBusy = false;
 function renderXiaohongshuScheduleMode(data) {
   const toggle = document.getElementById("xhsScheduleMode");
   const status = document.getElementById("xhsScheduleStatus");
-  const wrap = document.getElementById("xhsScheduleReference");
-  const image = document.getElementById("xhsScheduleImage");
-  const name = document.getElementById("xhsScheduleName");
-  const query = document.getElementById("xhsScheduleQuery");
-  const refresh = document.getElementById("xhsScheduleRefresh");
   const creatorPriority = document.getElementById("xhsCreatorPriority");
   const creatorPriorityHint = document.getElementById("xhsCreatorPriorityHint");
-  const reference = data && data.today_reference && typeof data.today_reference === "object"
-    ? data.today_reference
-    : {};
   if (toggle) {
     toggle.checked = data?.enabled === true;
     toggle.disabled = xhsScheduleModeBusy;
@@ -17734,30 +17719,11 @@ function renderXiaohongshuScheduleMode(data) {
       ? `已收藏 ${count} 位；不匹配时自动回退全站搜索`
       : "收藏博主后可从其近期笔记优先选图";
   }
-  if (refresh) refresh.disabled = xhsScheduleModeBusy;
   if (status) {
-    if (xhsScheduleModeBusy) status.textContent = "正在选择今日穿搭...";
-    else if (data?.status === "ready") {
-      status.textContent = reference.selection_source === "favorite_creator"
-        ? `今日参考已就绪 · 来自 ${reference.creator_name || "常用博主"}`
-        : "今日参考已就绪";
-    }
+    if (xhsScheduleModeBusy) status.textContent = "正在保存...";
     else if (data?.enabled && data?.last_error) status.textContent = data.last_error;
-    else if (data?.enabled) status.textContent = "等待今日日程";
-    else status.textContent = "已关闭，使用原日程参考";
-  }
-  const hasReference = data?.enabled === true && Boolean(reference.url);
-  if (wrap) wrap.hidden = !hasReference;
-  if (hasReference) {
-    if (image) image.src = `${API}${reference.url}`;
-    if (name) name.textContent = reference.title || reference.label || "今日穿搭";
-    if (query) {
-      query.textContent = reference.selection_source === "favorite_creator"
-        ? `${reference.query || ""} · ${reference.creator_name || "常用博主"}`
-        : (reference.query || "");
-    }
-  } else if (image) {
-    image.removeAttribute("src");
+    else if (data?.enabled) status.textContent = "已开启：日常日程默认先尝试小红书穿搭参考";
+    else status.textContent = "已关闭：日常日程使用原参考图 / LLM 穿搭";
   }
 }
 
@@ -17766,9 +17732,12 @@ async function loadXiaohongshuScheduleMode() {
     const response = await fetch(`${API}/api/xiaohongshu/schedule-mode`);
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    // Never leave the settings toggle stuck in a phantom busy state.
+    xhsScheduleModeBusy = false;
     renderXiaohongshuScheduleMode(data);
     return data;
   } catch (error) {
+    xhsScheduleModeBusy = false;
     renderXiaohongshuScheduleMode({enabled: false, status: "error", last_error: error.message});
     const status = document.getElementById("xhsScheduleStatus");
     if (status) status.textContent = `读取失败：${error.message}`;
@@ -17776,7 +17745,7 @@ async function loadXiaohongshuScheduleMode() {
   }
 }
 
-async function updateXiaohongshuScheduleMode(enabled, refresh = false, preferCreators = null) {
+async function updateXiaohongshuScheduleMode(enabled, preferCreators = null) {
   if (xhsScheduleModeBusy) return;
   xhsScheduleModeBusy = true;
   const currentPreference = preferCreators === null
@@ -17788,7 +17757,9 @@ async function updateXiaohongshuScheduleMode(enabled, refresh = false, preferCre
     status: enabled ? "missing" : "disabled"
   });
   try {
-    const requestBody = {enabled, refresh};
+    // Settings only saves the global default. Do not trigger XHS outfit
+    // selection here; that happens later during schedule generation.
+    const requestBody = {enabled: Boolean(enabled)};
     if (preferCreators !== null) requestBody.prefer_creators = Boolean(preferCreators);
     const response = await fetch(`${API}/api/xiaohongshu/schedule-mode`, {
       method: "POST",
@@ -17799,9 +17770,8 @@ async function updateXiaohongshuScheduleMode(enabled, refresh = false, preferCre
     if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
     xhsScheduleModeBusy = false;
     renderXiaohongshuScheduleMode(data);
-    if (enabled && data.status === "ready") showToast("今日小红书穿搭已就绪");
-    else if (enabled && data.last_error) showToast(data.last_error, 7000);
-    else if (!enabled) showToast("日程已恢复原参考图模式");
+    if (enabled) showToast("已开启：日程默认使用小红书穿搭");
+    else showToast("已关闭：日程恢复原参考图模式");
   } catch (error) {
     xhsScheduleModeBusy = false;
     await loadXiaohongshuScheduleMode();
@@ -17810,16 +17780,12 @@ async function updateXiaohongshuScheduleMode(enabled, refresh = false, preferCre
 }
 
 function setXiaohongshuScheduleMode(enabled) {
-  updateXiaohongshuScheduleMode(Boolean(enabled), false);
+  updateXiaohongshuScheduleMode(Boolean(enabled));
 }
 
 function setXiaohongshuCreatorPriority(enabled) {
   const scheduleEnabled = document.getElementById("xhsScheduleMode")?.checked === true;
-  updateXiaohongshuScheduleMode(scheduleEnabled, false, Boolean(enabled));
-}
-
-function refreshXiaohongshuScheduleReference() {
-  updateXiaohongshuScheduleMode(true, true);
+  updateXiaohongshuScheduleMode(scheduleEnabled, Boolean(enabled));
 }
 
 function setXiaohongshuLoginState(state, text) {
@@ -20366,7 +20332,7 @@ function renderThemeDayManualReference() {
   var el = document.getElementById('eggThemeDayXhsSelected');
   if (!el) return;
   if (themeDayManualReferenceUrl) {
-    el.textContent = '已手动指定小红书穿搭';
+    el.textContent = '已指定当天参考图';
   } else {
     el.textContent = '';
   }

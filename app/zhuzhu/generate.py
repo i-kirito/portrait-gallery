@@ -924,7 +924,6 @@ def generate(
     schedule_activity = ""
     if schedule_ctx and theme in DAILY_THEMES and not prompt_final:
         # Extract activity text for schedule-aware prompt building
-        import re
         m = re.search(r"Today's plan:\s*(.+?)(?:\.\s*(?:Time|Style):|$)", schedule_ctx)
         if m:
             schedule_activity = m.group(1).strip()

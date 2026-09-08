@@ -876,7 +876,7 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             try:
                 response = await client.post(
                     "/api/xiaohongshu/schedule-mode",
-                    json={"enabled": True},
+                    json={"enabled": True, "refresh": True},
                 )
                 payload = await response.json()
                 references_response = await client.get("/api/xiaohongshu/references")
@@ -1107,6 +1107,42 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             server.xiaohongshu_client.detail.assert_awaited_once_with(
                 "favorite-note", "note-token"
             )
+    async def test_schedule_mode_enable_only_saves_global_default_without_selecting(self):
+        """Settings toggle must stay snappy and not start XHS selection."""
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            server._now = lambda: datetime(2026, 7, 30, 10, 0)
+            ScheduleStore(str(root / "data")).save({
+                "2026-07-30": {
+                    "date": "2026-07-30",
+                    "reference_query": "夏季通勤穿搭",
+                }
+            })
+            server.xiaohongshu_client.status = AsyncMock(return_value={
+                "service_running": True,
+                "is_logged_in": True,
+            })
+            server.xiaohongshu_client.search = AsyncMock()
+            client = await self._start_client(server)
+            try:
+                response = await client.post(
+                    "/api/xiaohongshu/schedule-mode",
+                    json={"enabled": True},
+                )
+                payload = await response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(200, response.status, payload)
+            self.assertTrue(payload["enabled"])
+            self.assertIn(payload["status"], {"missing", "disabled", "ready", "error", "stale"})
+            # Bare enable must not kick off selection work.
+            if payload["status"] != "ready":
+                self.assertEqual("missing", payload["status"])
+            server.xiaohongshu_client.search.assert_not_called()
+            server.xiaohongshu_client.status.assert_not_called()
+
     async def test_schedule_mode_login_failure_keeps_enabled_for_runtime_fallback(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
             root = Path(tmpdir)
@@ -1127,7 +1163,7 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             try:
                 response = await client.post(
                     "/api/xiaohongshu/schedule-mode",
-                    json={"enabled": True},
+                    json={"enabled": True, "refresh": True},
                 )
                 payload = await response.json()
             finally:
@@ -1201,7 +1237,7 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             try:
                 response = await client.post(
                     "/api/xiaohongshu/schedule-mode",
-                    json={"enabled": True},
+                    json={"enabled": True, "refresh": True},
                 )
                 payload = await response.json()
             finally:
@@ -1295,7 +1331,7 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             try:
                 response = await client.post(
                     "/api/xiaohongshu/schedule-mode",
-                    json={"enabled": True},
+                    json={"enabled": True, "refresh": True},
                 )
                 payload = await response.json()
             finally:
@@ -1333,7 +1369,7 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             try:
                 response = await client.post(
                     "/api/xiaohongshu/schedule-mode",
-                    json={"enabled": True},
+                    json={"enabled": True, "refresh": True},
                 )
                 payload = await response.json()
             finally:
@@ -1549,10 +1585,38 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             call = server.on_generate_custom.await_args
             self.assertEqual([str(xhs_path), str(face_only_path)], call.args[10])
 
+    async def test_custom_generation_rejects_style_ref_without_identity(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server = self._make_server(Path(tmpdir))
+            from settings import DEFAULT_STYLE_REFERENCE_FILES
+            style_name = DEFAULT_STYLE_REFERENCE_FILES["sweet"]
+            Image.new("RGB", (48, 48), "white").save(Path(server.app_reference_dir) / style_name)
+            xhs_path = Path(server.xiaohongshu_reference_dir) / "xhs_outfit.webp"
+            Image.new("RGB", (48, 48), "white").save(xhs_path)
+            server.xiaohongshu_reference_store.update(lambda records: {
+                **records, xhs_path.name: {"filename": xhs_path.name, "source": "xiaohongshu"},
+            })
+            server.on_generate_custom = AsyncMock()
+            client = await self._start_client(server)
+            try:
+                response = await client.post("/api/generate-custom", json={
+                    "prompt": "portrait", "ref_images": [
+                        "/local-refs/xiaohongshu/xhs_outfit.webp", "/refs/" + style_name,
+                    ],
+                })
+                self.assertEqual(400, response.status, await response.text())
+                self.assertEqual("missing_identity_reference", (await response.json())["error"])
+                server.on_generate_custom.assert_not_awaited()
+            finally:
+                await client.close()
+
     async def test_custom_generation_cleans_temporary_xiaohongshu_reference(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
             root = Path(tmpdir)
             server = self._make_server(root)
+            Image.new("RGB", (48, 48), "white").save(
+                Path(server.app_reference_dir) / "reference_face.jpg"
+            )
 
             async def fake_import(_url, output_dir):
                 path = Path(output_dir) / "xhs_temporary.png"
@@ -1597,7 +1661,10 @@ class XiaohongshuApiTest(unittest.IsolatedAsyncioTestCase):
             generated_args = server.on_generate_custom.await_args.args
             resolved_temporary_path = str(temporary_path.resolve())
             self.assertEqual(resolved_temporary_path, generated_args[2])
-            self.assertEqual([resolved_temporary_path], generated_args[-1])
+            self.assertEqual([
+                resolved_temporary_path,
+                str((Path(server.app_reference_dir) / "reference_face.jpg").resolve()),
+            ], generated_args[-1])
 
 
 if __name__ == "__main__":

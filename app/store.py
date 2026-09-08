@@ -35,10 +35,12 @@ class LockedJsonDictStore:
         try:
             with open(self.path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return data if isinstance(data, dict) else {}
+            if not isinstance(data, dict):
+                raise ValueError("JSON store must contain an object")
+            return data
         except (json.JSONDecodeError, OSError) as e:
             logger.error("LockedJsonDictStore load error: %s", e)
-            return {}
+            raise
 
     def _write_unlocked(self, data: dict) -> None:
         tmp_fd, tmp_path = tempfile.mkstemp(
@@ -162,7 +164,9 @@ class ScheduleStore:
                         with open(self.path, "r", encoding="utf-8") as f:
                             data = json.load(f)
                     except (json.JSONDecodeError, OSError):
-                        data = {}
+                        raise
+                if not isinstance(data, dict):
+                    raise ValueError("Schedule store must contain an object")
                 # Modify
                 data = callback(data)
                 # Atomic write
