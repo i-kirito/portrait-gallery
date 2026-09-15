@@ -8452,6 +8452,15 @@ textarea:focus-visible,
           </div>
           <div class="sk-engine-grid">
             <div class="sk-field">
+              <label for="skGptModel">默认生图模型</label>
+              <select id="skGptModel" disabled>
+                <option value="">加载中...</option>
+              </select>
+              <div class="sk-desc">定时生图和未单独指定模型的任务使用此选项；保存后从下一次生图生效。</div>
+              <div class="sk-status" id="skGptModelStatus">加载中...</div>
+              <button type="button" class="sk-llm-test-btn" id="skGptModelSave" onclick="saveDefaultImageModel()">保存模型</button>
+            </div>
+            <div class="sk-field">
               <label for="skGptBaseUrl">Base URL</label>
               <div class="sk-desc">OpenAI 兼容地址，填到 /v1 即可</div>
               <input type="text" id="skGptBaseUrl" placeholder="必填：填写 GPT Image /v1 地址">
@@ -11515,11 +11524,12 @@ function renderCharacterImageModelOptions(models = [], currentModel = "", defaul
   if (!select) return;
   const saved = select.value;
   const ordered = [];
-  [currentModel, defaultModel, "gpt-image-2", "agnes-image-2.1-flash", ...models].forEach(model => {
+  [currentModel, defaultModel, ...CUSTOM_IMAGE_MODEL_FALLBACKS, "agnes-image-2.1-flash", ...models].forEach(model => {
     model = normalizeCustomImageModel(model);
     if (model && !ordered.includes(model)) ordered.push(model);
   });
-  select.innerHTML = `<option value="">${toolEscapeHtml(defaultModel ? `默认模型（${defaultModel}）` : "默认模型")}</option>`;
+  const effectiveDefault = currentModel || defaultModel;
+  select.innerHTML = `<option value="">${toolEscapeHtml(effectiveDefault ? `默认模型（${effectiveDefault}）` : "默认模型")}</option>`;
   ordered.forEach(model => {
     const opt = document.createElement("option");
     opt.value = model;
@@ -16255,7 +16265,7 @@ const DEFAULT_STYLE_REF_FALLBACKS = [
     builtin: true
   }
 ];
-const CUSTOM_IMAGE_MODEL_FALLBACKS = ["gpt-image-2"];
+const CUSTOM_IMAGE_MODEL_FALLBACKS = ["gpt-image-2", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare"];
 let customImageModelsLoaded = false;
 let customImageDefaultModel = "";
 
@@ -16393,7 +16403,7 @@ function renderCustomImageModels(models, currentModel, defaultModel) {
   const select = document.getElementById("cgModelSelect");
   if (!select) return;
   const savedModel = normalizeCustomImageModel(readCustomGenState().model || select.value);
-  customImageDefaultModel = normalizeCustomImageModel(defaultModel || currentModel || customImageDefaultModel);
+  customImageDefaultModel = normalizeCustomImageModel(currentModel || defaultModel || customImageDefaultModel);
   const ordered = [];
   [currentModel, defaultModel, ...CUSTOM_IMAGE_MODEL_FALLBACKS, ...(Array.isArray(models) ? models : [])].forEach(model => {
     model = normalizeCustomImageModel(model);
@@ -18939,16 +18949,55 @@ async function saveScheduleForbiddenDialog() {
   }
 }
 
+async function saveDefaultImageModel() {
+  const select = document.getElementById("skGptModel");
+  if (select.disabled || !select.value) return;
+  const button = document.getElementById("skGptModelSave");
+  button.disabled = true;
+  try {
+    const response = await fetch(`${API}/api/config/keys`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({gpt_model: select.value})
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.message || data.error || "保存失败");
+    document.getElementById("skGptModelStatus").textContent = "当前：" + select.value;
+    customImageModelsLoaded = false;
+    characterModelsLoaded = false;
+    await Promise.all([loadCustomImageModels(), loadCharacterImageModels()]);
+    showToast("✅ 默认生图模型已保存，下一次生图生效");
+  } catch (error) {
+    showToast("❌ " + error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function loadSettingsStatus() {
   try {
     // 并行获取配置和模型列表
-    const [configRes, modelsRes] = await Promise.all([
+    const [configRes, modelsRes, imageModelsData] = await Promise.all([
       fetch(`${API}/api/config/keys`),
-      fetch(`${API}/api/models`)
+      fetch(`${API}/api/models`),
+      fetch(`${API}/api/image-models`).then(res => res.ok ? res.json() : {}).catch(() => ({}))
     ]);
     const data = await configRes.json();
     const modelsData = await modelsRes.json();
     settingsSnapshot = data;
+    const imageModelSelect = document.getElementById("skGptModel");
+    const currentImageModel = data.gpt_model || imageModelsData.current_model || data.gpt_model_default || "gpt-image-2";
+    const imageModels = [...new Set([currentImageModel, ...CUSTOM_IMAGE_MODEL_FALLBACKS, ...(imageModelsData.models || [])])];
+    const modelLabels = {
+      "gpt-image-2": "GPT Image 2",
+      "gpt-image-2.5-sunburst": "GPT Image 2.5 Sunburst · 精确编辑",
+      "gpt-image-2.5-flare": "GPT Image 2.5 Flare · 快速生图"
+    };
+    imageModelSelect.replaceChildren();
+    imageModels.forEach(model => imageModelSelect.add(new Option(modelLabels[model] || model, model)));
+    imageModelSelect.value = currentImageModel;
+    imageModelSelect.disabled = false;
+    document.getElementById("skGptModelStatus").textContent = "当前：" + currentImageModel;
     applyDisplayConfig(data);
     setPushChannel(data.push_channel || "wechat");
 
@@ -19640,6 +19689,8 @@ async function saveSettings() {
     body.gitee_url = giteeUrl;
     if (gptKey) body.gpt_key = gptKey;
     body.gpt_base_url = gptBaseUrl;
+    const imageModelSelect = document.getElementById("skGptModel");
+    if (!imageModelSelect.disabled) body.gpt_model = imageModelSelect.value;
     body.gpt_image_endpoints = collectGptEndpoints();
     body.cpa_url = cpaUrl;
     if (cpaKey) body.cpa_key = cpaKey;
@@ -19678,6 +19729,9 @@ async function saveSettings() {
     if (data.success) {
       showToast("✅ 设置已保存");
       closeSettings();
+      customImageModelsLoaded = false;
+      characterModelsLoaded = false;
+      await Promise.all([loadCustomImageModels(), loadCharacterImageModels()]);
       await loadDisplayConfig();
       await loadGallery();
     } else {

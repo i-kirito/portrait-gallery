@@ -5875,6 +5875,8 @@ class GalleryServer:
             "gpt_base_url": effective_gpt_base_url,
             "gpt_base_url_local": local_gpt_base_url,
             "gpt_base_url_default": default_gpt_base_url,
+            "gpt_model": self._effective_gpt_image_model(keys_config)[0],
+            "gpt_model_default": self._effective_gpt_image_model(keys_config)[1],
             "gpt_image_endpoints": [
                 {
                     "label": str(endpoint.get("label", "") or "").strip(),
@@ -6901,6 +6903,15 @@ class GalleryServer:
                             body.get("gpt_base_url"),
                             default_gpt_base_url,
                         )
+                    if "gpt_model" in body:
+                        raw_model = str(body.get("gpt_model") or "").strip()
+                        model = self._normalize_image_model_id(raw_model)
+                        if raw_model and not model:
+                            return web.json_response({"error": "invalid_image_model", "message": "请选择有效的生图模型。"}, status=400)
+                        if model:
+                            keys_config["gpt_model"] = model
+                        else:
+                            keys_config.pop("gpt_model", None)
                     if "gpt_image_endpoints" in body:
                         cleaned_endpoints, endpoint_error = self._clean_gpt_image_endpoints(
                             body.get("gpt_image_endpoints"),
@@ -7466,6 +7477,8 @@ class GalleryServer:
                 current_model,
                 default_model,
                 "gpt-image-2",
+                "gpt-image-2.5-sunburst",
+                "gpt-image-2.5-flare",
             )
             if model
         ]
