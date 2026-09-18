@@ -6285,12 +6285,14 @@ class GalleryServer:
 
     @staticmethod
     def _display_model_name(model_name: str) -> str:
-        """Normalize stored model ids to stable gallery display labels."""
+        """Normalize provider labels while preserving concrete image model ids."""
         name = (model_name or "").strip()
         lower = name.lower()
         if lower.startswith("agnes-image-"):
             return "Agnes"
-        if "gpt-image" in lower or lower == "gpt image":
+        if lower.startswith("gpt-image-"):
+            return name
+        if lower == "gpt image":
             return "GPT Image"
         if "z-image" in lower or "gitee" in lower:
             return "Gitee"
@@ -6327,8 +6329,12 @@ class GalleryServer:
             if meta_entry.get("source") == "hermes_api" or img_file.startswith("hermes_"):
                 normalized["source"] = "hermes_api"
                 source = "hermes_api"
-            meta_model = meta_entry.get("model_name") or meta_entry.get("model")
-            if meta_model and not normalized.get("model_name"):
+            meta_model_exact = str(meta_entry.get("model") or "").strip()
+            meta_model = str(meta_entry.get("model_name") or meta_model_exact).strip()
+            current_model = str(normalized.get("model_name") or "").strip()
+            if meta_model_exact and current_model.lower() == "gpt image":
+                normalized["model_name"] = meta_model_exact
+            elif meta_model and not current_model:
                 normalized["model_name"] = meta_model
             for field in (
                 "prompt_mode",
