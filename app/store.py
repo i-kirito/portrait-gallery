@@ -12,22 +12,69 @@ except ImportError:
             return None
 
     fcntl = _FcntlFallback()
+import contextlib
 import json
 import logging
 import os
 import tempfile
+import threading
+import time
 
 logger = logging.getLogger(__name__)
 
+# Lock degradation warning de-duplication: warn once per lock path per interval.
+_DEGRADE_WARN_INTERVAL_SECONDS = 300
+_degrade_state: dict[str, float] = {}
+_degrade_state_lock = threading.Lock()
+
+
+def _warn_lock_degraded(lock_path: str, exc: BaseException) -> None:
+    """Log a rate-limited warning that file locking has been degraded."""
+    now = time.monotonic()
+    with _degrade_state_lock:
+        last = _degrade_state.get(lock_path, 0.0)
+        if now - last < _DEGRADE_WARN_INTERVAL_SECONDS:
+            return
+        _degrade_state[lock_path] = now
+    logger.warning(
+        "文件锁不可用，已降级为无锁读写（数据仍会原子写入，但跨进程并发保护失效）: %s (%s: %s)",
+        lock_path,
+        type(exc).__name__,
+        exc,
+    )
+
 
 class LockedJsonDictStore:
-    """File-locked JSON object store with atomic same-directory replacement."""
+    """File-locked JSON object store with atomic same-directory replacement.
+
+    If the lock file cannot be opened (e.g. ``PermissionError`` from macOS TCC
+    restrictions on an external volume), locking degrades to a no-op so readers
+    and writers still work; atomic replace keeps single-process writes safe.
+    """
 
     def __init__(self, path: str, lock_path: str | None = None):
         self.path = os.path.abspath(path)
         self.data_dir = os.path.dirname(self.path)
         self.lock_path = lock_path or f"{self.path}.lock"
         os.makedirs(self.data_dir, exist_ok=True)
+
+    @contextlib.contextmanager
+    def _locked(self, operation: int):
+        """Hold the advisory lock, degrading to no locking if unavailable."""
+        try:
+            lock_file = open(self.lock_path, "w")
+        except (PermissionError, OSError) as e:
+            _warn_lock_degraded(self.lock_path, e)
+            yield
+            return
+        try:
+            fcntl.flock(lock_file.fileno(), operation)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        finally:
+            lock_file.close()
 
     def _load_unlocked(self) -> dict:
         if not os.path.exists(self.path):
@@ -60,35 +107,23 @@ class LockedJsonDictStore:
             raise
 
     def load(self) -> dict:
-        with open(self.lock_path, "w") as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_SH)
-            try:
-                return self._load_unlocked()
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        with self._locked(fcntl.LOCK_SH):
+            return self._load_unlocked()
 
     def save(self, data: dict) -> None:
-        with open(self.lock_path, "w") as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            try:
-                self._write_unlocked(data if isinstance(data, dict) else {})
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        with self._locked(fcntl.LOCK_EX):
+            self._write_unlocked(data if isinstance(data, dict) else {})
 
     def update(self, callback) -> dict:
-        with open(self.lock_path, "w") as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            try:
-                data = self._load_unlocked()
-                updated = callback(data)
-                if updated is not None:
-                    data = updated
-                if not isinstance(data, dict):
-                    raise TypeError("JSON store callback must return a dict or None")
-                self._write_unlocked(data)
-                return data
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        with self._locked(fcntl.LOCK_EX):
+            data = self._load_unlocked()
+            updated = callback(data)
+            if updated is not None:
+                data = updated
+            if not isinstance(data, dict):
+                raise TypeError("JSON store callback must return a dict or None")
+            self._write_unlocked(data)
+            return data
 
 
 class ImageMetadataStore(LockedJsonDictStore):

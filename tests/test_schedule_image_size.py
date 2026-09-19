@@ -76,6 +76,21 @@ class ScheduleImageSizeTest(unittest.TestCase):
         self.assertNotIn("Mandatory 3:4 full-body", prompt)
         self.assertEqual(prompt, apply_schedule_image_framing(prompt))
 
+    def test_schedule_prompt_uses_seated_mode_for_kneeling_prop_activity(self):
+        prompt = apply_schedule_image_framing(
+            "Today's plan: Activity: set up a picnic basket in a forest clearing. "
+            "Action: kneeling on the grass, arranging a woven picnic basket. "
+            "Scene: forest clearing with dappled sunlight."
+        )
+
+        self.assertIn("FRAMING MODE: SEATED OR KNEELING DAILY PORTRAIT", prompt)
+        self.assertIn("55 to 75 percent of frame height", prompt)
+        self.assertIn("No elongated torso, stretched forearms", prompt)
+        self.assertIn("no close foreground exaggeration", prompt)
+        self.assertIn("Foreground baskets", prompt)
+        self.assertNotIn(SCHEDULE_IMAGE_FRAMING_RULE, prompt)
+        self.assertNotIn(SCHEDULE_IMAGE_OOTD_FRAMING_RULE, prompt)
+
     def test_schedule_prompt_uses_ordinary_mode_despite_full_outfit_and_standing(self):
         prompt = apply_schedule_image_framing(
             "Today's plan: Activity: trim leaves beside the desk. "

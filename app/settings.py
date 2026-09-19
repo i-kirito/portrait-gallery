@@ -173,6 +173,28 @@ LEGACY_SCHEDULE_IMAGE_FRAMING_RULE = (
 
 SCHEDULE_IMAGE_FRAMING_MARKER = "Professional 3:4 lifestyle photography composition:"
 
+SCHEDULE_SEATED_INTENT_RE = re.compile(
+    r"(?:\bkneel(?:ing)?\b|\bsit(?:ting|s)?\b|\bseated\b|\bcrouch(?:ing)?\b|\bsquat(?:ting)?\b|"
+    r"\blean(?:ing)?\b|跪|跪坐|坐下|坐着|坐在|蹲|半蹲|倚靠|靠坐)",
+    re.IGNORECASE,
+)
+
+SCHEDULE_IMAGE_SEATED_FRAMING_RULE = (
+    f"{SCHEDULE_IMAGE_FRAMING_MARKER} FRAMING MODE: SEATED OR KNEELING DAILY PORTRAIT (mandatory). "
+    "Use a level eye-height or upper-torso-height medium-wide portrait from several steps back, then crop optically rather "
+    "than placing the lens close to the subject. Keep the complete head, shoulders, torso, both upper arms, forearms, "
+    "hands, hips, and enough upper legs to make the seated or kneeling posture anatomically clear. The subject should "
+    "occupy roughly 55 to 75 percent of frame height so the pose has room to read naturally. Preserve correct adult human "
+    "proportions: normal shoulder width, normal torso length, normal upper-arm and forearm length, natural hand size, and "
+    "a head scale consistent with the body. No elongated torso, stretched forearms, oversized hands, tiny head, compressed "
+    "hips, shortened legs, or perspective-driven body distortion. Use a natural 70-105mm-equivalent portrait perspective; "
+    "no wide-angle or ultra-wide lens, no close foreground exaggeration, and no strong foreshortening. Foreground baskets, "
+    "tables, flowers, tools, or other props must remain at believable scale and should stay beside the subject or in the "
+    "lower third instead of looming close to the lens. Keep both hands fully visible when they interact with a prop. "
+    "Fill the entire 3:4 canvas edge to edge with the photographed scene; no black bars, blurred side panels, frames, "
+    "borders, or blank margins. Do not copy the reference image's camera distance, crop, or perspective."
+)
+
 SCHEDULE_IMAGE_FRAMING_RULE = (
     f"{SCHEDULE_IMAGE_FRAMING_MARKER} FRAMING MODE: ORDINARY DAILY PORTRAIT (mandatory). "
     "Use an eye-level medium or medium-long portrait cropped from the complete head to the waist, hips, or mid-thigh; "
@@ -482,6 +504,8 @@ def schedule_image_framing_rule(prompt: Any) -> str:
         return SCHEDULE_IMAGE_OOTD_FRAMING_RULE
     if activity_action and SCHEDULE_SCENERY_INTENT_RE.search(activity_action):
         return SCHEDULE_IMAGE_SCENERY_FRAMING_RULE
+    if activity_action and SCHEDULE_SEATED_INTENT_RE.search(activity_action):
+        return SCHEDULE_IMAGE_SEATED_FRAMING_RULE
     return SCHEDULE_IMAGE_FRAMING_RULE
 
 

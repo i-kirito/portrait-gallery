@@ -18,6 +18,13 @@ from web_server import GalleryServer  # noqa: E402
 
 
 class ThemeDayTests(unittest.IsolatedAsyncioTestCase):
+    def test_random_theme_recycles_least_recent_when_long_window_covers_pool(self):
+        ordered_recent = list(THEME_DAY_POOL)
+
+        selected = DailyScheduler.random_theme_day(ordered_recent)
+
+        self.assertEqual(THEME_DAY_POOL[-1], selected)
+
     def test_theme_day_prompt_turns_a_theme_into_a_full_day_constraint(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scheduler = DailyScheduler({"config": {"timezone": "Asia/Shanghai"}}, tmpdir)
@@ -921,7 +928,7 @@ class ThemeDayTests(unittest.IsolatedAsyncioTestCase):
 
         app.scheduler_gen.recent_theme_days.assert_called_once_with(
             date(2026, 8, 1),
-            days=7,
+            days=21,
         )
         app.scheduler_gen.random_theme_day.assert_called_once_with(
             ["海边度假日", "森林野餐日"]

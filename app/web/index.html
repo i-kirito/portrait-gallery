@@ -9003,6 +9003,29 @@ if (document.readyState === "loading") {
 const IMAGE_OPERATION_TIMEOUT_MS = 31 * 60 * 1000;
 const QUICK_MUTATION_TIMEOUT_MS = 20 * 1000;
 
+async function readGalleryApiJson(response) {
+  const text = await response.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('invalid_payload');
+  } catch (_) {
+    const error = new Error(`HTTP ${response.status}：接口返回了非 JSON 内容，请检查画廊转发服务。`);
+    error.name = response.status === 504 ? 'FetchTimeoutError' : 'ApiResponseError';
+    error.httpStatus = response.status;
+    if (response.status === 504) error.message += ' 后台可能仍在处理，请先刷新画廊确认，勿重复提交。';
+    throw error;
+  }
+  if (!response.ok) {
+    const message = data.message || data.error || '请求失败';
+    const error = new Error(`HTTP ${response.status}：${message}`);
+    error.name = response.status === 504 ? 'FetchTimeoutError' : 'ApiResponseError';
+    error.httpStatus = response.status;
+    throw error;
+  }
+  return data;
+}
+
 async function fetchWithTimeout(input, init = {}, timeoutMs = IMAGE_OPERATION_TIMEOUT_MS, timeoutMessage = '请求超时，请稍后重试') {
   const duration = Math.max(1, Number(timeoutMs) || IMAGE_OPERATION_TIMEOUT_MS);
   const timeoutError = () => {
@@ -13143,7 +13166,7 @@ async function triggerGenerate() {
       method: "POST",
       headers: {"Content-Type": "application/json"},
     }, IMAGE_OPERATION_TIMEOUT_MS, '生图请求超时，后台可能仍在处理，请稍后刷新画廊');
-    const data = await res.json();
+    const data = await readGalleryApiJson(res);
     if (data.error) {
       showToast("❌ " + (data.message || data.error));
     } else {
@@ -17316,7 +17339,7 @@ async function uploadReferenceFile(file, style = "") {
     method: "POST",
     body: formData
   });
-  const data = await res.json().catch(() => ({}));
+  const data = await readGalleryApiJson(res);
   if (!res.ok || data.error) {
     throw new Error(data.message || data.error || `HTTP ${res.status}`);
   }
@@ -17425,7 +17448,7 @@ async function submitCustomGen() {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify(payload.body)
     }, IMAGE_OPERATION_TIMEOUT_MS, '定制生图请求超时，后台可能仍在处理，请稍后刷新画廊');
-    const data = await res.json();
+    const data = await readGalleryApiJson(res);
     if (data.error) {
       showToast("❌ " + data.error);
       await releaseTransientXiaohongshuRefs({
@@ -17477,7 +17500,7 @@ async function quickCustomImg2ImgFromModal(event, btn) {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify(payload.body)
     }, IMAGE_OPERATION_TIMEOUT_MS, '参考图生图请求超时，后台可能仍在处理，请稍后刷新画廊');
-    const data = await res.json().catch(() => ({}));
+    const data = await readGalleryApiJson(res);
     if (!res.ok || data.error) {
       showToast("❌ " + (data.error || `HTTP ${res.status}`));
       return;
@@ -18960,7 +18983,7 @@ async function saveDefaultImageModel() {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({gpt_model: select.value})
     });
-    const data = await response.json();
+    const data = await readGalleryApiJson(response);
     if (!response.ok || !data.success) throw new Error(data.message || data.error || "保存失败");
     document.getElementById("skGptModelStatus").textContent = "当前：" + select.value;
     customImageModelsLoaded = false;
@@ -19724,7 +19747,7 @@ async function saveSettings() {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify(body)
     });
-    const data = await res.json();
+    const data = await readGalleryApiJson(res);
     
     if (data.success) {
       showToast("✅ 设置已保存");

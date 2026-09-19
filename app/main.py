@@ -139,6 +139,7 @@ REFERENCE_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
 REFERENCE_METADATA_KEYS = ("id", "filename", "url", "label", "prompt", "source", "selection_mode", "selection_reason")
 TODAY_SCHEDULE_REFERENCE_MODE = "today_schedule"
 LOG_RETENTION_DAYS = 3
+LOG_ROTATE_WARN_INTERVAL_SECONDS = 300
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 ACCESS_LOG_RE = re.compile(
     r'"(?P<method>[A-Z]+)\s+(?P<path>\S+)\s+HTTP/[^"]+"\s+(?P<status>\d{3})'
@@ -202,6 +203,33 @@ def _stream_targets_path(stream, path: str) -> bool:
         return False
 
 
+class _ResilientTimedRotatingFileHandler(TimedRotatingFileHandler):
+    """Rotate logs without raising when the log file cannot be renamed.
+
+    On macOS, a service running under a launchd context may lose permission to
+    rename files on an external volume (TCC). Rotation failure must not turn
+    every log record into a traceback, so it stays quiet and keeps appending to
+    the current log file instead.
+    """
+
+    def handleError(self, record):  # noqa: N802 - logging API name
+        if sys.exc_info()[0] is not None and issubclass(sys.exc_info()[0], OSError):
+            self._warn_rotate_failure(sys.exc_info()[1])
+            return
+        super().handleError(record)
+
+    def _warn_rotate_failure(self, exc):
+        now = time.monotonic()
+        if now - self._last_rotate_warning < LOG_ROTATE_WARN_INTERVAL_SECONDS:
+            return
+        self._last_rotate_warning = now
+        sys.stderr.write(
+            f"{datetime.now().isoformat()} [WARNING] 日志轮转失败，继续写入当前日志文件: "
+            f"{type(exc).__name__}: {exc}\n"
+        )
+        sys.stderr.flush()
+
+
 def _cleanup_old_log_files(log_path: str, retention_days: int = LOG_RETENTION_DAYS):
     log_dir = os.path.dirname(log_path)
     log_name = os.path.basename(log_path)
@@ -237,13 +265,14 @@ def configure_logging() -> str:
         if getattr(handler, "baseFilename", "")
     }
     if os.path.abspath(log_path) not in existing_files:
-        file_handler = TimedRotatingFileHandler(
+        file_handler = _ResilientTimedRotatingFileHandler(
             log_path,
             when="midnight",
             interval=1,
             backupCount=LOG_RETENTION_DAYS,
             encoding="utf-8",
         )
+        file_handler._last_rotate_warning = 0.0
         file_handler.setFormatter(formatter)
         file_handler.setLevel(logging.INFO)
         root_logger.addHandler(file_handler)
@@ -1160,7 +1189,7 @@ class PortraitGalleryApp:
                 None,
             )
             recent_themes = (
-                recent_theme_loader(schedule_date, days=7)
+                recent_theme_loader(schedule_date, days=21)
                 if callable(recent_theme_loader)
                 else []
             )
