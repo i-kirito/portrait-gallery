@@ -13,6 +13,7 @@ except ImportError:
 
     fcntl = _FcntlFallback()
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -26,30 +27,94 @@ logger = logging.getLogger(__name__)
 _DEGRADE_WARN_INTERVAL_SECONDS = 300
 _degrade_state: dict[str, float] = {}
 _degrade_state_lock = threading.Lock()
+_local_locks: dict[str, threading.RLock] = {}
 
 
-def _warn_lock_degraded(lock_path: str, exc: BaseException) -> None:
-    """Log a rate-limited warning that file locking has been degraded."""
+def _local_lock(lock_path: str) -> threading.RLock:
+    key = os.path.abspath(lock_path)
+    with _degrade_state_lock:
+        return _local_locks.setdefault(key, threading.RLock())
+
+
+def _fallback_lock_path(lock_path: str) -> str:
+    digest = hashlib.sha256(os.path.abspath(lock_path).encode("utf-8")).hexdigest()[:32]
+    return os.path.join(tempfile.gettempdir(), f"portrait-gallery-lock-{digest}.lock")
+
+
+def _warn_lock_degraded(lock_path: str, exc: BaseException, fallback_path: str = "") -> None:
+    """Log a rate-limited warning about a lock path problem."""
     now = time.monotonic()
     with _degrade_state_lock:
         last = _degrade_state.get(lock_path, 0.0)
         if now - last < _DEGRADE_WARN_INTERVAL_SECONDS:
             return
         _degrade_state[lock_path] = now
-    logger.warning(
-        "文件锁不可用，已降级为无锁读写（数据仍会原子写入，但跨进程并发保护失效）: %s (%s: %s)",
-        lock_path,
-        type(exc).__name__,
-        exc,
-    )
+    if fallback_path:
+        logger.warning(
+            "文件锁路径不可用，已改用共享临时锁: %s -> %s (%s: %s)",
+            lock_path,
+            fallback_path,
+            type(exc).__name__,
+            exc,
+        )
+    else:
+        logger.warning(
+            "文件锁不可用，已降级为无锁读写（数据仍会原子写入，但跨进程并发保护失效）: %s (%s: %s)",
+            lock_path,
+            type(exc).__name__,
+            exc,
+        )
+
+
+@contextlib.contextmanager
+def _locked_file(lock_path: str, operation: int):
+    """Use a shared file lock, with a safe fallback for inaccessible lock paths."""
+    local_lock = _local_lock(lock_path)
+    with local_lock:
+        lock_file = None
+        try:
+            try:
+                lock_file = open(lock_path, "a")
+            except OSError as original_error:
+                fallback_path = _fallback_lock_path(lock_path)
+                try:
+                    lock_file = open(fallback_path, "a")
+                except OSError:
+                    _warn_lock_degraded(lock_path, original_error)
+                    if operation == fcntl.LOCK_EX:
+                        raise original_error
+                    yield
+                    return
+                _warn_lock_degraded(lock_path, original_error, fallback_path)
+
+            try:
+                fcntl.flock(lock_file.fileno(), operation)
+            except OSError as lock_error:
+                _warn_lock_degraded(lock_path, lock_error)
+                if operation == fcntl.LOCK_EX:
+                    raise
+                yield
+                return
+
+            try:
+                yield
+            finally:
+                try:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                except OSError as unlock_error:
+                    _warn_lock_degraded(lock_path, unlock_error)
+        finally:
+            if lock_file is not None:
+                lock_file.close()
 
 
 class LockedJsonDictStore:
     """File-locked JSON object store with atomic same-directory replacement.
 
     If the lock file cannot be opened (e.g. ``PermissionError`` from macOS TCC
-    restrictions on an external volume), locking degrades to a no-op so readers
-    and writers still work; atomic replace keeps single-process writes safe.
+    restrictions on an external volume), a shared temporary lock is used.
+    Exclusive operations fail closed if both lock locations are unavailable;
+    read-only operations may continue without a lock in that last-resort case.
     """
 
     def __init__(self, path: str, lock_path: str | None = None):
@@ -60,21 +125,9 @@ class LockedJsonDictStore:
 
     @contextlib.contextmanager
     def _locked(self, operation: int):
-        """Hold the advisory lock, degrading to no locking if unavailable."""
-        try:
-            lock_file = open(self.lock_path, "w")
-        except (PermissionError, OSError) as e:
-            _warn_lock_degraded(self.lock_path, e)
+        """Hold the advisory lock, using a shared temporary lock if needed."""
+        with _locked_file(self.lock_path, operation):
             yield
-            return
-        try:
-            fcntl.flock(lock_file.fileno(), operation)
-            try:
-                yield
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-        finally:
-            lock_file.close()
 
     def _load_unlocked(self) -> dict:
         if not os.path.exists(self.path):
@@ -149,72 +202,66 @@ class ScheduleStore:
         self.lock_path = os.path.join(data_dir, "schedule_data.lock")
         os.makedirs(data_dir, exist_ok=True)
 
+    @contextlib.contextmanager
+    def _locked(self, operation: int):
+        with _locked_file(self.lock_path, operation):
+            yield
+
     def load(self) -> dict:
         """Read schedule_data.json under a shared lock. Returns {} if missing."""
         if not os.path.exists(self.path):
             return {}
-        with open(self.lock_path, "w") as lf:
-            fcntl.flock(lf.fileno(), fcntl.LOCK_SH)
+        with self._locked(fcntl.LOCK_SH):
             try:
                 with open(self.path, "r", encoding="utf-8") as f:
                     return json.load(f)
             except (json.JSONDecodeError, OSError) as e:
                 logger.error(f"ScheduleStore load error: {e}")
                 return {}
-            finally:
-                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
     def save(self, data: dict) -> None:
         """Atomically write schedule_data.json under an exclusive lock."""
-        with open(self.lock_path, "w") as lf:
-            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+        with self._locked(fcntl.LOCK_EX):
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                dir=self.data_dir, prefix=".schedule_", suffix=".tmp"
+            )
             try:
-                tmp_fd, tmp_path = tempfile.mkstemp(
-                    dir=self.data_dir, prefix=".schedule_", suffix=".tmp"
-                )
-                try:
-                    with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
-                        json.dump(data, f, ensure_ascii=False, indent=2)
-                    os.replace(tmp_path, self.path)
-                except Exception:
-                    # Clean up temp file on failure
-                    if os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
-                    raise
-            finally:
-                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+                with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                os.replace(tmp_path, self.path)
+            except Exception:
+                # Clean up temp file on failure
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
 
     def update(self, callback) -> None:
         """Read-modify-write under exclusive lock.
 
         callback(data: dict) -> dict  — receives current data, returns updated data.
         """
-        with open(self.lock_path, "w") as lf:
-            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
-            try:
-                # Read
-                data = {}
-                if os.path.exists(self.path):
-                    try:
-                        with open(self.path, "r", encoding="utf-8") as f:
-                            data = json.load(f)
-                    except (json.JSONDecodeError, OSError):
-                        raise
-                if not isinstance(data, dict):
-                    raise ValueError("Schedule store must contain an object")
-                # Modify
-                data = callback(data)
-                # Atomic write
-                tmp_fd, tmp_path = tempfile.mkstemp(
-                    dir=self.data_dir, prefix=".schedule_", suffix=".tmp"
-                )
+        with self._locked(fcntl.LOCK_EX):
+            # Read
+            data = {}
+            if os.path.exists(self.path):
                 try:
-                    with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
-                        json.dump(data, f, ensure_ascii=False, indent=2)
-                    os.replace(tmp_path, self.path)
-                except Exception:
-                    if os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
+                    with open(self.path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                except (json.JSONDecodeError, OSError):
                     raise
-            finally:
-                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+            if not isinstance(data, dict):
+                raise ValueError("Schedule store must contain an object")
+            # Modify
+            data = callback(data)
+            # Atomic write
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                dir=self.data_dir, prefix=".schedule_", suffix=".tmp"
+            )
+            try:
+                with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                os.replace(tmp_path, self.path)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise

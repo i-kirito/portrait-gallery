@@ -123,6 +123,18 @@ class WebServerPasswordAuthTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(401, response.status)
             self.assertIn("password_setup_required", response.text)
 
+    async def test_storage_permission_errors_return_service_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server = self._make_server(Path(tmpdir))
+            request = DummyRequest("localhost:18889", "127.0.0.1", path="/api/auth/status")
+
+            with patch.object(server, "_load_auth_store", side_effect=PermissionError("disk permission denied")):
+                response = await server.gallery_auth_middleware(request, server.handle_auth_status)
+
+            self.assertEqual(503, response.status)
+            payload = json.loads(response.text)
+            self.assertEqual("storage_unavailable", payload.get("error"))
+
     async def test_local_password_setup_rejects_cross_origin(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             server = self._make_server(Path(tmpdir))

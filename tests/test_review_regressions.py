@@ -13,6 +13,18 @@ from web_server import GalleryServer
 
 
 class StorageFailures(unittest.TestCase):
+    def test_inaccessible_lock_path_uses_shared_fallback(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            data_path = root / "store.json"
+            lock_path = root / "missing-lock-directory" / "store.lock"
+            store = LockedJsonDictStore(str(data_path), str(lock_path))
+
+            store.save({"value": 1})
+
+            self.assertEqual({"value": 1}, store.load())
+            self.assertFalse(lock_path.exists())
+
     def test_failed_reads_never_overwrite_existing_data(self):
         for cls in (LockedJsonDictStore, ScheduleStore):
             for error in (OSError("read failed"), json.JSONDecodeError("bad", "", 0)):

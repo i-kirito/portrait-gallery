@@ -212,15 +212,18 @@ class _ResilientTimedRotatingFileHandler(TimedRotatingFileHandler):
     the current log file instead.
     """
 
-    def handleError(self, record):  # noqa: N802 - logging API name
-        if sys.exc_info()[0] is not None and issubclass(sys.exc_info()[0], OSError):
-            self._warn_rotate_failure(sys.exc_info()[1])
-            return
-        super().handleError(record)
+    def doRollover(self):
+        try:
+            super().doRollover()
+        except OSError as exc:
+            # FileHandler.emit will reopen the base file after this returns.
+            # Keep normal write errors on the standard logging error path.
+            self._warn_rotate_failure(exc)
+            self.rolloverAt = self.computeRollover(int(time.time()))
 
     def _warn_rotate_failure(self, exc):
         now = time.monotonic()
-        if now - self._last_rotate_warning < LOG_ROTATE_WARN_INTERVAL_SECONDS:
+        if now - getattr(self, "_last_rotate_warning", 0.0) < LOG_ROTATE_WARN_INTERVAL_SECONDS:
             return
         self._last_rotate_warning = now
         sys.stderr.write(

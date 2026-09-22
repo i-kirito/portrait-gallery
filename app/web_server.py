@@ -742,26 +742,37 @@ class GalleryServer:
     @web.middleware
     async def gallery_auth_middleware(self, request: web.Request, handler):
         """Require the gallery password for non-local gallery data access."""
-        path = request.path
-        protected_path = (
-            (
-                path.startswith("/api/")
-                and path not in GALLERY_AUTH_PUBLIC_PATHS
-                and not path.startswith("/api/social/hub/")
-            )
-            or path.startswith("/images/")
-            or path.startswith("/local-refs/")
-        )
-        if protected_path:
-            if not self._request_has_gallery_access(request):
-                payload, status = self._auth_required_payload(request)
-                return web.json_response(payload, status=status)
-            if not self._same_origin_write(request):
-                return web.json_response(
-                    {"error": "origin_not_allowed", "message": "请求来源与画廊地址不一致。"},
-                    status=403,
+        try:
+            path = request.path
+            protected_path = (
+                (
+                    path.startswith("/api/")
+                    and path not in GALLERY_AUTH_PUBLIC_PATHS
+                    and not path.startswith("/api/social/hub/")
                 )
-        return await handler(request)
+                or path.startswith("/images/")
+                or path.startswith("/local-refs/")
+            )
+            if protected_path:
+                if not self._request_has_gallery_access(request):
+                    payload, status = self._auth_required_payload(request)
+                    return web.json_response(payload, status=status)
+                if not self._same_origin_write(request):
+                    return web.json_response(
+                        {"error": "origin_not_allowed", "message": "请求来源与画廊地址不一致。"},
+                        status=403,
+                    )
+            return await handler(request)
+        except OSError as exc:
+            logger.error("Gallery storage is not accessible: %s", exc)
+            return web.json_response(
+                {
+                    "error": "storage_unavailable",
+                    "message": "画廊数据目录当前不可访问，请检查服务进程的磁盘访问权限。",
+                },
+                status=503,
+                headers={"Retry-After": "60"},
+            )
 
     def _setup_routes(self):
         """设置路由"""
