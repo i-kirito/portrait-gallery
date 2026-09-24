@@ -2994,12 +2994,22 @@ textarea:focus-visible,
 /* ===== Style Filter Bar ===== */
 .style-filter-bar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   padding: 10px 0 6px;
   margin-bottom: 12px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-padding-inline: 8px;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
 }
 .style-pill {
+  flex: 0 0 auto;
+  white-space: nowrap;
   padding: 5px 14px;
   border-radius: 20px;
   border: 1.5px solid #e8d5e8;
@@ -3036,13 +3046,10 @@ textarea:focus-visible,
 
 @media (max-width: 560px) {
   .style-filter-bar {
-    flex-wrap: nowrap;
     gap: 7px;
     max-width: none;
     margin: 0 -14px 8px;
     padding: 7px 14px 9px;
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
     scroll-padding-inline: 14px;
     scroll-snap-type: x proximity;
     scrollbar-width: none;
@@ -3052,10 +3059,8 @@ textarea:focus-visible,
     display: none;
   }
   .style-pill {
-    flex: 0 0 auto;
     min-height: 36px;
     padding: 6px 13px;
-    white-space: nowrap;
     scroll-snap-align: start;
   }
 }
@@ -14003,7 +14008,14 @@ ms.textContent = `
   width:36px;height:36px;border-radius:12px;
   background:linear-gradient(135deg,#fff0f6,#f3e8ff);color:#d81b60;
   display:inline-flex;align-items:center;justify-content:center;font-size:14px;
+  border:0;padding:0;cursor:pointer;
   box-shadow:inset 0 0 0 1px rgba(233,30,99,0.08);
+}
+.modal-video-icon:hover,
+.modal-video-icon:focus-visible {
+  color:#9c27b0;
+  background:linear-gradient(135deg,#ffe4f0,#eee0ff);
+  box-shadow:inset 0 0 0 1px rgba(233,30,99,0.22), 0 5px 12px rgba(156,39,176,0.14);
 }
 .modal-video-input {
   width:100%;min-width:0;height:38px;padding:0 12px;border:1px solid #eadfea;border-radius:12px;
@@ -15471,7 +15483,7 @@ window.addEventListener("resize", () => {
 	    ? `<div class="modal-video-status error"><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i><span>${escapeHtml(errorText)}</span></div>`
 	    : '';
 	  return `${errorHtml}<div class="modal-video-compose">
-	    <span class="modal-video-icon" aria-hidden="true"><i class="fa-solid fa-clapperboard"></i></span>
+	    <button type="button" class="modal-video-icon" onclick="openVideoSettings(event)" title="打开视频设置" aria-label="打开视频设置"><i class="fa-solid fa-clapperboard" aria-hidden="true"></i></button>
 	    <input class="modal-video-input" id="modalVideoPrompt" type="text" maxlength="1000" autocomplete="off" value="${escapeAttr(prompt)}" placeholder="描述动作、镜头或氛围">
 	    <button class="modal-video-submit" id="modalVideoGenerateBtn" type="button" onclick="generateVideoFromModal(event)"><i class="fa-solid fa-video" aria-hidden="true"></i><span>生成视频</span></button>
 	  </div>`;
@@ -18210,11 +18222,25 @@ function setSettingsPanel(panel) {
   }
 }
 
-function openSettings() {
+function openVideoSettings(event) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  if (typeof closeModal === "function" && modalOverlay?.classList.contains("open")) {
+    closeModal();
+  }
+  openSettings("model");
+}
+
+function openSettings(panel = "") {
   const overlay = document.getElementById("skOverlay");
   overlay.classList.add("open");
   activateAccessibleDialog(overlay, '.sk-settings-tab.active');
   document.body.style.overflow = "hidden";
+  if (["persona", "model", "xiaohongshu", "maintain"].includes(panel)) {
+    activeSettingsPanel = panel;
+  }
   setSettingsPanel(activeSettingsPanel || "persona");
   // Clear input fields
   document.getElementById("skGiteeUrl").value = "";
