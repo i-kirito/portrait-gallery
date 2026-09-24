@@ -5958,6 +5958,14 @@ class GalleryServer:
                 and video_settings["model"]
             ),
             "grok_video_api_key_configured": bool(video_settings["api_key"]),
+            # This only controls whether the detail-page video UI is shown.  Keep
+            # the default enabled so existing installations retain their current
+            # behaviour when upgrading from a config without this field.
+            "video_generation_enabled": self._body_bool(
+                keys_config,
+                "video_generation_enabled",
+                True,
+            ),
             "push_channel": push_channel,
             "push_channel_local": normalize_push_channel(local_push_channel_raw) if local_push_channel_raw else "",
             "push_agent": push_agent,
@@ -7019,6 +7027,12 @@ class GalleryServer:
                             keys_config["grok_video_resolution"] = normalized_video_resolution
                         else:
                             keys_config.pop("grok_video_resolution", None)
+                    if "video_generation_enabled" in body:
+                        keys_config["video_generation_enabled"] = self._body_bool(
+                            body,
+                            "video_generation_enabled",
+                            True,
+                        )
                     if body.get("grok_api_key") and not self._looks_masked_key(body.get("grok_api_key")):
                         keys_config["grok_api_key"] = str(body["grok_api_key"]).strip()
                     if "appearance" in body:

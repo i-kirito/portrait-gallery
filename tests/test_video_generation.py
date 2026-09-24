@@ -570,6 +570,9 @@ class VideoGenerationHelpersTest(unittest.TestCase):
         self.assertNotIn('Grok API Key', html)
         self.assertIn('id="skGrokVideoDuration"', html)
         self.assertIn('id="skGrokVideoResolution"', html)
+        self.assertIn('id="skVideoGenerationEnabled"', html)
+        self.assertIn("body.video_generation_enabled", html)
+        self.assertIn("if (!videoGenerationEnabled)", html)
         self.assertIn("body.grok_video_duration", html)
         self.assertIn("body.grok_video_resolution", html)
         self.assertIn("cachedGrokVideoDefaults", html)
@@ -684,6 +687,48 @@ class VideoConfigurationEndpointTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(10, stored["grok_video_duration"])
             self.assertEqual("720p", stored["grok_video_resolution"])
             self.assertEqual("video-secret", stored["grok_api_key"])
+
+    async def test_video_generation_enabled_defaults_on_and_persists(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server = self._make_server(Path(tmpdir))
+            test_server = TestServer(server.app)
+            await test_server.start_server(access_log=None)
+            client = TestClient(test_server)
+            try:
+                initial_response = await client.get("/api/config/keys")
+                initial = await initial_response.json()
+                disabled_response = await client.post(
+                    "/api/config/keys",
+                    json={"video_generation_enabled": False},
+                )
+                disabled = await disabled_response.json()
+                disabled_current_response = await client.get("/api/config/keys")
+                disabled_current = await disabled_current_response.json()
+                enabled_response = await client.post(
+                    "/api/config/keys",
+                    json={"video_generation_enabled": True},
+                )
+                enabled = await enabled_response.json()
+                enabled_current_response = await client.get("/api/config/keys")
+                enabled_current = await enabled_current_response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(200, initial_response.status)
+            self.assertTrue(initial["video_generation_enabled"])
+            self.assertEqual(200, disabled_response.status, disabled)
+            self.assertTrue(disabled.get("success"))
+            self.assertEqual(200, disabled_current_response.status)
+            self.assertFalse(disabled_current["video_generation_enabled"])
+            self.assertEqual(200, enabled_response.status, enabled)
+            self.assertTrue(enabled.get("success"))
+            self.assertEqual(200, enabled_current_response.status)
+            self.assertTrue(enabled_current["video_generation_enabled"])
+
+            stored = json.loads(
+                (Path(tmpdir) / "data" / "api_keys_config.json").read_text(encoding="utf-8")
+            )
+            self.assertIs(stored["video_generation_enabled"], True)
 
 
     async def test_video_generation_uses_configured_duration_and_resolution_defaults(self):

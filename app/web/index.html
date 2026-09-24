@@ -8553,6 +8553,19 @@ textarea:focus-visible,
             </div>
             <span class="sk-engine-group-status" id="skGrokVideoGroupStatus">加载中...</span>
           </div>
+          <div class="sk-field sk-video-display-field">
+            <div class="sk-gitee-fallback-inline" id="skVideoGenerationRow">
+              <div class="sk-gitee-fallback-copy">
+                <span class="sk-gitee-fallback-title">详情页视频功能</span>
+                <span class="sk-gitee-fallback-hint">开启后，图片详情显示视频生成、播放和历史区域</span>
+                <div class="sk-status" id="skVideoGenerationStatus">加载中...</div>
+              </div>
+              <label class="sk-switch" for="skVideoGenerationEnabled" aria-label="显示图片详情页视频功能">
+                <input type="checkbox" id="skVideoGenerationEnabled" onchange="syncVideoGenerationVisual(this.checked)">
+                <span class="sk-switch-knob"></span>
+              </label>
+            </div>
+          </div>
           <div class="sk-engine-grid sk-engine-grid--video-main">
             <div class="sk-field">
               <label for="skGrokVideoUrl">Grok2API 地址</label>
@@ -9318,6 +9331,8 @@ const DEFAULT_GROK_VIDEO_DURATION = 5;
 const DEFAULT_GROK_VIDEO_RESOLUTION = "720p";
 const GROK_VIDEO_DURATION_OPTIONS = [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 const GROK_VIDEO_RESOLUTION_OPTIONS = ["480p", "720p"];
+// Kept enabled by default for backwards compatibility with existing galleries.
+let videoGenerationEnabled = true;
 let cachedGrokVideoDefaults = {
   duration: DEFAULT_GROK_VIDEO_DURATION,
   resolution: DEFAULT_GROK_VIDEO_RESOLUTION
@@ -9406,6 +9421,7 @@ function fillGrokVideoOptionControls(data = {}) {
 }
 
 function applyDisplayConfig(data) {
+  videoGenerationEnabled = !(data && data.video_generation_enabled === false);
   if (data && (data.grok_video_duration || data.grok_video_resolution)) {
     cachedGrokVideoDefaults = {
       duration: Number(data.grok_video_duration) || DEFAULT_GROK_VIDEO_DURATION,
@@ -15151,7 +15167,8 @@ function openModal(e, returnFocusTarget = null) {
     capEl.innerHTML = '<span class="tc-thought-label" aria-hidden="true">💭</span><span class="tc-thought-text">正在根据图片生成小心思…</span>';
     capEl.style.display = "flex";
   } else { capEl.style.display = "none"; }
-	  renderModalVideo(e);
+	  if (videoGenerationEnabled) renderModalVideo(e);
+	  else clearModalVideoPanel();
 	  // Fav button state
 	  updateModalFavBtn(e.favorite === true);
 	  updateModalWardrobeBtn(e);
@@ -15167,7 +15184,7 @@ function openModal(e, returnFocusTarget = null) {
   activateAccessibleDialog(modalOverlay, '#modalFav', returnFocusTarget);
   document.body.style.overflow = "hidden";
   syncModalDetailHeight();
-  refreshModalVideoStatus(e.image_filename);
+	  if (videoGenerationEnabled) refreshModalVideoStatus(e.image_filename);
 }
 function closeModal() {
   try { closeVideoPlayCard(); } catch (_) {}
@@ -15210,6 +15227,14 @@ window.addEventListener("resize", () => {
 	    clearTimeout(modalVideoPollTimer);
 	    modalVideoPollTimer = 0;
 	  }
+	}
+	function clearModalVideoPanel() {
+	  stopModalVideoPolling();
+	  const panel = document.getElementById('modalVideo');
+	  if (!panel) return;
+	  panel.classList.remove('visible');
+	  panel.replaceChildren();
+	  syncModalDetailHeight();
 	}
 	function mergeModalVideoPayload(filename, payload) {
 	  const fresh = Object.assign({}, payload || {}, {image_filename: filename});
@@ -15454,6 +15479,10 @@ window.addEventListener("resize", () => {
 	function renderModalVideo(entry, options = {}) {
 	  const panel = document.getElementById('modalVideo');
 	  if (!panel) return;
+	  if (!videoGenerationEnabled) {
+	    clearModalVideoPanel();
+	    return;
+	  }
 	  panel.classList.add('visible');
 	  const status = modalVideoStatus(entry);
 	  const playerHtml = modalVideoPlayerHtml(entry);
@@ -15481,11 +15510,16 @@ window.addEventListener("resize", () => {
 	window.openVideoHistory = openVideoHistory;
 	window.closeVideoHistory = closeVideoHistory;
 	function showModalVideoComposer() {
+	  if (!videoGenerationEnabled) return;
 	  const entry = currentModalEntry();
 	  if (!entry) return;
 	  renderModalVideo(entry, {composer: true, focus: true});
 	}
 	async function refreshModalVideoStatus(filename, options = {}) {
+	  if (!videoGenerationEnabled) {
+	    clearModalVideoPanel();
+	    return null;
+	  }
 	  const normalized = String(filename || '').trim();
 	  if (!normalized || currentModalImg !== normalized) return null;
 	  try {
@@ -15510,6 +15544,7 @@ window.addEventListener("resize", () => {
 	  }
 	}
 	function scheduleModalVideoPolling(filename) {
+	  if (!videoGenerationEnabled) return;
 	  const normalized = String(filename || '').trim();
 	  if (!normalized) return;
 	  if (!modalVideoPollDeadline) modalVideoPollDeadline = Date.now() + 21 * 60 * 1000;
@@ -15536,6 +15571,7 @@ window.addEventListener("resize", () => {
 	    event.preventDefault();
 	    event.stopPropagation();
 	  }
+	  if (!videoGenerationEnabled) return;
 	  const entry = currentModalEntry();
 	  if (!entry || !entry.image_filename) {
 	    showToast('找不到当前图片');
@@ -18195,6 +18231,7 @@ function openSettings() {
   document.getElementById("skGptChatFallback").checked = false;
   document.getElementById("skGptPromptCompact").checked = false;
   document.getElementById("skLlmStream").checked = false;
+  document.getElementById("skVideoGenerationEnabled").checked = false;
   availableLlmModels = [];
   setLlmModelChain([]);
   setPushChannel("wechat");
@@ -18202,6 +18239,7 @@ function openSettings() {
   syncLlmStreamVisual(false);
   syncGptChatFallbackVisual(false);
   syncGptPromptCompactVisual(false);
+  syncVideoGenerationVisual(false);
   const cleanupResult = document.getElementById("skCleanupResult");
   if (cleanupResult) cleanupResult.textContent = "";
   updateCleanupCustomVisibility();
@@ -18348,6 +18386,17 @@ function syncLlmStreamVisual(enabled) {
   if (status) {
     status.textContent = enabled ? "✓ 流式已开启" : "○ 使用普通响应";
     status.className = "sk-status " + (enabled ? "set" : "unset");
+  }
+}
+
+function syncVideoGenerationVisual(enabled) {
+  const row = document.getElementById("skVideoGenerationRow");
+  const status = document.getElementById("skVideoGenerationStatus");
+  const isEnabled = enabled === true;
+  if (row) row.classList.toggle("enabled", isEnabled);
+  if (status) {
+    status.textContent = isEnabled ? "✓ 详情页显示视频区域" : "○ 详情页隐藏视频区域";
+    status.className = "sk-status " + (isEnabled ? "set" : "unset");
   }
 }
 
@@ -19008,6 +19057,12 @@ async function loadSettingsStatus() {
     const data = await configRes.json();
     const modelsData = await modelsRes.json();
     settingsSnapshot = data;
+    videoGenerationEnabled = data.video_generation_enabled !== false;
+    const videoGenerationEl = document.getElementById("skVideoGenerationEnabled");
+    if (videoGenerationEl) {
+      videoGenerationEl.checked = videoGenerationEnabled;
+      syncVideoGenerationVisual(videoGenerationEnabled);
+    }
     const imageModelSelect = document.getElementById("skGptModel");
     const currentImageModel = data.gpt_model || imageModelsData.current_model || data.gpt_model_default || "gpt-image-2";
     const imageModels = [...new Set([currentImageModel, ...CUSTOM_IMAGE_MODEL_FALLBACKS, ...(imageModelsData.models || [])])];
@@ -19681,6 +19736,7 @@ async function saveSettings() {
   const gptChatFallbackEnabled = document.getElementById("skGptChatFallback").checked;
   const gptPromptCompactEnabled = document.getElementById("skGptPromptCompact").checked;
   const llmStreamEnabled = document.getElementById("skLlmStream").checked;
+  const videoGenerationEnabledValue = document.getElementById("skVideoGenerationEnabled").checked;
   const grokVideoUrlEl = document.getElementById("skGrokVideoUrl");
   const grokVideoModelEl = document.getElementById("skGrokVideoModel");
   const grokVideoDurationEl = document.getElementById("skGrokVideoDuration");
@@ -19729,6 +19785,7 @@ async function saveSettings() {
     body.gitee_fallback_enabled = giteeFallbackEnabled;
     body.gpt_chat_fallback_enabled = gptChatFallbackEnabled;
     body.gpt_prompt_compact_enabled = gptPromptCompactEnabled;
+    body.video_generation_enabled = videoGenerationEnabledValue;
     // llm_model: always send; llm_models keeps the ordered fallback chain
     body.llm_model = llmModel;
     body.llm_models = llmModels;
@@ -19750,6 +19807,7 @@ async function saveSettings() {
     const data = await readGalleryApiJson(res);
     
     if (data.success) {
+      videoGenerationEnabled = videoGenerationEnabledValue;
       showToast("✅ 设置已保存");
       closeSettings();
       customImageModelsLoaded = false;
