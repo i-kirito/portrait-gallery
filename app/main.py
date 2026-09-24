@@ -1369,6 +1369,10 @@ class PortraitGalleryApp:
         has_reference = bool(ref_path or ordered_refs)
         no_auto_style = bool(pure)
         custom_ref_mode = "pure" if pure else ("reference" if has_reference else "text2img")
+        if self._engine_from_model_name(image_model) == "qwen":
+            if not has_reference:
+                raise ValueError("Qwen 只支持图生图，请先选择参考图。")
+            custom_ref_mode = "reference"
 
         filename = await self.image_gen.generate(
             generation_prompt,
@@ -2191,6 +2195,8 @@ class PortraitGalleryApp:
     @staticmethod
     def _engine_from_model_name(model_name: str) -> str:
         name = (model_name or "").strip().lower()
+        if "qwen-image-2.1" in name:
+            return "qwen"
         if "gitee" in name or "z-image" in name:
             return "gitee"
         if "gemini" in name:

@@ -125,7 +125,11 @@ class ImageGenerator:
         xiaohongshu_outfit_reference: bool = False,
     ) -> Optional[str]:
         """生成图片，返回图片文件名（相对路径）（异步，不阻塞事件循环）"""
+        if image_model.lower() in {"qwen-image-2.1", "qwen-image-2.1-q8_0", "qwen"}:
+            engine = "qwen"
         engine = engine or self.default_engine
+        if engine == "qwen":
+            timeout = max(timeout, int(self.config.get("image_gen", {}).get("qwen_timeout", 900)) + 90)
         if not timeout:
             timeout = image_process_timeout(self.config, with_reference_fallback=bool(style or ref_image or ref_images))
         model_label = image_model or "-"

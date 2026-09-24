@@ -2,6 +2,9 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<meta name="gallery-ui-revision" content="history-version-delete-20260924">
+<link rel="stylesheet" href="/static/image-comparison.css?v=20260924-4">
+<script src="/static/image-comparison.js?v=20260924-4"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>每日穿搭画廊</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✨</text></svg>">
@@ -8738,7 +8741,7 @@ textarea:focus-visible,
           <button class="cg-size-mode-btn" type="button" role="tab" aria-selected="false" data-size-mode="custom">自定义宽高</button>
         </div>
         <div class="cg-size-mode-panel" id="cgAutoSizePanel" data-size-panel="auto" role="tabpanel" hidden>
-          <div class="cg-auto-size-state"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span>模型自动选择</span></div>
+          <div class="cg-auto-size-state"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span id="cgAutoSizeText" aria-live="polite">图生图按原图尺寸，文生图由模型选择</span></div>
         </div>
         <div class="cg-size-mode-panel" id="cgAspectSizePanel" data-size-panel="aspect" role="tabpanel">
           <div class="cg-size-section">
@@ -8796,7 +8799,7 @@ textarea:focus-visible,
       <div class="hint" id="cgModelHint">默认模型</div>
     </div>
     <div class="cg-field">
-      <label>参考图（可选，可多选；第1张锁动作/场景/穿搭，第2张起换脸/发色）</label>
+      <label id="cgReferenceLabel">参考图（可选，可多选；第1张锁动作/场景/穿搭，第2张起换脸/发色）</label>
       <div class="xhs-search-panel">
         <div class="xhs-search-tabs" role="tablist" aria-label="小红书参考来源">
           <button type="button" class="xhs-search-tab active" id="xhsSearchModeOutfits" role="tab" aria-selected="true" onclick="setXiaohongshuSearchMode('outfits')">搜穿搭</button>
@@ -13678,7 +13681,7 @@ function renderGallery() {
           const deleteArg = jsStringArg(e.image_filename || e.date || "");
           const displayStyle = displayOutfitStyle(e);
           const imgHtml = e.image_filename
-            ? `<img src="${imageUrlAttr}" alt="${escapeAttr(e.date || '')}" loading="lazy" decoding="async">`
+            ? (renderImageComparison(e) || `<img src="${imageUrlAttr}" alt="${escapeAttr(e.date || '')}" loading="lazy" decoding="async">`)
             : `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#ddd;font-size:32px;">📸</div>`;
           const timeDisplay = e.time ? e.time : "";
           let metaHtml = "";
@@ -13737,7 +13740,7 @@ function renderGallery() {
           const imageUrlAttr = escapeAttr(imageUrl);
           const deleteArg = jsStringArg(imageFilename || e.date || "");
           const imgHtml = e.image_filename
-            ? `<img src="${imageUrlAttr}" alt="${escapeAttr(e.date || '')}" loading="lazy" decoding="async">`
+            ? (renderImageComparison(e) || `<img src="${imageUrlAttr}" alt="${escapeAttr(e.date || '')}" loading="lazy" decoding="async">`)
             : `<div class="img-placeholder">📸</div>`;
           const displayStyle = displayOutfitStyle(e);
           const styleTag = displayStyle ? `<span class="card-style-tag" title="${escapeAttr(displayStyle)}" onclick="event.stopPropagation();filterByTag(${jsStringArg(displayStyle)});">${escapeHtml(displayStyle)}</span>` : "";
@@ -14436,6 +14439,12 @@ ms.textContent = `
 .image-version-activate { min-height:34px;padding:0 11px;border:1px solid #efb8ca;border-radius:8px;background:#fff7fa;color:#c2185b;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:12px;font-weight:800;white-space:nowrap;cursor:pointer;transition:all .18s ease; }
 .image-version-activate:hover { border-color:#df7ba0;background:#fce4ec;color:#9c124b; }
 .image-version-activate:disabled { opacity:.58;cursor:wait; }
+.image-version-actions { display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0; }
+.image-version-delete { min-height:34px;padding:0 11px;border:1px solid #f2ccd2;border-radius:8px;background:#fff8f9;color:#bd3650;display:inline-flex;align-items:center;justify-content:center;gap:6px;font:inherit;font-size:12px;font-weight:700;white-space:nowrap;cursor:pointer;transition:background-color .15s,border-color .15s; }
+.image-version-delete:hover { background:#ffebef;border-color:#e896a5;color:#a4203b; }
+.image-version-delete:disabled { opacity:.58;cursor:wait; }
+.image-version-actions button:focus-visible { outline:3px solid rgba(216,27,96,.3);outline-offset:2px; }
+@media (pointer:coarse) { .image-version-actions button { min-height:44px; } }
 .image-version-legacy-note { display:flex;align-items:flex-start;gap:8px;margin:4px 0 10px;padding:11px 12px;border-top:1px solid #f0e8f1;color:#8a7b8d;font-size:12px;line-height:1.55; }
 .image-version-legacy-note i { color:#b39ab8;margin-top:2px; }
 .wardrobe-version-dialog {
@@ -14904,7 +14913,7 @@ function renderImageVersions(payload) {
   if (!items.length) {
     const legacyText = unavailableCount > 0
       ? '这张图在历史版本功能启用前完成过编辑，旧图当时没有保留。'
-      : '没有可查看的历史版本。';
+      : (Number(payload && payload.deleted_count) > 0 ? '历史版本已删除，当前图片仍保留。' : '没有可查看的历史版本。');
     list.innerHTML = `<div class="image-version-empty"><i class="fa-regular fa-images" aria-hidden="true"></i><strong>暂无旧图</strong><span>${escapeHtml(legacyText)}</span></div>`;
     return;
   }
@@ -14939,7 +14948,10 @@ function renderImageVersions(payload) {
         </span>
         <i class="fa-solid fa-up-right-and-down-left-from-center image-version-arrow" aria-hidden="true"></i>
       </button>
-      <button class="image-version-activate" type="button" data-version-activate-index="${index}" aria-label="将${escapeAttr(versionLabel)}设为当前版本"><i class="fa-solid fa-arrow-right-arrow-left" aria-hidden="true"></i><span>设为当前</span></button>
+      <div class="image-version-actions">
+        <button class="image-version-activate" type="button" data-version-activate-index="${index}" aria-label="将${escapeAttr(versionLabel)}设为当前版本"><i class="fa-solid fa-arrow-right-arrow-left" aria-hidden="true"></i><span>设为当前</span></button>
+        <button class="image-version-delete" type="button" data-version-delete-index="${index}" aria-label="删除${escapeAttr(versionLabel)}" title="仅删除这个历史版本，不影响当前图片"><i class="fa-regular fa-trash-can" aria-hidden="true"></i><span>删除</span></button>
+      </div>
     </article>`;
   }).join('') + (unavailableCount > 0
     ? `<div class="image-version-legacy-note"><i class="fa-solid fa-circle-info" aria-hidden="true"></i><span>另有 ${unavailableCount} 次早期编辑发生在历史版本功能启用前，旧图未保留。</span></div>`
@@ -14956,6 +14968,63 @@ function renderImageVersions(payload) {
       if (item) activateImageVersion(item, button);
     });
   });
+  list.querySelectorAll('[data-version-delete-index]').forEach(button => {
+    button.addEventListener('click', () => {
+      const item = items[Number(button.dataset.versionDeleteIndex)];
+      if (item) deleteImageVersion(item, button);
+    });
+  });
+}
+async function deleteImageVersion(item, button) {
+  if (imageVersionSwitchBusy) return;
+  const imageFilename = String(currentModalImg || '').trim();
+  const versionId = String((item && item.id) || '').trim();
+  if (!imageFilename || !versionId) return;
+  const token = imageVersionRequestToken;
+  const sameDialog = () => currentModalImg === imageFilename && token === imageVersionRequestToken && imageVersionOverlay.classList.contains('open');
+  imageVersionSwitchBusy = true;
+  const controls = Array.from(document.querySelectorAll('#imageVersionList .image-version-activate, #imageVersionList .image-version-delete'));
+  const originalHtml = button ? button.innerHTML : '';
+  controls.forEach(control => { control.disabled = true; });
+  try {
+    const confirmed = await confirmDeleteAction({
+      title: '删除这个历史版本？',
+      description: '只删除选中的历史图片，无法撤销。当前图片、其他历史版本和收藏状态不受影响。',
+      confirmLabel: '删除版本',
+      returnFocusTarget: button
+    });
+    if (!confirmed || !sameDialog()) return;
+    if (button) button.innerHTML = '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><span>删除中</span>';
+    const response = await fetchWithTimeout(`${API}/api/images/${encodeURIComponent(imageFilename)}/versions/${encodeURIComponent(versionId)}`, {
+      method: 'DELETE', headers: {'Content-Type':'application/json'}, body: JSON.stringify({})
+    }, 20000, '删除请求超时，请重新打开历史版本核对结果，勿重复点击。');
+    const data = await readGalleryApiJson(response);
+    if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    const count = Math.max(0, Number(data.version_count) || 0);
+    const hasHistory = count > 0 || Number(data.unavailable_count) > 0;
+    const state = {version_count:count, deleted_version_count:Number(data.deleted_count)||0, has_image_history:hasHistory};
+    for (const entry of [...allEntries, ...((todayData && todayData.photos) || [])]) {
+      if (entry.image_filename === imageFilename) Object.assign(entry, state);
+    }
+    renderActivePhotoView();
+    if (sameDialog()) {
+      renderImageVersions(data);
+      const historyButton = document.getElementById('modalVersionBtn');
+      if (historyButton) {
+        historyButton.hidden = !hasHistory;
+        historyButton.title = count ? `查看 ${count} 个历史版本` : '查看历史版本';
+        historyButton.setAttribute('aria-label', historyButton.title);
+      }
+      requestAnimationFrame(() => document.getElementById('imageVersionCloseBtn')?.focus({preventScroll:true}));
+    }
+    showToast(data.cleanup_pending ? '历史记录已移除，文件清理待重试；当前图片不变。' : '已删除该历史版本，当前图片未改变。');
+  } catch (error) {
+    showToast('历史版本删除失败：' + (error && error.message ? error.message : '未知错误'));
+  } finally {
+    imageVersionSwitchBusy = false;
+    controls.forEach(control => { if (control.isConnected) control.disabled = false; });
+    if (button && button.isConnected) button.innerHTML = originalHtml;
+  }
 }
 async function activateImageVersion(item, button) {
   if (imageVersionSwitchBusy) return;
@@ -14963,7 +15032,7 @@ async function activateImageVersion(item, button) {
   const versionId = String((item && item.id) || '').trim();
   if (!imageFilename || !versionId) return;
   imageVersionSwitchBusy = true;
-  const controls = Array.from(document.querySelectorAll('#imageVersionList .image-version-activate'));
+  const controls = Array.from(document.querySelectorAll('#imageVersionList .image-version-activate, #imageVersionList .image-version-delete'));
   const originalHtml = button ? button.innerHTML : '';
   controls.forEach(control => { control.disabled = true; });
   if (button) button.innerHTML = '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><span>切换中</span>';
@@ -15097,7 +15166,9 @@ function openModal(e, returnFocusTarget = null) {
   const modalImageUrl = generatedEntryImageUrl(e) || ('/images/' + e.image_filename);
   const modalImageUrlAttr = escapeAttr(modalImageUrl);
   const modalAltText = escapeAttr(e.caption || appDisplay.shareTitle);
-  document.getElementById("modalImageWrap").innerHTML = `<img src="${modalImageUrlAttr}" alt="${modalAltText}" decoding="async" onclick="openFullscreenImg(${jsStringArg(modalImageUrl)})">`;
+  const comparisonHtml = renderImageComparison(e, true);
+  document.getElementById("modalImageWrap").classList.toggle("has-image-compare", Boolean(comparisonHtml));
+  document.getElementById("modalImageWrap").innerHTML = comparisonHtml || `<img src="${modalImageUrlAttr}" alt="${modalAltText}" decoding="async" onclick="openFullscreenImg(${jsStringArg(modalImageUrl)})">`;
   const modalImg = document.querySelector("#modalImageWrap img");
   if (modalImg) modalImg.onload = syncModalDetailHeight;
   document.getElementById("modalDate").textContent = formatDate(e.date) + (e.time ? ' ' + e.time : '');
@@ -15106,7 +15177,7 @@ function openModal(e, returnFocusTarget = null) {
     0,
     Number(e.edit_history_count) || (Array.isArray(e.edit_history) ? e.edit_history.length : 0)
   );
-  const hasImageHistory = Boolean(e.has_image_history || versionCount || editHistoryCount);
+  const hasImageHistory = Boolean(e.has_image_history || versionCount || editHistoryCount > (Number(e.deleted_version_count) || 0));
   const versionBtn = document.getElementById('modalVersionBtn');
   versionBtn.hidden = !hasImageHistory;
   versionBtn.title = versionCount > 0 ? `查看 ${versionCount} 个历史版本` : '查看历史版本';
@@ -16336,7 +16407,8 @@ const DEFAULT_STYLE_REF_FALLBACKS = [
     builtin: true
   }
 ];
-const CUSTOM_IMAGE_MODEL_FALLBACKS = ["gpt-image-2", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare"];
+const QWEN_CUSTOM_MODEL = "qwen-image-2.1-Q8_0";
+const CUSTOM_IMAGE_MODEL_FALLBACKS = ["gpt-image-2", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare", QWEN_CUSTOM_MODEL];
 let customImageModelsLoaded = false;
 let customImageDefaultModel = "";
 
@@ -16467,7 +16539,26 @@ function updateCustomModelHint() {
   const hint = document.getElementById("cgModelHint");
   if (!hint) return;
   const selected = getCustomImageModel();
-  hint.textContent = selected || (customImageDefaultModel ? `默认：${customImageDefaultModel}` : "默认模型");
+  const qwenSelected = selected === QWEN_CUSTOM_MODEL;
+  const sizeField = document.getElementById("cgSizeModeGroup")?.closest(".cg-field");
+  const shotField = document.getElementById("cgShotGroup")?.closest(".cg-field");
+  const title = document.getElementById("cgDialogTitle");
+  const promptLabel = document.querySelector('label[for="cgPrompt"]');
+  const promptInput = document.getElementById("cgPrompt");
+  const referenceLabel = document.getElementById("cgReferenceLabel");
+  const submit = document.getElementById("cgSubmitBtn");
+  if (sizeField) sizeField.style.display = qwenSelected ? "none" : "";
+  if (shotField) shotField.style.display = qwenSelected ? "none" : "";
+  if (title) title.textContent = qwenSelected ? "🖼️ Qwen 图生图" : "🎀 穿搭生成";
+  if (promptLabel) promptLabel.textContent = qwenSelected ? "修改要求" : "穿搭描述";
+  if (promptInput) promptInput.placeholder = qwenSelected
+    ? "描述要修改的内容，比如：把衣服改为深蓝色，保留人物、姿势和背景。"
+    : "描述你想看到的穿搭，比如：穿着粉色JK制服在樱花树下吃团子~";
+  if (referenceLabel) referenceLabel.textContent = qwenSelected
+    ? "参考图（必选1–2张；第一张是要修改的原图，第二张为辅助参考）"
+    : "参考图（可选，可多选；第1张锁动作/场景/穿搭，第2张起换脸/发色）";
+  if (submit && !submit.disabled) submit.textContent = qwenSelected ? "🖼️ 开始图生图" : "✨ 开始生成";
+  hint.textContent = qwenSelected ? "Q8 为 8 位量化版本，仅支持图生图。" : selected || (customImageDefaultModel ? `默认：${customImageDefaultModel}` : "默认模型");
 }
 
 function renderCustomImageModels(models, currentModel, defaultModel) {
@@ -16488,7 +16579,7 @@ function renderCustomImageModels(models, currentModel, defaultModel) {
   ordered.forEach(model => {
     const opt = document.createElement("option");
     opt.value = model;
-    opt.textContent = model;
+    opt.textContent = model === QWEN_CUSTOM_MODEL ? "Qwen-Image-2.1 Q8" : model;
     select.appendChild(opt);
   });
   setCustomImageModel(savedModel);
@@ -16559,11 +16650,33 @@ function restoreCustomGenState() {
   updateCustomSizeHint();
 }
 
-function updateCustomSizeHint() {
+let customAutoSizeRequest = 0;
+
+async function updateCustomSizeHint() {
+  const requestId = ++customAutoSizeRequest;
   const hint = document.getElementById("cgSizeHint");
+  const description = document.getElementById("cgAutoSizeText");
   if (!hint) return;
   const selected = getCustomGenSize();
   hint.textContent = selected.mode === "auto" ? "自动" : selected.size;
+  if (description) description.textContent = "图生图按原图尺寸，文生图由模型选择";
+  if (selected.mode !== "auto") return;
+  const reference = ensureXiaohongshuIdentityReference(getSelectedCustomRefImages())[0];
+  if (!reference) return;
+  hint.textContent = "读取原图尺寸…";
+  if (description) description.textContent = "正在读取第一张参考图的实际宽高…";
+  try {
+    const response = await fetchWithTimeout(`${API}/api/reference-size?ref=${encodeURIComponent(reference)}`, {cache: "no-store"}, 10000);
+    const data = await readGalleryApiJson(response);
+    if (!response.ok || data.error || !data.width || !data.height) throw new Error(data.message || data.error || "size_unavailable");
+    if (requestId !== customAutoSizeRequest) return;
+    hint.textContent = `原图 ${data.width}×${data.height}`;
+    if (description) description.textContent = `按第一张参考图原尺寸生成：${data.width} × ${data.height}，不使用预览缩略图尺寸`;
+  } catch (error) {
+    if (requestId !== customAutoSizeRequest) return;
+    hint.textContent = "按原图尺寸";
+    if (description) description.textContent = "原图尺寸暂未读到，提交时后端会重新校验；不会改用默认方图";
+  }
 }
 
 function bindCustomGenOptionGroup(groupId) {
@@ -16681,6 +16794,7 @@ function refreshCustomRefOrderBadges() {
     badge.textContent = String(index + 1);
   });
   grid.querySelectorAll(".cg-ref-item:not(.selected) .cg-ref-order").forEach((el) => el.remove());
+  updateCustomSizeHint();
 }
 
 function currentCustomGenPayload(refImageOverride = "") {
@@ -16706,6 +16820,14 @@ function currentCustomGenPayload(refImageOverride = "") {
   };
   const imageModel = getCustomImageModel();
   if (imageModel) body.model = imageModel;
+  if (imageModel === QWEN_CUSTOM_MODEL) {
+    if (!refs.length) return { error: "qwen_reference_required" };
+    if (refs.length > 2) return { error: "qwen_too_many_references" };
+    body.pure = true;
+    body.size = "auto";
+    body.aspect = "auto";
+    body.resolution = "auto";
+  }
   if (refs[0]) body.ref_image = refs[0];
   if (refs.length > 1) body.ref_images = refs;
   return { body };
@@ -16919,6 +17041,7 @@ function renderRefImages(defaultRefs, uploadRefs, options = {}) {
     options.selectedRefs || storedState.refs || []
   );
   bindReferenceGridSelection(grid);
+  updateCustomSizeHint();
 }
 async function loadRefImages(options = {}) {
   renderRefImages(mergeDefaultStyleRefs([]), uploadedRefs, options);
@@ -17473,6 +17596,8 @@ async function deleteXiaohongshuRef(index) {
 }
 async function submitCustomGen() {
   const payload = currentCustomGenPayload();
+  if (payload.error === "qwen_reference_required") { showToast("Qwen 只支持图生图，请先选择或上传参考图。"); return; }
+  if (payload.error === "qwen_too_many_references") { showToast("WIND 12GB 当前最多支持两张参考图。"); return; }
   if (payload.error === "prompt_required") { showToast("✍️ 先输入穿搭描述呀～"); return; }
 
   const submittedRefs = [payload.body.ref_image, ...(payload.body.ref_images || [])]
@@ -17522,6 +17647,7 @@ async function submitCustomGen() {
     if (!generationMayStillBeRunning) customGenXiaohongshuInFlight = new Set();
     btn.disabled = false;
     btn.textContent = "✨ 开始生成";
+    updateCustomModelHint();
   }
 }
 
@@ -17532,6 +17658,8 @@ async function quickCustomImg2ImgFromModal(event, btn) {
     return;
   }
   const payload = currentCustomGenPayload(`/images/${currentModalImg}`);
+  if (payload.error === "qwen_reference_required") { showToast("Qwen 只支持图生图，请先选择或上传参考图。"); return; }
+  if (payload.error === "qwen_too_many_references") { showToast("WIND 12GB 当前最多支持两张参考图。"); return; }
   if (payload.error === "prompt_required") {
     showToast("✍️ 先在穿搭生成里填好提示词");
     return;

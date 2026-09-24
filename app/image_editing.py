@@ -1,6 +1,45 @@
 """Shared validation and prompts for precision gallery image edits."""
 import re
 
+from PIL import Image
+
+
+def reference_image_dimensions(image_path: str) -> tuple[int, int]:
+    """Read source pixels before upload compression, honoring EXIF orientation."""
+    try:
+        with Image.open(image_path) as image:
+            width, height = image.size
+            if image.getexif().get(274) in {5, 6, 7, 8}:
+                width, height = height, width
+        # PNG EXIF lookup can load the file; verify requires a fresh reader.
+        with Image.open(image_path) as image:
+            image.verify()
+    except (OSError, ValueError, Image.DecompressionBombError) as exc:
+        raise ValueError("无法读取参考图原始尺寸，请重新选择有效图片。") from exc
+    return width, height
+
+
+def resolve_reference_output_size(size: str | None, ref_image: str | None) -> str | None:
+    """Auto edits use the first source's exact dimensions; explicit sizes win."""
+    value = str(size or "").strip()
+    if value.lower() not in {"", "auto", "自动"}:
+        return value
+    if not ref_image:
+        # Preserve the caller's ``None`` sentinel for text-to-image requests;
+        # an omitted size is different from an explicit automatic size for
+        # transport adapters that choose their own default.
+        return None if size is None else ""
+    try:
+        width, height = reference_image_dimensions(ref_image)
+    except ValueError:
+        # A direct provider call may still be carrying a stale reference path.
+        # Let its normal reference preflight report that failure when no size
+        # was explicitly requested, while explicit auto mode stays fail-closed.
+        if size is None:
+            return None
+        raise
+    return f"{width}x{height}"
+
 
 MAX_IMAGE_EDIT_INSTRUCTION_LENGTH = 800
 MAX_IMAGE_EDIT_SCHEDULE_DESCRIPTION_LENGTH = 160

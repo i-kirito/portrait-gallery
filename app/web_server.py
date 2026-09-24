@@ -53,6 +53,8 @@ from characters import (
     upsert_manual_character,
 )
 from group_chat import GroupChatStore
+from image_comparison import group_qwen_edits
+from image_version_delete import VersionDeleteError, delete_history_version
 from social import REACTION_KINDS, SocialStore
 from social_hub import (
     SocialHubSettingsStore,
@@ -66,6 +68,8 @@ from image_editing import (
     normalize_image_edit_instruction,
     normalize_image_edit_schedule_description,
     normalize_image_edit_target,
+    reference_image_dimensions,
+    resolve_reference_output_size,
 )
 from image_versions import (
     archive_image_version,
@@ -514,6 +518,7 @@ class GalleryServer:
         self.on_image_dir_changed = None
 
         self.app = web.Application(middlewares=[self.gallery_auth_middleware])
+        self.app.on_response_prepare.append(self._set_html_cache_headers)
         self._setup_routes()
         self.app.on_cleanup.append(self._cleanup_group_chat_background_tasks)
         self.app.on_cleanup.append(self._cleanup_video_generation_tasks)
@@ -795,6 +800,7 @@ class GalleryServer:
         self.app.router.add_get("/api/today", self.handle_today)
         self.app.router.add_get("/api/gallery", self.handle_gallery)
         self.app.router.add_get("/api/entries/{date}", self.handle_entry)
+        self.app.router.add_get("/api/reference-size", self.handle_reference_size)
         self.app.router.add_get("/api/ref-list", self.handle_ref_list)
         self.app.router.add_get("/api/uploaded-refs", self.handle_uploaded_refs)
         self.app.router.add_post("/api/upload-ref", self.handle_upload_ref)
@@ -871,6 +877,10 @@ class GalleryServer:
             "/api/images/{img_id}/versions/{version_id}/activate",
             self.handle_activate_image_version,
         )
+        self.app.router.add_delete(
+            "/api/images/{img_id}/versions/{version_id}",
+            self.handle_delete_image_version,
+        )
         self.app.router.add_get("/api/images/{img_id}", self.handle_image_detail)
         self.app.router.add_post(
             "/api/images/{img_id}/recognize-outfit",
@@ -896,6 +906,7 @@ class GalleryServer:
         self.app.router.add_post("/api/models/test", self.handle_test_llm_model)
         self.app.router.add_get("/api/image-models", self.handle_image_models)
         # Hermes 纯净生图 API（不注入 persona）
+        self.app.router.add_get("/api/qwen/health", self.handle_qwen_health)
         self.app.router.add_post("/api/hermes/text-to-image", self.handle_hermes_text_to_image)
         self.app.router.add_post("/api/hermes/image-to-image", self.handle_hermes_image_to_image)
         self.app.router.add_get("/api/hermes/check-update", self.handle_hermes_check_update)
@@ -968,6 +979,13 @@ class GalleryServer:
             "/api/social/hub/media/{filename}",
             self.handle_social_hub_media,
         )
+
+    @staticmethod
+    async def _set_html_cache_headers(request: web.Request, response: web.StreamResponse):
+        # HTML contains the application JS; revalidate it, including 304 replies.
+        # Keep image caching and authenticated LAN access unchanged.
+        if response.content_type == "text/html" or request.path in {"/", "/static/index.html"}:
+            response.headers["Cache-Control"] = "no-cache, private"
 
     async def handle_index(self, request: web.Request):
         """返回画廊页面"""
@@ -4106,12 +4124,60 @@ class GalleryServer:
         available.reverse()
         edit_history = entry.get("edit_history")
         edit_count = len(edit_history) if isinstance(edit_history, list) else 0
+        try:
+            deleted_count = max(0, int(entry.get("deleted_version_count") or 0))
+        except (TypeError, ValueError):
+            deleted_count = 0
         return web.json_response({
             "image_filename": img_id,
             "version_count": len(available),
-            "unavailable_count": max(0, edit_count - len(available)),
+            "unavailable_count": max(0, edit_count - len(available) - deleted_count),
+            "deleted_count": deleted_count,
             "items": available,
         })
+
+    async def handle_delete_image_version(self, request: web.Request):
+        """Delete only the requested owned archive; never replace the current image."""
+        try:
+            img_id = self._normalize_gallery_image_filename(request.match_info.get("img_id", ""))
+        except ValueError:
+            return web.json_response({"error": "invalid_filename"}, status=400)
+        version_id = str(request.match_info.get("version_id") or "").strip().lower()
+        if not re.fullmatch(r"[a-f0-9]{32}", version_id):
+            return web.json_response({"error": "invalid_version_id"}, status=400)
+        lock = self._reserve_image_mutation_lock(img_id)
+        acquired = False
+        try:
+            try:
+                await asyncio.wait_for(lock.acquire(), timeout=1.5)
+                acquired = True
+            except asyncio.TimeoutError:
+                return web.json_response({"error": "image_busy", "message": "当前图片正在重抽、编辑或切换版本，请稍后再删除。"}, status=409)
+            future = asyncio.get_running_loop().run_in_executor(
+                None, delete_history_version, self.data_dir, img_id, version_id,
+                self._image_file_path(img_id),
+            )
+            try:
+                result = await asyncio.shield(future)
+            except asyncio.CancelledError:
+                # Do not release the image lock while the filesystem worker runs.
+                await asyncio.shield(future)
+                raise
+            response = await self.handle_image_versions(request)
+            payload = json.loads(response.text)
+            payload.update(result)
+            # Count only files still available to the history UI.
+            payload["version_count"] = len(payload.get("items") or [])
+            return web.json_response(payload, headers={"Cache-Control": "no-store"})
+        except VersionDeleteError as exc:
+            return web.json_response({"error": exc.code, "message": exc.message}, status=exc.status)
+        except Exception:
+            logger.exception("Delete history version failed: image=%s version=%s", img_id, version_id)
+            return web.json_response({"error": "version_delete_failed", "message": "历史版本删除失败，当前图片未改变，请稍后重试。"}, status=500)
+        finally:
+            if acquired and lock.locked():
+                lock.release()
+            self._release_image_mutation_lock(img_id, lock)
 
     async def handle_image_version_file(self, request: web.Request):
         """Serve one archived version only when it belongs to the current card."""
@@ -5958,7 +6024,7 @@ class GalleryServer:
                 and video_settings["model"]
             ),
             "grok_video_api_key_configured": bool(video_settings["api_key"]),
-            # This only controls whether the detail-page video UI is shown.  Keep
+            # This only controls whether the detail-page video UI is shown. Keep
             # the default enabled so existing installations retain their current
             # behaviour when upgrading from a config without this field.
             "video_generation_enabled": self._body_bool(
@@ -6328,7 +6394,11 @@ class GalleryServer:
         edit_history_count = len(edit_history) if isinstance(edit_history, list) else 0
         normalized["version_count"] = len(image_versions)
         normalized["edit_history_count"] = edit_history_count
-        normalized["has_image_history"] = bool(image_versions or edit_history_count)
+        try:
+            deleted_history_count = max(0, int(normalized.get("deleted_version_count") or 0))
+        except (TypeError, ValueError):
+            deleted_history_count = 0
+        normalized["has_image_history"] = bool(image_versions or edit_history_count > deleted_history_count)
         img_file = normalized.get("image_filename", "")
         if img_file:
             for field in ("schedule", "schedule_prompt", "schedule_details"):
@@ -8230,6 +8300,22 @@ class GalleryServer:
                 if local_path and self._is_reference_image_file(local_path):
                     return local_path
         return ""
+
+    async def handle_reference_size(self, request: web.Request):
+        """Read source dimensions only from the allowed gallery/reference roots."""
+        path = self._resolve_reference_image(request.query.get("ref", ""), allow_any_path=True)
+        if not path:
+            return web.json_response({"error": "invalid_ref_image"}, status=400)
+        try:
+            width, height = await asyncio.get_running_loop().run_in_executor(
+                None, reference_image_dimensions, path,
+            )
+        except ValueError as exc:
+            return web.json_response({"error": "invalid_ref_image", "message": str(exc)}, status=400)
+        return web.json_response(
+            {"width": width, "height": height, "size": f"{width}x{height}"},
+            headers={"Cache-Control": "no-store"},
+        )
 
     async def handle_ref_list(self, request: web.Request):
         """返回参考图列表（内置底模 + 用户上传）"""
@@ -10521,6 +10607,12 @@ class GalleryServer:
                 self._metadata_gallery_entry(img_id, meta),
                 metadata,
             )
+        # Keep the same before/after view when a card's details are refreshed.
+        for grouped in self._load_all_entries():
+            if grouped.get("image_filename") == img_id:
+                if grouped.get("image_comparison"):
+                    payload["image_comparison"] = grouped["image_comparison"]
+                break
         payload["has_prompt"] = bool(str(payload.get("prompt") or ""))
         return web.json_response(payload)
 
@@ -16513,12 +16605,18 @@ JSON 格式：
                 body.get("aspect", ""),
                 body.get("resolution", ""),
             )
+            if str(body.get("size_mode", "")).strip().lower() == "auto":
+                size = ""  # Ignore stale manual dimensions in automatic mode.
             shot_type = normalize_custom_shot_type(body.get("shot_type", ""))
             pure_raw = body.get("pure", False)
             if isinstance(pure_raw, str):
                 pure = pure_raw.strip().lower() in {"1", "true", "yes", "on"}
             else:
                 pure = bool(pure_raw)
+            requested_model = str(body.get("model") or body.get("image_model") or body.get("gpt_model") or "").strip().lower()
+            qwen_requested = requested_model in {"qwen", "qwen-image-2.1", "qwen-image-2.1-q8_0"} or str(body.get("engine", "")).lower() == "qwen"
+            if qwen_requested:
+                pure = True  # Raw editing instructions; a user-selected reference is mandatory.
             raw_ref_image = body.get("ref_image", "")
             raw_ref_images = body.get("ref_images") or body.get("references") or []
             if isinstance(raw_ref_images, str):
@@ -16541,6 +16639,10 @@ JSON 格式：
                     continue
                 seen_raw.add(token)
                 unique_raw.append(token)
+            if qwen_requested and not unique_raw:
+                return web.json_response({"error": "qwen_reference_required", "message": "Qwen 只支持图生图，请先选择或上传参考图。"}, status=400)
+            if qwen_requested and len(unique_raw) > 2:
+                return web.json_response({"error": "qwen_too_many_references", "message": "WIND 12GB 当前最多接收两张参考图，不会忽略多余图片。"}, status=400)
             resolved_pairs = []
             for token in unique_raw:
                 resolved = self._resolve_reference_image(token, allow_any_path=True)
@@ -16609,6 +16711,11 @@ JSON 格式：
                 ref_image = str(selected_reference.get("path") or "").strip()
                 if ref_image:
                     resolved_refs = [ref_image]
+            if not qwen_requested:
+                try:
+                    size = resolve_reference_output_size(size, ref_image)
+                except ValueError as exc:
+                    return web.json_response({"error": "invalid_ref_image", "message": str(exc)}, status=400)
             api_source = self._normalize_api_source(
                 body.get("api_source"),
                 body.get("source"),
@@ -16628,13 +16735,13 @@ JSON 格式：
                     api_source = "hermes"
             api_caption = self._request_caption(body)
             api_description = self._request_outfit_description(body)
-            if api_source == "hermes":
+            if api_source == "hermes" and not qwen_requested:
                 api_description = await self._normalize_hermes_display_description(
                     api_description,
                     user_prompt,
                     "自定义生图",
                 )
-            image_model = self._normalize_image_model_id(body.get("model") or body.get("image_model") or body.get("gpt_model"))
+            image_model = "qwen-image-2.1-Q8_0" if qwen_requested else self._normalize_image_model_id(body.get("model") or body.get("image_model") or body.get("gpt_model"))
             raw_image_model = str(body.get("model") or body.get("image_model") or body.get("gpt_model") or "").strip()
             if raw_image_model and not image_model and raw_image_model.lower() not in {"default", "auto", "current"}:
                 return web.json_response({"error": "invalid_image_model"}, status=400)
@@ -17112,7 +17219,7 @@ JSON 格式：
             logger.error(f"Sync picxazz favorites error: {e}")
             return web.json_response({"error": str(e)}, status=500)
 
-    def _load_all_entries(self) -> list:
+    def _load_all_entries(self, group_edits: bool = True) -> list:
         """加载所有条目（按 image_filename 去重，包含日期 key 条目用于日程共享）"""
         try:
             store = ScheduleStore(self.data_dir)
@@ -17156,7 +17263,7 @@ JSON 格式：
                 seen_filenames.add(img_file)
                 entry = self._metadata_gallery_entry(img_file, meta)
                 result.append(self._normalize_entry_display(entry, metadata))
-            return result
+            return group_qwen_edits(result, metadata, self.image_dir) if group_edits else result
         except Exception as e:
             logger.error(f"Load entries error: {e}")
             return []
@@ -17577,6 +17684,9 @@ JSON 格式：
         persist_metadata: bool = True,
         filename_prefix: str = "hermes",
         classify_style: bool = True,
+        seed: Optional[int] = None,
+        steps: int = 25,
+        ref_images: Optional[list] = None,
     ) -> Optional[dict]:
         """Run a pure image-generation request outside the aiohttp event loop."""
         zhuzhu_dir = os.path.join(os.path.dirname(__file__), "zhuzhu")
@@ -17589,12 +17699,22 @@ JSON 格式：
             from generate_gptimage import _generate_via_direct_gpt
             from generate_gptimage import GPTIMAGE_DIRECT_MODEL
             model_name = GPTIMAGE_DIRECT_MODEL
+            size = resolve_reference_output_size(size, ref_image)
             result = _generate_via_direct_gpt(
                 prompt,
                 ref_image=ref_image or None,
                 size=size,
                 request_info=request_info,
             )
+        elif engine == "qwen":
+            from generate_qwen import generate_image_bytes, MODEL_NAME
+            if not ref_image and not ref_images:
+                raise ValueError("Qwen 只支持图生图，必须提供参考图。")
+            ref_image = ref_image or ref_images[0]
+            model_name = MODEL_NAME
+            classify_style = False
+            result = generate_image_bytes(prompt, size=size, request_info=request_info, seed=seed, steps=steps,
+                                          ref_image=ref_image, ref_images=ref_images)
         elif engine == "gitee":
             from generate_gitee import generate_image_bytes
             from generate_gitee import MODEL_NAME
@@ -17668,6 +17788,10 @@ JSON 格式：
             "fallback_from": "",
             "fallback_to": "",
         }
+        if engine == "qwen":
+            meta_entry.update({key: request_info[key] for key in ("comfy_prompt_id", "resolved_size", "seed", "steps", "quantization", "text_encoder", "ref_images", "reference_count", "reference_sha256", "upstream_references", "size_policy") if key in request_info})
+            meta_entry["size"] = request_info.get("resolved_size", size)
+            meta_entry["engine"] = "qwen"
         selected_reference = self._wardrobe_reference_for_value(ref_image)
         if selected_reference:
             meta_entry["selected_reference"] = selected_reference
@@ -17707,7 +17831,19 @@ JSON 格式：
             "height": height,
             "file_size_bytes": meta_entry.get("file_size_bytes", 0),
             "selected_reference": selected_reference,
+            **({"comfy_prompt_id": request_info.get("comfy_prompt_id"), "resolved_size": request_info.get("resolved_size"), "requested_size": size or "auto", "seed": request_info.get("seed"), "reference_count": request_info.get("reference_count"), "ref_images": request_info.get("ref_images"), "size_policy": request_info.get("size_policy")} if engine == "qwen" else {}),
         }
+
+    async def handle_qwen_health(self, request: web.Request):
+        try:
+            zhuzhu_dir = os.path.join(os.path.dirname(__file__), "zhuzhu")
+            if zhuzhu_dir not in sys.path:
+                sys.path.insert(0, zhuzhu_dir)
+            from generate_qwen import health
+            payload = await asyncio.get_running_loop().run_in_executor(None, health)
+            return web.json_response(payload)
+        except Exception as exc:
+            return web.json_response({"status": "unavailable", "engine": "qwen", "error": str(exc)}, status=503)
 
     async def handle_hermes_text_to_image(self, request: web.Request):
         """Hermes 纯文生图 API（不注入 persona）"""
@@ -17734,6 +17870,8 @@ JSON 格式：
 
             engine = str(body.get("engine", "gptimage") or "gptimage").strip().lower()
             size = str(body.get("size", "") or "").strip()
+            if engine == "qwen":
+                return web.json_response({"error": "qwen_img2img_only", "message": "Qwen 已改为仅图生图，请使用 /api/hermes/image-to-image 并提供参考图。"}, status=400)
             if engine not in {"gptimage", "gitee"}:
                 logger.warning(
                     "Hermes image API call rejected: request=%s mode=text-to-image "
@@ -17751,9 +17889,7 @@ JSON 格式：
             )
             caption = self._request_caption(body)
             display_outfit = await self._normalize_hermes_display_description(
-                self._request_outfit_description(body),
-                prompt,
-                "文生图",
+                self._request_outfit_description(body), prompt, "文生图",
             )
 
             loop = asyncio.get_running_loop()
@@ -17794,6 +17930,53 @@ JSON 格式：
             )
             return web.json_response({"error": str(e)}, status=500)
 
+    async def _handle_qwen_image_to_image(self, body):
+        zhuzhu_dir = os.path.join(os.path.dirname(__file__), "zhuzhu")
+        if zhuzhu_dir not in sys.path:
+            sys.path.insert(0, zhuzhu_dir)
+        from generate_qwen import QwenError, MAX_REFERENCES, validate_settings, reference_paths
+        try:
+            prompt = str(body.get("prompt") or "").strip()
+            seed, steps = validate_settings(prompt, body.get("seed"), body.get("steps", 25))
+            extras = body.get("ref_images") or body.get("references") or []
+            if isinstance(extras, str):
+                extras = [extras]
+            if not isinstance(extras, list):
+                return web.json_response({"error": "invalid_ref_images"}, status=400)
+            raw_refs = [body.get("ref_image")] + list(extras)
+            raw_refs.extend(body.get(key) for key in ("ref_image_2", "face_ref", "face_image", "identity_ref"))
+            paths = []
+            for raw in raw_refs:
+                if not raw:
+                    continue
+                path = self._resolve_reference_image(str(raw), allow_any_path=True)
+                if not path:
+                    return web.json_response({"error": "invalid_ref_image", "message": "请选择画廊图片或先上传参考图。"}, status=400)
+                if path not in paths:
+                    paths.append(path)
+            if not paths:
+                return web.json_response({"error": "qwen_reference_required", "message": "Qwen 只支持图生图，必须提供参考图。"}, status=400)
+            if len(paths) > MAX_REFERENCES:
+                return web.json_response({"error": "qwen_too_many_references"}, status=400)
+            reference_paths(paths[0], paths)
+            result = await asyncio.get_running_loop().run_in_executor(
+                None,
+                lambda: self._run_hermes_image_generation(
+                    "qwen", prompt, size=str(body.get("size") or "auto"), ref_image=paths[0], ref_images=paths,
+                    seed=seed, steps=steps, caption=self._request_caption(body),
+                    display_outfit=str(self._request_outfit_description(body) or "").strip(),
+                ),
+            )
+            if not result:
+                return web.json_response({"error": "generate_failed"}, status=500)
+            logger.info("Hermes Qwen image-to-image succeeded: file=%s refs=%s task=%s", result.get("filename"), len(paths), result.get("comfy_prompt_id"))
+            return web.json_response(result)
+        except (ValueError, TypeError, OSError) as exc:
+            return web.json_response({"error": "invalid_qwen_image_request", "message": str(exc)}, status=400)
+        except QwenError as exc:
+            logger.error("Qwen image-to-image failed, no fallback: %s", exc)
+            return web.json_response({"error": "qwen_img2img_failed", "message": str(exc)}, status=502)
+
     async def handle_hermes_image_to_image(self, request: web.Request):
         """Hermes 纯图生图 API（不注入 persona）"""
         request_id = uuid.uuid4().hex
@@ -17808,6 +17991,8 @@ JSON 格式：
                     request_id,
                 )
                 return web.json_response({"error": "invalid_json"}, status=400)
+            if str(body.get("engine", "gptimage") or "gptimage").strip().lower() == "qwen":
+                return await self._handle_qwen_image_to_image(body)
             prompt = str(body.get("prompt", "") or "").strip()
             ref_image = str(body.get("ref_image", "") or "").strip()
 
