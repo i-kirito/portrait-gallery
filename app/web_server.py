@@ -986,6 +986,15 @@ class GalleryServer:
         # Keep image caching and authenticated LAN access unchanged.
         if response.content_type == "text/html" or request.path in {"/", "/static/index.html"}:
             response.headers["Cache-Control"] = "no-cache, private"
+        elif request.path in {
+            "/api/today",
+            "/api/schedule-detail",
+            "/api/photo-jobs",
+            "/api/config/keys",
+        } or request.path.startswith("/api/schedule-detail/"):
+            # These projections are backed by mutable schedule/job files. A
+            # browser revalidation must not resurrect yesterday's response.
+            response.headers["Cache-Control"] = "no-store, private"
 
     async def handle_index(self, request: web.Request):
         """返回画廊页面"""
@@ -3941,31 +3950,133 @@ class GalleryServer:
     def _delete_gallery_image(self, filename: str) -> dict:
         """Remove one image from storage, gallery data, and image metadata."""
         img_id = self._normalize_gallery_image_filename(filename)
-        deleted_file_count, errors = self._delete_image_files(img_id)
-        previous_metadata = ImageMetadataStore(self.data_dir).load().get(img_id, {})
-        previous_video = (
-            str(previous_metadata.get("video_filename") or "").strip()
-            if isinstance(previous_metadata, dict)
-            else ""
-        )
-        previous_video_history = (
-            previous_metadata.get("video_history")
-            if isinstance(previous_metadata, dict)
-            else []
-        )
+        errors = []
+        metadata_store = ImageMetadataStore(self.data_dir)
+        all_metadata = metadata_store.load()
+        store = ScheduleStore(self.data_dir)
+        all_entries = store.load()
+
+        # A Qwen comparison edit is a separate gallery file whose metadata
+        # explicitly points at this card via ref_images/ref_image_path. Keep
+        # that relation when deleting the source: otherwise the edit becomes
+        # an orphan card/file after the source is removed. Resolve references
+        # with the same safety rules as image_comparison.group_qwen_edits:
+        # only an image basename, /images/<basename>, or an absolute path
+        # inside the gallery image directory is allowed. A secondary face or
+        # style reference must never make an unrelated gallery image a child.
+        delete_ids = [img_id]
+        available = set()
+        entries_by_name = {}
+        if isinstance(all_entries, dict):
+            for key, raw_entry in all_entries.items():
+                entry = raw_entry if isinstance(raw_entry, dict) else {}
+                filename = str(entry.get("image_filename") or "").strip()
+                if not filename and self._safe_image_relative_path(str(key)):
+                    filename = str(key).strip()
+                if self._safe_image_relative_path(filename):
+                    available.add(filename)
+                    entries_by_name.setdefault(filename, entry)
+        for key in all_metadata:
+            filename = str(key or "").strip()
+            if self._safe_image_relative_path(filename):
+                available.add(filename)
+
+        image_root = Path(self.image_dir).expanduser().resolve()
+
+        def _reference_name(value) -> str:
+            raw = str(value or "").strip()
+            if not raw:
+                return ""
+            parsed = urlparse(raw)
+            if parsed.scheme or parsed.netloc:
+                return ""
+            path = unquote(parsed.path or raw)
+            if path.startswith("/images/"):
+                name = path[len("/images/"):]
+            elif Path(path).is_absolute():
+                try:
+                    name = str(Path(path).resolve().relative_to(image_root))
+                except (OSError, ValueError):
+                    return ""
+            elif "/" not in path and "\\" not in path:
+                name = path
+            else:
+                return ""
+            if (
+                not name
+                or "/" in name
+                or "\\" in name
+                or name in {".", ".."}
+                or name not in available
+            ):
+                return ""
+            return name
+
+        parent_of = {}
+        for child in sorted(available):
+            meta = all_metadata.get(child)
+            entry = entries_by_name.get(child, {})
+            if not isinstance(meta, dict):
+                meta = {}
+            if not isinstance(entry, dict):
+                entry = {}
+            model = str(
+                meta.get("model")
+                or meta.get("model_name")
+                or entry.get("model_name")
+                or ""
+            ).lower()
+            mode = str(
+                meta.get("generation_mode")
+                or entry.get("generation_mode")
+                or ""
+            ).lower()
+            if not model.startswith("qwen-image-2.1") or (
+                mode and not mode.startswith(("img2img", "image-to-image"))
+            ):
+                continue
+            ref = ""
+            for source in (meta, entry):
+                refs = source.get("ref_images")
+                if isinstance(refs, (list, tuple)) and refs:
+                    ref = refs[0]
+                elif refs:
+                    ref = refs
+                if ref:
+                    break
+                for field in (
+                    "requested_ref_image_path",
+                    "ref_image_path",
+                    "requested_ref_image",
+                    "ref_image",
+                ):
+                    if source.get(field):
+                        ref = source[field]
+                        break
+                if ref:
+                    break
+            parent = _reference_name(ref)
+            if parent and parent != child:
+                parent_of[child] = parent
+        changed = True
+        while changed:
+            changed = False
+            for child, parent in parent_of.items():
+                if parent in delete_ids and child not in delete_ids:
+                    delete_ids.append(child)
+                    changed = True
 
         removed_entry_count = 0
         version_records = []
-        store = ScheduleStore(self.data_dir)
 
         def _delete_entries(all_data):
             nonlocal removed_entry_count
             if not isinstance(all_data, dict):
                 return all_data
             for key, entry in list(all_data.items()):
-                if key == img_id or (
+                if key in delete_ids or (
                     isinstance(entry, dict)
-                    and entry.get("image_filename") == img_id
+                    and entry.get("image_filename") in delete_ids
                 ):
                     if isinstance(entry, dict):
                         version_records.extend(
@@ -3981,31 +4092,32 @@ class GalleryServer:
 
         def _delete_metadata(metadata):
             nonlocal metadata_deleted
-            if img_id in metadata:
-                del metadata[img_id]
-                metadata_deleted = True
+            for name in delete_ids:
+                if name in metadata:
+                    del metadata[name]
+                    metadata_deleted = True
             return metadata
 
-        ImageMetadataStore(self.data_dir).update(_delete_metadata)
+        metadata_store.update(_delete_metadata)
+        deleted_file_count = 0
         deleted_video_count = 0
-        history_names = []
-        if isinstance(previous_video_history, list):
-            history_names = [
-                str((item or {}).get("video_filename") or "").strip()
-                for item in previous_video_history
-                if isinstance(item, dict)
-            ]
-        for name in [previous_video, *history_names]:
-            if not name:
-                continue
-            previous_video_path = self._video_file_path(name)
-            if not previous_video_path:
-                continue
-            try:
-                os.unlink(previous_video_path)
-                deleted_video_count += 1
-            except OSError as e:
-                errors.append(f"{previous_video_path}: {e}")
+        for name in delete_ids:
+            count, file_errors = self._delete_image_files(name)
+            deleted_file_count += count
+            errors.extend(file_errors)
+            previous_metadata = all_metadata.get(name, {})
+            if isinstance(previous_metadata, dict):
+                video_names = [str(previous_metadata.get("video_filename") or "").strip()]
+                video_names.extend(str((item or {}).get("video_filename") or "").strip() for item in (previous_metadata.get("video_history") or []) if isinstance(item, dict))
+                for video_name in video_names:
+                    previous_video_path = self._video_file_path(video_name)
+                    if not previous_video_path:
+                        continue
+                    try:
+                        os.unlink(previous_video_path)
+                        deleted_video_count += 1
+                    except OSError as e:
+                        errors.append(f"{previous_video_path}: {e}")
         deleted_version_count, version_errors = delete_image_versions(
             self.data_dir,
             version_records,
@@ -4014,11 +4126,13 @@ class GalleryServer:
 
         return {
             "image_filename": img_id,
+            "deleted_image_filenames": list(delete_ids),
             "deleted_file_count": deleted_file_count,
             "removed_entry_count": removed_entry_count,
             "metadata_deleted": metadata_deleted,
             "deleted_video_count": deleted_video_count,
             "deleted_version_count": deleted_version_count,
+            "deleted_related_count": max(0, len(delete_ids) - 1),
             "errors": errors,
         }
 
@@ -16617,6 +16731,11 @@ JSON 格式：
             qwen_requested = requested_model in {"qwen", "qwen-image-2.1", "qwen-image-2.1-q8_0"} or str(body.get("engine", "")).lower() == "qwen"
             if qwen_requested:
                 pure = True  # Raw editing instructions; a user-selected reference is mandatory.
+                # Qwen is a reference-image editor and does not expose a
+                # camera/shot selector. Ignore a stale UI value such as the
+                # persisted default "selfie" rather than writing it to the
+                # gallery entry.
+                shot_type = ""
             raw_ref_image = body.get("ref_image", "")
             raw_ref_images = body.get("ref_images") or body.get("references") or []
             if isinstance(raw_ref_images, str):

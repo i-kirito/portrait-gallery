@@ -17,6 +17,11 @@
 }
 .image-compare .compare-before { z-index:0; }
 .image-compare .compare-after { z-index:1; clip-path:inset(0 0 0 var(--compare-split,50%)); }
+.image-compare.compare-loading .compare-before {
+  /* Do not let the unedited layer fill the side that belongs to the edited image. */
+  clip-path:inset(0 calc(100% - var(--compare-split,50%)) 0 0);
+}
+.image-compare.compare-loading .compare-after { opacity:0; }
 .image-compare:is(:hover,:focus-within,.compare-dragging) .compare-after { will-change:clip-path; }
 .image-compare:is(:hover,:focus-within,.compare-dragging) .compare-line { will-change:transform; }
 .gallery-card:has(.image-compare):hover { transform:none; }

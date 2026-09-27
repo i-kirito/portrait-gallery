@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="gallery-ui-revision" content="history-version-delete-20260924">
-<link rel="stylesheet" href="/static/image-comparison.css?v=20260924-4">
-<script src="/static/image-comparison.js?v=20260924-4"></script>
+<link rel="stylesheet" href="/static/image-comparison.css?v=20260927-8">
+<script src="/static/image-comparison.js?v=20260927-10"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>每日穿搭画廊</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✨</text></svg>">
@@ -2584,6 +2584,32 @@ textarea:focus-visible,
   color: #e53935;
   background: #ffebee;
 }
+.gallery-card.image-locked {
+  box-shadow: 0 0 0 2px rgba(126, 87, 151, 0.16), 0 10px 24px rgba(75, 48, 83, 0.08);
+}
+.gallery-card.image-locked .card-img-wrap::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(74, 52, 83, 0.08), transparent 35%);
+}
+.card-lock-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 3;
+  width: 25px;
+  height: 25px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(74, 52, 83, 0.78);
+  box-shadow: 0 3px 9px rgba(36, 22, 43, 0.2);
+  font-size: 12px;
+}
 .gallery-list .big-card {
   cursor: default;
 }
@@ -2623,6 +2649,9 @@ textarea:focus-visible,
 .gallery-list .today-compact:hover {
   box-shadow: 0 4px 20px rgba(0,0,0,0.1);
   transform: translateY(-2px);
+}
+.gallery-list .today-compact.image-locked {
+  box-shadow: 0 0 0 2px rgba(126, 87, 151, 0.14), 0 10px 24px rgba(75, 48, 83, 0.07);
 }
 .today-compact .tc-image {
   flex: 0 0 34%;
@@ -8011,9 +8040,9 @@ textarea:focus-visible,
       <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">穿搭画廊</span> <span class="version-tag" id="versionTag">v1.3.7</span></h1>
   </div>
   <div class="tabs">
-    <button class="tab has-badge" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="showUnfavoriteGallery(event)"><span class="tab-label"><span class="tab-icon" aria-hidden="true">✨</span><span class="tab-text">全部</span></span><span class="tab-badge" id="badge-all">0</span></button>
+    <button class="tab has-badge" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="resetGalleryComparisonSplits(event)" title="双击将全部对比图恢复到中间"><span class="tab-label"><span class="tab-icon" aria-hidden="true">✨</span><span class="tab-text">全部</span></span><span class="tab-badge" id="badge-all">0</span></button>
     <button class="tab has-badge" data-tab="today" onclick="switchTab('today')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">🌸</span><span class="tab-text">今日</span></span><span class="tab-badge" id="badge-today">0</span></button>
-    <button class="tab has-badge" data-tab="favorites" onclick="switchTab('favorites')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">❤️</span><span class="tab-text">收藏</span></span><span class="tab-badge" id="badge-favorites">0</span></button>
+    <button class="tab has-badge" data-tab="favorites" onclick="switchTab('favorites')" title="点击切换收藏和未收藏" aria-label="收藏，点击切换收藏和未收藏"><span class="tab-label"><span class="tab-icon" aria-hidden="true">❤️</span><span class="tab-text">收藏</span></span><span class="tab-badge" id="badge-favorites">0</span></button>
     <button class="tab has-badge" data-tab="wardrobe" onclick="switchTab('wardrobe')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">👗</span><span class="tab-text">衣柜</span></span><span class="tab-badge" id="badge-wardrobe">0</span></button>
     <button class="tab" data-tab="group-chat" onclick="switchTab('group-chat')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">💬</span><span class="tab-text">互动</span></span></button>
   </div>
@@ -9135,6 +9164,145 @@ let currentTagFilter = "";
 let showFavoritesOnly = false;
 let showUnfavoritesOnly = false;
 let showTodayOnly = false;
+let favoriteViewMode = window.galleryStorageGet('favorite_view', 'favorites') === 'unfavorites'
+  ? 'unfavorites'
+  : 'favorites';
+const IMAGE_LOCK_STORAGE_KEY = "locked_images";
+let imageLockIds = null;
+
+function loadImageLockIds() {
+  if (imageLockIds instanceof Set) return imageLockIds;
+  imageLockIds = new Set();
+  try {
+    const raw = window.galleryStorageGet(IMAGE_LOCK_STORAGE_KEY, "[]");
+    const parsed = JSON.parse(raw || "[]");
+    if (Array.isArray(parsed)) {
+      parsed.forEach(value => {
+        const id = String(value || "").trim();
+        if (id) imageLockIds.add(id);
+      });
+    }
+  } catch (_) { /* A disabled or corrupt storage area simply starts unlocked. */ }
+  return imageLockIds;
+}
+
+function isImageLocked(imageId) {
+  const id = String(imageId || "").trim();
+  return Boolean(id && loadImageLockIds().has(id));
+}
+
+function persistImageLockIds() {
+  try {
+    window.galleryStorageSet(IMAGE_LOCK_STORAGE_KEY, JSON.stringify([...loadImageLockIds()].sort()));
+  } catch (_) { /* Keep the in-memory lock when storage is unavailable. */ }
+}
+
+function setImageLocked(imageId, locked) {
+  const id = String(imageId || "").trim();
+  if (!id) return false;
+  const locks = loadImageLockIds();
+  if (locked) locks.add(id);
+  else locks.delete(id);
+  persistImageLockIds();
+  return locks.has(id);
+}
+
+function guardImageMutation(imageId, action = "修改") {
+  if (!isImageLocked(imageId)) return false;
+  showToast(`🔒 此卡片已锁定，不能${action}`);
+  return true;
+}
+
+function applyImageLockToCard(card, locked) {
+  if (!card) return;
+  card.classList.toggle("image-locked", locked);
+  card.dataset.imageLocked = locked ? "1" : "0";
+  const imageWrap = card.querySelector(".card-img-wrap");
+  if (imageWrap) {
+    const existingBadge = imageWrap.querySelector(".card-lock-badge");
+    if (locked && !existingBadge) {
+      imageWrap.insertAdjacentHTML("beforeend", '<span class="card-lock-badge" title="此卡片已锁定"><i class="fa-solid fa-lock" aria-hidden="true"></i></span>');
+    } else if (!locked && existingBadge) {
+      existingBadge.remove();
+    }
+  }
+  const controls = card.querySelectorAll(
+    '[data-favorite-img], .card-reroll-btn, .card-edit-btn, .tc-actions .danger, .ca-btn.danger, .tc-btn.danger, .modal-actions .danger'
+  );
+  controls.forEach(control => {
+    const permanentlyDisabled = control.classList.contains("card-reroll-btn") && !control.dataset.img;
+    control.disabled = locked || permanentlyDisabled;
+    control.setAttribute("aria-disabled", locked ? "true" : "false");
+    if (locked) {
+      control.dataset.lockedTitle = control.getAttribute("title") || "";
+      control.setAttribute("title", "已锁定，无法修改");
+    } else if (control.dataset.lockedTitle !== undefined) {
+      if (control.dataset.lockedTitle) control.setAttribute("title", control.dataset.lockedTitle);
+      else control.removeAttribute("title");
+      delete control.dataset.lockedTitle;
+    }
+  });
+}
+
+function applyImageLockToDom(imageId, locked) {
+  const id = String(imageId || "").trim();
+  if (!id) return;
+  document.querySelectorAll(".gallery-card, .today-compact").forEach(card => {
+    if (card.dataset.galleryImg === id) applyImageLockToCard(card, locked);
+  });
+  if (currentModalImg === id) setModalLockState(locked);
+}
+
+function setModalLockState(locked) {
+  const btn = document.getElementById("modalLockBtn");
+  if (btn) {
+    btn.classList.toggle("active", Boolean(locked));
+    btn.setAttribute("aria-pressed", locked ? "true" : "false");
+    btn.setAttribute("aria-label", locked ? "解锁此卡片" : "锁定此卡片");
+    btn.setAttribute("title", locked ? "已锁定，点击解锁" : "锁定此卡片");
+    btn.innerHTML = `<i class="fa-solid ${locked ? "fa-lock" : "fa-lock-open"}" aria-hidden="true"></i>`;
+  }
+  const modal = document.getElementById("modalContent");
+  if (modal) modal.classList.toggle("image-locked", Boolean(locked));
+  if (currentModalImg) {
+    const selectors = [
+      "#modalFav",
+      "#modalWardrobe",
+      "#modalEditBtn",
+      "#modalRerollBtn",
+      "#modalVideoGenerateBtn",
+      "#modalContent .modal-actions .danger",
+      "#modalOutfit .outfit-magic-btn:not(.outfit-recognize-btn)",
+      "#modalVideo .modal-video-regenerate"
+    ];
+    selectors.forEach(selector => {
+      const control = document.querySelector(selector);
+      if (!control) return;
+      control.disabled = Boolean(locked);
+      control.setAttribute("aria-disabled", locked ? "true" : "false");
+      if (locked) {
+        control.dataset.lockedTitle = control.getAttribute("title") || "";
+        control.setAttribute("title", "已锁定，无法修改");
+      } else if (control.dataset.lockedTitle !== undefined) {
+        if (control.dataset.lockedTitle) control.setAttribute("title", control.dataset.lockedTitle);
+        else control.removeAttribute("title");
+        delete control.dataset.lockedTitle;
+      }
+    });
+  }
+}
+
+function toggleCurrentImageLock(event) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  if (!currentModalImg) return;
+  const locked = setImageLocked(currentModalImg, !isImageLocked(currentModalImg));
+  applyImageLockToDom(currentModalImg, locked);
+  showToast(locked ? "🔒 已锁定此卡片，修改操作已禁用" : "🔓 已解锁此卡片");
+}
+
 let wardrobeItems = [];
 let wardrobeLoaded = false;
 let wardrobeRequest = null;
@@ -9254,6 +9422,7 @@ function deactivateAccessibleDialog(overlay) {
   }
 }
 let scheduleEggRequest = null;
+let scheduleEggRequestToken = 0;
 let keywordCloudCache = { payload: null, updatedAt: 0 };
 let keywordCloudVisibleTerms = [];
 let keywordCloudLayoutRound = 0;
@@ -9482,6 +9651,26 @@ function filterByTag(tag) {
   switchTab('gallery');
 }
 
+function updateFavoriteTabAffordance() {
+  const tab = document.querySelector('.tab[data-tab="favorites"]');
+  if (!tab) return;
+  const showingUnfavorites = showUnfavoritesOnly;
+  const icon = tab.querySelector('.tab-icon');
+  if (icon) icon.textContent = showingUnfavorites ? '🤍' : '❤️';
+  const description = showingUnfavorites
+    ? '当前显示未收藏，点击切换到收藏'
+    : '当前显示收藏，点击切换到未收藏';
+  tab.dataset.favoriteView = showingUnfavorites ? 'unfavorites' : 'favorites';
+  tab.title = description;
+  tab.setAttribute('aria-label', description);
+}
+
+function setFavoriteViewMode(mode) {
+  favoriteViewMode = mode === 'unfavorites' ? 'unfavorites' : 'favorites';
+  window.galleryStorageSet('favorite_view', favoriteViewMode);
+  updateFavoriteTabAffordance();
+}
+
 async function showUnfavoriteGallery(event) {
   if (event) {
     event.preventDefault();
@@ -9494,8 +9683,8 @@ async function showUnfavoriteGallery(event) {
   const characterSec = document.getElementById("characterSection");
   const groupChatSec = document.getElementById("groupChatSection");
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-  document.querySelector('.tab[data-tab="gallery"]')?.classList.add("active");
-  window.galleryStorageSet('active_tab', 'gallery');
+  document.querySelector('.tab[data-tab="favorites"]')?.classList.add("active");
+  window.galleryStorageSet('active_tab', 'favorites');
   if (todaySec) todaySec.classList.remove("visible");
   if (gallerySec) gallerySec.classList.remove("hidden");
   if (wardrobeSec) wardrobeSec.classList.add("hidden");
@@ -9504,11 +9693,10 @@ async function showUnfavoriteGallery(event) {
   showFavoritesOnly = false;
   showUnfavoritesOnly = true;
   showTodayOnly = false;
+  setFavoriteViewMode('unfavorites');
   if (galleryLoadedFavoritesOnly) {
     await loadGallery({ skipTabSwitch: true });
-    showFavoritesOnly = false;
-    showUnfavoritesOnly = true;
-    showTodayOnly = false;
+    if (!showUnfavoritesOnly) return;
   }
   renderGallery();
 }
@@ -9818,18 +10006,19 @@ function renderRerollButton(entry, options = {}) {
   const imgId = entry && entry.image_filename;
   const hasPrompt = Boolean(entry && (entry.prompt || entry.has_prompt === true));
   if (!imgId) return "";
+  const locked = isImageLocked(imgId);
   if (options.card) {
     if (!hasPrompt) {
       return `<button type="button" class="ca-btn card-reroll-btn" disabled title="暂无提示词，无法重抽" aria-label="暂无提示词，无法重抽"><i class="fa-solid fa-rotate-right ca-icon" aria-hidden="true"></i><span class="ca-label">重抽</span></button>`;
     }
-    return `<button type="button" class="ca-btn card-reroll-btn" data-img="${escapeAttr(imgId)}" onclick="rerollImage(this.dataset.img,event,this)" title="重抽图片" aria-label="重抽图片"><i class="fa-solid fa-rotate-right ca-icon" aria-hidden="true"></i><span class="ca-label">重抽</span></button>`;
+    return `<button type="button" class="ca-btn card-reroll-btn" data-img="${escapeAttr(imgId)}" onclick="rerollImage(this.dataset.img,event,this)" title="${locked ? "已锁定，无法修改" : "重抽图片"}" aria-label="${locked ? "已锁定，无法重抽" : "重抽图片"}"${locked ? " disabled aria-disabled=\"true\"" : ""}><i class="fa-solid fa-rotate-right ca-icon" aria-hidden="true"></i><span class="ca-label">重抽</span></button>`;
   }
   if (!hasPrompt) return "";
   const idAttr = options.id ? ` id="${escapeAttr(options.id)}"` : "";
   const onClick = options.modal
     ? "rerollModalImage(event)"
     : "rerollImage(this.dataset.img, event, this)";
-  return `<button type="button" class="modal-reroll-btn"${idAttr} data-img="${escapeAttr(imgId)}" onclick="${onClick}" title="抽卡新图" aria-label="抽卡新图">↻</button>`;
+  return `<button type="button" class="modal-reroll-btn"${idAttr} data-img="${escapeAttr(imgId)}" onclick="${onClick}" title="${locked ? "已锁定，无法修改" : "抽卡新图"}" aria-label="${locked ? "已锁定，无法重抽" : "抽卡新图"}"${locked ? " disabled aria-disabled=\"true\"" : ""}>↻</button>`;
 }
 
 function matchesOutfitStyleFilter(e, filterLower) {
@@ -9858,6 +10047,17 @@ function showToast(msg, d = 3000) {
   t.textContent = msg; t.classList.add("show");
   clearTimeout(t._timer);
   t._timer = setTimeout(() => t.classList.remove("show"), d);
+}
+
+function resetGalleryComparisonSplits(event) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  const count = typeof window.resetComparisonSplits === 'function'
+    ? window.resetComparisonSplits()
+    : 0;
+  showToast(`↔ 已将 ${count || '所有'} 张对比图恢复到中间`);
 }
 
 function toolEscapeHtml(value) {
@@ -10721,8 +10921,8 @@ async function loadSocialSchedulePanel(options = {}) {
   }
   try {
     const [detail, today] = await Promise.all([
-      fetch(`${API}/api/schedule-detail`).then(r => r.json()).catch(() => null),
-      fetch(`${API}/api/today`).then(r => r.json()).catch(() => null),
+      fetch(`${API}/api/schedule-detail`, {cache: 'no-store'}).then(r => r.json()).catch(() => null),
+      fetch(`${API}/api/today`, {cache: 'no-store'}).then(r => r.json()).catch(() => null),
     ]);
     socialSchedulePanelData = { detail, today };
     renderSocialSchedulePanel();
@@ -13009,31 +13209,70 @@ function applyFavoriteViewState(imgId, previousFavorite, nextFavorite, viewportA
   updateBadges();
 }
 
-function removeLocalImage(imgId) {
+function removeLocalImages(imageIds) {
+  const ids = new Set((Array.isArray(imageIds) ? imageIds : [imageIds])
+    .map(value => String(value || "").trim())
+    .filter(Boolean));
+  if (!ids.size) return 0;
   const previousTotal = Number.isFinite(galleryTotal) ? galleryTotal : 0;
   const previousViewTotal = Number.isFinite(galleryViewTotal) ? galleryViewTotal : 0;
-  const removedEntry = allEntries.find(e => e.image_filename === imgId || e.date === imgId)
-    || (todayData && Array.isArray(todayData.photos)
-      ? todayData.photos.find(e => e.image_filename === imgId || e.date === imgId)
-      : null);
-  const removedFromView = !currentTagFilter
-    || (removedEntry && matchesGalleryTagFilter(removedEntry, currentTagFilter));
-  allEntries = allEntries.filter(e => e.image_filename !== imgId && e.date !== imgId);
-  if (removedEntry && removedEntry.favorite === true && Number.isFinite(galleryFavoriteTotal)) {
-    galleryFavoriteTotal = Math.max(0, galleryFavoriteTotal - 1);
+  const removedEntries = allEntries.filter(e => e && (
+    ids.has(e.image_filename) || ids.has(e.date)
+  ));
+  const hiddenComparisonIds = new Set();
+  for (const list of [
+    allEntries,
+    todayData && Array.isArray(todayData.photos) ? todayData.photos : []
+  ]) {
+    for (const entry of list) {
+      const edits = entry && entry.image_comparison && entry.image_comparison.edits;
+      if (!Array.isArray(edits)) continue;
+      edits.forEach(edit => {
+        if (edit && edit.filename) hiddenComparisonIds.add(edit.filename);
+      });
+    }
   }
+  const removedVisibleEntries = removedEntries.filter(e => !hiddenComparisonIds.has(e.image_filename));
+  // The API returns physical files, while allEntries is the grouped card
+  // projection. Hidden Qwen edits therefore count as one visible card.
+  const removedCardCount = removedVisibleEntries.length || 1;
+  const removedFromViewCount = removedVisibleEntries.filter(e => (
+    !currentTagFilter || matchesGalleryTagFilter(e, currentTagFilter)
+  )).length || (!currentTagFilter ? removedCardCount : 0);
+  const removedFavoriteIds = new Set(
+    removedVisibleEntries.filter(e => e.favorite === true).map(e => e.image_filename || e.date)
+  );
+  if (Number.isFinite(galleryFavoriteTotal) && removedFavoriteIds.size) {
+    galleryFavoriteTotal = Math.max(0, galleryFavoriteTotal - removedFavoriteIds.size);
+  }
+  allEntries = allEntries.filter(e => !(e && (
+    ids.has(e.image_filename) || ids.has(e.date)
+  )));
   if (todayData && Array.isArray(todayData.photos)) {
-    todayData.photos = todayData.photos.filter(e => e.image_filename !== imgId && e.date !== imgId);
+    todayData.photos = todayData.photos.filter(e => !(e && (
+      ids.has(e.image_filename) || ids.has(e.date)
+    )));
   }
   const loaded = allEntries.filter(entry => entry && entry.image_filename).length;
-  galleryTotal = Math.max(loaded, previousTotal > 0 ? previousTotal - 1 : 0);
+  galleryTotal = Math.max(loaded, previousTotal > 0 ? previousTotal - removedCardCount : 0);
   const loadedView = allEntries.filter(entry => (
     entry && entry.image_filename && matchesGalleryTagFilter(entry, currentTagFilter)
   )).length;
   galleryViewTotal = Math.max(
     loadedView,
-    removedFromView && previousViewTotal > 0 ? previousViewTotal - 1 : previousViewTotal
+    previousViewTotal > 0 ? Math.max(0, previousViewTotal - removedFromViewCount) : previousViewTotal
   );
+  const locks = loadImageLockIds();
+  let locksChanged = false;
+  ids.forEach(id => {
+    if (locks.delete(id)) locksChanged = true;
+  });
+  if (locksChanged) persistImageLockIds();
+  return ids.size;
+}
+
+function removeLocalImage(imgId) {
+  return removeLocalImages([imgId]);
 }
 
 function replaceEntryInList(list, oldImgId, freshEntry) {
@@ -13110,6 +13349,7 @@ function restoreGalleryViewportAnchor(anchor) {
 // ===== Tab switching =====
 function switchTab(tab) {
   if (tab === "character") tab = "group-chat";
+  const previousActiveTab = document.querySelector(".tab.active")?.dataset.tab || "";
   const todaySec = document.getElementById("todaySection");
   const gallerySec = document.getElementById("gallerySection");
   const wardrobeSec = document.getElementById("wardrobeSection");
@@ -13133,11 +13373,23 @@ function switchTab(tab) {
     showTodayOnly = true;
     renderToday();
   } else if (tab === "favorites") {
+    // A second click on the active 收藏 tab switches to the complementary
+    // view. This keeps the gesture single-click and avoids the old
+    // click-then-double-click race that briefly rendered the wrong gallery.
+    if (showFavoritesOnly) {
+      void showUnfavoriteGallery();
+      return;
+    }
+    if (!showUnfavoritesOnly && previousActiveTab === "favorites" && favoriteViewMode === "unfavorites") {
+      void showUnfavoriteGallery();
+      return;
+    }
     if (gallerySec) gallerySec.classList.remove("hidden");
     currentTagFilter = "";
     showFavoritesOnly = true;
     showUnfavoritesOnly = false;
     showTodayOnly = false;
+    setFavoriteViewMode('favorites');
     const content = document.getElementById("galleryContent");
     if (content) content.innerHTML = `<div class="loading-state"><div class="spinner"></div><p>正在整理全部收藏...</p></div>`;
     loadFavoriteGallery();
@@ -13347,8 +13599,35 @@ function customShotLabelFromType(value) {
   return "";
 }
 
+function isCustomReferenceEditEntry(e) {
+  if (!e) return false;
+  const mode = String(
+    e.generation_mode
+      || e.requested_generation_mode
+      || e.custom_ref_mode
+      || ""
+  ).toLowerCase();
+  const hasReferenceMode = ["reference", "img2img", "image-to-image", "image_edit", "image-edit"].includes(mode);
+  const hasReference = hasReferenceMode
+    || Boolean(
+      e.ref_image
+      || e.ref_image_path
+      || e.requested_ref_image
+      || e.requested_ref_image_path
+      || (e.selected_reference && typeof e.selected_reference === "object" && (
+        e.selected_reference.filename || e.selected_reference.path || e.selected_reference.url
+      ))
+    );
+  if (!hasReference) return false;
+  const model = String(e.model_name || e.model || "").toLowerCase();
+  return isPureCustomPrompt(e) || model.includes("qwen");
+}
+
 function customShotAngleLabel(e) {
   if (!e) return "";
+  // A pure custom reference edit is framed by the uploaded source image, not
+  // by the custom-generation selfie control. Hide stale historical values too.
+  if (isCustomReferenceEditEntry(e)) return "";
   const fieldLabel = customShotLabelFromType(e.shot_type || e.custom_shot_type || e.shot);
   if (fieldLabel) return fieldLabel;
   const outfit = String(e.outfit || "");
@@ -13422,6 +13701,7 @@ function renderToday() {
   for (const today of photos) {
     const timeLabel = today.time || "";
     const todayImageFilename = String(today.image_filename || "");
+    const todayLocked = isImageLocked(todayImageFilename);
     const todayImageFilenameAttr = escapeAttr(todayImageFilename);
     const todayImageSrc = generatedEntryImageUrl(today) || ("/images/" + todayImageFilename);
     const todayImageSrcAttr = escapeAttr(todayImageSrc);
@@ -13458,7 +13738,7 @@ function renderToday() {
     const metaHtml = `${today.model_name ? `<span class="meta-tag">🤖 ${escapeHtml(today.model_name)}</span>` : ""}${renderEntryTagsMeta(today)}${renderReferenceMetaTag(today)}${displayImageSizeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayImageSizeMeta(today))}</span>` : ""}${displayFileSizeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayFileSizeMeta(today))}</span>` : ""}${displayGenerationTimeMeta(today) ? `<span class="meta-tag">${escapeHtml(displayGenerationTimeMeta(today))}</span>` : ""}${renderRerollButton(today)}`;
 
     html += `
-      <div class="today-compact" data-gallery-img="${todayImageFilenameAttr}" style="cursor:default;">
+      <div class="today-compact${todayLocked ? ' image-locked' : ''}" data-gallery-img="${todayImageFilenameAttr}" data-image-locked="${todayLocked ? '1' : '0'}" style="cursor:default;">
         <div class="tc-image">
           <img src="${todayImageSrcAttr}" alt="今日穿搭" decoding="async" onclick="openViewer(${todayImageSrcArg})" style="cursor:pointer;">
         </div>
@@ -13474,11 +13754,11 @@ function renderToday() {
           ${schedHtml ? `<div class="modal-schedule">${schedHtml}</div>` : ""}
           ${captionHtml}
           <div class="modal-actions" onclick="event.stopPropagation()">
-            <button class="mbtn ${today.favorite ? 'liked' : ''}" data-favorite-img="${todayImageFilenameAttr}" aria-label="${today.favorite ? '取消收藏' : '收藏'}" onclick="event.stopPropagation();toggleFavorite(${todayImageArg},event)"><i class="${today.favorite ? 'fa-solid' : 'fa-regular'} fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
+            <button class="mbtn ${today.favorite ? 'liked' : ''}" data-favorite-img="${todayImageFilenameAttr}" aria-label="${todayLocked ? '已锁定，无法收藏' : (today.favorite ? '取消收藏' : '收藏')}" title="${todayLocked ? '已锁定，无法修改' : (today.favorite ? '取消收藏' : '收藏')}"${todayLocked ? ' disabled aria-disabled="true"' : ''} onclick="event.stopPropagation();toggleFavorite(${todayImageArg},event)"><i class="${today.favorite ? 'fa-solid' : 'fa-regular'} fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
             <button class="mbtn" onclick="shareGalleryImageToSocial(${todayImageArg}, event)"><i class="fa-solid fa-paper-plane btn-icon" aria-hidden="true"></i> 发推</button>
             <button class="mbtn" onclick="event.stopPropagation();shareImage(${todayImageArg});"><i class="fa-solid fa-share-nodes btn-icon" aria-hidden="true"></i> 分享</button>
             <button class="mbtn" onclick="event.stopPropagation();showPrompt(this)" data-image="${todayImageFilenameAttr}" data-prompt="${encodeURIComponent(today.prompt || '')}"><i class="fa-regular fa-pen-to-square btn-icon" aria-hidden="true"></i> 提示词</button>
-            <button class="mbtn danger" onclick="event.stopPropagation();deleteImage(${todayDeleteArg}, event);"><i class="fa-regular fa-trash-can btn-icon" aria-hidden="true"></i> 删除</button>
+            <button class="mbtn danger"${todayLocked ? ' disabled aria-disabled="true"' : ''} title="${todayLocked ? '已锁定，无法修改' : '删除'}" onclick="event.stopPropagation();deleteImage(${todayDeleteArg}, event);"><i class="fa-regular fa-trash-can btn-icon" aria-hidden="true"></i> 删除</button>
           </div>
         </div>
       </div>`;
@@ -13674,6 +13954,7 @@ function renderGallery() {
     ? `<div class="gallery-list">${
         filtered.map(e => {
           const safeImageFilename = escapeAttr(e.image_filename || "");
+          const locked = isImageLocked(e.image_filename || "");
           const imageFilenameArg = jsStringArg(e.image_filename || "");
           const imageUrl = generatedEntryImageUrl(e) || ("/images/" + (e.image_filename || ""));
           const imageUrlAttr = escapeAttr(imageUrl);
@@ -13707,7 +13988,7 @@ function renderGallery() {
             }
           }
           return `
-            <div class="today-compact" data-gallery-img="${safeImageFilename}">
+            <div class="today-compact${locked ? ' image-locked' : ''}" data-gallery-img="${safeImageFilename}" data-image-locked="${locked ? '1' : '0'}">
               <div class="tc-image" onclick="event.stopPropagation();openViewer(${imageSrcArg})" style="cursor:zoom-in;">
                 ${imgHtml}
               </div>
@@ -13721,11 +14002,11 @@ function renderGallery() {
                 ${renderThoughtBlock(e.caption, "tc-thought", e.caption_status)}
                 ${periodHtml}
                 <div class="tc-actions">
-                  <button class="tc-btn ${e.favorite ? 'liked' : ''}" onclick="toggleFavorite(${imageFilenameArg}, event)" data-img="${safeImageFilename}" data-favorite-img="${safeImageFilename}" aria-label="${e.favorite ? '取消收藏' : '收藏'}"><i class="${e.favorite ? 'fa-solid' : 'fa-regular'} fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
+                  <button class="tc-btn ${e.favorite ? 'liked' : ''}" onclick="toggleFavorite(${imageFilenameArg}, event)" data-img="${safeImageFilename}" data-favorite-img="${safeImageFilename}" aria-label="${locked ? '已锁定，无法收藏' : (e.favorite ? '取消收藏' : '收藏')}" title="${locked ? '已锁定，无法修改' : (e.favorite ? '取消收藏' : '收藏')}"${locked ? ' disabled aria-disabled="true"' : ''}><i class="${e.favorite ? 'fa-solid' : 'fa-regular'} fa-heart btn-icon" aria-hidden="true"></i> 收藏</button>
                   <button class="tc-btn" onclick="shareGalleryImageToSocial(${imageFilenameArg}, event)"><i class="fa-solid fa-paper-plane btn-icon" aria-hidden="true"></i> 发推</button>
                   <button class="tc-btn" onclick="shareImage(${imageFilenameArg}, event)"><i class="fa-solid fa-share-nodes btn-icon" aria-hidden="true"></i> 分享</button>
                   <button class="tc-btn" onclick="showPrompt(this)" data-image="${safeImageFilename}" data-prompt="${encodeURIComponent(e.prompt || '')}"><i class="fa-regular fa-pen-to-square btn-icon" aria-hidden="true"></i> 提示词</button>
-                  <button class="tc-btn danger" onclick="deleteImage(${deleteArg}, event)"><i class="fa-regular fa-trash-can btn-icon" aria-hidden="true"></i> 删除</button>
+                  <button class="tc-btn danger" onclick="deleteImage(${deleteArg}, event)" title="${locked ? '已锁定，无法修改' : '删除'}"${locked ? ' disabled aria-disabled="true"' : ''}><i class="fa-regular fa-trash-can btn-icon" aria-hidden="true"></i> 删除</button>
                 </div>
               </div>
             </div>`;
@@ -13734,6 +14015,7 @@ function renderGallery() {
     : `<div class="gallery-grid">${
         filtered.map(e => {
           const imageFilename = String(e.image_filename || "");
+          const locked = isImageLocked(imageFilename);
           const imageFilenameAttr = escapeAttr(imageFilename);
           const imageFilenameArg = jsStringArg(imageFilename);
           const imageUrl = generatedEntryImageUrl(e) || ("/images/" + imageFilename);
@@ -13750,11 +14032,12 @@ function renderGallery() {
           metaHtml += renderEntryTagsMeta(e, "meta-tag meta-ref");
           metaHtml += renderReferenceMetaTag(e, "meta-tag meta-ref");
           return `
-            <div class="gallery-card" data-gallery-img="${imageFilenameAttr}" onclick="event.stopPropagation();openModal(allEntries.find(x=>x.image_filename===${imageFilenameArg}),this.querySelector('.card-edit-btn'))">
+            <div class="gallery-card${locked ? ' image-locked' : ''}" data-gallery-img="${imageFilenameAttr}" data-image-locked="${locked ? '1' : '0'}" onclick="event.stopPropagation();openModal(allEntries.find(x=>x.image_filename===${imageFilenameArg}),this.querySelector('.card-edit-btn'))">
               <div class="card-img-wrap">
                 ${imgHtml}
                 <span class="card-date-tag">${escapeHtml(shortDate(e.date))}</span>
                 ${styleTag}
+                ${locked ? '<span class="card-lock-badge" title="此卡片已锁定"><i class="fa-solid fa-lock" aria-hidden="true"></i></span>' : ''}
               </div>
               <div class="card-body">
                 <div class="card-row1">
@@ -13763,11 +14046,11 @@ function renderGallery() {
                 </div>
                 ${metaHtml ? `<div class="card-meta">${metaHtml}</div>` : ''}
                 <div class="card-actions">
-                  <button class="ca-btn ${e.favorite ? 'liked' : ''}" title="${e.favorite ? '取消收藏' : '收藏'}" aria-label="${e.favorite ? '取消收藏' : '收藏'}" onclick="event.stopPropagation();toggleFavorite(${imageFilenameArg}, event)" data-img="${imageFilenameAttr}" data-favorite-img="${imageFilenameAttr}"><i class="${e.favorite ? 'fa-solid' : 'fa-regular'} fa-heart ca-icon" aria-hidden="true"></i><span class="ca-label">收藏</span></button>
+                  <button class="ca-btn ${e.favorite ? 'liked' : ''}" title="${locked ? '已锁定，无法修改' : (e.favorite ? '取消收藏' : '收藏')}" aria-label="${locked ? '已锁定，无法收藏' : (e.favorite ? '取消收藏' : '收藏')}"${locked ? ' disabled aria-disabled="true"' : ''} onclick="event.stopPropagation();toggleFavorite(${imageFilenameArg}, event)" data-img="${imageFilenameAttr}" data-favorite-img="${imageFilenameAttr}"><i class="${e.favorite ? 'fa-solid' : 'fa-regular'} fa-heart ca-icon" aria-hidden="true"></i><span class="ca-label">收藏</span></button>
                   ${renderRerollButton(e, {card: true})}
-                  <button class="ca-btn card-edit-btn" title="编辑图片" aria-label="编辑图片" onclick="event.stopPropagation();openImageEditForImage(${imageFilenameArg})"><i class="fa-solid fa-wand-magic-sparkles ca-icon" aria-hidden="true"></i><span class="ca-label">编辑</span></button>
+                  <button class="ca-btn card-edit-btn" title="编辑图片" aria-label="编辑图片"${locked ? ' disabled aria-disabled="true" data-lock-hint="已锁定，无法编辑图片"' : ''} onclick="event.stopPropagation();openImageEditForImage(${imageFilenameArg})"><i class="fa-solid fa-wand-magic-sparkles ca-icon" aria-hidden="true"></i><span class="ca-label">编辑</span></button>
                   <button class="ca-btn" title="发推" aria-label="发推" onclick="shareGalleryImageToSocial(${imageFilenameArg}, event)"><i class="fa-solid fa-paper-plane ca-icon" aria-hidden="true"></i><span class="ca-label">发推</span></button>
-                  <button class="ca-btn danger" title="删除" aria-label="删除" onclick="event.stopPropagation();deleteImage(${deleteArg}, event)"><i class="fa-regular fa-trash-can ca-icon" aria-hidden="true"></i><span class="ca-label">删除</span></button>
+                  <button class="ca-btn danger" title="删除" aria-label="删除"${locked ? ' disabled aria-disabled="true" data-lock-hint="已锁定，无法删除"' : ''} onclick="event.stopPropagation();deleteImage(${deleteArg}, event)"><i class="fa-regular fa-trash-can ca-icon" aria-hidden="true"></i><span class="ca-label">删除</span></button>
                 </div>
               </div>
             </div>`;
@@ -13872,6 +14155,28 @@ ms.textContent = `
 .modal-info { flex:1;padding:24px 24px 20px;display:flex;flex-direction:column;gap:10px;background:linear-gradient(180deg,#fcfaff 0%,#fff 100%); }
 .modal-info-top { display:flex;align-items:center;justify-content:space-between;gap:12px; }
 .modal-date-group { min-width:0;display:flex;align-items:center;gap:7px; }
+.modal-lock-btn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid #e6dbea;
+  border-radius: 8px;
+  background: #fff;
+  color: #817188;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 13px;
+  line-height: 1;
+  box-shadow: none;
+  transition: all .18s ease;
+}
+.modal-lock-btn:hover { color:#6f4f7d;border-color:#cdb7d6;background:#f9f3fb;transform:translateY(-1px); }
+.modal-lock-btn.active { color:#fff;border-color:#7e5797;background:linear-gradient(135deg,#7e5797,#5f4277);box-shadow:0 4px 10px rgba(95,66,119,.2); }
+.modal-lock-btn:focus-visible { outline:3px solid rgba(126,87,151,.22);outline-offset:2px; }
+.modal-lock-btn i { line-height:1; }
 .modal-date { font-size:15px;color:#999;font-weight:500;letter-spacing:0.3px; }
 .modal-version-btn {
   width:30px;height:30px;padding:0;border:1px solid #f2bfd0;border-radius:8px;background:#fff7fa;color:#d81b60;
@@ -14667,9 +14972,10 @@ modalOverlay.setAttribute("aria-hidden", "true");
 modalOverlay.onclick = (e) => { if (e.target === modalOverlay) closeModal(); };
 modalOverlay.innerHTML = `
   <div class="modal-content" id="modalContent" role="dialog" aria-modal="true" aria-label="图片详情" tabindex="-1" onclick="event.stopPropagation()">
-    <div class="modal-image" id="modalImageWrap"></div>
+	    <div class="modal-image" id="modalImageWrap"></div>
 	    <div class="modal-info today-card-info">
 	      <div class="modal-info-top">
+	        <button class="modal-lock-btn" id="modalLockBtn" type="button" onclick="toggleCurrentImageLock(event)" title="锁定此卡片" aria-label="锁定此卡片" aria-pressed="false"><i class="fa-solid fa-lock-open" aria-hidden="true"></i></button>
 	        <span class="modal-date-group">
 	          <span class="modal-date" id="modalDate"></span>
 	          <button class="modal-version-btn" id="modalVersionBtn" type="button" onclick="openImageVersions(event)" title="查看历史版本" aria-label="查看历史版本" hidden><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i></button>
@@ -15255,6 +15561,7 @@ function openModal(e, returnFocusTarget = null) {
 	  // Fav button state
 	  updateModalFavBtn(e.favorite === true);
 	  updateModalWardrobeBtn(e);
+	  setModalLockState(isImageLocked(e.image_filename));
 	  if (!wardrobeLoaded) {
 	    loadWardrobe({ render: false, silent: true }).then(function() {
 	      if (currentModalImg === e.image_filename) updateModalWardrobeBtn(e);
@@ -15585,6 +15892,7 @@ window.addEventListener("resize", () => {
 	    if (options.focus) requestAnimationFrame(() => document.getElementById('modalVideoPrompt')?.focus({preventScroll:true}));
 	  }
 	  syncModalDetailHeight();
+	  setModalLockState(isImageLocked(entry && entry.image_filename));
 	}
 	window.playModalHistoryVideo = playModalHistoryVideo;
 	window.playModalVideoPreview = playModalVideoPreview;
@@ -15596,6 +15904,7 @@ window.addEventListener("resize", () => {
 	  if (!videoGenerationEnabled) return;
 	  const entry = currentModalEntry();
 	  if (!entry) return;
+	  if (guardImageMutation(entry.image_filename, '生成视频')) return;
 	  renderModalVideo(entry, {composer: true, focus: true});
 	}
 	async function refreshModalVideoStatus(filename, options = {}) {
@@ -15660,6 +15969,7 @@ window.addEventListener("resize", () => {
 	    showToast('找不到当前图片');
 	    return;
 	  }
+	  if (guardImageMutation(entry.image_filename, '生成视频')) return;
 	  const input = document.getElementById('modalVideoPrompt');
 	  const button = document.getElementById('modalVideoGenerateBtn');
 	  if (button && button.disabled) return;
@@ -15777,6 +16087,7 @@ window.addEventListener("resize", () => {
 	    showToast('找不到当前图片');
 	    return;
 	  }
+	  if (guardImageMutation(entry.image_filename, '编辑')) return;
 	  imageEditSourceImg = entry.image_filename;
 	  imageEditLastFocus = document.activeElement;
 	  document.getElementById('imageEditPreview').src = generatedEntryImageUrl(entry)
@@ -15793,6 +16104,7 @@ window.addEventListener("resize", () => {
 	}
 	function openImageEditForImage(imageFilename) {
 	  const normalizedFilename = String(imageFilename || '').trim();
+	  if (guardImageMutation(normalizedFilename, '编辑')) return;
 	  const entry = allEntries.find(item => item && item.image_filename === normalizedFilename);
 	  if (!entry) {
 	    showToast('找不到当前图片');
@@ -15829,6 +16141,10 @@ window.addEventListener("resize", () => {
 	}
 	async function submitImageEdit() {
 	  if (imageEditBusy || !imageEditSourceImg) return;
+	  if (guardImageMutation(imageEditSourceImg, '编辑')) {
+	    closeImageEdit();
+	    return;
+	  }
 	  const instruction = document.getElementById('imageEditInstruction').value.trim();
 	  const scheduleInput = document.getElementById('imageEditScheduleDescription');
 	  const scheduleDescription = scheduleInput.value.replace(/\s+/g, ' ').trim();
@@ -15964,8 +16280,10 @@ window.addEventListener("resize", () => {
 	  const btn = document.getElementById("modalWardrobe");
 	  if (!btn) return;
 	  const active = state === "active";
-	  const disabled = state === "disabled" || state === "busy" || active;
+	  const locked = Boolean(currentModalImg && isImageLocked(currentModalImg));
+	  const disabled = locked || state === "disabled" || state === "busy" || active;
 	  btn.disabled = disabled;
+	  btn.setAttribute("aria-disabled", disabled ? "true" : "false");
 	  btn.classList.toggle("active", active);
 	  if (state === "busy") {
 	    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin btn-icon" aria-hidden="true"></i> 保存中';
@@ -15976,7 +16294,7 @@ window.addEventListener("resize", () => {
 	  } else {
 	    btn.innerHTML = '<i class="fa-solid fa-shirt btn-icon" aria-hidden="true"></i> ' + escapeHtml(text || "入衣柜");
 	  }
-	  btn.setAttribute("title", active ? "已收藏到衣柜" : "收藏到衣柜");
+	  if (!locked) btn.setAttribute("title", active ? "已收藏到衣柜" : "收藏到衣柜");
 	}
 	function updateModalWardrobeBtn(entry) {
 	  const payload = favoriteOutfitPayloadFromGalleryEntry(entry, true);
@@ -15992,6 +16310,7 @@ window.addEventListener("resize", () => {
 	}
 	async function modalAddToWardrobe() {
 	  const entry = currentModalEntry();
+	  if (entry && guardImageMutation(entry.image_filename, '加入衣柜')) return;
 	  const payload = favoriteOutfitPayloadFromGalleryEntry(entry, true);
 	  const btn = document.getElementById("modalWardrobe");
 	  if (!payload) {
@@ -16028,6 +16347,7 @@ window.addEventListener("resize", () => {
 	}
 function modalDelete() {
   if (!currentModalImg) return;
+  if (guardImageMutation(currentModalImg, '删除')) return;
   deleteImage(currentModalImg);
 }
 
@@ -16064,7 +16384,7 @@ function confirmDeleteAction(options = {}) {
 function confirmDeleteImage() {
   return confirmDeleteAction({
     title: "删除这条穿搭？",
-    description: "图片和记录会一起移除，收藏状态也会同步更新。",
+    description: "图片和记录会一起移除；如果存在关联的改后图，也会一并删除。收藏状态会同步更新。",
     confirmLabel: "删除"
   });
 }
@@ -16079,6 +16399,7 @@ function setRerollButtonLoading(btn, loading) {
 async function rerollImage(imgId, event, btn, options = {}) {
   if (event) event.stopPropagation();
   if (!imgId) return;
+  if (guardImageMutation(imgId, '重抽')) return;
   if (btn && btn.disabled) return;
   const shouldOpenModal = Boolean(options.openFreshModal || (modalOverlay.classList.contains("open") && currentModalImg === imgId));
   const viewportAnchor = captureGalleryViewportAnchor(imgId, event);
@@ -16135,6 +16456,7 @@ async function deleteImage(imgId, event) {
     showToast("❌ 无法删除：缺少标识");
     return;
   }
+  if (guardImageMutation(imgId, '删除')) return;
   if (!(await confirmDeleteImage())) return;
 
   try {
@@ -16150,17 +16472,26 @@ async function deleteImage(imgId, event) {
       data = { success: res.ok };
     }
     if (data.success) {
-      // Remove from local entries: match by image_filename OR by date key
+      // The API may cascade to associated edited images. Remove every filename
+      // it reports from both gallery and Today state (older APIs only return
+      // the requested filename, so retain that fallback).
+      const deletedImageFilenames = Array.from(new Set([
+        imgId,
+        ...(Array.isArray(data.deleted_image_filenames)
+          ? data.deleted_image_filenames
+          : (data.deleted_image_filenames ? [data.deleted_image_filenames] : []))
+      ].map(value => String(value || '').trim()).filter(Boolean)));
       const viewportAnchor = captureGalleryViewportAnchor(imgId, event);
-      removeLocalImage(imgId);
-      if (currentModalImg === imgId) {
+      removeLocalImages(deletedImageFilenames);
+      if (deletedImageFilenames.includes(currentModalImg)) {
         currentModalImg = "";
         closeModal();
       }
       renderActivePhotoView();
       updateBadges();
       restoreGalleryViewportAnchor(viewportAnchor);
-      showToast("🗑 已删除");
+      const cascadeCount = deletedImageFilenames.length;
+      showToast(cascadeCount > 1 ? `🗑 已删除（含 ${cascadeCount - 1} 张关联改图）` : "🗑 已删除");
     } else {
       showToast("❌ 删除失败" + (data.error ? ": " + data.error : ""));
     }
@@ -16175,6 +16506,7 @@ async function toggleFavorite(imgId, event) {
     showToast("❌ 无法收藏：缺少图片");
     return;
   }
+  if (guardImageMutation(imgId, '收藏')) return;
   const entry = allEntries.find(x => x.image_filename === imgId)
     || (todayData && Array.isArray(todayData.photos) ? todayData.photos.find(x => x.image_filename === imgId) : null);
   if (!entry) return;
@@ -16802,6 +17134,7 @@ function currentCustomGenPayload(refImageOverride = "") {
   const prompt = promptEl ? promptEl.value.trim() : "";
   if (!prompt) return { error: "prompt_required" };
   const customSize = getCustomGenSize();
+  const imageModel = getCustomImageModel();
   let refs = [];
   if (refImageOverride) {
     refs = [String(refImageOverride).trim()].filter(Boolean);
@@ -16815,10 +17148,11 @@ function currentCustomGenPayload(refImageOverride = "") {
     aspect: customSize.aspect,
     resolution: customSize.resolution,
     size: customSize.size,
-    shot_type: getCustomShotType(),
+    // Qwen is a reference-image editor; its hidden shot control must not
+    // leak the persisted default "selfie" into the generation record.
+    shot_type: imageModel === QWEN_CUSTOM_MODEL ? "" : getCustomShotType(),
     source: "custom_ui"
   };
-  const imageModel = getCustomImageModel();
   if (imageModel) body.model = imageModel;
   if (imageModel === QWEN_CUSTOM_MODEL) {
     if (!refs.length) return { error: "qwen_reference_required" };
@@ -17657,6 +17991,7 @@ async function quickCustomImg2ImgFromModal(event, btn) {
     showToast("❌ 找不到当前图片");
     return;
   }
+  if (guardImageMutation(currentModalImg, '改图')) return;
   const payload = currentCustomGenPayload(`/images/${currentModalImg}`);
   if (payload.error === "qwen_reference_required") { showToast("Qwen 只支持图生图，请先选择或上传参考图。"); return; }
   if (payload.error === "qwen_too_many_references") { showToast("WIND 12GB 当前最多支持两张参考图。"); return; }
@@ -17790,7 +18125,7 @@ async function loadGallery(options = {}) {
     if (append) galleryParams.set('cursor', galleryNextCursor);
     if (requestedTagFilter) galleryParams.set('style', requestedTagFilter);
     const [todayRes, galleryRes] = await Promise.all([
-      fetch(`${API}/api/today`),
+      fetch(`${API}/api/today`, {cache: 'no-store'}),
       fetch(`${API}/api/gallery?${galleryParams.toString()}`)
     ]);
     if (todayRes.status === 401 || galleryRes.status === 401) {
@@ -21037,11 +21372,13 @@ function loadScheduleEggData(options) {
   if (target === 'tomorrow') {
     scheduleDetailUrl += '?date=' + encodeURIComponent(targetDate);
   }
+  const requestToken = ++scheduleEggRequestToken;
   scheduleEggRequest = Promise.all([
-    fetch(scheduleDetailUrl).then(function(r){ return r.json(); }).catch(function(){ return null; }),
-    fetch('/api/today').then(function(r){ return r.json(); }).catch(function(){ return null; }),
-    fetch('/api/photo-jobs').then(function(r){ return r.json(); }).catch(function(){ return null; }),
+    fetch(scheduleDetailUrl, {cache: 'no-store'}).then(function(r){ return r.json(); }).catch(function(){ return null; }),
+    fetch('/api/today', {cache: 'no-store'}).then(function(r){ return r.json(); }).catch(function(){ return null; }),
+    fetch('/api/photo-jobs', {cache: 'no-store'}).then(function(r){ return r.json(); }).catch(function(){ return null; }),
   ]).then(function(results) {
+    if (requestToken !== scheduleEggRequestToken) return;
     var detail = results[0];
     var today  = results[1];
     var jobsData = results[2];
@@ -21389,11 +21726,12 @@ function loadScheduleEggData(options) {
     scheduleEggCache = { html: html, dateText: eggDateText, updatedAt: Date.now() };
     body.innerHTML = html;
   }).catch(function() {
+    if (requestToken !== scheduleEggRequestToken) return;
     if (!options.silent || !hasCache) {
       body.innerHTML = '<div class="egg-empty"><div class="icon">😵</div><p>加载失败了...</p></div>';
     }
   }).finally(function() {
-    scheduleEggRequest = null;
+    if (requestToken === scheduleEggRequestToken) scheduleEggRequest = null;
   });
   return scheduleEggRequest;
 }
@@ -22230,8 +22568,8 @@ function removeFavoriteOutfitPlan(btn) {
 function readPhotoJobState(timeText) {
   var wanted = extractClockTime(timeText);
   return Promise.all([
-    fetch('/api/today').then(function(r){ return r.json(); }).catch(function(){ return null; }),
-    fetch('/api/photo-jobs').then(function(r){ return r.json(); }).catch(function(){ return null; }),
+    fetch('/api/today', {cache: 'no-store'}).then(function(r){ return r.json(); }).catch(function(){ return null; }),
+    fetch('/api/photo-jobs', {cache: 'no-store'}).then(function(r){ return r.json(); }).catch(function(){ return null; }),
   ]).then(function(results) {
     var today = results[0];
     var jobsData = results[1];
@@ -22626,6 +22964,37 @@ function closeScheduleEgg() {
 
 function bindScheduleEggEvents() {
   var title = document.querySelector('.header-left h1');
+  var logo = document.getElementById('appHeaderLogo');
+  if (logo && logo.dataset.comparisonToggleBound !== '1') {
+    logo.dataset.comparisonToggleBound = '1';
+    logo.removeAttribute('aria-hidden');
+    logo.setAttribute('role', 'button');
+    logo.setAttribute('tabindex', '0');
+    logo.setAttribute('aria-label', '切换全部图片显示原图或改后图');
+    logo.title = '点击切换全部图片：改后图 / 原图';
+    var toggleComparisonView = function(event) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      var mode = typeof window.toggleComparisonDisplayMode === 'function'
+        ? window.toggleComparisonDisplayMode()
+        : '';
+      if (mode === 'after') {
+        logo.setAttribute('aria-label', '当前显示改后图，点击切换为原图');
+        logo.title = '当前：改后图（点击切换为原图）';
+        showToast('🪄 已切换为全部改后图');
+      } else if (mode === 'before') {
+        logo.setAttribute('aria-label', '当前显示原图，点击切换为改后图');
+        logo.title = '当前：原图（点击切换为改后图）';
+        showToast('🖼️ 已切换为全部原图');
+      }
+    };
+    logo.addEventListener('click', toggleComparisonView);
+    logo.addEventListener('keydown', function(event) {
+      if (event.key === 'Enter' || event.key === ' ') toggleComparisonView(event);
+    });
+  }
   if (title && title.dataset.scheduleEggBound !== '1') {
     title.dataset.scheduleEggBound = '1';
     title.style.cursor = 'pointer';

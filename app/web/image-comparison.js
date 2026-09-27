@@ -3,11 +3,46 @@
   'use strict';
   const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const localImage = value => typeof value === 'string' && value.startsWith('/images/') && !value.includes('\\');
+  const compareStorageKey = root => {
+    const value = String(root || '').trim();
+    if (!value) return '';
+    const key = `compare_split:${encodeURIComponent(value)}`;
+    try {
+      return typeof window.galleryStorageKey === 'function'
+        ? window.galleryStorageKey(key)
+        : `portrait_gallery:${key}`;
+    } catch (_) {
+      return `portrait_gallery:${key}`;
+    }
+  };
+  function readPersistedSplit(root) {
+    const key = compareStorageKey(root);
+    if (!key) return 50;
+    try {
+      const raw = localStorage.getItem(key);
+      const value = Number(raw);
+      if (raw !== null && (value === 0 || value === 100)) return value;
+      if (raw !== null) localStorage.removeItem(key);
+    } catch (_) { /* Private browsing or a disabled storage area: use center. */ }
+    return 50;
+  }
+  function persistSplit(element, percent, exactEdge) {
+    const key = compareStorageKey(element?.dataset?.comparisonRoot);
+    if (!key) return;
+    try {
+      if (exactEdge && (percent === 0 || percent === 100)) localStorage.setItem(key, String(percent));
+      else localStorage.removeItem(key);
+    } catch (_) { /* The slider remains usable when browser storage is unavailable. */ }
+  }
 
   // Compatibility with the already-running server: derive the same read-only
   // grouping from its public reference URLs. No process restart is required.
   const sourceCache = new Map(), sourcePending = new Set(), sourceMissing = new Set();
   let comparisonCards = new Map();
+  // A gallery-wide view mode is controlled by the header pig icon. It is
+  // intentionally kept separate from each card's persisted split position so
+  // toggling the shortcut never overwrites a user's individual slider state.
+  let comparisonDisplayMode = '';
   window.comparisonHiddenCount = 0;
   function sourceName(entry) {
     const value = String(entry.ref_image_path || entry.requested_ref_image_path || entry.ref_image || '');
@@ -84,13 +119,21 @@
     const comparison = entry && entry.image_comparison;
     if (!comparison || !localImage(comparison.before?.url) || !localImage(comparison.after?.url)) return '';
     const before = comparison.before, after = comparison.after;
+    const rootFilename = String(comparison.root_filename || '');
+    const initialSplit = comparisonDisplayMode === 'after'
+      ? 0
+      : comparisonDisplayMode === 'before'
+        ? 100
+        : readPersistedSplit(rootFilename);
     const imageLoading = detail ? 'eager' : 'lazy';
+    const afterPriority = detail || initialSplit < 100 ? 'high' : 'auto';
     const edits = (comparison.edits || [after]).filter(item => localImage(item.url));
     const options = edits.map((item, index) => `<option value="${esc(item.url)}" data-filename="${esc(item.filename)}" ${item.filename === after.filename ? 'selected' : ''}>修改 ${index + 1}${item.date ? ' · ' + esc(item.date) : ''}${item.time ? ' ' + esc(item.time) : ''}</option>`).join('');
+    const loadingClass = initialSplit < 100 ? ' compare-loading' : '';
     return `<div class="compare-shell${detail ? ' compare-detail' : ''}" data-comparison-root="${esc(comparison.root_filename)}">
-      <div class="image-compare" role="slider" tabindex="0" aria-label="修改前后对比，左右移动；左侧原图，右侧改后" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" aria-valuetext="原图 50%，改后 50%" data-before-url="${esc(before.url)}" data-after-url="${esc(after.url)}" style="--compare-split:50%" title="左右移动查看修改前后；点击查看详情">
+      <div class="image-compare${loadingClass}${initialSplit === 0 ? ' compare-edge-left compare-at-start' : initialSplit === 100 ? ' compare-edge-right compare-at-end' : ''}" role="slider" tabindex="0" aria-label="修改前后对比，左右移动；左侧原图，右侧改后" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${initialSplit}" aria-valuetext="原图 ${initialSplit}%，改后 ${100-initialSplit}%" data-comparison-root="${esc(rootFilename)}" data-before-url="${esc(before.url)}" data-after-url="${esc(after.url)}" style="--compare-split:${initialSplit}%" title="左右移动查看修改前后；点击查看详情">
         <img class="compare-before" src="${esc(before.url)}" alt="修改前原图" loading="${imageLoading}" decoding="async" draggable="false">
-        <img class="compare-after" src="${esc(after.url)}" alt="Qwen 修改后" loading="${imageLoading}" decoding="async" draggable="false">
+        <img class="compare-after" src="${esc(after.url)}" alt="Qwen 修改后" loading="${imageLoading}" fetchpriority="${afterPriority}" decoding="async" draggable="false">
         <span class="compare-line" aria-hidden="true"><span>↔</span></span>
         <span class="compare-label compare-label-before" aria-hidden="true">原图</span>
         <span class="compare-label compare-label-after" aria-hidden="true">改后</span>
@@ -112,9 +155,12 @@
     </div>`;
   };
 
-  function setSplit(element, value) {
+  function setSplit(element, value, exactEdge = false, persist = true) {
     const percent = +Math.max(0, Math.min(100, Number(value) || 0)).toFixed(4);
-    if (element._compareLastPercent === percent) return;
+    if (element._compareLastPercent === percent) {
+      if (persist) persistSplit(element, percent, exactEdge);
+      return;
+    }
     element._compareLastPercent = percent;
     element.style.setProperty('--compare-split', `${percent}%`);
     const rounded = Math.round(percent);
@@ -127,7 +173,66 @@
     element.classList.toggle('compare-edge-right', percent > 92);
     element.classList.toggle('compare-at-start', percent === 0);
     element.classList.toggle('compare-at-end', percent === 100);
+    if (percent === 100 || element._compareAfterReady || element.classList.contains('compare-after-failed')) {
+      element.classList.remove('compare-loading');
+    } else {
+      element.classList.add('compare-loading');
+      revealWhenReady(element);
+    }
+    if (persist) persistSplit(element, percent, exactEdge);
   }
+
+  function applyComparisonDisplayMode() {
+    const value = comparisonDisplayMode === 'after' ? 0 : 100;
+    const elements = typeof document.querySelectorAll === 'function'
+      ? document.querySelectorAll('.image-compare')
+      : [];
+    elements.forEach(element => {
+      setSplit(element, value, false, false);
+    });
+  }
+
+  function clearPersistedComparisonSplits() {
+    try {
+      if (typeof localStorage.length !== 'number' || typeof localStorage.key !== 'function') return;
+      const prefix = typeof window.galleryStorageKey === 'function'
+        ? window.galleryStorageKey('compare_split:')
+        : 'portrait_gallery:compare_split:';
+      const keys = [];
+      for (let index = 0; index < localStorage.length; index++) {
+        const key = localStorage.key(index);
+        if (key && key.startsWith(prefix)) keys.push(key);
+      }
+      keys.forEach(key => localStorage.removeItem(key));
+    } catch (_) { /* Keep the visual reset usable when storage is unavailable. */ }
+  }
+
+  // Restore every rendered comparison to the neutral midpoint. Unlike the
+  // logo shortcut this is an intentional reset: remove any endpoint
+  // persistence so a subsequent render/reload stays centered, including cards
+  // that have not been loaded into the current pagination window yet.
+  window.resetComparisonSplits = function() {
+    comparisonDisplayMode = '';
+    clearPersistedComparisonSplits();
+    const elements = typeof document.querySelectorAll === 'function'
+      ? document.querySelectorAll('.image-compare')
+      : [];
+    elements.forEach(element => {
+      setSplit(element, 50, false, true);
+    });
+    return elements.length;
+  };
+
+  window.setComparisonDisplayMode = function(mode) {
+    comparisonDisplayMode = mode === 'after' || mode === 'before' ? mode : '';
+    if (comparisonDisplayMode) applyComparisonDisplayMode();
+    return comparisonDisplayMode;
+  };
+  window.toggleComparisonDisplayMode = function() {
+    const next = comparisonDisplayMode === 'after' ? 'before' : 'after';
+    return window.setComparisonDisplayMode(next);
+  };
+  window.getComparisonDisplayMode = function() { return comparisonDisplayMode; };
   // Coalesce pointer samples into one visual update per animation frame.
   const pendingMoves = new Map();
   const bounds = new WeakMap();
@@ -160,12 +265,13 @@
       if (Number.isFinite(sample.exitX) && (sample.exitX <= left || sample.exitX >= left + width)) clientX = sample.exitX;
       if (!Number.isFinite(clientX)) continue;
       const offset = clientX - left;
+      const exactEdge = offset <= 0 || offset >= width;
       const snap = Math.min(sample.pointerType === 'touch' ? 20 : 12, width * 0.08);
       const value = offset <= snap ? 0 : offset >= width - snap ? 100 : offset / width * 100;
-      updates.push([element, value]);
+      updates.push([element, value, exactEdge]);
     }
     pendingMoves.clear();
-    for (const [element, value] of updates) setSplit(element, value);
+    for (const [element, value, exactEdge] of updates) setSplit(element, value, exactEdge);
   }
   function track(element, event, boundaryOnly = false) {
     if (!Number.isFinite(event.clientX)) return;
@@ -295,7 +401,7 @@
     event.preventDefault();
     event.stopPropagation();
     pendingMoves.delete(element);
-    setSplit(element, value);
+    setSplit(element, value, value === 0 || value === 100);
   });
   document.addEventListener('click', event => {
     const button = event.target.closest?.('[data-compare-open]');
@@ -311,16 +417,53 @@
     const select = event.target, element = select.closest('.compare-shell').querySelector('.image-compare');
     if (!localImage(select.value)) return;
     element.dataset.afterUrl = select.value;
+    element._compareAfterToken = (element._compareAfterToken || 0) + 1;
+    element._compareAfterReady = false;
     element.classList.remove('compare-after-failed');
+    element.classList.add('compare-loading');
     element.querySelector('.compare-image-error').hidden = true;
     element.querySelector('.compare-after').src = select.value;
-    setSplit(element, 50);
+    setSplit(element, 50, false);
+    revealWhenReady(element);
   });
   document.addEventListener('error', event => {
     const image = event.target;
     if (!image.matches?.('.compare-before, .compare-after')) return;
     const element = image.closest('.image-compare');
+    if (image.classList.contains('compare-after')) {
+      const source = image.getAttribute?.('src');
+      if (source && element.dataset.afterUrl && source !== element.dataset.afterUrl) return;
+    }
     element.classList.add(image.classList.contains('compare-after') ? 'compare-after-failed' : 'compare-before-failed');
+    if (image.classList.contains('compare-after')) {
+      element._compareAfterReady = false;
+      element.classList.remove('compare-loading');
+    }
     element.querySelector('.compare-image-error').hidden = false;
   }, true);
+  function revealWhenReady(element) {
+    if (!element?.matches?.('.image-compare.compare-loading')) return;
+    const after = element.querySelector('.compare-after');
+    if (!after || !after.complete || !after.naturalWidth) return;
+    const token = element._compareAfterToken || 0;
+    const reveal = () => {
+      if (token !== (element._compareAfterToken || 0) || after !== element.querySelector?.('.compare-after')) return;
+      element._compareAfterReady = true;
+      element.classList.remove('compare-loading');
+    };
+    try {
+      if (typeof after.decode === 'function') Promise.resolve(after.decode()).then(reveal, reveal);
+      else reveal();
+    } catch (_) { reveal(); }
+  }
+  document.addEventListener('load', event => {
+    if (event.target?.matches?.('.compare-after')) revealWhenReady(event.target.closest('.image-compare'));
+  }, true);
+  const comparisonReadyObserver = typeof MutationObserver === 'function'
+    ? new MutationObserver(mutations => mutations.forEach(mutation => mutation.addedNodes.forEach(node => {
+      if (node.nodeType !== 1) return;
+      if (node.matches?.('.image-compare')) revealWhenReady(node);
+      node.querySelectorAll?.('.image-compare').forEach(revealWhenReady);
+    }))) : null;
+  if (comparisonReadyObserver) comparisonReadyObserver.observe(document.documentElement, {childList:true, subtree:true});
 })();

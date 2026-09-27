@@ -5,22 +5,31 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const code = fs.readFileSync(path.join(__dirname, '../app/web/image-comparison.js'), 'utf8');
-function harness() {
+function harness(sharedStorage = new Map()) {
   const listeners = new Map(), frames = [], calls = [];
   let reads = 0, writes = 0, box = {left:20, width:200};
   const add = (name,fn,options) => { if (!listeners.has(name)) listeners.set(name,[]); listeners.get(name).push({fn,options}); };
   const attrs = new Map([['aria-valuenow','50']]), classes = new Set();
+  const imageError = {hidden:true};
+  const afterImage = {
+    complete:true, naturalWidth:100,
+    matches:s=>s==='.compare-after',
+    closest:s=>s==='.image-compare'?element:null
+  };
   const element = {
-    isConnected:true, dataset:{beforeUrl:'/images/before.png',afterUrl:'/images/after.png'},
+    isConnected:true, dataset:{comparisonRoot:'root.png',beforeUrl:'/images/before.png',afterUrl:'/images/after.png'},
     getBoundingClientRect() { reads++;return {...box}; },
     getAttribute(name) {return attrs.get(name);}, setAttribute(name,value) {attrs.set(name,value);},
     style:{setProperty(name,value){writes++;attrs.set(name,value);}},
-    classList:{add:name=>classes.add(name),remove:name=>classes.delete(name),toggle(name,yes){yes?classes.add(name):classes.delete(name);}},
+    classList:{add:name=>classes.add(name),remove:name=>classes.delete(name),contains:name=>classes.has(name),toggle(name,yes){yes?classes.add(name):classes.delete(name);}},
+    matches:s=>s==='.image-compare' || (s==='.image-compare.compare-loading' && classes.has('compare-loading')),
+    querySelector:s=>s==='.compare-after'?afterImage:s==='.compare-image-error'?imageError:null,
     closest:s=>s==='.image-compare'?element:null, contains:other=>other===element,
     setPointerCapture(){}, hasPointerCapture(){return false;}, releasePointerCapture(){}
   };
-  const context = {console, Map,Set,WeakMap,Date,Number,String,Math,
-    document:{addEventListener:add}, window:{addEventListener:add,openFullscreenImg:url=>calls.push(url)},
+  const localStorage = {get length(){return sharedStorage.size;},key:index=>Array.from(sharedStorage.keys())[index] ?? null,getItem:key=>sharedStorage.has(key)?sharedStorage.get(key):null,setItem:(key,value)=>sharedStorage.set(key,String(value)),removeItem:key=>sharedStorage.delete(key)};
+  const context = {console, Map,Set,WeakMap,Date,Number,String,Math,encodeURIComponent,localStorage,
+    document:{addEventListener:add,querySelectorAll:s=>s==='.image-compare'?[element]:[]}, window:{addEventListener:add,openFullscreenImg:url=>calls.push(url)},
     requestAnimationFrame:fn=>{frames.push(fn);return frames.length;},
     ResizeObserver:class {observe(){} unobserve(){}}
   };
@@ -30,7 +39,7 @@ function harness() {
     for (const {fn} of listeners.get(type)||[]) fn(event);
     return event;
   }
-  return {element,attrs,classes,calls,listeners,emit,window:context.window,run(){while(frames.length)frames.shift()();},frames:()=>frames.length,reads:()=>reads,writes:()=>writes,setBox:value=>{box=value;}};
+  return {element,afterImage,attrs,classes,calls,listeners,emit,window:context.window,storage:sharedStorage,run(){while(frames.length)frames.shift()();},frames:()=>frames.length,reads:()=>reads,writes:()=>writes,setBox:value=>{box=value;}};
 }
 let count=0;
 function test(name,fn) { fn();count++;console.log('PASS',name); }
@@ -77,12 +86,55 @@ test('detail images load eagerly, card images remain lazy',()=>{
  const h=harness();const entry={image_comparison:{root_filename:'root.png',before:{url:'/images/before.png'},after:{url:'/images/after.png'}}};
  assert.ok(h.window.renderImageComparison(entry,true).includes('loading="eager"'));
  assert.ok(h.window.renderImageComparison(entry,false).includes('loading="lazy"'));
+ assert.ok(h.window.renderImageComparison(entry,false).includes('fetchpriority="high"'));
 });
 test('near left edge snaps to exact zero, not a one-pixel strip',()=>{
  const h=harness();h.emit('pointermove',{clientX:22});h.run();assert.equal(h.attrs.get('--compare-split'),'0%');
 });
 test('near right edge snaps to exact one hundred',()=>{
  const h=harness();h.emit('pointermove',{clientX:218});h.run();assert.equal(h.attrs.get('--compare-split'),'100%');
+});
+test('only an exact left endpoint persists across a rerender',()=>{
+ const storage=new Map(),h=harness(storage);h.emit('pointermove',{clientX:20});h.run();assert.equal(storage.get('portrait_gallery:compare_split:root.png'),'0');
+ const rerender=harness(storage);const html=rerender.window.renderImageComparison({image_comparison:{root_filename:'root.png',before:{url:'/images/before.png'},after:{url:'/images/after.png'}}});assert.match(html,/aria-valuenow="0"/);assert.match(html,/--compare-split:0%/);
+});
+test('a snapped-near-edge position clears persistence and rerenders at center',()=>{
+ const storage=new Map([['portrait_gallery:compare_split:root.png','100']]),h=harness(storage);h.emit('pointermove',{clientX:218});h.run();assert.equal(h.attrs.get('--compare-split'),'100%');assert.equal(storage.has('portrait_gallery:compare_split:root.png'),false);
+ const rerender=harness(storage);const html=rerender.window.renderImageComparison({image_comparison:{root_filename:'root.png',before:{url:'/images/before.png'},after:{url:'/images/after.png'}}});assert.match(html,/aria-valuenow="50"/);assert.match(html,/--compare-split:50%/);
+});
+test('keyboard endpoints persist while arrow positions do not',()=>{
+ const storage=new Map(),h=harness(storage);h.emit('keydown',{key:'End'});assert.equal(storage.get('portrait_gallery:compare_split:root.png'),'100');h.emit('keydown',{key:'ArrowLeft'});assert.equal(storage.has('portrait_gallery:compare_split:root.png'),false);
+});
+test('edited image loading gate reveals only after the edited image loads',()=>{
+ const h=harness();h.classes.add('compare-loading');h.emit('load',{target:h.afterImage});assert.equal(h.classes.has('compare-loading'),false);
+});
+test('fully original endpoint does not wait for the hidden edited layer',()=>{
+ const storage=new Map([['portrait_gallery:compare_split:root.png','100']]),h=harness(storage);
+ const html=h.window.renderImageComparison({image_comparison:{root_filename:'root.png',before:{url:'/images/before.png'},after:{url:'/images/after.png'}}});
+ assert.doesNotMatch(html,/class="image-compare compare-loading/);
+});
+test('header shortcut toggles every rendered comparison without overwriting card persistence',()=>{
+ const storage=new Map([['portrait_gallery:compare_split:root.png','100']]),h=harness(storage);
+ assert.equal(h.window.toggleComparisonDisplayMode(),'after');
+ assert.equal(h.attrs.get('--compare-split'),'0%');
+ assert.equal(storage.get('portrait_gallery:compare_split:root.png'),'100');
+ assert.equal(h.window.toggleComparisonDisplayMode(),'before');
+ assert.equal(h.attrs.get('--compare-split'),'100%');
+ assert.equal(storage.get('portrait_gallery:compare_split:root.png'),'100');
+});
+test('resetting all comparisons centers rendered sliders and clears endpoint persistence',()=>{
+ const storage=new Map([['portrait_gallery:compare_split:root.png','100']]),h=harness(storage);
+ assert.equal(h.window.toggleComparisonDisplayMode(),'after');
+ assert.equal(h.attrs.get('--compare-split'),'0%');
+ assert.equal(h.window.resetComparisonSplits(),1);
+ assert.equal(h.window.getComparisonDisplayMode(),'');
+ assert.equal(h.attrs.get('--compare-split'),'50%');
+ assert.equal(h.attrs.get('aria-valuenow'),'50');
+ assert.equal(storage.has('portrait_gallery:compare_split:root.png'),false);
+ const rerender=harness(storage);
+ const html=rerender.window.renderImageComparison({image_comparison:{root_filename:'root.png',before:{url:'/images/before.png'},after:{url:'/images/after.png'}}});
+ assert.match(html,/aria-valuenow="50"/);
+ assert.match(html,/--compare-split:50%/);
 });
 test('fast hover exit finishes at left edge without an extra move',()=>{
  const h=harness();h.emit('pointermove',{clientX:70});h.run();h.emit('pointerout',{clientX:5,relatedTarget:{}});h.run();assert.equal(h.attrs.get('--compare-split'),'0%');

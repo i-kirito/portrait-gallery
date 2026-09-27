@@ -1295,9 +1295,10 @@ class PortraitGalleryApp:
         """自定义 prompt 生图"""
         today_str = self._today().isoformat()
         ts = int(self._now().timestamp())
-        shot_type = normalize_custom_shot_type(shot_type)
-        shot_label = custom_shot_label(shot_type)
-        shot_prompt = custom_shot_prompt(shot_type, size)
+        raw_shot_type = str(shot_type or "").strip()
+        shot_type = normalize_custom_shot_type(shot_type) if raw_shot_type else ""
+        shot_label = custom_shot_label(shot_type) if shot_type else ""
+        shot_prompt = custom_shot_prompt(shot_type, size) if shot_type else ""
         # Prefer a short final prompt for custom/Hermes generations.
         # Heavy quality prefixes + long pose menus make custom scenes collapse.
         user_prompt = re.sub(r"\s+", " ", str(user_prompt or "")).strip()
@@ -1374,6 +1375,16 @@ class PortraitGalleryApp:
                 raise ValueError("Qwen 只支持图生图，请先选择参考图。")
             custom_ref_mode = "reference"
 
+        # A pure reference edit is framed by the uploaded source image. The
+        # custom UI keeps a selfie value in its persisted state for the normal
+        # generator, so never let that stale value become metadata for Qwen or
+        # another pure img2img request.
+        reference_edit = bool(pure and has_reference)
+        if reference_edit:
+            shot_type = ""
+            shot_label = ""
+            shot_prompt = ""
+
         filename = await self.image_gen.generate(
             generation_prompt,
             style=style,
@@ -1396,10 +1407,16 @@ class PortraitGalleryApp:
         if not display_prompt:
             display_prompt = user_prompt[:80] if entry_source != "hermes_api" else "Hermes 自定义生图：按原始描述生成的场景、动作和穿搭。"
 
+        outfit_parts = ["风格：自定义"]
+        if pure:
+            outfit_parts.append("模式：纯")
+        if shot_label:
+            outfit_parts.append(f"视角：{shot_label}")
+        outfit_parts.append(f"穿搭：{display_prompt}")
         entry = DailyEntry(
             date=today_str,
             outfit_style="自定义",
-            outfit=f"风格：自定义{' 模式：纯' if pure else ''} 视角：{shot_label} 穿搭：{display_prompt}",
+            outfit=" ".join(outfit_parts),
             schedule="",
             prompt=generation_prompt,
             caption=caption,
