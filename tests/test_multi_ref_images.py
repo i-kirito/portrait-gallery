@@ -97,6 +97,12 @@ class MultiRefImageTests(unittest.TestCase):
 
 
 class DualRefFallbackTests(unittest.TestCase):
+    def setUp(self):
+        # These transport/fallback tests use placeholder reference paths.
+        sizes = patch('image_editing.reference_image_dimensions', return_value=(768, 1024))
+        sizes.start()
+        self.addCleanup(sizes.stop)
+
     def tearDown(self):
         generate_gptimage._LAST_TERMINAL_IMAGE_FAILURE = ""
         generate_gptimage._LAST_IMAGE_FAILURE_KIND = ""

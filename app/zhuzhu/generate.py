@@ -28,6 +28,7 @@ from core import (
     send_photo,
     update_metadata_caption,
 )
+from generate_qwen import generate as generate_with_qwen, MODEL_NAME as QWEN_MODEL_NAME
 from generate_gitee import MODEL_NAME as GITEE_MODEL_NAME
 from generate_gitee import generate as generate_with_gitee
 from generate_gptimage import GPTIMAGE_DIRECT_MODEL
@@ -1025,7 +1026,12 @@ def generate(
     actual_style = explicit_style or auto_style
 
     used_model = ""
-    if theme == "sexy":
+    if engine == "qwen":
+        path = generate_with_qwen(theme, resolved_prompt, size=size or "", source=source,
+                                  ref_image=ref_image, ref_images=ref_images)
+        if path:
+            used_model = QWEN_MODEL_NAME
+    elif theme == "sexy":
         path = generate_with_gitee(
             theme,
             send=False,
@@ -1168,7 +1174,7 @@ def generate(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="聊天生图主入口")
     parser.add_argument("--theme", choices=ALL_THEMES, default=None)
-    parser.add_argument("--engine", choices=["gitee", "gemini", "gptimage"], default="gptimage", help="默认 GPT Image，失败自动降级")
+    parser.add_argument("--engine", choices=["gitee", "gemini", "gptimage", "qwen"], default="gptimage", help="默认 GPT Image，失败自动降级")
     parser.add_argument("--caption", action="store_true")
     parser.add_argument("--send", action="store_true")
     parser.add_argument("--prompt", type=str, default=None, help="自定义描述（自动注入前缀+外貌）")

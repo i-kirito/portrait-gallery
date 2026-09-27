@@ -64,7 +64,15 @@ DAILY_IMAGE_SAFETY_GUARD = (
     "secure, activity-appropriate daywear. "
     "IMPORTANT: preserve her natural adult body proportions exactly - never compress, flatten, shrink or reduce the chest, "
     "keep clothing naturally fitted without squeezing or minimizing. "
-    "Her pose, expression, and camera treatment are natural and focused on the scheduled task."
+    "Her pose, expression, eye line, and camera treatment must follow the scheduled action, props, "
+    "setting, and time exactly; do not change the action just to create eye contact. "
+    "Treat the camera as a possible interaction partner only when the action supports it. "
+    "For a selfie, greeting, presentation, showing or offering an object, or social acknowledgment, "
+    "use a natural look toward the lens and a compatible gesture. For reading, observing, cooking, "
+    "crafting, operating equipment, or precise hand work, keep her eyes and hands on that task; a brief "
+    "glance toward the lens is optional only if it does not interrupt the action. Keep her face readable "
+    "when plausible, but never force eye contact, a wave, a beckoning gesture, or a new prop. Do not "
+    "invent, remove, or replace the scheduled action or its props."
 )
 
 
@@ -978,10 +986,14 @@ def _shorten_caption(caption: str, limit: int = 90) -> str:
 
 def _scheduled_scene_gaze_instruction(schedule_activity: str) -> str:
     return (
-        "Let the model infer the most natural eye line from the scheduled activity, props, setting, and social context. "
-        "Choose whether she looks at the camera, the object she is handling, another person, a screen, or elsewhere based on what would feel believable in that exact moment. "
-        "Avoid default portrait eye contact when it is not motivated by the activity; avoid forcing an off-camera gaze when camera awareness is naturally part of the scene. "
-        "The result should feel like a coherent candid moment rather than a generic posed portrait"
+        "Treat the scheduled activity, body and hand action, props, setting, and time as the source of truth; "
+        "never override them to force a portrait gaze. First choose the eye line that makes the action believable. "
+        "Add camera interaction only when it is semantically compatible: use a direct look or brief glance for a "
+        "selfie, greeting, showing or offering an item, presentation, or social acknowledgment. For reading, cooking, "
+        "crafting, observing, or operating equipment, keep her eyes on the relevant object and her hands on the "
+        "correct props; a brief glance toward the lens is optional only if it does not interrupt the action. "
+        "Do not invent a wave, beckoning motion, prop, selfie pose, or changed body direction just to interact with "
+        "the camera. Vary compatible interaction naturally while preserving the exact scheduled action"
     )
 
 

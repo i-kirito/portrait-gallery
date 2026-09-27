@@ -37,6 +37,7 @@ from core import (
     _API_KEYS_CONFIG_PATH,
 )
 from characters import NATURAL_FACE_SHAPE_GUARD
+from image_editing import resolve_reference_output_size
 from settings import (
     SCHEDULE_IMAGE_FRAMING_MARKER,
     XIAOHONGSHU_OUTFIT_REFERENCE_MARKER,
@@ -694,11 +695,12 @@ def _compress_image_for_img2img(
     quality: int = IMG2IMG_QUALITY,
 ) -> str:
     """Compress image to base64 for img2img."""
-    from PIL import Image
+    from PIL import Image, ImageOps
     import io
 
     _preflight_reference_image(image_path)
-    img = Image.open(image_path)
+    with Image.open(image_path) as source:
+        img = ImageOps.exif_transpose(source)
     img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
     if img.mode in ('RGBA', 'P'):
         img = img.convert('RGB')
@@ -711,10 +713,11 @@ def _compress_image_for_img2img(
 
 def _image_bytes_for_edit(image_path: str, max_size: int = IMG2IMG_MAX_SIZE) -> bytes:
     """Resize a reference only when it exceeds the configured identity limit."""
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     _preflight_reference_image(image_path)
-    img = Image.open(image_path)
+    with Image.open(image_path) as source:
+        img = ImageOps.exif_transpose(source)
     img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
     if img.mode not in ("RGB", "RGBA"):
         img = img.convert("RGBA")
@@ -1337,6 +1340,7 @@ def _generate_via_direct_gpt(
     request_prompt = _strip_pipeline_reference_suffix(prompt)
     prepared_prompt = _compact_request_prompt(request_prompt)
     refs = _normalize_ref_images(ref_image, ref_images)
+    size = resolve_reference_output_size(size, refs[0] if refs else None)
     submitted_prompt = prepared_prompt
     if refs:
         submitted_prompt += _pipeline_reference_block(
@@ -1503,6 +1507,7 @@ def generate(theme: str, send: bool = False, caption: bool = False,
     refs = _normalize_ref_images(ref_image, ref_images)
     if refs and not ref_image:
         ref_image = refs[0]
+    size = resolve_reference_output_size(size, ref_image)
     requested_mode = "img2img" if refs else "text2img"
     final_mode = requested_mode
     requested_ref_image = ref_image or ""
