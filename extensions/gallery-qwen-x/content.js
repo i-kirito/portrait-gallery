@@ -2,10 +2,15 @@
  * the visible text of the X post attached to the image being edited. */
 (()=>{
 'use strict';
-const controls=new Map();let scheduled=0,refreshTimer=0;
+const controls=new Map();let scheduled=0,refreshTimer=0,viewStateReady=false;
+const viewStates=new Map();
 const imageSelector='article img, [role="dialog"] img';
 const wand='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 20 13-13 3 3L7 23M14 10l3 3M5 2v5M2.5 4.5h5M19 1v4M17 3h4M21 16v5M18.5 18.5h5"/></svg>';
 const send=message=>chrome.runtime.sendMessage(message).then(r=>{if(!r?.success)throw new Error(r?.error||'扩展未响应，请刷新 X。');return r;});
+function viewStateKey(button){return String(button?._mediaKey||'').trim();}
+function preferredOriginal(button,job){const key=viewStateKey(button),state=key?viewStates.get(key):null;return Boolean(state&&state.jobId===job?.localId&&state.originalVisible===true);}
+function persistViewState(button,job,originalVisible){const key=viewStateKey(button);if(!key||!job?.localId)return;viewStates.set(key,{jobId:job.localId,originalVisible:Boolean(originalVisible),updatedAt:Date.now()});while(viewStates.size>200)viewStates.delete(viewStates.keys().next().value);chrome.storage.local.set({gqxViewStates:Object.fromEntries(viewStates)}).catch(()=>{});}
+async function loadViewStates(){try{const stored=await chrome.storage.local.get('gqxViewStates'),entries=stored?.gqxViewStates&&typeof stored.gqxViewStates==='object'?stored.gqxViewStates:{};Object.entries(entries).forEach(([key,state])=>{if(state&&state.jobId)viewStates.set(key,state);});}catch{}viewStateReady=true;scheduleScan();}
 let toastTimer;function toast(text){let el=document.getElementById('gqx-toast');if(!el){el=document.createElement('div');el.id='gqx-toast';el.setAttribute('role','status');document.body.append(el);}el.textContent=text;el.classList.add('gqx-visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('gqx-visible'),6000);}
 function hidePreview(){const o=document.getElementById('gqx-preview');if(!o)return;o.classList.remove('gqx-preview-visible');const image=o.querySelector('.gqx-preview-image');if(image)image.removeAttribute('src');}
 function showPreview(src,alt='Qwen 改后'){if(!src)return;let o=document.getElementById('gqx-preview');if(!o){o=document.createElement('div');o.id='gqx-preview';o.setAttribute('role','dialog');o.setAttribute('aria-modal','true');o.setAttribute('aria-label','改后图放大查看');const i=document.createElement('img');i.className='gqx-preview-image';const c=document.createElement('button');c.type='button';c.className='gqx-preview-close';c.setAttribute('aria-label','关闭放大查看');c.title='关闭';c.textContent='×';o.append(i,c);document.body.append(o);const d=()=>hidePreview();c.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();d();});o.addEventListener('click',e=>{if(e.target===o)d();});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&o.classList.contains('gqx-preview-visible'))d();},true);}const i=o.querySelector('.gqx-preview-image');i.src=src;i.alt=alt;o.classList.add('gqx-preview-visible');o.querySelector('.gqx-preview-close')?.focus({preventScroll:true});}
@@ -103,11 +108,11 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden){scheduleS
 // Keep a user's explicit "show original" choice stable across mutation scans
 // and background status refreshes until they click the wand again.
 const gqxInlineResultOriginal=inlineResult;
-inlineResult=async function(img,button,job){if(job?.status==='done'&&img.dataset.gqxOriginalVisible===job.localId)return;return gqxInlineResultOriginal(img,button,job);};
+inlineResult=async function(img,button,job){if(job?.status==='done'){if(!viewStateReady)return;if(preferredOriginal(button,job)){restoreOriginal(img);img.dataset.gqxOriginalVisible=job.localId;button._gqxOriginalVisibleFor=job.localId;apply(button,job);return;}delete img.dataset.gqxOriginalVisible;button._gqxOriginalVisibleFor='';}return gqxInlineResultOriginal(img,button,job);};
 const gqxApplyOriginal=apply;
 apply=function(button,job){gqxApplyOriginal(button,job);if(job?.status==='done'&&button._gqxOriginalVisibleFor===job.localId){button.disabled=false;button.querySelector('span').textContent='显示改图';button.title='当前显示原图；再次点击显示改图';}};
-document.addEventListener('click',event=>{const button=event.target?.closest?.('.gqx-wand');if(!button||event.shiftKey||button.disabled)return;const pair=[...controls].find(([,candidate])=>candidate===button);if(!pair||pair[1]._job?.status!=='done')return;const [img]=pair;event.preventDefault();event.stopImmediatePropagation();if(img._gqxResult?.isConnected){restoreOriginal(img);img.dataset.gqxOriginalVisible=button._job.localId;button._gqxOriginalVisibleFor=button._job.localId;button.disabled=false;apply(button,button._job);toast('已恢复原图。');}else{delete img.dataset.gqxOriginalVisible;button._gqxOriginalVisibleFor='';apply(button,button._job);inlineResult(img,button,button._job);toast('已直接显示改图。');}},true);
+document.addEventListener('click',event=>{const button=event.target?.closest?.('.gqx-wand');if(!button||event.shiftKey||button.disabled)return;const pair=[...controls].find(([,candidate])=>candidate===button);if(!pair||pair[1]._job?.status!=='done')return;const [img]=pair;event.preventDefault();event.stopImmediatePropagation();if(img._gqxResult?.isConnected){restoreOriginal(img);img.dataset.gqxOriginalVisible=button._job.localId;button._gqxOriginalVisibleFor=button._job.localId;persistViewState(button,button._job,true);button.disabled=false;apply(button,button._job);toast('已恢复原图。');}else{delete img.dataset.gqxOriginalVisible;button._gqxOriginalVisibleFor='';persistViewState(button,button._job,false);apply(button,button._job);inlineResult(img,button,button._job);toast('已直接显示改图。');}},true);
 const gqxEnsureRerollOriginal=ensureRerollControls;
 ensureRerollControls=function(){gqxEnsureRerollOriginal();for(const [img]of controls){const save=img._gqxSave,zoom=img._gqxToolbar?.querySelector('.gqx-inline-zoom');if(save){save.setAttribute('aria-label','保存到画廊');save.title='保存到画廊';}if(zoom){zoom.setAttribute('aria-label','放大查看');zoom.title='放大查看';}}};
-scheduleScan();
+loadViewStates();
 })();
