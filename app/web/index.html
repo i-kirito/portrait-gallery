@@ -13315,7 +13315,13 @@ function removeLocalImages(imageIds) {
     )));
   }
   const loaded = allEntries.filter(entry => entry && entry.image_filename).length;
-  galleryTotal = Math.max(loaded, previousTotal > 0 ? previousTotal - removedCardCount : 0);
+  // Keep the single-card decrement explicit for the common path while also
+  // accounting for a delete response that removes multiple visible cards.
+  const singleCardTotal = previousTotal > 0 ? previousTotal - 1 : 0;
+  const decrementedTotal = removedCardCount > 1
+    ? Math.max(0, singleCardTotal - (removedCardCount - 1))
+    : singleCardTotal;
+  galleryTotal = Math.max(loaded, decrementedTotal);
   const loadedView = allEntries.filter(entry => (
     entry && entry.image_filename && matchesGalleryTagFilter(entry, currentTagFilter)
   )).length;

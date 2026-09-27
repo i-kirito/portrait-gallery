@@ -1,7 +1,7 @@
 /* Gallery settings for the local Chrome extension. The page never receives X credentials. */
 (()=>{
   'use strict';
-  let extensionId='',lastSynced='',syncTimer=0,autoEnabled=true;
+  let extensionId='',lastSynced='',syncTimer=0,recentPollTimer=0,autoEnabled=true;
   const MAX_BATCH=12,MAX_BYTES=10*1024*1024;
   const ALLOWED_TYPES=new Set(['image/jpeg','image/jpg','image/png','image/webp']);
   const P='/api/browser-extension';
@@ -120,7 +120,7 @@
     el('gxSave')?.addEventListener('click',window.saveBrowserExtensionSettings);
     el('gxBatchImages')?.addEventListener('change',updateBatchSelection);
     el('gxBatchSubmit')?.addEventListener('click',async()=>{try{await batchGalleryImages();}catch(e){if(el('gxBatchStatus'))el('gxBatchStatus').textContent=e.message;status(e.message,'error');updateBatchSelection();}});
-    el('gxRecentToggle')?.addEventListener('click',()=>{const panel=el('gxRecentPanel'),button=el('gxRecentToggle');if(!panel||!button)return;const open=panel.hidden;panel.hidden=!open;button.setAttribute('aria-expanded',String(open));if(open)loadRecentTasks();});
+    el('gxRecentToggle')?.addEventListener('click',()=>{const panel=el('gxRecentPanel'),button=el('gxRecentToggle');if(!panel||!button)return;const open=panel.hidden;panel.hidden=!open;button.setAttribute('aria-expanded',String(open));if(open){loadRecentTasks();clearInterval(recentPollTimer);recentPollTimer=setInterval(()=>{if(!panel.hidden)loadRecentTasks();},5000);}else{clearInterval(recentPollTimer);recentPollTimer=0;}});
     el('gxRecentRefresh')?.addEventListener('click',loadRecentTasks);
     el('gxCopyExtensions')?.addEventListener('click',()=>copy('chrome://extensions').then(()=>status('已复制。粘贴到 Chrome 地址栏打开。'),e=>status(e.message,'error')));
     el('gxImportPrompt')?.addEventListener('click',()=>{const state=typeof readCustomGenState==='function'?readCustomGenState():{};const current=document.getElementById('cgPrompt')?.value||state.prompt||'';el('gxPrompt').value=current;status(current?'已填入画廊魔法棒提示词，请保存。':'请先在“穿搭生成”填写修改要求。',current?'ok':'warn');});
