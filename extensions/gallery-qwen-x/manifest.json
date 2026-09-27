@@ -1,0 +1,68 @@
+{
+  "manifest_version": 3,
+  "name": "画廊魔法棒 · Qwen X",
+  "version": "1.1.3",
+  "minimum_chrome_version": "120",
+  "description": "在 X 帖子图片上点击魔法棒，或批量上传本地图片，用 WIND Qwen Q8 图生图，结果按需保存至本地画廊。",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvX/Tbomyzav4JJkbk7zSrWM4mrb+KF93wNSTQG8U1Uk9uJScM4JYxmdcjkrEOMjT0U8LBbGwo7ad0alEbPrfCUlM8tIRubeApnTLSH3KpgnCG/TLXl4ZZrZWeWcu/TDrtO7pYwgo3GEr+KPIF6J2vm3SLMXUfhMjCCcpFqhipRIr7PzXEZbJYpStRmp9wwsHLcBVI/HGJ1O2PaKoSsHGLwOYpzl5nOoaJEMy+2w0u0meFarXCeTKm8CJO1FoR4im84hMwt3KVGZAqLRNbmrhslMHNcLF1o4DG5iZqa6HlNyBXwmFtvb+ANPfSJVY9nIlhgQCARFS3biHXkDHUI/7dQIDAQAB",
+  "permissions": [
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*",
+    "http://192.168.31.216/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://x.com/*",
+        "https://www.x.com/*",
+        "https://twitter.com/*",
+        "https://www.twitter.com/*"
+      ],
+      "js": [
+        "shared.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "画廊魔法棒 · Qwen X",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "externally_connectable": {
+    "matches": [
+      "http://127.0.0.1/*",
+      "http://localhost/*",
+      "http://192.168.31.216/*"
+    ]
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
+  },
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ]
+}

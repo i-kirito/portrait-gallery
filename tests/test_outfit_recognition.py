@@ -141,9 +141,85 @@ class OutfitRecognitionFrontendTest(unittest.TestCase):
 
         self.assertIn("function canRecognizeHermesChatOutfit(e)", html)
         self.assertIn('source === "chat" && e.metadata_only === true', html)
+        self.assertIn("function isXSourceEntry(e)", html)
+        self.assertIn('if (isXSourceEntry(e)) return "X";', html)
         self.assertIn('title="识别穿搭"', html)
         self.assertIn("/recognize-outfit", html)
         self.assertIn("recognizeOutfitFromModal(event,this)", html)
+
+
+class GallerySourceLabelTest(unittest.TestCase):
+    @staticmethod
+    def _make_server(root: Path) -> GalleryServer:
+        config_path = root / "config" / "config.yaml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text("gallery:\n  port: 18889\n", encoding="utf-8")
+        (root / "app" / "references").mkdir(parents=True, exist_ok=True)
+        return GalleryServer(
+            {"paths": {"project_root": str(root)}, "gallery": {"port": 18889}},
+            str(root / "data"),
+            str(config_path),
+        )
+
+    def test_x_source_url_is_exposed_and_labeled_x(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server = self._make_server(Path(tmpdir))
+            filename = "qwen_x_edit.png"
+            Image.new("RGB", (24, 32), (220, 210, 200)).save(Path(server.image_dir) / filename)
+            normalized = server._normalize_entry_display(
+                {
+                    "image_filename": filename,
+                    "source": "chat",
+                    "outfit_style": "自定义",
+                    "outfit": "风格：自定义 穿搭：白色连衣裙",
+                },
+                {
+                    filename: {
+                        "source": "chrome_extension",
+                        "source_url": "https://x.com/example/status/12345/photo/1",
+                        "source_media_url": "https://pbs.twimg.com/media/fixture?format=jpg&name=orig",
+                    }
+                },
+            )
+
+            self.assertEqual("https://x.com/example/status/12345/photo/1", normalized["source_url"])
+            self.assertEqual("X", normalized["outfit_style"])
+            self.assertIn("风格：X", normalized["outfit"])
+            self.assertEqual("X", server._gallery_style_label(normalized))
+            self.assertTrue(server._gallery_entry_matches_style(normalized, "X"))
+
+    def test_non_x_source_url_stays_custom(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server = self._make_server(Path(tmpdir))
+            filename = "custom.png"
+            Image.new("RGB", (24, 32), (220, 210, 200)).save(Path(server.image_dir) / filename)
+            normalized = server._normalize_entry_display(
+                {
+                    "image_filename": filename,
+                    "source": "chat",
+                    "outfit_style": "自定义",
+                    "outfit": "风格：自定义 穿搭：白色连衣裙",
+                },
+                {filename: {"source_url": "https://example.com/example/status/12345"}},
+            )
+
+            self.assertEqual("自定义", normalized["outfit_style"])
+            self.assertEqual("自定义", server._gallery_style_label(normalized))
+
+    def test_metadata_only_x_image_is_labeled_x(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server = self._make_server(Path(tmpdir))
+            entry = server._metadata_gallery_entry(
+                "qwen_x_edit_metadata.png",
+                {
+                    "created_at": 1786454767,
+                    "source": "chrome_extension",
+                    "source_url": "https://twitter.com/example/status/12345",
+                },
+            )
+
+            self.assertEqual("X", entry["outfit_style"])
+            self.assertIn("风格：X", entry["outfit"])
 
 
 if __name__ == "__main__":

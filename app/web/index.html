@@ -2,7 +2,9 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="gallery-ui-revision" content="history-version-delete-20260924">
+<link rel="stylesheet" href="/static/gallery-extension-settings.css?v=20260928-recent1">
+<script defer src="/static/gallery-extension-settings.js?v=20260928-recent1"></script>
+<meta name="gallery-ui-revision" content="extension-settings-inline-20260927">
 <link rel="stylesheet" href="/static/image-comparison.css?v=20260927-8">
 <script src="/static/image-comparison.js?v=20260927-10"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -409,7 +411,7 @@ textarea:focus-visible,
 }
 .sk-settings-tabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin: -4px 0 18px;
 }
@@ -8336,6 +8338,7 @@ textarea:focus-visible,
       <button type="button" class="sk-settings-tab active" data-settings-panel="persona" onclick="setSettingsPanel('persona')">人设</button>
       <button type="button" class="sk-settings-tab" data-settings-panel="model" onclick="setSettingsPanel('model')">模型</button>
       <button type="button" class="sk-settings-tab" data-settings-panel="xiaohongshu" onclick="setSettingsPanel('xiaohongshu')">小红书</button>
+      <button type="button" class="sk-settings-tab" data-settings-panel="extension" onclick="setSettingsPanel('extension')">Chrome 扩展</button>
       <button type="button" class="sk-settings-tab" data-settings-panel="maintain" onclick="setSettingsPanel('maintain')">清理/升级</button>
     </div>
     <div class="sk-panel active" id="skPanelPersona" data-settings-panel-content="persona">
@@ -8677,6 +8680,39 @@ textarea:focus-visible,
           </div>
           <div class="sk-status" id="xhsLoginMessage"></div>
         </div>
+      </div>
+    </div>
+    <div class="sk-panel" id="skPanelExtension" data-settings-panel-content="extension">
+      <div class="gx-card gx-hero-card">
+        <div class="gx-heading"><span class="gx-mark">✦</span><div><strong>画廊魔法棒 · Chrome 扩展</strong><small>X 图片一键改图 · Qwen-Image-2.1 Q8</small></div><span class="gx-status-dot" id="gxStatusDot" aria-hidden="true"></span></div>
+        <p class="gx-note gx-hero-note">在 X 图片上直接改图，结果先显示在原图位置；保存按钮由你决定是否写入画廊。提示词、批量图片和连接状态都集中在这里管理。</p>
+        <div class="gx-actions gx-hero-actions"><button type="button" class="btn btn-primary" id="gxInstall">安装 Chrome 扩展</button><button type="button" class="btn btn-secondary" id="gxConnect">连接扩展</button></div>
+        <div id="gxInstallGuide" class="gx-guide" hidden>
+          <strong>首次安装（仅需一次）</strong><br>
+          1. 解压下载的 ZIP，保留 <code>gallery-qwen-x</code> 文件夹。<br>
+          2. 地址栏打开 <code>chrome://extensions</code>，打开右上角“开发者模式”。<br>
+          3. 点击“加载已解压的扩展程序”，选择含 <code>manifest.json</code> 的文件夹。<br>
+          4. 打开扩展即可自动连接本机画廊；其他设备手填画廊 IP，再刷新 X。<br>
+          <div class="gx-actions"><button type="button" class="btn btn-secondary" id="gxCopyExtensions">复制 Chrome 扩展页地址</button></div>
+          <span class="gx-note">专属本地版未上架 Chrome 商店，网页无法静默安装。更新时重新下载解压，然后在扩展页点击重新加载。安装包不包含密码、连接码或令牌。</span>
+        </div>
+        <div class="gx-connection-row"><span class="gx-status-badge" id="gxStatusBadge"><span class="gx-status-dot" aria-hidden="true"></span><span id="gxStatus" role="status">正在检测扩展连接…</span></span><span id="gxClients" class="gx-note"></span><button class="btn btn-secondary" type="button" id="gxRevoke">停用扩展连接</button></div>
+      </div>
+      <div class="gx-batch-card">
+        <div class="gx-section-heading"><span class="gx-section-icon">▣</span><div><strong>批量上传改图</strong><small>一次选择最多 12 张，按当前提示词逐张提交</small></div></div>
+        <label class="gx-dropzone" for="gxBatchImages"><input id="gxBatchImages" type="file" multiple accept="image/jpeg,image/png,image/webp"><span class="gx-dropzone-icon">＋</span><strong id="gxBatchSelection">选择图片</strong><small>JPEG / PNG / WEBP · 单张不超过 10 MiB</small></label>
+        <div class="gx-batch-footer"><span class="gx-status" id="gxBatchStatus" role="status" aria-live="polite">改图结果会出现在下方最近任务中，不会自动保存到画廊。</span><button type="button" class="btn btn-secondary" id="gxRecentToggle" aria-expanded="false">最近任务</button><button type="button" class="btn btn-primary" id="gxBatchSubmit" disabled>一键改图</button></div>
+        <div class="gx-recent-panel" id="gxRecentPanel" hidden>
+          <div class="gx-recent-head"><div><strong>最近任务</strong><small>批量改图和 X 魔法棒任务都会显示在这里</small></div><button type="button" class="btn btn-secondary" id="gxRecentRefresh">刷新</button></div>
+          <div class="gx-recent-list" id="gxRecentTasks" role="status" aria-live="polite">点击“最近任务”加载记录。</div>
+        </div>
+      </div>
+      <div class="gx-settings-card">
+        <div class="gx-section-heading"><span class="gx-section-icon">✎</span><div><strong>改图设置</strong><small>保存后，X 魔法棒和批量上传都会使用这里的要求</small></div></div>
+        <label for="gxPrompt">X 魔法棒修改要求</label><textarea id="gxPrompt" maxlength="4000" rows="4" placeholder="例如：把外套改成深蓝色，保留人物、姿势和背景。"></textarea>
+        <div class="gx-prompt-actions"><button class="btn btn-secondary" type="button" id="gxImportPrompt">使用画廊魔法棒提示词</button><span class="gx-char-hint">最多 4000 字</span></div>
+        <div class="gx-options-row"><label for="gxSteps">采样步数 <input id="gxSteps" type="number" min="1" max="50" value="25"></label><label class="gx-check-label"><input id="gxSync" type="checkbox" checked> 跟随画廊魔法棒提示词</label><button class="btn btn-primary" type="button" id="gxSave">保存扩展设置</button></div>
+        <p class="gx-note">沿用现有 Qwen 尺寸策略：保持原图比例，最高约 1MP。WIND 和画廊需在线；局域网 HTTP 连接仅在可信内网使用。</p>
       </div>
     </div>
     <div class="sk-panel" id="skPanelMaintain" data-settings-panel-content="maintain">
@@ -9705,8 +9741,24 @@ function isBaseModelStyle(style) {
   return ["cool", "girly", "sweet"].includes(String(style || "").trim().toLowerCase());
 }
 
+function isXSourceEntry(e) {
+  if (!e) return false;
+  const source = String(e.source || "").trim().toLowerCase();
+  if (["chrome_extension", "x", "twitter"].includes(source)) return true;
+  const rawUrl = String(e.source_url || "").trim();
+  if (!rawUrl) return false;
+  try {
+    const url = new URL(rawUrl);
+    return ["x.com", "www.x.com", "twitter.com", "www.twitter.com"].includes(url.hostname.toLowerCase())
+      && /^\/[A-Za-z0-9_]{1,50}\/status\/\d+(?:\/photo\/[1-4])?$/.test(url.pathname);
+  } catch (_) {
+    return false;
+  }
+}
+
 function displayOutfitStyle(e) {
   const style = String((e && e.outfit_style) || "").trim();
+  if (isXSourceEntry(e)) return "X";
   if (!style) return "";
   return isBaseModelStyle(style) ? "自定义" : style;
 }
@@ -10022,13 +10074,22 @@ function renderRerollButton(entry, options = {}) {
 }
 
 function matchesOutfitStyleFilter(e, filterLower) {
-  const rawStyle = String((e && e.outfit_style) || "").trim();
-  const displayStyle = displayOutfitStyle(e);
   const needle = String(filterLower || "").trim().toLowerCase();
   if (!needle) return true;
-  if (rawStyle && rawStyle.toLowerCase() === needle) return true;
-  if (displayStyle && displayStyle.toLowerCase() === needle) return true;
-  return needle === "自定义".toLowerCase() && isBaseModelStyle(rawStyle);
+  const matchesEntry = entry => {
+    const rawStyle = String((entry && entry.outfit_style) || "").trim();
+    const displayStyle = displayOutfitStyle(entry);
+    if (rawStyle && rawStyle.toLowerCase() === needle) return true;
+    if (displayStyle && displayStyle.toLowerCase() === needle) return true;
+    return needle === "自定义".toLowerCase() && isBaseModelStyle(rawStyle);
+  };
+  if (matchesEntry(e)) return true;
+  // Qwen edits are rendered inside their source card. Preserve filtering by
+  // the edit's provenance (notably X) even though it is not a top-level card.
+  const comparison = (e && e.image_comparison) || {};
+  const grouped = Array.isArray(comparison.edits) ? comparison.edits.slice() : [];
+  if (comparison.after) grouped.push(comparison.after);
+  return grouped.some(matchesEntry);
 }
 
 function matchesGalleryTagFilter(e, filterValue) {
@@ -13232,6 +13293,7 @@ function removeLocalImages(imageIds) {
       });
     }
   }
+  }
   const removedVisibleEntries = removedEntries.filter(e => !hiddenComparisonIds.has(e.image_filename));
   // The API returns physical files, while allEntries is the grouped card
   // projection. Hidden Qwen edits therefore count as one visible card.
@@ -13568,10 +13630,34 @@ function isPrecisionImageEditEntry(e) {
     || promptMode === "precision_edit";
 }
 
+// Chrome extension image edits carry the user's free-form edit prompt rather
+// than a wardrobe description.  Keep this separate from X-source detection so
+// ordinary imported X posts without a prompt retain their normal metadata.
+function isExtensionEditEntry(e) {
+  if (!e) return false;
+  const source = String(e.source || "").trim().toLowerCase();
+  if (!["chrome_extension", "chrome-extension", "extension"].includes(source) && !e.extension_job_id) return false;
+  return Boolean(String(e.prompt || e.custom_prompt || e.user_prompt || "").trim());
+}
+
+function modalEditPrompt(e) {
+  if (!e || (!isPrecisionImageEditEntry(e) && !isExtensionEditEntry(e))) return "";
+  return String(e.prompt || e.custom_prompt || e.user_prompt || "").trim();
+}
+
+function modalOriginalText(e) {
+  if (!e || !isXSourceEntry(e)) return "";
+  return String(e.source_text || e.original_text || e.originalText || e.tweet_text || "").trim();
+}
+
 function modalSourceLabel(e) {
   const source = String((e && e.source) || "").toLowerCase();
   if (isPrecisionImageEditEntry(e)) return "精准编辑";
   if (isHermesApiEntry(e)) return "Hermes API";
+  // Some legacy/detail payloads only carry the normalized style label while
+  // omitting source/source_url.  Keep the modal source row consistent with
+  // cards and the style filter in that case.
+  if (isXSourceEntry(e) || String((e && e.outfit_style) || "").trim().toLowerCase() === "x") return "X";
   if (e && e.metadata_only) return "聊天生图";
   if (source === "chat") return "聊天生图";
   if (source === "custom") return "自定义生图";
@@ -15512,8 +15598,11 @@ function openModal(e, returnFocusTarget = null) {
   const outfitRecognizeBtn = canRecognizeHermesChatOutfit(e)
     ? `<button type="button" class="outfit-magic-btn outfit-recognize-btn" onclick="recognizeOutfitFromModal(event,this)" title="识别穿搭" aria-label="识别穿搭"><i class="fa-solid fa-eye" aria-hidden="true"></i></button>`
     : "";
-  document.getElementById("modalOutfit").innerHTML = e.outfit
-    ? `<span class="outfit-label">${escapeHtml(modalOutfitLabel(e))}</span><span class="outfit-divider">|</span><span class="outfit-text">${escapeHtml(extractOutfitText(e.outfit))}</span>${outfitRecognizeBtn}${outfitMagicBtn}`
+  const editPrompt = modalEditPrompt(e);
+  const outfitText = editPrompt || (e.outfit ? extractOutfitText(e.outfit) : "");
+  const outfitLabel = editPrompt ? "改图提示词" : modalOutfitLabel(e);
+  document.getElementById("modalOutfit").innerHTML = outfitText
+    ? `<span class="outfit-label">${escapeHtml(outfitLabel)}</span><span class="outfit-divider">|</span><span class="outfit-text">${escapeHtml(outfitText)}</span>${editPrompt ? "" : outfitRecognizeBtn + outfitMagicBtn}`
     : '--';
   // Schedule
   const schedEl = document.getElementById("modalSchedule");
@@ -15549,8 +15638,9 @@ function openModal(e, returnFocusTarget = null) {
   }
   // Caption
   const capEl = document.getElementById("modalCaption");
-  if (e.caption) {
-    capEl.innerHTML = '<span class="tc-thought-label" title="思考" aria-label="思考">💭</span><span class="tc-thought-text">' + renderCaptionLinks(e.caption) + '</span>';
+  const modalCaption = modalOriginalText(e) || String(e.caption || "").trim();
+  if (modalCaption) {
+    capEl.innerHTML = '<span class="tc-thought-label" title="思考" aria-label="思考">💭</span><span class="tc-thought-text">' + renderCaptionLinks(modalCaption) + '</span>';
     capEl.style.display = "flex";
   } else if (String(e.caption_status || "").toLowerCase() === "pending") {
     capEl.innerHTML = '<span class="tc-thought-label" aria-hidden="true">💭</span><span class="tc-thought-text">正在根据图片生成小心思…</span>';
@@ -16964,6 +17054,7 @@ function saveCustomGenState() {
     refs: selectedRefs
   };
   window.galleryStorageSet("custom_gen_state", JSON.stringify(state));
+  window.syncExtensionMagicPrompt?.(state.prompt);
 }
 
 function restoreCustomGenState() {
@@ -18664,7 +18755,7 @@ async function requestXiaohongshuQrcode(options = {}) {
 }
 
 function setSettingsPanel(panel) {
-  const normalized = ["persona", "model", "xiaohongshu", "maintain"].includes(panel) ? panel : "persona";
+  const normalized = ["persona", "model", "xiaohongshu", "extension", "maintain"].includes(panel) ? panel : "persona";
   const leavingXiaohongshu = activeSettingsPanel === "xiaohongshu" && normalized !== "xiaohongshu";
   activeSettingsPanel = normalized;
   if (leavingXiaohongshu) cancelXiaohongshuLoginFlow();
@@ -18676,6 +18767,7 @@ function setSettingsPanel(panel) {
   document.querySelectorAll("[data-settings-panel-content]").forEach(section => {
     section.classList.toggle("active", section.dataset.settingsPanelContent === normalized);
   });
+  if (normalized === "extension") window.loadBrowserExtensionSettings?.();
   if (normalized === "xiaohongshu") {
     loadXiaohongshuStatus(false, xhsLoginRequestGeneration, {
       probe: true,
@@ -18701,7 +18793,7 @@ function openSettings(panel = "") {
   overlay.classList.add("open");
   activateAccessibleDialog(overlay, '.sk-settings-tab.active');
   document.body.style.overflow = "hidden";
-  if (["persona", "model", "xiaohongshu", "maintain"].includes(panel)) {
+  if (["persona", "model", "xiaohongshu", "extension", "maintain"].includes(panel)) {
     activeSettingsPanel = panel;
   }
   setSettingsPanel(activeSettingsPanel || "persona");
@@ -20205,6 +20297,7 @@ function collectGptEndpoints() {
 }
 
 async function saveSettings() {
+  if (activeSettingsPanel === "extension") return window.saveBrowserExtensionSettings?.();
   const giteeUrl = document.getElementById("skGiteeUrl").value.trim();
   const giteeKey = document.getElementById("skGiteeKey").value.trim();
   const gptKey = document.getElementById("skGptKey").value.trim();

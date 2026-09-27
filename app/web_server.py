@@ -53,6 +53,7 @@ from characters import (
     upsert_manual_character,
 )
 from group_chat import GroupChatStore
+from browser_extension import BrowserExtension
 from image_comparison import group_qwen_edits
 from image_version_delete import VersionDeleteError, delete_history_version
 from social import REACTION_KINDS, SocialStore
@@ -144,6 +145,7 @@ logger = logging.getLogger(__name__)
 # 日期 key 正则：匹配 YYYY-MM-DD 格式
 DATE_KEY_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 GALLERY_BASE_MODEL_STYLES = {"cool", "girly", "sweet"}
+GALLERY_X_HOSTS = {"x.com", "www.x.com", "twitter.com", "www.twitter.com"}
 LOG_ENTRY_RE = re.compile(
     r'^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:,\d+)? '
     r'\[(?P<level>[A-Z]+)\] (?P<logger>[^:]+): (?P<message>.*)$'
@@ -517,9 +519,14 @@ class GalleryServer:
         self.on_validate_xiaohongshu_outfit = None
         self.on_image_dir_changed = None
 
-        self.app = web.Application(middlewares=[self.gallery_auth_middleware])
+        self.browser_extension = BrowserExtension(self)
+        # Browser-extension uploads are bounded to 10 MiB per image; leave a
+        # small multipart envelope allowance while keeping the global request
+        # limit finite for every route.
+        self.app = web.Application(middlewares=[self.gallery_auth_middleware], client_max_size=12 * 1024 * 1024)
         self.app.on_response_prepare.append(self._set_html_cache_headers)
         self._setup_routes()
+        self.browser_extension.setup(self.app)
         self.app.on_cleanup.append(self._cleanup_group_chat_background_tasks)
         self.app.on_cleanup.append(self._cleanup_video_generation_tasks)
         self.app.on_cleanup.append(self._cleanup_xiaohongshu_client)
@@ -749,6 +756,11 @@ class GalleryServer:
         """Require the gallery password for non-local gallery data access."""
         try:
             path = request.path
+            extension = getattr(self, "browser_extension", None)
+            if extension is not None and extension.client_route(path):
+                denied = extension.authorize(request)
+                response = denied if denied is not None else await handler(request)
+                return extension.cors(request, response)
             protected_path = (
                 (
                     path.startswith("/api/")
@@ -6558,6 +6570,10 @@ class GalleryServer:
                 "caption_status",
                 "display_outfit",
                 "outfit_description",
+                "source_url",
+                "source_media_url",
+                "source_text",
+                "extension_job_id",
                 "delivery_status",
                 "delivery_updated_at",
                 "delivery_sent_at",
@@ -6578,6 +6594,17 @@ class GalleryServer:
                 normalized["size"] = meta_entry.get("size")
             if normalized.get("generation_time") is None and meta_entry.get("generation_time") is not None:
                 normalized["generation_time"] = meta_entry.get("generation_time")
+
+        if self._is_x_gallery_entry(normalized):
+            normalized["outfit_style"] = "X"
+            outfit = str(normalized.get("outfit") or "")
+            if outfit:
+                normalized["outfit"] = re.sub(
+                    r"风格[：:]\s*[^ \n，,。；;]+",
+                    "风格：X",
+                    outfit,
+                    count=1,
+                )
 
         if source == "hermes_api":
             display_outfit = self._clean_display_description(
@@ -6968,6 +6995,7 @@ class GalleryServer:
         prompt = meta.get("prompt", "")
         model_name = meta.get("model") or meta.get("model_name", "")
         source = "hermes_api" if meta.get("source") == "hermes_api" or filename.startswith("hermes_") else "chat"
+        x_source = self._is_x_gallery_entry({"source": meta.get("source"), "source_url": meta.get("source_url")})
         mode = str(meta.get("generation_mode") or meta.get("requested_generation_mode") or "").lower()
         is_img2img = mode == "img2img" or "img2img" in prompt.lower() or "参考这张图" in prompt
         outfit_label = "Hermes 图生图" if source == "hermes_api" and is_img2img else (
@@ -6986,8 +7014,8 @@ class GalleryServer:
             "time": time_text,
             "model_name": self._display_model_name(model_name),
             "base_style": str(meta.get("base_style") or "").strip(),
-            "outfit_style": "自定义",
-            "outfit": f"风格：自定义 穿搭：{display_outfit or outfit_label}",
+            "outfit_style": "X" if x_source else "自定义",
+            "outfit": f"风格：{'X' if x_source else '自定义'} 穿搭：{display_outfit or outfit_label}",
             "image_path": f"/images/{filename}",
             "image_filename": filename,
             "prompt": prompt,
@@ -6996,6 +7024,10 @@ class GalleryServer:
             "favorite": False,
             "status": "ok",
             "source": source,
+            "source_url": str(meta.get("source_url") or "").strip(),
+            "source_media_url": str(meta.get("source_media_url") or "").strip(),
+            "source_text": str(meta.get("source_text") or "").strip(),
+            "extension_job_id": str(meta.get("extension_job_id") or "").strip(),
             "prompt_mode": meta.get("prompt_mode", "pure" if source == "hermes_api" else ""),
             "pure_prompt": meta.get("pure_prompt", True if source == "hermes_api" else False),
             "custom_ref_mode": meta.get("custom_ref_mode", "reference" if is_img2img else "text2img"),
@@ -10603,11 +10635,53 @@ class GalleryServer:
         return self._fallback_hermes_display_description(prompt, mode_label)
 
     @staticmethod
+    def _is_x_source_url(value: str) -> bool:
+        """Return whether a source URL points to an X/Twitter status."""
+        try:
+            parsed = urlparse(str(value or "").strip())
+        except ValueError:
+            return False
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if parsed.scheme not in {"http", "https"} or host not in GALLERY_X_HOSTS:
+            return False
+        return bool(re.fullmatch(r"/[A-Za-z0-9_]{1,50}/status/\d+(?:/photo/[1-4])?", parsed.path or ""))
+
+    @classmethod
+    def _is_x_gallery_entry(cls, entry: dict) -> bool:
+        if not isinstance(entry, dict):
+            return False
+        source = str(entry.get("source") or "").strip().casefold()
+        if source in {"chrome_extension", "x", "twitter"}:
+            return True
+        return cls._is_x_source_url(entry.get("source_url", ""))
+
+    @staticmethod
     def _gallery_style_label(entry: dict) -> str:
+        if GalleryServer._is_x_gallery_entry(entry):
+            return "X"
         raw_style = str((entry or {}).get("outfit_style") or "").strip()
         if raw_style.lower() in GALLERY_BASE_MODEL_STYLES:
             return "自定义"
         return raw_style
+
+    @classmethod
+    def _gallery_entry_style_labels(cls, entry: dict) -> set[str]:
+        """Return display style labels for a card and any grouped edits."""
+        labels = set()
+        if not isinstance(entry, dict):
+            return labels
+        label = cls._gallery_style_label(entry)
+        if label:
+            labels.add(label)
+        comparison = entry.get("image_comparison") or {}
+        grouped = list(comparison.get("edits") or [])
+        if comparison.get("after"):
+            grouped.append(comparison["after"])
+        for edit in grouped:
+            label = cls._gallery_style_label(edit)
+            if label:
+                labels.add(label)
+        return labels
 
     @classmethod
     def _gallery_entry_matches_style(cls, entry: dict, requested_style: str) -> bool:
@@ -10618,6 +10692,20 @@ class GalleryServer:
         display_style = cls._gallery_style_label(entry)
         if raw_style.casefold() == needle or display_style.casefold() == needle:
             return True
+        # Qwen edits are grouped into their source card and hidden as
+        # top-level entries.  Match the card when any grouped edit carries
+        # the requested provenance/style (notably X), otherwise filtering
+        # would report only the ungrouped subset.
+        comparison = (entry or {}).get("image_comparison") or {}
+        grouped = list(comparison.get("edits") or [])
+        if comparison.get("after"):
+            grouped.append(comparison["after"])
+        for edit in grouped:
+            if cls._gallery_style_label(edit).casefold() == needle:
+                return True
+            edit_style = str(edit.get("outfit_style") or "").strip()
+            if edit_style.casefold() == needle:
+                return True
         caption = str((entry or {}).get("caption") or "")
         return any(
             tag.casefold() == needle or tag.lstrip("#").casefold() == needle
@@ -10632,7 +10720,7 @@ class GalleryServer:
         styles = sorted({
             label
             for entry in all_entries
-            for label in (self._gallery_style_label(entry),)
+            for label in self._gallery_entry_style_labels(entry)
             if label
         }, key=str.casefold)
         entries = list(all_entries)

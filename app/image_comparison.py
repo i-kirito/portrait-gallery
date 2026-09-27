@@ -65,6 +65,11 @@ def _image_info(name: str, entry: dict, meta: dict, image_dir: Path) -> dict:
         "created_at": meta.get("created_at"),
         "date": entry.get("date", ""),
         "time": entry.get("time", ""),
+        # Preserve provenance so gallery filters can match a grouped edit even
+        # though the edit itself is rendered inside its source card.
+        "source": meta.get("source") or entry.get("source", ""),
+        "source_url": meta.get("source_url") or entry.get("source_url", ""),
+        "outfit_style": meta.get("outfit_style") or entry.get("outfit_style", ""),
     }
 
 

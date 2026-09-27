@@ -293,6 +293,12 @@ class GalleryPaginationFrontendContractTest(unittest.TestCase):
         self.assertIn("loadGallery({ skipTabSwitch: true });", html)
         self.assertNotIn("galleryReloadPending = true;", html)
 
+    def test_style_filter_matches_grouped_edit_provenance(self):
+        html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("const comparison = (e && e.image_comparison) || {};", html)
+        self.assertIn("return grouped.some(matchesEntry);", html)
+
     def test_gallery_automatically_loads_more_at_the_scroll_boundary(self):
         html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")
 

@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.4.5**
+当前版本：**v1.4.6**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -96,7 +96,7 @@ curl http://localhost:18889/api/health
 如果要使用已经发布到 Docker Hub/GHCR 的镜像，通过 `PORTRAIT_GALLERY_IMAGE` 指定：
 
 ```bash
-PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.4.5 docker compose up -d
+PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.4.6 docker compose up -d
 curl http://localhost:18889/api/health
 ```
 
@@ -147,7 +147,7 @@ docker compose up -d
    如使用已发布镜像而不是在服务器上构建源码，可指定与画廊版本相同的镜像标签：
 
    ```bash
-   SOCIAL_HUB_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery-social-hub:1.4.5 \
+   SOCIAL_HUB_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery-social-hub:1.4.6 \
      docker compose -f docker-compose.social-hub.yaml up -d
    ```
 
@@ -422,6 +422,12 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥、三级 LLM 模型链、Gitee 回退、日程风格和升级选项
 
 ## 🧾 Release Notes
+
+### v1.4.6
+
+- 修复 Qwen 图片对比、历史版本和持久化分割线。
+- 新增 Chrome 扩展 X 图片原位改图、批量上传、任务缓存、重抽、放大查看和运行状态反馈。
+- 修复批量改图最近任务状态刷新，并完善详情提示词、X 来源正文、视频设置、筛选和元数据同步。
 
 ### v1.4.5
 

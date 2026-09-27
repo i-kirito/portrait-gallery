@@ -96,6 +96,15 @@ class ComparisonTests(unittest.TestCase):
         self.meta['original.png'].update(model='qwen-image-2.1-Q8_0',ref_images=['/images/edited.png'])
         self.assertEqual(len(self.group()),3)
 
+    def test_grouped_x_edit_remains_matchable_by_x_style(self):
+        self.entries[1]['source'] = 'chrome_extension'
+        self.meta['edited.png'].update(source='chrome_extension', source_url='https://x.com/user/status/123')
+        result = self.group()
+        self.assertEqual(len(result), 2)
+        comparison = result[0]['image_comparison']
+        self.assertEqual(comparison['after']['source'], 'chrome_extension')
+        self.assertEqual(comparison['after']['source_url'], 'https://x.com/user/status/123')
+
 
 class ComparisonApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -211,6 +220,25 @@ class ComparisonApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('unsafe.png', remaining)
         self.assertTrue((self.image_dir / 'secondary.png').exists())
         self.assertTrue((self.image_dir / 'unsafe.png').exists())
+
+    async def test_grouped_x_edit_is_in_style_facets_and_filter(self):
+        ImageMetadataStore(self.server.data_dir).update(
+            lambda m: {
+                **m,
+                'edited.png': {
+                    **m['edited.png'],
+                    'source': 'chrome_extension',
+                    'source_url': 'https://x.com/user/status/123',
+                },
+            }
+        )
+        response = await self.server.handle_gallery(
+            SimpleNamespace(query={'limit': '20', 'style': 'X'})
+        )
+        payload = json.loads(response.text)
+        self.assertIn('X', payload['styles'])
+        self.assertEqual(payload['total'], 1)
+        self.assertEqual(payload['items'][0]['image_filename'], 'original.png')
 
 
 if __name__=='__main__':
