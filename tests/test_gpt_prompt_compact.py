@@ -35,6 +35,12 @@ class PromptCompactTests(unittest.TestCase):
         self.assertEqual(prompt, result)
         compact.assert_not_called()
 
+    def test_daily_guard_requests_camera_aware_interaction(self):
+        self.assertIn("active conversational partner", DAILY_IMAGE_SAFETY_GUARD)
+        self.assertIn("direct eye contact", DAILY_IMAGE_SAFETY_GUARD)
+        self.assertIn("camera-aware gesture", DAILY_IMAGE_SAFETY_GUARD)
+        self.assertIn("Do not default to looking away", DAILY_IMAGE_SAFETY_GUARD)
+
     def test_llm_failure_returns_complete_original_prompt(self):
         prompt = "Detailed original prompt. " * 60
         with patch.object(

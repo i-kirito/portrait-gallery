@@ -64,7 +64,12 @@ DAILY_IMAGE_SAFETY_GUARD = (
     "secure, activity-appropriate daywear. "
     "IMPORTANT: preserve her natural adult body proportions exactly - never compress, flatten, shrink or reduce the chest, "
     "keep clothing naturally fitted without squeezing or minimizing. "
-    "Her pose, expression, and camera treatment are natural and focused on the scheduled task."
+    "Her pose, expression, and camera treatment are natural and focused on the scheduled task. "
+    "Treat the camera as an active conversational partner: unless the activity genuinely requires "
+    "sustained visual focus elsewhere, she should make direct eye contact or glance back toward the lens "
+    "and include one small camera-aware gesture, such as showing or offering a prop, a relaxed wave, "
+    "a beckoning gesture, or a natural selfie-like acknowledgment. Do not default to looking away, "
+    "looking down, closed eyes, a turned back, or a blank side profile."
 )
 
 
@@ -978,10 +983,14 @@ def _shorten_caption(caption: str, limit: int = 90) -> str:
 
 def _scheduled_scene_gaze_instruction(schedule_activity: str) -> str:
     return (
-        "Let the model infer the most natural eye line from the scheduled activity, props, setting, and social context. "
-        "Choose whether she looks at the camera, the object she is handling, another person, a screen, or elsewhere based on what would feel believable in that exact moment. "
-        "Avoid default portrait eye contact when it is not motivated by the activity; avoid forcing an off-camera gaze when camera awareness is naturally part of the scene. "
-        "The result should feel like a coherent candid moment rather than a generic posed portrait"
+        "Make the camera feel like an active conversational partner rather than a passive observer. "
+        "For most scheduled scenes, have her meet the lens or glance back toward it while naturally "
+        "acknowledging the camera with a small gesture: showing or offering a prop, a relaxed wave, "
+        "a beckoning motion, a friendly smile, or a casual selfie-like acknowledgment. "
+        "Only use sustained off-camera focus when the activity genuinely requires it; even then, keep "
+        "her face readable and add a brief camera-aware glance when plausible. Never default to a back "
+        "view, blank side profile, closed eyes, or looking down at the task. Vary the interaction so the "
+        "result feels like a coherent candid moment, not a repeated posed portrait"
     )
 
 
