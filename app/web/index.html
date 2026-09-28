@@ -10384,6 +10384,7 @@ function updateGroupChatImageToolState() {
   }
   if (!sendsToChat) loadSocialSchedulePanel();
 }
+}
 
 function socialCharacterById(characterIdValue) {
   return characterItems.find(item => item.id === String(characterIdValue || "")) || null;
@@ -13321,7 +13322,6 @@ function removeLocalImages(imageIds) {
         if (edit && edit.filename) hiddenComparisonIds.add(edit.filename);
       });
     }
-  }
   }
   const removedVisibleEntries = removedEntries.filter(e => !hiddenComparisonIds.has(e.image_filename));
   // The API returns physical files, while allEntries is the grouped card
