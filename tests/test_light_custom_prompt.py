@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -159,6 +160,54 @@ class CustomImageCaptionTests(unittest.IsolatedAsyncioTestCase):
             "",
             "failed",
         )
+
+
+class CustomReferenceEditMetadataTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pure_reference_edit_does_not_store_selfie_label(self) -> None:
+        app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+        app.config = {}
+        app.data_dir = tempfile.mkdtemp()
+        app._today = lambda: date(2026, 9, 27)
+        app._now = lambda: datetime(2026, 9, 27, 12, 0)
+        app.image_gen = SimpleNamespace(generate=AsyncMock(return_value="edited.png"))
+        app._apply_custom_reference_role_guard = lambda prompt, refs, selected: prompt
+        app._update_image_metadata_caption = Mock()
+        app._save_generation_reference_metadata = Mock()
+        app._start_custom_image_caption = Mock()
+
+        with patch("main.save_schedule_entry"):
+            entry = await app.generate_custom(
+                "把衣服改成深蓝色，保留人物和背景",
+                ref_image="/tmp/reference.png",
+                shot_type="selfie",  # stale persisted UI value
+                pure=True,
+                image_model="qwen-image-2.1-Q8_0",
+            )
+
+        self.assertEqual("", entry.shot_type)
+        self.assertNotIn("视角：自拍", entry.outfit)
+        self.assertIn("模式：纯", entry.outfit)
+        self.assertEqual("reference", entry.custom_ref_mode)
+
+    async def test_pure_text_generation_keeps_explicit_selfie_label(self) -> None:
+        app = PortraitGalleryApp.__new__(PortraitGalleryApp)
+        app.config = {}
+        app.data_dir = tempfile.mkdtemp()
+        app._today = lambda: date(2026, 9, 27)
+        app._now = lambda: datetime(2026, 9, 27, 12, 0)
+        app.image_gen = SimpleNamespace(generate=AsyncMock(return_value="selfie.png"))
+        app._update_image_metadata_caption = Mock()
+        app._start_custom_image_caption = Mock()
+
+        with patch("main.save_schedule_entry"):
+            entry = await app.generate_custom(
+                "在窗边喝咖啡",
+                shot_type="selfie",
+                pure=True,
+            )
+
+        self.assertEqual("selfie", entry.shot_type)
+        self.assertIn("视角：自拍", entry.outfit)
 
 
 if __name__ == "__main__":

@@ -214,8 +214,45 @@ class GalleryPaginationFrontendContractTest(unittest.TestCase):
 
         self.assertIn("Number.isFinite(galleryTotal) ? galleryTotal : 0", html)
         self.assertNotIn("const allCount = imageEntries.length;", html)
-        self.assertIn("previousTotal > 0 ? previousTotal - 1 : 0", html)
+        self.assertIn("previousTotal > 0 ? previousTotal - removedCardCount : 0", html)
         self.assertIn("galleryTotal = Math.max(loaded, currentTotal + 1);", html)
+
+    def test_delete_cascade_updates_every_loaded_gallery_projection(self):
+        html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("deleted_image_filenames", html)
+        self.assertIn("removeLocalImages(deletedImageFilenames)", html)
+        self.assertIn("todayData.photos = todayData.photos.filter", html)
+
+    def test_logo_shortcut_toggles_comparison_view_mode(self):
+        html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")
+        comparison = (APP_DIR / "web" / "image-comparison.js").read_text(encoding="utf-8")
+
+        self.assertIn("appHeaderLogo", html)
+        self.assertIn("toggleComparisonDisplayMode", html)
+        self.assertIn("window.toggleComparisonDisplayMode", comparison)
+        self.assertIn("window.setComparisonDisplayMode", comparison)
+
+    def test_all_tab_double_click_resets_comparison_splits(self):
+        html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")
+        comparison = (APP_DIR / "web" / "image-comparison.js").read_text(encoding="utf-8")
+
+        self.assertIn('ondblclick="resetGalleryComparisonSplits(event)"', html)
+        self.assertIn("function resetGalleryComparisonSplits(event)", html)
+        self.assertIn("window.resetComparisonSplits", comparison)
+        self.assertIn("comparisonDisplayMode = '';", comparison)
+        self.assertIn("setSplit(element, 50, false, true);", comparison)
+
+    def test_locked_cards_disable_every_mutating_modal_entrypoint(self):
+        html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn(".ca-btn.danger", html)
+        self.assertIn("#modalContent .modal-actions .danger", html)
+        self.assertIn("#modalOutfit .outfit-magic-btn:not(.outfit-recognize-btn)", html)
+        self.assertIn("#modalVideo .modal-video-regenerate", html)
+        self.assertIn("const locked = Boolean(currentModalImg && isImageLocked(currentModalImg));", html)
+        self.assertIn("if (guardImageMutation(currentModalImg, '删除')) return;", html)
+        self.assertIn("if (guardImageMutation(currentModalImg, '改图')) return;", html)
 
     def test_favorites_badge_and_tab_use_complete_server_result(self):
         html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")
@@ -225,6 +262,16 @@ class GalleryPaginationFrontendContractTest(unittest.TestCase):
         self.assertIn("while (hasMore)", html)
         self.assertIn("galleryFavoriteTotal = Number.isFinite(favoriteTotal)", html)
         self.assertIn("if (showFavoritesOnly || !galleryHasMore) return '';", html)
+
+    def test_favorites_tab_uses_single_click_to_switch_views(self):
+        html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")
+
+        self.assertNotIn('ondblclick="showUnfavoriteGallery(event)"', html)
+        self.assertIn('onclick="switchTab(\'favorites\')" title="点击切换收藏和未收藏"', html)
+        self.assertIn("if (showFavoritesOnly) {", html)
+        self.assertIn("void showUnfavoriteGallery();", html)
+        self.assertIn("let favoriteViewMode = window.galleryStorageGet('favorite_view', 'favorites')", html)
+        self.assertIn("当前显示未收藏，点击切换到收藏", html)
 
     def test_gallery_cards_render_the_supported_reroll_action(self):
         html = (APP_DIR / "web" / "index.html").read_text(encoding="utf-8")

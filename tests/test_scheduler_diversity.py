@@ -587,6 +587,10 @@ class ScheduleDiversityTest(unittest.TestCase):
             self.assertIn("生图镜头原则", prompt)
             self.assertIn("交给你自行判断", prompt)
             self.assertIn("镜头里只能清楚拍到角色本人", prompt)
+            self.assertIn("镜头互动偏好", prompt)
+            self.assertIn("camera-aware interaction", prompt)
+            self.assertIn("必须服从动作", prompt)
+            self.assertIn("不能为了看镜头擅自添加/删除道具", prompt)
             self.assertNotIn("hand in hand", prompt)
             self.assertNotIn("schedule_details.action_en", prompt)
 

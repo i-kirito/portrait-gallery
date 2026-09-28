@@ -10382,7 +10382,6 @@ function updateGroupChatImageToolState() {
     if (label) label.textContent = text;
     else button.textContent = text;
   }
-  }
   if (!sendsToChat) loadSocialSchedulePanel();
 }
 
@@ -13323,6 +13322,7 @@ function removeLocalImages(imageIds) {
       });
     }
   }
+  }
   const removedVisibleEntries = removedEntries.filter(e => !hiddenComparisonIds.has(e.image_filename));
   // The API returns physical files, while allEntries is the grouped card
   // projection. Hidden Qwen edits therefore count as one visible card.
@@ -13348,8 +13348,9 @@ function removeLocalImages(imageIds) {
   // Keep the single-card decrement explicit for the common path while also
   // accounting for a delete response that removes multiple visible cards.
   const singleCardTotal = previousTotal > 0 ? previousTotal - 1 : 0;
+  const requestedDecrementedTotal = previousTotal > 0 ? previousTotal - removedCardCount : 0;
   const decrementedTotal = removedCardCount > 1
-    ? Math.max(0, singleCardTotal - (removedCardCount - 1))
+    ? Math.max(0, requestedDecrementedTotal)
     : singleCardTotal;
   galleryTotal = Math.max(loaded, decrementedTotal);
   const loadedView = allEntries.filter(entry => (

@@ -35,6 +35,13 @@ class PromptCompactTests(unittest.TestCase):
         self.assertEqual(prompt, result)
         compact.assert_not_called()
 
+    def test_daily_guard_keeps_action_primary_and_interaction_conditional(self):
+        self.assertIn("must follow the scheduled action, props", DAILY_IMAGE_SAFETY_GUARD)
+        self.assertIn("only when the action supports it", DAILY_IMAGE_SAFETY_GUARD)
+        self.assertIn("keep her eyes and hands on that task", DAILY_IMAGE_SAFETY_GUARD)
+        self.assertIn("never force eye contact", DAILY_IMAGE_SAFETY_GUARD)
+        self.assertIn("Do not invent, remove, or replace the scheduled action", DAILY_IMAGE_SAFETY_GUARD)
+
     def test_llm_failure_returns_complete_original_prompt(self):
         prompt = "Detailed original prompt. " * 60
         with patch.object(
