@@ -2,8 +2,8 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<link rel="stylesheet" href="/static/gallery-extension-settings.css?v=20260928-recent1">
-<script defer src="/static/gallery-extension-settings.js?v=20260928-recent1"></script>
+<link rel="stylesheet" href="/static/gallery-extension-settings.css?v=20260928-recent3">
+<script defer src="/static/gallery-extension-settings.js?v=20260928-recent3"></script>
 <meta name="gallery-ui-revision" content="extension-settings-inline-20260927">
 <link rel="stylesheet" href="/static/image-comparison.css?v=20260927-8">
 <script src="/static/image-comparison.js?v=20260927-10"></script>
@@ -3066,6 +3066,19 @@ textarea:focus-visible,
   color: #fff;
   background: linear-gradient(135deg, #e91e63, #9c27b0);
   box-shadow: 0 2px 8px rgba(233,30,99,0.2);
+}
+.style-pill.edit-filter {
+  border-color: #d81b72;
+  color: #c2185b;
+  background: linear-gradient(135deg, #fff0f7, #f7e9ff);
+  font-weight: 700;
+  box-shadow: 0 2px 8px rgba(216, 27, 114, 0.16);
+}
+.style-pill.edit-filter:hover,
+.style-pill.edit-filter.active {
+  border-color: #c2185b;
+  background: linear-gradient(135deg, #ec407a, #8e24aa);
+  color: #fff;
 }
 .style-pill.clear {
   border-color: #e0e0e0;
@@ -8039,7 +8052,7 @@ textarea:focus-visible,
 
 <div class="header">
   <div class="header-left">
-      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">穿搭画廊</span> <span class="version-tag" id="versionTag">v1.3.7</span></h1>
+      <h1 style="user-select:none;"><span class="app-logo" id="appHeaderLogo" aria-hidden="true">🐷</span><span id="appHeaderTitle">穿搭画廊</span> <span class="version-tag" id="versionTag">v1.4.7</span></h1>
   </div>
   <div class="tabs">
     <button class="tab has-badge" data-tab="gallery" onclick="switchTab('gallery')" ondblclick="resetGalleryComparisonSplits(event)" title="双击将全部对比图恢复到中间"><span class="tab-label"><span class="tab-icon" aria-hidden="true">✨</span><span class="tab-text">全部</span></span><span class="tab-badge" id="badge-all">0</span></button>
@@ -8703,7 +8716,7 @@ textarea:focus-visible,
         <label class="gx-dropzone" for="gxBatchImages"><input id="gxBatchImages" type="file" multiple accept="image/jpeg,image/png,image/webp"><span class="gx-dropzone-icon">＋</span><strong id="gxBatchSelection">选择图片</strong><small>JPEG / PNG / WEBP · 单张不超过 10 MiB</small></label>
         <div class="gx-batch-footer"><span class="gx-status" id="gxBatchStatus" role="status" aria-live="polite">改图结果会出现在下方最近任务中，不会自动保存到画廊。</span><button type="button" class="btn btn-secondary" id="gxRecentToggle" aria-expanded="false">最近任务</button><button type="button" class="btn btn-primary" id="gxBatchSubmit" disabled>一键改图</button></div>
         <div class="gx-recent-panel" id="gxRecentPanel" hidden>
-          <div class="gx-recent-head"><div><strong>最近任务</strong><small>批量改图和 X 魔法棒任务都会显示在这里</small></div><button type="button" class="btn btn-secondary" id="gxRecentRefresh">刷新</button></div>
+          <div class="gx-recent-head"><div><strong>最近任务</strong><small>批量改图和 X 魔法棒任务都会显示在这里</small></div><div class="gx-recent-actions"><button type="button" class="btn btn-secondary" id="gxRecentRefresh">刷新</button><button type="button" class="btn btn-danger" id="gxRecentClear" disabled>一键清空</button></div></div>
           <div class="gx-recent-list" id="gxRecentTasks" role="status" aria-live="polite">点击“最近任务”加载记录。</div>
         </div>
       </div>
@@ -8763,7 +8776,7 @@ textarea:focus-visible,
           <span class="sk-update-title">版本与服务</span>
           <span class="sk-update-desc">检查代码更新，或重新加载当前服务</span>
         </div>
-        <span class="sk-version-text">当前 <strong id="settingsVersion">v1.3.7</strong></span>
+        <span class="sk-version-text">当前 <strong id="settingsVersion">v1.4.7</strong></span>
       </div>
       <div class="sk-update-row">
         <button class="btn btn-secondary" id="checkUpdateBtn" onclick="checkUpdate()">🔍 检查更新</button>
@@ -9763,10 +9776,26 @@ function displayOutfitStyle(e) {
   return isBaseModelStyle(style) ? "自定义" : style;
 }
 
+function isEditedGalleryEntry(e) {
+  if (!e || typeof e !== "object") return false;
+  if (isPrecisionImageEditEntry(e) || isExtensionEditEntry(e)) return true;
+  const comparison = e.image_comparison && typeof e.image_comparison === "object"
+    ? e.image_comparison
+    : null;
+  if (!comparison) return false;
+  return Boolean(
+    comparison.after
+    || (Array.isArray(comparison.edits) && comparison.edits.length)
+  );
+}
+
 function compareStyleFilterLabels(a, b) {
   const groupA = String(a || "").trim() === "群聊";
   const groupB = String(b || "").trim() === "群聊";
   if (groupA !== groupB) return groupA ? 1 : -1;
+  const editA = String(a || "").trim() === "改图";
+  const editB = String(b || "").trim() === "改图";
+  if (editA !== editB) return editA ? -1 : 1;
   const settingA = String(a || "").trim() === "设定图";
   const settingB = String(b || "").trim() === "设定图";
   if (settingA !== settingB) return settingA ? 1 : -1;
@@ -10095,6 +10124,7 @@ function matchesOutfitStyleFilter(e, filterLower) {
 function matchesGalleryTagFilter(e, filterValue) {
   const filterLower = String(filterValue || "").trim().toLowerCase();
   if (!filterLower) return true;
+  if (filterLower === "改图" && isEditedGalleryEntry(e)) return true;
   if (matchesOutfitStyleFilter(e, filterLower)) return true;
   const tags = String((e && e.caption) || "").match(/#[^\s#]+/g) || [];
   return tags.some(tag => (
@@ -14020,11 +14050,16 @@ function renderGallery() {
     const styleSource = galleryStyles.length
       ? galleryStyles
       : allEntries.map(e => displayOutfitStyle(e));
-    const styles = [...new Set(styleSource.filter(Boolean))].sort(compareStyleFilterLabels);
+    // “改图” is a synthetic facet for grouped Qwen/extension edits. Keep it
+    // visible and highlighted even when the current page has no edited card,
+    // so users can always reach the edit-only view from the same first pill.
+    const styles = [...new Set(["改图", ...styleSource.filter(Boolean)])].sort(compareStyleFilterLabels);
     if (styles.length) {
       const stylePills = styles.map(s => {
         const active = currentTagFilter && currentTagFilter.toLowerCase() === s.toLowerCase();
-        return `<button type="button" class="style-pill${active ? ' active' : ''}" aria-pressed="${active ? 'true' : 'false'}" onclick="filterByTag(${jsStringArg(s)})">${escapeHtml(s)}</button>`;
+        const editClass = s === "改图" ? " edit-filter" : "";
+        const label = s === "改图" ? "✦ 改图" : escapeHtml(s);
+        return `<button type="button" class="style-pill${editClass}${active ? ' active' : ''}" aria-pressed="${active ? 'true' : 'false'}" aria-label="按${escapeAttr(s)}筛选" onclick="filterByTag(${jsStringArg(s)})">${label}</button>`;
       }).join('');
       const clearBtn = currentTagFilter ? `<button class="style-pill clear" onclick="clearFilter()">✕ 清除</button>` : '';
       headerHtml += `<div class="style-filter-bar" role="group" aria-label="按风格筛选">${stylePills}${clearBtn}</div>`;

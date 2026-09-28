@@ -10664,6 +10664,25 @@ class GalleryServer:
             return "自定义"
         return raw_style
 
+    @staticmethod
+    def _gallery_entry_is_image_edit(entry: dict) -> bool:
+        """Return whether an entry represents an image-edit result.
+
+        Extension results historically used ``chrome_extension`` as their
+        source, while API edits use ``image_edit``.  Grouped comparison cards
+        are handled by inspecting their nested ``edits``/``after`` payloads.
+        """
+        if not isinstance(entry, dict):
+            return False
+        source = str(entry.get("source") or "").strip().casefold()
+        if source in {"image_edit", "chrome_extension"}:
+            return True
+        for key in ("generation_type", "schedule_edit_source", "edit_source"):
+            value = str(entry.get(key) or "").strip().casefold()
+            if value in {"image_edit", "chrome_extension"}:
+                return True
+        return bool(entry.get("image_comparison"))
+
     @classmethod
     def _gallery_entry_style_labels(cls, entry: dict) -> set[str]:
         """Return display style labels for a card and any grouped edits."""
@@ -10673,6 +10692,8 @@ class GalleryServer:
         label = cls._gallery_style_label(entry)
         if label:
             labels.add(label)
+        if cls._gallery_entry_is_image_edit(entry):
+            labels.add("改图")
         comparison = entry.get("image_comparison") or {}
         grouped = list(comparison.get("edits") or [])
         if comparison.get("after"):
@@ -10681,6 +10702,8 @@ class GalleryServer:
             label = cls._gallery_style_label(edit)
             if label:
                 labels.add(label)
+            if cls._gallery_entry_is_image_edit(edit):
+                labels.add("改图")
         return labels
 
     @classmethod
@@ -10692,6 +10715,8 @@ class GalleryServer:
         display_style = cls._gallery_style_label(entry)
         if raw_style.casefold() == needle or display_style.casefold() == needle:
             return True
+        if needle == "改图" and cls._gallery_entry_is_image_edit(entry):
+            return True
         # Qwen edits are grouped into their source card and hidden as
         # top-level entries.  Match the card when any grouped edit carries
         # the requested provenance/style (notably X), otherwise filtering
@@ -10701,6 +10726,8 @@ class GalleryServer:
         if comparison.get("after"):
             grouped.append(comparison["after"])
         for edit in grouped:
+            if needle == "改图" and cls._gallery_entry_is_image_edit(edit):
+                return True
             if cls._gallery_style_label(edit).casefold() == needle:
                 return True
             edit_style = str(edit.get("outfit_style") or "").strip()
@@ -10722,7 +10749,7 @@ class GalleryServer:
             for entry in all_entries
             for label in self._gallery_entry_style_labels(entry)
             if label
-        }, key=str.casefold)
+        }, key=lambda value: (0 if value == "改图" else 1, value.casefold()))
         entries = list(all_entries)
         favorites_only = request.query.get("favorites", "").lower() == "true"
         if favorites_only:

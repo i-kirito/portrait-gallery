@@ -1,7 +1,8 @@
 /* Gallery settings for the local Chrome extension. The page never receives X credentials. */
 (()=>{
   'use strict';
-  let extensionId='',lastSynced='',syncTimer=0,recentPollTimer=0,autoEnabled=true;
+  let extensionId='',lastSynced='',syncTimer=0,recentPollTimer=0,recentLoadBusy=false,recentRenderKey='',recentScrollVersion=0,recentModalScrollVersion=0,autoEnabled=true;
+  const recentPreviewCache=new Map(),recentPreviewInFlight=new Map();
   const MAX_BATCH=12,MAX_BYTES=10*1024*1024;
   const ALLOWED_TYPES=new Set(['image/jpeg','image/jpg','image/png','image/webp']);
   const P='/api/browser-extension';
@@ -73,13 +74,60 @@
     }
   }
   const recentStatus={submitting:'提交中',queued:'排队中',downloading:'读取原图',generating:'改图中',done:'已完成',error:'失败',unknown:'待核对',interrupted:'已中断'};
+  const recentJobId=job=>String(job?.localId||job?.request_id||job?.requestId||job?.id||'').trim();
   function recentJobName(job){return job.inputType==='upload'?(job.sourceName||'上传图片'):'X 图片改图';}
   function recentJobDetail(job){const label=recentStatus[job.status]||job.status||'未知状态';const when=job.createdAt?new Date(job.createdAt).toLocaleString():'刚刚';return `${label} · ${when}`;}
+  function openRecentPreview(src,target){if(typeof openFullscreenImg==='function')openFullscreenImg(src,target);else if(typeof openViewer==='function')openViewer(src);}
+  async function loadRecentPreview(job,row,meta,detail){
+    const jobId=recentJobId(job);
+    if(!jobId||row.querySelector('.gx-recent-preview'))return;
+    try{
+      let dataUrl=recentPreviewCache.get(jobId),pending=recentPreviewInFlight.get(jobId);
+      if(!dataUrl){
+        if(!pending){
+          pending=external({type:'RESULT',localId:jobId,kind:'image'}).then(result=>{
+            dataUrl=result.dataUrl;
+            if(typeof dataUrl!=='string'||!dataUrl.startsWith('data:image/'))throw new Error('改图结果格式无效。');
+            recentPreviewCache.set(jobId,dataUrl);return dataUrl;
+          });
+          recentPreviewInFlight.set(jobId,pending);
+        }
+        try{dataUrl=await pending;}finally{if(recentPreviewInFlight.get(jobId)===pending)recentPreviewInFlight.delete(jobId);}
+      }
+      const image=document.createElement('img');image.className='gx-recent-preview';image.alt='改后图';image.src=dataUrl;
+      image.title='点击放大查看';image.setAttribute('role','button');image.setAttribute('tabindex','0');image.setAttribute('aria-label','点击放大查看改后图');
+      image.addEventListener('click',()=>openRecentPreview(dataUrl,image));
+      image.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();openRecentPreview(dataUrl,image);}});
+      row.insertBefore(image,meta);
+    }catch(error){
+      if(detail)detail.textContent=`${recentJobDetail(job)} · ${error.message}`;
+    }
+  }
   async function loadRecentTasks(){
     const box=el('gxRecentTasks');if(!box)return;
-    box.textContent='正在加载最近任务…';
+    const clearButton=el('gxRecentClear');
+    if(recentLoadBusy)return;
+    recentLoadBusy=true;
+    if(!box.dataset.scrollBound){
+      box.addEventListener('scroll',()=>{recentScrollVersion++;},{passive:true});
+      box.dataset.scrollBound='1';
+    }
+    const modal=document.querySelector('#skOverlay .sk-modal');
+    if(modal&&!modal.dataset.recentScrollBound){
+      modal.addEventListener('scroll',()=>{recentModalScrollVersion++;},{passive:true});
+      modal.dataset.recentScrollBound='1';
+    }
+    const modalScroll=modal?.scrollTop||0;
+    const previousScroll=box.scrollTop;
+    const scrollVersion=recentScrollVersion,modalScrollVersion=recentModalScrollVersion;
+    if(!box.children.length)box.textContent='正在加载最近任务…';
     try{
       const r=await external({type:'JOBS'}),jobs=(r.jobs||[]).slice().sort((a,b)=>Number(b.updatedAt||b.createdAt||0)-Number(a.updatedAt||a.createdAt||0)).slice(0,12);
+      if(clearButton)clearButton.disabled=!jobs.length;
+      const renderKey=jobs.map(job=>[recentJobId(job),job.status,job.updatedAt||job.createdAt||'',job.message||'',job.result?.saved_to_gallery?'saved':''].join('|')).join('\n');
+      box.querySelector('.gx-recent-error')?.remove();
+      if(renderKey===recentRenderKey&&box.children.length)return;
+      recentRenderKey=renderKey;
       box.replaceChildren();
       if(!jobs.length){const empty=document.createElement('div');empty.className='gx-recent-empty';empty.textContent='暂无任务。提交批量图片或在 X 上点击魔法棒后会显示在这里。';box.append(empty);return;}
       jobs.forEach(job=>{
@@ -88,15 +136,38 @@
         const name=document.createElement('span');name.className='gx-recent-name';name.textContent=recentJobName(job);
         const detail=document.createElement('span');detail.className='gx-recent-detail';detail.textContent=job.message||recentJobDetail(job);
         meta.append(name,detail);row.append(meta);
-        if(job.status==='done'&&job.inputType==='upload'){
-          const view=document.createElement('button');view.type='button';view.className='btn btn-secondary';view.textContent='查看改图';
-          view.addEventListener('click',async()=>{view.disabled=true;view.textContent='加载中…';try{const result=await external({type:'RESULT',localId:job.localId,kind:'image'});const image=document.createElement('img');image.className='gx-recent-preview';image.alt='改后图';image.src=result.dataUrl;meta.append(image);view.remove();}catch(error){view.disabled=false;view.textContent='查看改图';detail.textContent=error.message;}});row.append(view);
+        const actions=document.createElement('div');actions.className='gx-recent-item-actions';
+        const remove=document.createElement('button');remove.type='button';remove.className='btn btn-secondary gx-recent-delete';remove.textContent='删除';remove.title='删除这条最近任务记录';
+        remove.addEventListener('click',async()=>{
+          const confirmed=typeof confirmDeleteAction==='function'?await confirmDeleteAction({title:'删除这条任务记录？',description:'只会清理扩展的最近任务记录，不会删除已保存到画廊的图片。',confirmLabel:'删除',returnFocusTarget:remove}):confirm('删除这条任务记录？已保存到画廊的图片不会删除。');
+          if(!confirmed)return;
+          remove.disabled=true;
+          try{await external({type:'DELETE_JOB',localId:recentJobId(job)});recentPreviewCache.delete(recentJobId(job));recentPreviewInFlight.delete(recentJobId(job));recentRenderKey='';await loadRecentTasks();status('已删除最近任务记录。','ok');}
+          catch(error){remove.disabled=false;detail.textContent=`${recentJobDetail(job)} · ${error.message}`;status(error.message,'error');}
+        });
+        actions.append(remove);
+        if(job.status==='done'){
+          const save=document.createElement('button');save.type='button';save.className='btn btn-primary';save.textContent=job.result?.saved_to_gallery?'已保存':'保存到画廊';
+          save.disabled=Boolean(job.result?.saved_to_gallery);actions.append(save);
+          save.addEventListener('click',async()=>{save.disabled=true;save.textContent='保存中…';try{const result=await external({type:'SAVE_RESULT',localId:recentJobId(job)});save.textContent='已保存';detail.textContent=result.job?.message||'已保存到画廊';}catch(error){save.disabled=false;save.textContent='保存到画廊';detail.textContent=`${recentJobDetail(job)} · ${error.message}`;}});
+          if(job.sourceUrl){const open=document.createElement('button');open.type='button';open.className='btn btn-secondary';open.textContent='打开原帖';open.addEventListener('click',()=>window.open(job.sourceUrl,'_blank','noopener,noreferrer'));actions.append(open);}
+          loadRecentPreview(job,row,meta,detail);
         }else if(job.sourceUrl){
-          const open=document.createElement('button');open.type='button';open.className='btn btn-secondary';open.textContent='打开原帖';open.addEventListener('click',()=>window.open(job.sourceUrl,'_blank','noopener,noreferrer'));row.append(open);
+          const open=document.createElement('button');open.type='button';open.className='btn btn-secondary';open.textContent='打开原帖';open.addEventListener('click',()=>window.open(job.sourceUrl,'_blank','noopener,noreferrer'));actions.append(open);
         }
+        row.append(actions);
         box.append(row);
       });
-    }catch(error){box.textContent=`无法读取最近任务：${error.message}`;}
+      requestAnimationFrame(()=>{if(recentScrollVersion===scrollVersion)box.scrollTop=previousScroll;if(modal&&recentModalScrollVersion===modalScrollVersion)modal.scrollTop=modalScroll;});
+    }catch(error){
+      const message=`无法读取最近任务：${error.message}`;
+      if(box.children.length){
+        let note=box.querySelector('.gx-recent-error');
+        if(!note){note=document.createElement('div');note.className='gx-recent-error';box.prepend(note);}
+        note.textContent=message;
+      }else box.textContent=message;
+    }
+    finally{recentLoadBusy=false;}
   }
   window.loadBrowserExtensionSettings=async()=>{
     try{
@@ -122,6 +193,14 @@
     el('gxBatchSubmit')?.addEventListener('click',async()=>{try{await batchGalleryImages();}catch(e){if(el('gxBatchStatus'))el('gxBatchStatus').textContent=e.message;status(e.message,'error');updateBatchSelection();}});
     el('gxRecentToggle')?.addEventListener('click',()=>{const panel=el('gxRecentPanel'),button=el('gxRecentToggle');if(!panel||!button)return;const open=panel.hidden;panel.hidden=!open;button.setAttribute('aria-expanded',String(open));if(open){loadRecentTasks();clearInterval(recentPollTimer);recentPollTimer=setInterval(()=>{if(!panel.hidden)loadRecentTasks();},5000);}else{clearInterval(recentPollTimer);recentPollTimer=0;}});
     el('gxRecentRefresh')?.addEventListener('click',loadRecentTasks);
+    el('gxRecentClear')?.addEventListener('click',async event=>{
+      const button=event.currentTarget;
+      const confirmed=typeof confirmDeleteAction==='function'?await confirmDeleteAction({title:'清空最近任务？',description:'只会清理当前扩展的任务记录，不会删除已保存到画廊的图片。',confirmLabel:'一键清空',returnFocusTarget:button}):confirm('清空最近任务？已保存到画廊的图片不会删除。');
+      if(!confirmed)return;
+      button.disabled=true;
+      try{const result=await external({type:'CLEAR_JOBS'});recentPreviewCache.clear();recentPreviewInFlight.clear();recentRenderKey='';await loadRecentTasks();status(`已清空 ${result.cleared||0} 条最近任务记录。`,'ok');}
+      catch(error){button.disabled=false;status(error.message,'error');}
+    });
     el('gxCopyExtensions')?.addEventListener('click',()=>copy('chrome://extensions').then(()=>status('已复制。粘贴到 Chrome 地址栏打开。'),e=>status(e.message,'error')));
     el('gxImportPrompt')?.addEventListener('click',()=>{const state=typeof readCustomGenState==='function'?readCustomGenState():{};const current=document.getElementById('cgPrompt')?.value||state.prompt||'';el('gxPrompt').value=current;status(current?'已填入画廊魔法棒提示词，请保存。':'请先在“穿搭生成”填写修改要求。',current?'ok':'warn');});
     el('gxRevoke')?.addEventListener('click',async()=>{if(autoEnabled){const yes=typeof confirmDeleteAction==='function'?await confirmDeleteAction({title:'停用扩展连接？',description:'扩展将不能自动连接、提交或查询任务，画廊图片不会删除。',confirmLabel:'停用连接'}):confirm('停用扩展连接？');if(!yes)return;}try{await api({operation:autoEnabled?'revoke':'enable_auto_connect'});await window.loadBrowserExtensionSettings();status(autoEnabled?'已启用自动连接。':'已停用扩展连接。','ok');}catch(e){status(e.message,'error');}});

@@ -3,12 +3,23 @@
 importScripts('shared.js','connection.js');
 const trustedReady = chrome.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});
 let submitChain = Promise.resolve(), storageChain = Promise.resolve();
+const deletedLocalIds=new Set();
 const apiOrigin = value => GalleryX.galleryOrigin(value);
 const terminalStatuses = new Set(['done','error','interrupted']);
 function recordWithMediaKey(record){
   const next={...record};
+  // Older task records may predate localId. Reuse their stable server/request
+  // identifier so they remain viewable, deletable, and cacheable after an
+  // extension upgrade.
+  if(!next.localId){
+    const legacyId=next.request_id||next.requestId||next.id;
+    if(typeof legacyId==='string'&&legacyId.trim())next.localId=legacyId.trim();
+  }
   if(!next.mediaKey&&next.mediaUrl)next.mediaKey=GalleryX.mediaKey(next.mediaUrl);
   return next;
+}
+function jobIdentity(job){
+  return String(job?.localId||job?.request_id||job?.requestId||job?.id||'').trim();
 }
 function jobMediaKey(job){
   return job?.mediaKey||GalleryX.mediaKey(job?.mediaUrl||'');
@@ -25,6 +36,7 @@ async function connectResult(options={}) {
   return {success:true,connected:true,baseUrl:cfg.baseUrl,connectionMode:cfg.connectionMode};
 }
 async function writeJob(record) {
+  if(record?.localId&&deletedLocalIds.has(record.localId))return;
   const cfg=await settings(),jobs=Array.isArray(cfg.jobs)?cfg.jobs:[];
   const next=recordWithMediaKey({...record,updatedAt:Date.now()});
   const i=jobs.findIndex(j=>j.localId===next.localId);
@@ -35,9 +47,7 @@ async function writeJob(record) {
   await chrome.storage.local.set({jobs});
 }
 function saveJob(record) {
-  const saved=storageChain.then(()=>writeJob(record));
-  storageChain=saved.catch(()=>{});
-  return saved;
+  return queueStorage(()=>writeJob(record));
 }
 async function submit(message,sender) {
   const mediaUrl=GalleryX.mediaUrl(message.mediaUrl),sourceUrl=GalleryX.postUrl(message.sourceUrl||''),sourceText=sourceTextValue(message.sourceText);
@@ -120,6 +130,55 @@ async function refreshJob(localId,force=false) {
     await saveJob(fresh);return fresh;
   } catch(e) {return {...record,connectionError:e.message};}
 }
+async function jobsSnapshot() {
+  const cfg=await settings(),rawJobs=Array.isArray(cfg.jobs)?cfg.jobs:[];
+  const jobs=rawJobs.map(recordWithMediaKey);
+  if(jobs.some((job,index)=>job.localId!==rawJobs[index]?.localId))await replaceStoredJobs(jobs,cfg);
+  await Promise.all(jobs
+    // Refresh every non-terminal record, including statuses written by older
+    // extension builds, so a completed upload cannot remain stuck forever.
+    .filter(job=>job?.id&&!terminalStatuses.has(job.status))
+    .map(job=>refreshJob(job.localId).catch(()=>job)));
+  const fresh=await settings();
+  return (fresh.jobs||[]).map(({tabId,...job})=>recordWithMediaKey(job));
+}
+function validLocalId(value){return typeof value==='string'&&value.length>0&&value.length<=120;}
+// Recent-task deletion is intentionally local-only: server jobs may still finish,
+// while saved gallery images must never be removed by clearing extension history.
+function queueStorage(work){const run=storageChain.then(work);storageChain=run.catch(()=>{});return run;}
+async function replaceStoredJobs(next,cfg){
+  const saved={jobs:next};
+  if(cfg?.baseUrl&&cfg.jobsByGallery&&typeof cfg.jobsByGallery==='object'&&!Array.isArray(cfg.jobsByGallery))
+    saved.jobsByGallery={...cfg.jobsByGallery,[cfg.baseUrl]:next};
+  await chrome.storage.local.set(saved);
+}
+async function deleteStoredJob(localId){
+  if(!validLocalId(localId))throw new Error('任务编号无效。');
+  const key=String(localId).trim();
+  deletedLocalIds.add(key);
+  return queueStorage(async()=>{
+    const cfg=await settings(),jobs=Array.isArray(cfg.jobs)?cfg.jobs:[];
+    const removed=jobs.filter(job=>jobIdentity(job)===key);
+    const remaining=jobs.filter(job=>jobIdentity(job)!==key);
+    if(!removed.length){
+      // Deletion is idempotent: a polling refresh may have removed/migrated
+      // the row between rendering and confirmation. Treat that stale click as
+      // success instead of surfacing a misleading “record not found” error.
+      return {success:true,localId:key,remaining:jobs.length,alreadyDeleted:true};
+    }
+    removed.forEach(job=>{const id=jobIdentity(job);if(id)deletedLocalIds.add(id);});
+    await replaceStoredJobs(remaining,cfg);
+    return {success:true,localId:key,remaining:remaining.length};
+  });
+}
+async function clearStoredJobs(){
+  return queueStorage(async()=>{
+    const cfg=await settings(),jobs=Array.isArray(cfg.jobs)?cfg.jobs:[];
+    jobs.forEach(job=>{const id=jobIdentity(job);if(id)deletedLocalIds.add(id);});
+    await replaceStoredJobs([],cfg);
+    return {success:true,cleared:jobs.length};
+  });
+}
 async function imageData(localId,kind) {
   if(!['image','source'].includes(kind))throw new Error('invalid image kind');
   const cfg=await settings(),job=(cfg.jobs||[]).find(j=>j.localId===localId&&j.status==='done');
@@ -129,6 +188,25 @@ async function imageData(localId,kind) {
   let binary='';for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));
   return 'data:image/png;base64,'+btoa(binary);
 }
+async function saveResult(localId) {
+  const cfg=await settings(),record=(cfg.jobs||[]).find(j=>j.localId===localId);
+  if(!record?.id||!/^[a-f0-9]{32}$/.test(record.id))throw new Error('任务尚未提交完成。');
+  const saved=await api('/jobs/'+record.id+'/save',{method:'POST'});
+  const job=await saved.json();
+  const refreshed=await refreshJob(localId,true),serverJob=job.job||job;
+  const updated=recordWithMediaKey({...record,...refreshed,...serverJob,result:{...(record.result||{}),...(serverJob.result||{}),saved_to_gallery:true}});
+  await saveJob(updated);
+  return {success:true,job:updated};
+}
+function sanitizeViewStates(states){
+  if(!states||typeof states!=='object'||Array.isArray(states))return {};
+  return Object.fromEntries(Object.entries(states).slice(-200).filter(([key,state])=>/^[\w-]{1,120}$/.test(key)&&state&&typeof state==='object'&&typeof state.jobId==='string'&&state.jobId.length<=120).map(([key,state])=>[key,{jobId:state.jobId,originalVisible:state.originalVisible===true,updatedAt:Number(state.updatedAt)||Date.now()}]));
+}
+async function getViewStates(){
+  await trustedReady;
+  const stored=await chrome.storage.local.get('gqxViewStates');
+  return stored?.gqxViewStates&&typeof stored.gqxViewStates==='object'&&!Array.isArray(stored.gqxViewStates)?stored.gqxViewStates:{};
+}
 function ownPage(sender){return sender.id===chrome.runtime.id&&sender.url?.startsWith(chrome.runtime.getURL(''));}
 function xPage(sender){try{return sender.id===chrome.runtime.id&&new URL(sender.url).protocol==='https:'&&GalleryX.X_HOSTS.includes(new URL(sender.url).hostname)&&sender.tab?.id!=null;}catch{return false;}}
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
@@ -136,6 +214,16 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
     if(!message||typeof message!=='object')throw new Error('invalid message');
     const internal=ownPage(sender),fromX=xPage(sender);
     if(!internal&&!fromX)throw new Error('此页面不允许使用扩展。');
+    if(message.type==='VIEW_STATE_GET'){
+      if(!fromX)throw new Error('此页面不允许读取显示偏好。');
+      return {success:true,states:await getViewStates()};
+    }
+    if(message.type==='VIEW_STATE_SET'){
+      if(!fromX)throw new Error('此页面不允许保存显示偏好。');
+      await trustedReady;
+      await chrome.storage.local.set({gqxViewStates:sanitizeViewStates(message.states)});
+      return {success:true};
+    }
     switch(message.type){
       case 'GENERATE':
         if(!fromX)throw new Error('请选择 X 帖子图片。');
@@ -143,20 +231,12 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
       case 'BATCH_GENERATE':
         if(!internal)throw new Error('批量上传只允许从扩展弹窗发起。');
         const uploadRun=submitChain.then(()=>submitUpload(message,sender));submitChain=uploadRun.catch(()=>{});return await uploadRun;
-      case 'JOBS': {const cfg=await settings();return {success:true,connected:!!cfg.token,jobs:(cfg.jobs||[]).map(({tabId,...j})=>recordWithMediaKey(j))};}
+      case 'JOBS': {const cfg=await settings();return {success:true,connected:!!cfg.token,jobs:await jobsSnapshot()};}
+      case 'DELETE_JOB':return await deleteStoredJob(message.localId);
+      case 'CLEAR_JOBS':return await clearStoredJobs();
       case 'STATUS':return {success:true,job:await refreshJob(message.localId)};
       case 'RESULT':return {success:true,dataUrl:await imageData(message.localId,message.kind||'image')};
-      case 'SAVE_RESULT': {
-        const cfg=await settings(),record=(cfg.jobs||[]).find(j=>j.localId===message.localId);
-        if(!record?.id||!/^[a-f0-9]{32}$/.test(record.id))throw new Error('任务尚未提交完成。');
-        const saved=await api('/jobs/'+record.id+'/save',{method:'POST'});
-        const job=await saved.json();
-        const refreshed=await refreshJob(message.localId,true);
-        const serverJob=job.job||job;
-        const updated=recordWithMediaKey({...record,...refreshed,...serverJob,result:{...(record.result||{}),...(serverJob.result||{}),saved_to_gallery:true}});
-        await saveJob(updated);
-        return {success:true,job:updated};
-      }
+      case 'SAVE_RESULT':return await saveResult(message.localId);
       case 'OPEN_RESULT': {const cfg=await settings();if(!(cfg.jobs||[]).some(j=>j.localId===message.localId))throw new Error('任务不存在');await chrome.tabs.create({url:chrome.runtime.getURL('result.html')+'?job='+encodeURIComponent(message.localId)});return {success:true};}
       case 'OPEN_SOURCE': {const cfg=await settings(),record=(cfg.jobs||[]).find(j=>j.localId===message.localId),source=record?.sourceUrl||'';if(!/^https:\/\/(?:www\.)?(?:x|twitter)\.com\/[A-Za-z0-9_]{1,50}\/status\/\d+$/.test(source))throw new Error('任务没有关联的 X 原帖。');await chrome.tabs.create({url:source});return {success:true};}
       case 'OPEN_GALLERY': {const cfg=await settings();await chrome.tabs.create({url:apiOrigin(cfg.baseUrl||'http://127.0.0.1:18889')});return {success:true};}
@@ -171,8 +251,11 @@ chrome.runtime.onMessageExternal.addListener((message,sender,respond)=>{
     if(message?.type==='PING')return {success:true,version:chrome.runtime.getManifest().version,connected:!!cfg.token};
     if(message?.type==='CONNECT'&&base===apiOrigin(message.baseUrl))return connectResult({baseUrl:base,explicit:true});
     if(cfg.baseUrl&&apiOrigin(cfg.baseUrl)!==base)throw new Error('当前画廊不是扩展已连接的地址。');
-    if(message?.type==='JOBS')return {success:true,connected:!!cfg.token,jobs:(cfg.jobs||[]).map(({tabId,...j})=>recordWithMediaKey(j))};
+    if(message?.type==='JOBS')return {success:true,connected:!!cfg.token,jobs:await jobsSnapshot()};
+    if(message?.type==='DELETE_JOB')return await deleteStoredJob(message.localId);
+    if(message?.type==='CLEAR_JOBS')return await clearStoredJobs();
     if(message?.type==='RESULT')return {success:true,dataUrl:await imageData(message.localId,message.kind||'image')};
+    if(message?.type==='SAVE_RESULT')return await saveResult(message.localId);
     if(message?.type==='BATCH_GENERATE'){
       const page=new URL(sender.url),pageBase=apiOrigin(page.origin);
       if(cfg.baseUrl&&apiOrigin(cfg.baseUrl)!==pageBase)throw new Error('批量上传只能从当前已连接的画廊发起。');

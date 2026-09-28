@@ -1,6 +1,6 @@
 # 🎀 Portrait Gallery
 
-当前版本：**v1.4.6**
+当前版本：**v1.4.7**
 
 > AI 穿搭生图 & 个人画廊系统 —— 让 AI 每天为你量身定制穿搭方案并自动生成写真
 
@@ -96,7 +96,7 @@ curl http://localhost:18889/api/health
 如果要使用已经发布到 Docker Hub/GHCR 的镜像，通过 `PORTRAIT_GALLERY_IMAGE` 指定：
 
 ```bash
-PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.4.6 docker compose up -d
+PORTRAIT_GALLERY_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery:1.4.7 docker compose up -d
 curl http://localhost:18889/api/health
 ```
 
@@ -147,7 +147,7 @@ docker compose up -d
    如使用已发布镜像而不是在服务器上构建源码，可指定与画廊版本相同的镜像标签：
 
    ```bash
-   SOCIAL_HUB_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery-social-hub:1.4.6 \
+   SOCIAL_HUB_IMAGE=REGISTRY_OR_USER/hermes-portrait-gallery-social-hub:1.4.7 \
      docker compose -f docker-compose.social-hub.yaml up -d
    ```
 
@@ -422,6 +422,14 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **⚙️ 设置** — Web UI 管理 API 密钥、三级 LLM 模型链、Gitee 回退、日程风格和升级选项
 
 ## 🧾 Release Notes
+
+### v1.4.7
+
+- 完成 Chrome 扩展与画廊内置设置整合，支持 X 图片原地改图、恢复原图、重抽、放大预览与运行状态反馈。
+- 扩展任务缓存与原图/改后图显示偏好持久化，刷新后保持用户选择，避免跳转到扩展独立页面。
+- 新增批量上传改图、最近任务预览/放大/保存到画廊，修复批量任务卡住、结果刷新丢失和滚动查看问题。
+- 完善画廊对比图交互：改后图预加载、删除时同步清理、端点遮罩持久化，以及双击全部恢复分割线居中。
+- 优化人物提示词与镜头互动约束，保留动作优先的自然视线与姿态表现。
 
 ### v1.4.6
 

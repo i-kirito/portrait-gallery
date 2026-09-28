@@ -143,6 +143,84 @@ class ComparisonApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(items[0]['image_comparison']['edit_count'],2)
         self.assertEqual(len(self.server._load_all_entries(group_edits=False)),3)
 
+    async def test_delete_source_also_removes_explicitly_linked_qwen_edits(self):
+        response = await self.server.handle_delete_image(
+            SimpleNamespace(match_info={'img_id': 'original.png'})
+        )
+        payload = json.loads(response.text)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(payload['deleted_related_count'], 1)
+        self.assertEqual(set(payload['deleted_image_filenames']), {'original.png', 'edited.png'})
+        self.assertFalse((self.image_dir / 'original.png').exists())
+        self.assertFalse((self.image_dir / 'edited.png').exists())
+        self.assertEqual({}, ScheduleStore(self.server.data_dir).load())
+        self.assertEqual({}, ImageMetadataStore(self.server.data_dir).load())
+
+    async def test_delete_source_cascades_chain_and_ignores_secondary_or_unsafe_refs(self):
+        for name in ('chained.png', 'secondary.png', 'unsafe.png'):
+            Image.new('RGB', (24, 32), 'blue').save(self.image_dir / name)
+        store = ScheduleStore(self.server.data_dir)
+        store.update(lambda entries: {
+            **entries,
+            'chained.png': {
+                'image_filename': 'chained.png',
+                'status': 'ok',
+                'model_name': 'qwen-image-2.1-Q8_0',
+                'generation_mode': 'img2img',
+                'ref_image_path': str(self.image_dir / 'edited.png'),
+            },
+            'secondary.png': {
+                'image_filename': 'secondary.png',
+                'status': 'ok',
+                'model_name': 'qwen-image-2.1-Q8_0',
+                'generation_mode': 'img2img',
+                'ref_images': ['/local-refs/face.png', '/images/original.png'],
+            },
+            'unsafe.png': {
+                'image_filename': 'unsafe.png',
+                'status': 'ok',
+                'model_name': 'qwen-image-2.1-Q8_0',
+                'generation_mode': 'img2img',
+                'ref_image_path': '/etc/original.png',
+            },
+        })
+        ImageMetadataStore(self.server.data_dir).update(lambda metadata: {
+            **metadata,
+            'chained.png': {
+                'model': 'qwen-image-2.1-Q8_0',
+                'generation_mode': 'img2img',
+            },
+            'secondary.png': {
+                'model': 'qwen-image-2.1-Q8_0',
+                'generation_mode': 'img2img',
+            },
+            'unsafe.png': {
+                'model': 'qwen-image-2.1-Q8_0',
+                'generation_mode': 'img2img',
+            },
+        })
+
+        response = await self.server.handle_delete_image(
+            SimpleNamespace(match_info={'img_id': 'original.png'})
+        )
+        payload = json.loads(response.text)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(payload['deleted_related_count'], 2)
+        self.assertEqual(
+            set(payload['deleted_image_filenames']),
+            {'original.png', 'edited.png', 'chained.png'},
+        )
+        remaining_entries = ScheduleStore(self.server.data_dir).load()
+        self.assertEqual({'secondary.png', 'unsafe.png'}, set(remaining_entries))
+        remaining = ImageMetadataStore(self.server.data_dir).load()
+        self.assertNotIn('original.png', remaining)
+        self.assertNotIn('edited.png', remaining)
+        self.assertNotIn('chained.png', remaining)
+        self.assertIn('secondary.png', remaining)
+        self.assertIn('unsafe.png', remaining)
+        self.assertTrue((self.image_dir / 'secondary.png').exists())
+        self.assertTrue((self.image_dir / 'unsafe.png').exists())
+
     async def test_grouped_x_edit_is_in_style_facets_and_filter(self):
         ImageMetadataStore(self.server.data_dir).update(
             lambda m: {
@@ -159,6 +237,25 @@ class ComparisonApiTests(unittest.IsolatedAsyncioTestCase):
         )
         payload = json.loads(response.text)
         self.assertIn('X', payload['styles'])
+        self.assertEqual(payload['total'], 1)
+        self.assertEqual(payload['items'][0]['image_filename'], 'original.png')
+
+    async def test_image_edit_style_facet_is_available_and_pinned_first(self):
+        ImageMetadataStore(self.server.data_dir).update(
+            lambda m: {
+                **m,
+                'edited.png': {
+                    **m['edited.png'],
+                    'source': 'image_edit',
+                },
+            }
+        )
+        response = await self.server.handle_gallery(
+            SimpleNamespace(query={'limit': '20', 'style': '改图'})
+        )
+        payload = json.loads(response.text)
+        self.assertEqual(payload['styles'][0], '改图')
+        self.assertIn('改图', payload['styles'])
         self.assertEqual(payload['total'], 1)
         self.assertEqual(payload['items'][0]['image_filename'], 'original.png')
 
