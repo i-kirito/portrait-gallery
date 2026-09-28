@@ -2,7 +2,7 @@
 (()=>{
   'use strict';
   let extensionId='',lastSynced='',syncTimer=0,recentPollTimer=0,recentLoadBusy=false,recentLoadPending=false,recentRenderKey='',recentScrollVersion=0,recentModalScrollVersion=0,autoEnabled=true;
-  const recentPreviewCache=new Map(),recentPreviewInFlight=new Map();
+  const recentPreviewCache=new Map(),recentPreviewInFlight=new Map(),recentResultKeys=new Map();
   const MAX_BATCH=12,MAX_BYTES=10*1024*1024;
   const ALLOWED_TYPES=new Set(['image/jpeg','image/jpg','image/png','image/webp']);
   const P='/api/browser-extension';
@@ -82,8 +82,21 @@
   }
   const recentStatus={submitting:'提交中',queued:'排队中',downloading:'读取原图',generating:'改图中',done:'已完成',error:'失败',unknown:'待核对',interrupted:'已中断'};
   const recentJobId=job=>String(job?.localId||job?.request_id||job?.requestId||job?.id||'').trim();
-  function recentJobName(job){return job.inputType==='upload'?(job.sourceName||'上传图片'):'X 图片改图';}
-  function recentJobDetail(job){const label=recentStatus[job.status]||job.status||'未知状态';const when=job.createdAt?new Date(job.createdAt).toLocaleString():'刚刚';return `${label} · ${when}`;}
+  function recentTimestamp(value){
+    if(typeof value==='number'&&Number.isFinite(value))return value;
+    const text=String(value??'').trim();if(!text)return 0;
+    const numeric=Number(text);if(Number.isFinite(numeric)&&numeric>0)return numeric<1e12?numeric*1000:numeric;
+    const parsed=Date.parse(text);return Number.isFinite(parsed)?parsed:0;
+  }
+  function recentJobTime(job){return recentTimestamp(job?.updatedAt??job?.updated_at??job?.createdAt??job?.created_at);}
+  function recentResultKey(job){
+    const result=job?.result&&typeof job.result==='object'?job.result:{};
+    return [result.filename||'',result.saved_filename||'',result.comfy_prompt_id||'',result.width||'',result.height||'',result.updated_at||result.updatedAt||''].join('|');
+  }
+  function recentInputType(job){return String(job?.inputType||job?.input_type||'x').toLowerCase();}
+  function recentSourceUrl(job){return String(job?.sourceUrl||job?.source_url||'').trim();}
+  function recentJobName(job){return recentInputType(job)==='upload'?(job.sourceName||job.source_name||'上传图片'):'X 图片改图';}
+  function recentJobDetail(job){const label=recentStatus[job.status]||job.status||'未知状态';const timestamp=recentTimestamp(job?.createdAt??job?.created_at);const when=timestamp?new Date(timestamp).toLocaleString():'刚刚';return `${label} · ${when}`;}
   function openRecentPreview(src,target){if(typeof openFullscreenImg==='function')openFullscreenImg(src,target);else if(typeof openViewer==='function')openViewer(src);}
   async function loadRecentPreview(job,row,meta,detail){
     const jobId=recentJobId(job);
@@ -132,9 +145,17 @@
     const scrollVersion=recentScrollVersion,modalScrollVersion=recentModalScrollVersion;
     if(!box.children.length)box.textContent='正在加载最近任务…';
     try{
-      const r=await external({type:'JOBS'}),jobs=(r.jobs||[]).slice().sort((a,b)=>Number(b.updatedAt||b.createdAt||0)-Number(a.updatedAt||a.createdAt||0)).slice(0,12);
+      const r=await external({type:'JOBS'}),jobs=(r.jobs||[]).slice().sort((a,b)=>recentJobTime(b)-recentJobTime(a)).slice(0,12);
       if(clearButton)clearButton.disabled=!jobs.length;
-      const renderKey=jobs.map(job=>[recentJobId(job),job.status,job.updatedAt||job.createdAt||'',job.message||'',job.result?.saved_to_gallery?'saved':''].join('|')).join('\n');
+      const activeIds=new Set();
+      jobs.forEach(job=>{
+        const id=recentJobId(job);if(!id)return;activeIds.add(id);
+        const resultKey=recentResultKey(job);
+        if(recentResultKeys.has(id)&&recentResultKeys.get(id)!==resultKey){recentPreviewCache.delete(id);recentPreviewInFlight.delete(id);}
+        recentResultKeys.set(id,resultKey);
+      });
+      for(const id of recentResultKeys.keys())if(!activeIds.has(id)){recentResultKeys.delete(id);recentPreviewCache.delete(id);recentPreviewInFlight.delete(id);}
+      const renderKey=jobs.map(job=>[recentJobId(job),job.status,job.updatedAt||job.updated_at||job.createdAt||job.created_at||'',job.message||'',recentResultKey(job),job.result?.saved_to_gallery?'saved':''].join('|')).join('\n');
       box.querySelector('.gx-recent-error')?.remove();
       if(renderKey===recentRenderKey&&box.children.length)return;
       recentRenderKey=renderKey;
@@ -160,10 +181,10 @@
           const save=document.createElement('button');save.type='button';save.className='btn btn-primary';save.textContent=job.result?.saved_to_gallery?'已保存':'保存到画廊';
           save.disabled=Boolean(job.result?.saved_to_gallery);actions.append(save);
           save.addEventListener('click',async()=>{save.disabled=true;save.textContent='保存中…';try{const result=await external({type:'SAVE_RESULT',localId:recentJobId(job)});save.textContent='已保存';detail.textContent=result.job?.message||'已保存到画廊';}catch(error){save.disabled=false;save.textContent='保存到画廊';detail.textContent=`${recentJobDetail(job)} · ${error.message}`;}});
-          if(job.sourceUrl){const open=document.createElement('button');open.type='button';open.className='btn btn-secondary';open.textContent='打开原帖';open.addEventListener('click',()=>window.open(job.sourceUrl,'_blank','noopener,noreferrer'));actions.append(open);}
+          if(recentSourceUrl(job)){const open=document.createElement('button');open.type='button';open.className='btn btn-secondary';open.textContent='打开原帖';open.addEventListener('click',()=>window.open(recentSourceUrl(job),'_blank','noopener,noreferrer'));actions.append(open);}
           loadRecentPreview(job,row,meta,detail);
-        }else if(job.sourceUrl){
-          const open=document.createElement('button');open.type='button';open.className='btn btn-secondary';open.textContent='打开原帖';open.addEventListener('click',()=>window.open(job.sourceUrl,'_blank','noopener,noreferrer'));actions.append(open);
+        }else if(recentSourceUrl(job)){
+          const open=document.createElement('button');open.type='button';open.className='btn btn-secondary';open.textContent='打开原帖';open.addEventListener('click',()=>window.open(recentSourceUrl(job),'_blank','noopener,noreferrer'));actions.append(open);
         }
         row.append(actions);
         box.append(row);

@@ -11,6 +11,13 @@ const GalleryX=Object.freeze({
     if(!u.port)u.port='18889';
     return u.origin;
   },
+  sameGalleryOrigin(left,right){
+    try{
+      const a=new URL(this.galleryOrigin(left)),b=new URL(this.galleryOrigin(right));
+      const host=value=>value==='localhost'||value==='127.0.0.1'||value==='[::1]'?'loopback':value;
+      return a.protocol===b.protocol&&host(a.hostname)===host(b.hostname)&&a.port===b.port;
+    }catch{return false;}
+  },
   permissionOrigin(value){const u=new URL(this.galleryOrigin(value));return u.protocol+'//'+u.hostname+'/*';},
   localCandidates:['http://127.0.0.1:18889','http://localhost:18889'],
   mediaUrl(value){let u;try{u=new URL(value);}catch{throw new Error('找不到 X 原图。');}if(u.protocol!=='https:'||u.host!=='pbs.twimg.com'||u.username||u.password||u.hash||!/^\/media\/[\w-]+(?:\.(?:jpe?g|png|webp))?$/.test(u.pathname))throw new Error('仅支持 X 帖子静态图片。');const format=u.searchParams.get('format')||(u.pathname.includes('.')?u.pathname.split('.').pop():'jpg');if(!['jpg','jpeg','png','webp'].includes(format))throw new Error('图片格式不支持。');u.search='';u.searchParams.set('format',format);u.searchParams.set('name','orig');return u.href;},

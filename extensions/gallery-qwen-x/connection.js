@@ -13,14 +13,25 @@ const GalleryConnection = (() => {
     if(!r.ok){const d=await r.json().catch(()=>({}));const e=new Error(d.message||d.error||(r.status===404?'画廊尚未支持自动连接，请更新画廊。':`HTTP ${r.status}`));e.httpStatus=r.status;throw e;}
     return r;
   }
+  async function ensurePermission(base,explicit){
+    const permission={origins:[GalleryX.permissionOrigin(base)]};
+    if(await chrome.permissions.contains(permission))return;
+    // Optional LAN host permissions are requested only from the explicit
+    // “连接扩展” action. Automatic reconnect never prompts or sends first.
+    if(!explicit||typeof chrome.permissions.request!=='function')throw new Error('请点击“连接扩展”并允许扩展访问此画廊地址。');
+    let granted=false;
+    try{granted=await chrome.permissions.request(permission);}catch{}
+    if(!granted||!await chrome.permissions.contains(permission))throw new Error('未获得此画廊地址权限，连接未发送请求。');
+  }
   async function connect(options={}){
     let cfg=await read();
     if(cfg.autoConnectDisabled&&!options.explicit)throw new Error('已断开自动连接，点击“自动检测”或“连接”重新启用。');
     const manual=options.baseUrl!=null;
     const target=manual?GalleryX.galleryOrigin(options.baseUrl):null;
-    if(cfg.token&&!options.localOnly&&(!target||target===cfg.baseUrl)){
+    if(cfg.token&&!options.localOnly&&(!target||GalleryX.sameGalleryOrigin(target,cfg.baseUrl))){
       if(!options.explicit&&validatedBase===cfg.baseUrl&&Date.now()-validatedAt<30000)return cfg;
       try{
+        if(options.explicit)await ensurePermission(GalleryX.galleryOrigin(cfg.baseUrl),true);
         await response(GalleryX.galleryOrigin(cfg.baseUrl),'/config',{},cfg.token,4000);
         validatedBase=cfg.baseUrl;validatedAt=Date.now();
         if(options.explicit){await chrome.storage.local.set({autoConnectDisabled:false,connectionMode:manual?'manual':cfg.connectionMode||'auto'});}
@@ -36,13 +47,13 @@ const GalleryConnection = (() => {
     for(const value of [...new Set(candidates)]){
       const base=GalleryX.galleryOrigin(value);
       try{
-        if(!await chrome.permissions.contains({origins:[GalleryX.permissionOrigin(base)]}))throw new Error('请点击连接并允许扩展访问此画廊地址。');
+        await ensurePermission(base,options.explicit===true);
         const d=await (await response(base,'/connect',{method:'POST',body:JSON.stringify({client_id:clientId})},'',manual?8000:3000)).json();
         if(!d.success||d.extension_id!==chrome.runtime.id||!/^gxe_[\w-]+$/.test(d.token||''))throw new Error('此地址不是兼容的本地画廊。');
         cfg=await read();
         if(cfg.autoConnectDisabled&&!options.explicit)throw new Error('自动连接已取消。');
         const saved={baseUrl:base,token:d.token,connectionMode:manual?'manual':options.localOnly?'auto':cfg.connectionMode||'auto',autoConnectDisabled:false};
-        if(cfg.baseUrl&&cfg.baseUrl!==base){
+        if(cfg.baseUrl&&!GalleryX.sameGalleryOrigin(cfg.baseUrl,base)){
           const archived={...(cfg.jobsByGallery||{}),[cfg.baseUrl]:cfg.jobs||[]};
           saved.jobs=archived[base]||[];saved.jobsByGallery=archived;
         }

@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import time
 from urllib.parse import parse_qs, urlencode, urlsplit
 import zipfile
@@ -424,6 +425,57 @@ class BrowserExtension:
         value = ''.join(ch for ch in value if ch.isprintable())
         return value[:120] or '上传图片'
 
+    def _reserve_gallery_result(self, source: Path, filename: str, job_id: str):
+        """Copy a result into the gallery without ever overwriting a file.
+
+        The first save keeps the generated filename when it is free.  A retry
+        for the same job is idempotent when metadata already points at that
+        file; a different job gets a deterministic suffix instead.  The
+        exclusive create makes the choice safe if two save requests race.
+        """
+        gallery_dir = Path(self.server.image_dir)
+        gallery_dir.mkdir(parents=True, exist_ok=True)
+        metadata = ImageMetadataStore(self.server.data_dir).load()
+        original = Path(filename)
+        stem, suffix = original.stem, original.suffix or '.png'
+        candidates = [filename]
+        for index in range(0, 100):
+            marker = f'_saved_{job_id[:8]}' if index == 0 else f'_saved_{job_id[:8]}_{index}'
+            candidates.append(f'{stem}{marker}{suffix}')
+        for candidate in candidates:
+            target = gallery_dir / candidate
+            if target.exists():
+                owner = str((metadata.get(candidate) or {}).get('extension_job_id') or '')
+                if owner == job_id:
+                    return candidate, target, False
+                continue
+            descriptor = None
+            try:
+                descriptor = os.open(
+                    target,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                )
+                with source.open('rb') as src, os.fdopen(descriptor, 'wb') as dst:
+                    descriptor = None
+                    shutil.copyfileobj(src, dst, length=1024 * 1024)
+                return candidate, target, True
+            except FileExistsError:
+                # Another request won the race; try the next unique candidate.
+                continue
+            except Exception:
+                if descriptor is not None:
+                    try:
+                        os.close(descriptor)
+                    except OSError:
+                        pass
+                try:
+                    target.unlink()
+                except OSError:
+                    pass
+                raise
+        raise ValueError('画廊中无法创建唯一图片文件名，请稍后重试。')
+
     async def _read_upload(self, request):
         """Read one bounded multipart image and its request id.
 
@@ -626,39 +678,45 @@ class BrowserExtension:
 
     async def save(self, request):
         """Explicitly publish a completed extension result to the gallery index."""
-        job = self.get_job(request)
-        if not job or job.get('status') != 'done':
-            return self.response({'error': 'image_not_ready'}, 404)
-        result = job.get('result') or {}
-        filename = result.get('filename', '')
-        if not re.fullmatch(r'qwen_x_edit_[A-Za-z0-9_.-]+\.png', filename):
-            return self.response({'error': 'image_not_found'}, 404)
-        path = self.result_dir / filename
-        # Jobs created before the opt-in save flow stored their output directly
-        # in the gallery image directory; keep those results readable/savable.
-        if not path.is_file():
-            path = Path(self.server.image_dir) / filename
-        if not path.is_file():
-            return self.response({'error': 'image_not_found'}, 404)
-        metadata = {
-            'category': 'portrait', 'source': 'chrome_extension',
-            'source_url': job.get('source_url', ''), 'source_media_url': job.get('media_url', ''),
-            'source_text': job.get('source_text', ''),
-            'source_name': job.get('source_name', ''), 'input_type': job.get('input_type', 'x'),
-            'extension_job_id': job.get('id', ''), 'model': 'Qwen-Image-2.1 Q8',
-            'model_name': 'Qwen-Image-2.1 Q8', 'prompt': job.get('prompt', ''),
-            'custom_prompt': job.get('prompt', ''), 'user_prompt': job.get('prompt', ''),
-            'prompt_mode': 'pure', 'pure_prompt': True, 'custom_ref_mode': 'reference',
-            'generation_mode': 'img2img', 'created_at': job.get('created_at', int(time.time())),
-            'generation_time': result.get('elapsed', ''), 'width': result.get('width', 0),
-            'height': result.get('height', 0), 'file_size_bytes': path.stat().st_size,
-            'ref_image': '', 'ref_image_path': '',
-        }
-        target = Path(self.server.image_dir) / filename
-        target.write_bytes(path.read_bytes())
-        self.server._update_image_metadata_entry(filename, metadata)
-        self.update_job(job['id'], message='已保存到画廊', result={**result, 'saved_to_gallery': True})
-        return self.response({'success': True, 'job': self.public_job({**job, 'message': '已保存到画廊', 'result': {**result, 'saved_to_gallery': True}})})
+        async with self.request_lock:
+            job = self.get_job(request)
+            if not job or job.get('status') != 'done':
+                return self.response({'error': 'image_not_ready'}, 404)
+            result = job.get('result') or {}
+            if result.get('saved_to_gallery'):
+                return self.response({'success': True, 'job': self.public_job(job)})
+            filename = result.get('filename', '')
+            if not re.fullmatch(r'qwen_x_edit_[A-Za-z0-9_.-]+\.png', filename):
+                return self.response({'error': 'image_not_found'}, 404)
+            path = self.result_dir / filename
+            # Jobs created before the opt-in save flow stored their output directly
+            # in the gallery image directory; keep those results readable/savable.
+            if not path.is_file():
+                path = Path(self.server.image_dir) / filename
+            if not path.is_file():
+                return self.response({'error': 'image_not_found'}, 404)
+            metadata = {
+                'category': 'portrait', 'source': 'chrome_extension',
+                'source_url': job.get('source_url', ''), 'source_media_url': job.get('media_url', ''),
+                'source_text': job.get('source_text', ''),
+                'source_name': job.get('source_name', ''), 'input_type': job.get('input_type', 'x'),
+                'extension_job_id': job.get('id', ''), 'model': 'Qwen-Image-2.1 Q8',
+                'model_name': 'Qwen-Image-2.1 Q8', 'prompt': job.get('prompt', ''),
+                'custom_prompt': job.get('prompt', ''), 'user_prompt': job.get('prompt', ''),
+                'prompt_mode': 'pure', 'pure_prompt': True, 'custom_ref_mode': 'reference',
+                'generation_mode': 'img2img', 'created_at': job.get('created_at', int(time.time())),
+                'generation_time': result.get('elapsed', ''), 'width': result.get('width', 0),
+                'height': result.get('height', 0), 'ref_image': '', 'ref_image_path': '',
+            }
+            saved_filename, target, created = self._reserve_gallery_result(path, filename, job['id'])
+            metadata['file_size_bytes'] = target.stat().st_size
+            metadata['saved_filename'] = saved_filename
+            if created:
+                self.server._update_image_metadata_entry(saved_filename, metadata)
+            updated_result = {**result, 'saved_to_gallery': True, 'saved_filename': saved_filename}
+            self.update_job(job['id'], message='已保存到画廊', result=updated_result)
+            updated_job = {**job, 'message': '已保存到画廊', 'result': updated_result}
+            return self.response({'success': True, 'job': self.public_job(updated_job)})
 
     async def image(self, request):
         job = self.get_job(request)

@@ -11,6 +11,10 @@ COPY app/ /app/app/
 
 # 复制配置
 COPY config/ ./config/
+# BrowserExtension loads the packaged extension at server startup and serves
+# it from /api/browser-extension/download. Keep the runtime package in the
+# image; omitting it makes the container exit before binding port 18889.
+COPY extensions/ ./extensions/
 COPY VERSION /app/VERSION
 
 # 创建数据目录

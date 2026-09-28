@@ -15,6 +15,11 @@ function recordWithMediaKey(record){
     const legacyId=next.request_id||next.requestId||next.id;
     if(typeof legacyId==='string'&&legacyId.trim())next.localId=legacyId.trim();
   }
+  // Server responses and pre-upgrade records use snake_case.  Normalize the
+  // display/cache fields once so the content script and gallery settings keep
+  // working after an extension upgrade or browser restart.
+  const aliases=[['createdAt','created_at'],['updatedAt','updated_at'],['sourceUrl','source_url'],['sourceText','source_text'],['sourceName','source_name'],['inputType','input_type']];
+  for(const [camel,snake] of aliases)if(next[camel]==null&&next[snake]!=null)next[camel]=next[snake];
   if(!next.mediaKey&&next.mediaUrl)next.mediaKey=GalleryX.mediaKey(next.mediaUrl);
   return next;
 }
@@ -259,8 +264,8 @@ chrome.runtime.onMessageExternal.addListener((message,sender,respond)=>{
     const base=apiOrigin(new URL(sender.url).origin);
     const cfg=await settings();
     if(message?.type==='PING')return {success:true,version:chrome.runtime.getManifest().version,connected:!!cfg.token};
-    if(message?.type==='CONNECT'&&base===apiOrigin(message.baseUrl))return connectResult({baseUrl:base,explicit:true});
-    if(cfg.baseUrl&&apiOrigin(cfg.baseUrl)!==base)throw new Error('当前画廊不是扩展已连接的地址。');
+    if(message?.type==='CONNECT'&&GalleryX.sameGalleryOrigin(base,message.baseUrl))return connectResult({baseUrl:base,explicit:true});
+    if(cfg.baseUrl&&!GalleryX.sameGalleryOrigin(cfg.baseUrl,base))throw new Error('当前画廊不是扩展已连接的地址。');
     if(message?.type==='JOBS')return {success:true,connected:!!cfg.token,jobs:await jobsSnapshot()};
     if(message?.type==='DELETE_JOB')return await deleteStoredJob(message.localId);
     if(message?.type==='CLEAR_JOBS')return await clearStoredJobs();
@@ -268,7 +273,7 @@ chrome.runtime.onMessageExternal.addListener((message,sender,respond)=>{
     if(message?.type==='SAVE_RESULT')return await saveResult(message.localId);
     if(message?.type==='BATCH_GENERATE'){
       const page=new URL(sender.url),pageBase=apiOrigin(page.origin);
-      if(cfg.baseUrl&&apiOrigin(cfg.baseUrl)!==pageBase)throw new Error('批量上传只能从当前已连接的画廊发起。');
+      if(cfg.baseUrl&&!GalleryX.sameGalleryOrigin(cfg.baseUrl,pageBase))throw new Error('批量上传只能从当前已连接的画廊发起。');
       const run=submitChain.then(()=>submitUpload(message,sender));submitChain=run.catch(()=>{});return await run;
     }
     throw new Error('不支持外部操作。');

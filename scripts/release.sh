@@ -231,7 +231,7 @@ update_version_files() {
   local version="$1"
   local notes="$2"
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    log "would update VERSION, README.md, AGENTS.md and SKILL.md for $version"
+    log "would update VERSION, README.md, AGENTS.md, SKILL.md and app/web/index.html for $version"
     return 0
   fi
   python3 - "$version" "$notes" <<'PY'
@@ -267,6 +267,14 @@ def replace_version_pins(text: str) -> str:
         rf"\g<1>{version}",
         text,
     )
+    # Keep the static UI labels in sync with VERSION.  They are intentionally
+    # explicit IDs so unrelated version-looking text (model names, dates,
+    # release notes, etc.) is left untouched.
+    text = re.sub(
+        r'(id="(?:versionTag|settingsVersion)">)v?\d+\.\d+\.\d+(?=</(?:span|strong)>)',
+        rf"\g<1>v{version}",
+        text,
+    )
     return text
 
 
@@ -291,7 +299,7 @@ def upsert_release_notes(text: str, version: str, notes: str) -> str:
     return head + marker + block + rest
 
 
-for rel in ("README.md", "AGENTS.md", "SKILL.md"):
+for rel in ("README.md", "AGENTS.md", "SKILL.md", "app/web/index.html"):
     path = root / rel
     if not path.exists():
         continue
@@ -331,7 +339,10 @@ git_commit_tag_push() {
   local tag msg
   tag="$(version_tag "$version")"
 
-  run git add VERSION README.md AGENTS.md SKILL.md
+  # Keep the visible web version in the same release commit as VERSION/docs.
+  # Without this path, update_version_files() changes index.html locally but
+  # the tag would publish the old UI label.
+  run git add VERSION README.md AGENTS.md SKILL.md app/web/index.html
   if [[ "$DRY_RUN" -eq 0 ]]; then
     if git diff --cached --quiet; then
       die "nothing staged for release commit; VERSION/docs already match $version?"

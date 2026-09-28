@@ -2,8 +2,8 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<link rel="stylesheet" href="/static/gallery-extension-settings.css?v=20260928-recent3">
-<script defer src="/static/gallery-extension-settings.js?v=20260928-recent3"></script>
+<link rel="stylesheet" href="/static/gallery-extension-settings.css?v=20260928-recent4">
+<script defer src="/static/gallery-extension-settings.js?v=20260928-recent4"></script>
 <meta name="gallery-ui-revision" content="extension-settings-inline-20260927">
 <link rel="stylesheet" href="/static/image-comparison.css?v=20260927-8">
 <script src="/static/image-comparison.js?v=20260927-10"></script>
@@ -12112,7 +12112,7 @@ function generatedEntryImageUrl(entry) {
   }
   const filename = generatedEntryImageFilename(entry);
   return filename
-    ? withImageRevision(`/images/${filename}`, entry.image_revision)
+    ? withImageRevision(`/images/${encodeURIComponent(filename)}`, entry.image_revision)
     : "";
 }
 
@@ -12159,7 +12159,7 @@ async function appendGeneratedImageToGroupChatRoom(roomIdValue, entry, character
     content: "生成图片",
     metadata: {
       image_filename: filename,
-      image_url: generatedEntryImageUrl(entry) || `/images/${filename}`,
+      image_url: generatedEntryImageUrl(entry) || `/images/${encodeURIComponent(filename)}`,
       caption: "",
       prompt: truncateGroupChatMetadataText(entry?.prompt || "", 1400),
       style: truncateGroupChatMetadataText((typeof displayOutfitStyle === "function" ? displayOutfitStyle(entry) : entry?.outfit_style) || ""),
@@ -13825,7 +13825,7 @@ function renderToday() {
     const todayImageFilename = String(today.image_filename || "");
     const todayLocked = isImageLocked(todayImageFilename);
     const todayImageFilenameAttr = escapeAttr(todayImageFilename);
-    const todayImageSrc = generatedEntryImageUrl(today) || ("/images/" + todayImageFilename);
+    const todayImageSrc = generatedEntryImageUrl(today) || ("/images/" + encodeURIComponent(todayImageFilename));
     const todayImageSrcAttr = escapeAttr(todayImageSrc);
     const todayImageSrcArg = jsStringArg(todayImageSrc);
     const todayImageArg = jsStringArg(todayImageFilename);
@@ -14083,7 +14083,7 @@ function renderGallery() {
           const safeImageFilename = escapeAttr(e.image_filename || "");
           const locked = isImageLocked(e.image_filename || "");
           const imageFilenameArg = jsStringArg(e.image_filename || "");
-          const imageUrl = generatedEntryImageUrl(e) || ("/images/" + (e.image_filename || ""));
+          const imageUrl = generatedEntryImageUrl(e) || ("/images/" + encodeURIComponent(e.image_filename || ""));
           const imageUrlAttr = escapeAttr(imageUrl);
           const imageSrcArg = jsStringArg(imageUrl);
           const deleteArg = jsStringArg(e.image_filename || e.date || "");
@@ -14145,7 +14145,7 @@ function renderGallery() {
           const locked = isImageLocked(imageFilename);
           const imageFilenameAttr = escapeAttr(imageFilename);
           const imageFilenameArg = jsStringArg(imageFilename);
-          const imageUrl = generatedEntryImageUrl(e) || ("/images/" + imageFilename);
+          const imageUrl = generatedEntryImageUrl(e) || ("/images/" + encodeURIComponent(imageFilename));
           const imageUrlAttr = escapeAttr(imageUrl);
           const deleteArg = jsStringArg(imageFilename || e.date || "");
           const imgHtml = e.image_filename
@@ -15596,7 +15596,7 @@ function openModal(e, returnFocusTarget = null) {
   if (!e.image_filename) return;
   currentModalImg = e.image_filename;
   resetModalDetailHeight();
-  const modalImageUrl = generatedEntryImageUrl(e) || ('/images/' + e.image_filename);
+  const modalImageUrl = generatedEntryImageUrl(e) || ('/images/' + encodeURIComponent(e.image_filename));
   const modalImageUrlAttr = escapeAttr(modalImageUrl);
   const modalAltText = escapeAttr(e.caption || appDisplay.shareTitle);
   const comparisonHtml = renderImageComparison(e, true);

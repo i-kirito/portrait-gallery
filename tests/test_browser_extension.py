@@ -117,6 +117,34 @@ class ExtensionTests(unittest.IsolatedAsyncioTestCase):
         entry=self.server._metadata_gallery_entry(filename,metadata[filename]);entry=self.server._normalize_entry_display(entry,metadata);self.assertEqual(entry['source_text'],'X 原帖中的正文内容')
         r=await self.client.get(PREFIX+'/jobs/'+j['id']+'/image',headers=h);self.assertEqual(r.status,200)
 
+    async def test_save_result_never_overwrites_another_job(self):
+        h=await self.configured()
+        _, first = await self.submit(h, rid=uuid.uuid4().hex)
+        await self.drain()
+        saved = await self.client.post(PREFIX+'/jobs/'+first['id']+'/save', headers=h)
+        self.assertEqual(saved.status, 200)
+        first_saved = (await saved.json())['job']['result']['saved_filename']
+        first_path = Path(self.server.image_dir) / first_saved
+        first_bytes = first_path.read_bytes()
+
+        _, second = await self.submit(h, rid=uuid.uuid4().hex)
+        await self.drain()
+        second_record = self.ext.jobs.load()[second['id']]
+        second_source = self.ext.result_dir / second_record['result']['filename']
+        # Force a realistic filename collision between two independently
+        # generated jobs while keeping the second result bytes available.
+        collision = self.ext.result_dir / first_saved
+        collision.write_bytes(second_source.read_bytes())
+        second_record['result']['filename'] = first_saved
+        self.ext.jobs.update(lambda jobs: jobs.update({second['id']: second_record}))
+
+        saved = await self.client.post(PREFIX+'/jobs/'+second['id']+'/save', headers=h)
+        self.assertEqual(saved.status, 200)
+        second_saved = (await saved.json())['job']['result']['saved_filename']
+        self.assertNotEqual(second_saved, first_saved)
+        self.assertEqual(first_path.read_bytes(), first_bytes)
+        self.assertTrue((Path(self.server.image_dir) / second_saved).is_file())
+
     async def test_upload_job_is_independent_and_opt_in_saved(self):
         h=await self.configured();r=await self.upload(h);self.assertEqual(r.status,202);j=await r.json()
         self.assertEqual(j['input_type'],'upload');self.assertEqual(j['source_name'],'portrait.png');self.assertEqual(j['source_url'],'')
@@ -189,6 +217,12 @@ class ExtensionTests(unittest.IsolatedAsyncioTestCase):
         with zipfile.ZipFile(io.BytesIO(await r.read())) as z:
             names=z.namelist();self.assertIn('gallery-qwen-x/manifest.json',names);self.assertIn('gallery-qwen-x/icons/128.png',names)
             m=json.loads(z.read('gallery-qwen-x/manifest.json'));self.assertEqual(m['manifest_version'],3);self.assertNotIn('<all_urls>',m['host_permissions']);self.assertNotIn('cookies',m['permissions'])
+            # LAN gallery addresses are user-configurable.  The broad external
+            # message matcher only gets a message to the worker; background.js
+            # still rejects public origins and mismatched gallery origins.
+            self.assertIn('http://*/*',m['externally_connectable']['matches'])
+            self.assertIn('https://*/*',m['externally_connectable']['matches'])
+            self.assertNotIn('http://192.168.31.216/*',m['host_permissions'])
             self.assertFalse(any('config.yaml' in n or 'browser_extension_config' in n for n in names))
     async def test_cors_only_extension(self):
         r=await self.client.options(PREFIX+'/jobs',headers=self.headers);self.assertEqual(r.status,204);self.assertEqual(r.headers['Access-Control-Allow-Origin'],self.headers['Origin'])
