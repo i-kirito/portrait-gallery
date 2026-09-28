@@ -8789,7 +8789,7 @@ textarea:focus-visible,
       <div class="sk-footer-main">
         <div class="sk-actions">
           <button class="btn btn-secondary" onclick="closeSettings()">关闭</button>
-          <button class="btn btn-primary" id="skSaveBtn" onclick="saveSettings()">💾 保存</button>
+          <button class="btn btn-primary" type="button" id="skSaveBtn" onclick="saveSettings()">💾 保存</button>
         </div>
       </div>
     </div>
@@ -20338,7 +20338,31 @@ function collectGptEndpoints() {
 }
 
 async function saveSettings() {
-  if (activeSettingsPanel === "extension") return window.saveBrowserExtensionSettings?.();
+  if (activeSettingsPanel === "extension") {
+    const btn = document.getElementById("skSaveBtn");
+    const previousText = btn?.textContent || "💾 保存";
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "⏳ 保存中...";
+    }
+    try {
+      if (typeof window.saveBrowserExtensionSettings !== "function") {
+        const message = "扩展设置脚本尚未加载，请刷新画廊后重试。";
+        showToast("❌ " + message, 7000);
+        return {success: false, error: message};
+      }
+      const result = await window.saveBrowserExtensionSettings();
+      // Keep a visible confirmation even if an older cached extension script
+      // returns no result object after saving.
+      if (!result) showToast("✅ 扩展设置已保存");
+      return result;
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = previousText;
+      }
+    }
+  }
   const giteeUrl = document.getElementById("skGiteeUrl").value.trim();
   const giteeKey = document.getElementById("skGiteeKey").value.trim();
   const gptKey = document.getElementById("skGptKey").value.trim();

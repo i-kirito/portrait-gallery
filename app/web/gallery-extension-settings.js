@@ -7,6 +7,13 @@
   const ALLOWED_TYPES=new Set(['image/jpeg','image/jpg','image/png','image/webp']);
   const P='/api/browser-extension';
   const el=id=>document.getElementById(id);
+  function extensionToast(message,duration=3000){
+    const toast=document.getElementById('toast');
+    if(!toast)return;
+    toast.textContent=message;toast.classList.add('show');
+    clearTimeout(toast._extensionTimer);
+    toast._extensionTimer=setTimeout(()=>toast.classList.remove('show'),duration);
+  }
   const status=(text,state='neutral')=>{
     if(el('gxStatus'))el('gxStatus').textContent=text;
     const dot=el('gxStatusDot'),badge=el('gxStatusBadge');
@@ -192,7 +199,18 @@
       catch(e){status(e.message,'warn');}
     }catch(e){status(e.message,'error');}
   };
-  window.saveBrowserExtensionSettings=async()=>{try{await api({operation:'save',prompt:el('gxPrompt').value,steps:Number(el('gxSteps').value),sync_gallery_prompt:el('gxSync').checked});status('已保存，X 魔法棒和批量改图都会使用此要求。','ok');}catch(e){status(e.message,'error');}};
+  window.saveBrowserExtensionSettings=async()=>{
+    try{
+      const result=await api({operation:'save',prompt:el('gxPrompt').value,steps:Number(el('gxSteps').value),sync_gallery_prompt:el('gxSync').checked});
+      status('已保存，X 魔法棒和批量改图都会使用此要求。','ok');
+      extensionToast('✅ 扩展设置已保存');
+      return {success:true,result};
+    }catch(e){
+      status(e.message,'error');
+      extensionToast(`❌ 扩展设置保存失败：${e.message}`,7000);
+      return {success:false,error:e.message};
+    }
+  };
   window.syncExtensionMagicPrompt=prompt=>{if(typeof prompt!=='string'||prompt===lastSynced)return;clearTimeout(syncTimer);syncTimer=setTimeout(()=>{api({operation:'sync_prompt',prompt}).then(()=>{lastSynced=prompt;}).catch(()=>{});},900);};
   window.installGalleryExtension=()=>{const guide=el('gxInstallGuide');guide.hidden=false;const a=document.createElement('a');a.href=P+'/download';a.download='gallery-qwen-x.zip';document.body.append(a);a.click();a.remove();status('安装包已请求下载。解压后，在 Chrome 扩展页选择“加载已解压的扩展程序”。','neutral');};
   window.connectGalleryExtension=async()=>{const b=el('gxConnect');b.disabled=true;try{await external({type:'PING'});await api({operation:'enable_auto_connect'});await external({type:'CONNECT',baseUrl:location.origin});await window.loadBrowserExtensionSettings();status('连接成功。保存修改要求后即可在 X 或此页批量改图。','ok');}catch(e){status(e.message,'error');}finally{b.disabled=false;}};
