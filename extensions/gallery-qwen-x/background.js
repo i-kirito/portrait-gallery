@@ -133,7 +133,10 @@ async function refreshJob(localId,force=false) {
 async function jobsSnapshot() {
   const cfg=await settings(),rawJobs=Array.isArray(cfg.jobs)?cfg.jobs:[];
   const jobs=rawJobs.map(recordWithMediaKey);
-  if(jobs.some((job,index)=>job.localId!==rawJobs[index]?.localId))await replaceStoredJobs(jobs,cfg);
+  if(jobs.some((job,index)=>job.localId!==rawJobs[index]?.localId))
+    // Keep legacy-id migration on the same storage queue as deletion. A
+    // migration write must never race a delete and restore a stale row.
+    await queueStorage(()=>replaceStoredJobs(jobs,cfg));
   await Promise.all(jobs
     // Refresh every non-terminal record, including statuses written by older
     // extension builds, so a completed upload cannot remain stuck forever.
@@ -147,9 +150,16 @@ function validLocalId(value){return typeof value==='string'&&value.length>0&&val
 // while saved gallery images must never be removed by clearing extension history.
 function queueStorage(work){const run=storageChain.then(work);storageChain=run.catch(()=>{});return run;}
 async function replaceStoredJobs(next,cfg){
-  const saved={jobs:next};
+  // A queued refresh/migration may still hold an older snapshot. Filter
+  // identities marked deleted before every write so stale work cannot revive
+  // a task after the user removed it.
+  const filtered=next.filter(job=>{
+    const id=jobIdentity(job);
+    return !id||!deletedLocalIds.has(id);
+  });
+  const saved={jobs:filtered};
   if(cfg?.baseUrl&&cfg.jobsByGallery&&typeof cfg.jobsByGallery==='object'&&!Array.isArray(cfg.jobsByGallery))
-    saved.jobsByGallery={...cfg.jobsByGallery,[cfg.baseUrl]:next};
+    saved.jobsByGallery={...cfg.jobsByGallery,[cfg.baseUrl]:filtered};
   await chrome.storage.local.set(saved);
 }
 async function deleteStoredJob(localId){

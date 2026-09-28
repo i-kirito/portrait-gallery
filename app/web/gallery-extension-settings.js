@@ -1,7 +1,7 @@
 /* Gallery settings for the local Chrome extension. The page never receives X credentials. */
 (()=>{
   'use strict';
-  let extensionId='',lastSynced='',syncTimer=0,recentPollTimer=0,recentLoadBusy=false,recentRenderKey='',recentScrollVersion=0,recentModalScrollVersion=0,autoEnabled=true;
+  let extensionId='',lastSynced='',syncTimer=0,recentPollTimer=0,recentLoadBusy=false,recentLoadPending=false,recentRenderKey='',recentScrollVersion=0,recentModalScrollVersion=0,autoEnabled=true;
   const recentPreviewCache=new Map(),recentPreviewInFlight=new Map();
   const MAX_BATCH=12,MAX_BYTES=10*1024*1024;
   const ALLOWED_TYPES=new Set(['image/jpeg','image/jpg','image/png','image/webp']);
@@ -106,7 +106,10 @@
   async function loadRecentTasks(){
     const box=el('gxRecentTasks');if(!box)return;
     const clearButton=el('gxRecentClear');
-    if(recentLoadBusy)return;
+    // A delete/clear action can arrive while the five-second poll is loading.
+    // Remember that request and run one fresh load after the in-flight request
+    // completes; otherwise the stale response can leave the deleted row visible.
+    if(recentLoadBusy){recentLoadPending=true;return;}
     recentLoadBusy=true;
     if(!box.dataset.scrollBound){
       box.addEventListener('scroll',()=>{recentScrollVersion++;},{passive:true});
@@ -167,7 +170,15 @@
         note.textContent=message;
       }else box.textContent=message;
     }
-    finally{recentLoadBusy=false;}
+    finally{
+      recentLoadBusy=false;
+      if(recentLoadPending){
+        recentLoadPending=false;
+        // Yield to the event loop so the just-completed mutation has settled
+        // before querying the extension again.
+        queueMicrotask(()=>{loadRecentTasks();});
+      }
+    }
   }
   window.loadBrowserExtensionSettings=async()=>{
     try{
