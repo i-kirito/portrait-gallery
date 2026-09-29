@@ -3,7 +3,7 @@
   'use strict';
   let extensionId='',lastSynced='',syncTimer=0,recentPollTimer=0,recentLoadBusy=false,recentLoadPending=false,recentRenderKey='',recentScrollVersion=0,recentModalScrollVersion=0,autoEnabled=true;
   const recentPreviewCache=new Map(),recentPreviewInFlight=new Map(),recentResultKeys=new Map();
-  const MAX_BATCH=12,MAX_BYTES=10*1024*1024;
+  const MAX_BYTES=10*1024*1024;
   const ALLOWED_TYPES=new Set(['image/jpeg','image/jpg','image/png','image/webp']);
   const P='/api/browser-extension';
   const el=id=>document.getElementById(id);
@@ -51,12 +51,11 @@
     if(!files.length){label.textContent='选择图片';if(button)button.disabled=true;return;}
     const valid=files.filter(file=>ALLOWED_TYPES.has((file.type||'').toLowerCase())&&file.size<=MAX_BYTES);
     label.textContent=valid.length===files.length?`已选择 ${files.length} 张图片`:`已选择 ${files.length} 张 · ${files.length-valid.length} 张不可用`;
-    if(button)button.disabled=!valid.length||files.length>MAX_BATCH;
+    if(button)button.disabled=!valid.length;
   }
   async function batchGalleryImages(){
     const input=el('gxBatchImages'),files=Array.from(input?.files||[]),batchStatus=el('gxBatchStatus'),button=el('gxBatchSubmit');
     if(!files.length)throw new Error('请先选择图片。');
-    if(files.length>MAX_BATCH)throw new Error(`一次最多选择 ${MAX_BATCH} 张图片。`);
     button.disabled=true;
     let accepted=0;const failures=[];
     for(let i=0;i<files.length;i++){

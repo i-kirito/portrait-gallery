@@ -7,7 +7,6 @@ function base64FromBuffer(buffer){const bytes=new Uint8Array(buffer);let binary=
 async function batchGenerate(){
  const input=$('uploadImages'),files=Array.from(input.files||[]);
  if(!files.length)throw new Error('请先选择图片。');
- if(files.length>12)throw new Error('一次最多选择 12 张图片。');
  const allowed=new Set(['image/jpeg','image/jpg','image/png','image/webp']);
  let accepted=0,failed=0;const failures=[];
  for(let i=0;i<files.length;i++){
