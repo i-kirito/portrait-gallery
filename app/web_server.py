@@ -100,6 +100,14 @@ from reference_profiles import (
 from store import ImageMetadataStore, LockedJsonDictStore, ScheduleStore
 from text_repair import repair_mojibake_text
 from xiaohongshu_client import XiaohongshuClient, XiaohongshuError
+from xiaohongshu_favorites import (
+    COLLECTION_FAVORITES,
+    COLLECTION_HISTORY,
+    IMAGE_SUBDIR as XIAOHONGSHU_FAVORITE_IMAGE_SUBDIR,
+    XiaohongshuFavoriteLibrary,
+    build_post_url,
+    make_outfit_key,
+)
 from settings import (
     DEFAULT_GITEE_IMAGE_URL,
     DEFAULT_OUTFIT_STYLES,
@@ -459,6 +467,17 @@ class GalleryServer:
         self.xiaohongshu_creator_store = LockedJsonDictStore(
             os.path.join(self.data_dir, "xiaohongshu_creators.json"),
             os.path.join(self.data_dir, ".xiaohongshu_creators.lock"),
+        )
+        self.xiaohongshu_favorite_dir = os.path.join(
+            self.reference_dir,
+            XIAOHONGSHU_FAVORITE_IMAGE_SUBDIR,
+        )
+        # Separate from favorite_outfits.json (wardrobe): the lifecycles of the
+        # two collections must never touch each other's data.
+        self.xiaohongshu_favorites = XiaohongshuFavoriteLibrary(
+            self.data_dir,
+            self.xiaohongshu_favorite_dir,
+            now=lambda: self._now(),
         )
         self.xiaohongshu_client = XiaohongshuClient(
             workdir=os.path.join(self.data_dir, "xiaohongshu-mcp"),
@@ -833,6 +852,20 @@ class GalleryServer:
             self.handle_delete_xiaohongshu_creator,
         )
         self.app.router.add_post("/api/xiaohongshu/import", self.handle_xiaohongshu_import)
+        self.app.router.add_get("/api/xiaohongshu/favorites", self.handle_xiaohongshu_favorites)
+        self.app.router.add_post("/api/xiaohongshu/favorites", self.handle_xiaohongshu_favorites)
+        self.app.router.add_post(
+            "/api/xiaohongshu/favorites/settings",
+            self.handle_xiaohongshu_favorite_settings,
+        )
+        self.app.router.add_delete(
+            "/api/xiaohongshu/favorites/{favorite_id}",
+            self.handle_delete_xiaohongshu_favorite,
+        )
+        self.app.router.add_post(
+            "/api/xiaohongshu/favorites/{favorite_id}/wear",
+            self.handle_wear_xiaohongshu_favorite,
+        )
         self.app.router.add_get("/api/xiaohongshu/references", self.handle_xiaohongshu_references)
         self.app.router.add_delete(
             "/api/xiaohongshu/references/{filename}",
@@ -8931,6 +8964,13 @@ class GalleryServer:
             "height": height,
             "size_bytes": os.path.getsize(path),
             "created_at": created_at,
+            # Present only when the source came from the favorites library, so
+            # a successful generation can later be traced back to that outfit.
+            **{
+                key: source_record[key]
+                for key in ("favorite_id", "outfit_key", "post_id")
+                if source_record.get(key)
+            },
         }
         self.xiaohongshu_reference_store.update(
             lambda records: {**records, filename: record}
@@ -8954,6 +8994,12 @@ class GalleryServer:
             return state
 
         self.xiaohongshu_schedule_store.update(_save_state)
+        # A replaced assignment must not keep its favorite reserved.
+        self._release_replaced_favorite(
+            schedule_date,
+            old_reference,
+            keep_favorite_id=str(record.get("favorite_id") or ""),
+        )
         old_filename = str(old_reference.get("filename") or "").strip()
         if old_filename and old_filename != filename:
             try:
@@ -8969,12 +9015,21 @@ class GalleryServer:
     def _clear_manual_xiaohongshu_schedule_reference(
         self,
         schedule_date: str,
+        *,
+        include_favorite: bool = False,
     ) -> bool:
-        """Remove only the date-scoped manual copy, preserving imported originals."""
+        """Remove only the date-scoped manual copy, preserving imported originals.
+
+        ``include_favorite`` additionally drops an automatically assigned
+        favorites-library outfit (used by an explicit schedule refresh).
+        """
         state = self.xiaohongshu_schedule_store.load()
         references = state.get("references") if isinstance(state.get("references"), dict) else {}
         record = references.get(schedule_date)
-        if not isinstance(record, dict) or str(record.get("selection_source") or "") != "manual":
+        if not isinstance(record, dict) or (
+            str(record.get("selection_source") or "") != "manual"
+            and not (include_favorite and record.get("favorite_id"))
+        ):
             return False
         filename = str(record.get("filename") or "").strip()
         now_text = self._now().isoformat(timespec="seconds")
@@ -8996,6 +9051,9 @@ class GalleryServer:
             return current
 
         self.xiaohongshu_schedule_store.update(_remove_state)
+        # Canceling the assignment returns an unused favorite to the pool; a
+        # history item simply stays in history.
+        self._release_replaced_favorite(schedule_date, record)
         if filename:
             try:
                 self._delete_xiaohongshu_reference_file(
@@ -9016,7 +9074,7 @@ class GalleryServer:
                 "id", "filename", "url", "label", "title", "author", "query",
                 "source", "scope", "schedule_date", "created_at", "image_index",
                 "validation_score", "validation_reason", "selection_source",
-                "creator_id", "creator_name",
+                "creator_id", "creator_name", "favorite_id",
             )
             if reference.get(key) not in (None, "")
         }
@@ -9110,6 +9168,22 @@ class GalleryServer:
 
         async with self._xiaohongshu_schedule_lock:
             existing = self._xiaohongshu_schedule_reference(schedule_date)
+            if (
+                existing
+                and existing.get("selection_source") == "manual"
+                and existing.get("favorite_id")
+            ):
+                # An explicit "wear this outfit" assignment from the favorites
+                # library must survive routine schedule regeneration; only an
+                # explicit refresh/cancel (which drops the record first) or a
+                # new manual choice replaces it.
+                def _clear_wear_error(state: dict) -> dict:
+                    state["last_error"] = ""
+                    state["last_error_at"] = ""
+                    return state
+
+                self.xiaohongshu_schedule_store.update(_clear_wear_error)
+                return existing
             if existing and not force:
                 def _clear_reuse_error(state: dict) -> dict:
                     state["last_error"] = ""
@@ -9121,6 +9195,14 @@ class GalleryServer:
             if not query:
                 self._save_xiaohongshu_schedule_error("日程没有可用的穿搭关键词，已回退原参考图")
                 return {}
+            favorite_reference = self._select_favorite_schedule_reference(
+                schedule_date,
+                daily,
+                query,
+                existing,
+            )
+            if favorite_reference:
+                return favorite_reference
             query_saved_at = self._now().isoformat(timespec="seconds")
             self.xiaohongshu_schedule_store.update(lambda state: {
                 **state,
@@ -9322,6 +9404,14 @@ class GalleryServer:
                             or image_url in seen_urls
                             or (cover_identity and image_identity == cover_identity)
                         ):
+                            continue
+                        if self.xiaohongshu_favorites.known_outfit(
+                            post_id=feed_id,
+                            image_identity=image_identity,
+                        ):
+                            # Already in the library: either waiting in the pool,
+                            # reserved, or used (history).  Live search must not
+                            # silently reuse or duplicate it.
                             continue
                         seen_urls.add(image_url)
                         known_width = int(candidate_image.get("width") or 0)
@@ -9582,6 +9672,7 @@ class GalleryServer:
                     return state
                 self.xiaohongshu_schedule_store.update(_save_state)
                 schedule_state_saved = True
+                self._release_replaced_favorite(schedule_date, existing)
                 if old_filename and old_filename != filename:
                     self._delete_xiaohongshu_reference_file(old_filename, allow_daily_schedule=True)
                 self._cleanup_old_xiaohongshu_schedule_references(schedule_date)
@@ -9725,6 +9816,16 @@ class GalleryServer:
         )
         manual_query = str(body.get("keyword") or "").strip()
         if enabled and (refresh or manual_query):
+            # An explicit refresh asks for a different outfit: give the current
+            # library outfit (if any) back before selecting again.
+            async with self._xiaohongshu_schedule_lock:
+                # Only library-linked records; a plain manual choice keeps its
+                # existing refresh behavior.
+                if self._xiaohongshu_schedule_reference(schedule_date).get("favorite_id"):
+                    self._clear_manual_xiaohongshu_schedule_reference(
+                        schedule_date,
+                        include_favorite=True,
+                    )
             daily = self._xiaohongshu_schedule_daily_entry(schedule_date)
             if manual_query:
                 daily = dict(daily or {})
@@ -9994,6 +10095,520 @@ class GalleryServer:
             return web.json_response(response)
         except XiaohongshuError as exc:
             return self._xiaohongshu_error_response(exc)
+
+    # ------------------------------------------------------------------
+    # Xiaohongshu favorites library: saved outfits, history, explicit reuse.
+    # This is a collection inside the gallery; nothing is written back to the
+    # user's Xiaohongshu account.
+    # ------------------------------------------------------------------
+    def _release_replaced_favorite(
+        self,
+        schedule_date: str,
+        old_reference: dict,
+        *,
+        keep_favorite_id: str = "",
+    ) -> None:
+        """Give back a library outfit whose schedule assignment went away."""
+        old_id = str((old_reference or {}).get("favorite_id") or "").strip()
+        if not old_id or old_id == keep_favorite_id:
+            return
+        try:
+            self.xiaohongshu_favorites.release(
+                schedule_date,
+                favorite_id=old_id,
+                reason="replaced",
+            )
+        except Exception as exc:
+            logger.warning("释放小红书收藏穿搭预留失败: %s", exc)
+
+    def _select_favorite_schedule_reference(
+        self,
+        schedule_date: str,
+        daily: dict,
+        query: str,
+        existing: dict,
+    ) -> dict:
+        """Reserve a suitable unused favorite as this date's outfit reference.
+
+        Returns ``{}`` when no favorite applies so the caller keeps its normal
+        live-search and validated-cache behavior.  Never overrides a manual
+        assignment, and is idempotent per date so retries and restarts keep
+        the same outfit.
+        """
+        existing = existing if isinstance(existing, dict) else {}
+        if existing.get("selection_source") == "manual":
+            return {}
+        daily = daily if isinstance(daily, dict) else {}
+        context_text = " ".join(
+            str(value)
+            for value in (
+                query,
+                daily.get("theme_day"),
+                daily.get("theme_description"),
+                daily.get("outfit_style"),
+                daily.get("reference_query"),
+                str(daily.get("schedule") or "")[:400],
+            )
+            if value
+        )
+        library = self.xiaohongshu_favorites
+        try:
+            item = library.reserve_for_date(schedule_date, context_text=context_text)
+        except Exception as exc:
+            logger.warning("读取小红书收藏穿搭池失败，回退实时选图: %s", exc)
+            return {}
+        if not item:
+            return {}
+        if existing.get("favorite_id") == item.get("id") and existing.get("path"):
+            return existing
+        try:
+            reference = self._bind_favorite_schedule_reference(schedule_date, item, query=query)
+        except (XiaohongshuError, OSError) as exc:
+            logger.warning("绑定小红书收藏穿搭失败，回退实时选图: %s", exc)
+            library.release(schedule_date, favorite_id=str(item.get("id") or ""))
+            return {}
+        logger.info(
+            "小红书日程使用收藏穿搭: date=%s favorite=%s title=%s",
+            schedule_date,
+            item.get("id"),
+            item.get("title"),
+        )
+        return reference
+
+    def _bind_favorite_schedule_reference(
+        self,
+        schedule_date: str,
+        item: dict,
+        *,
+        query: str = "",
+    ) -> dict:
+        """Copy a library outfit into a date-scoped, durable schedule record."""
+        library = self.xiaohongshu_favorites
+        primary = next(
+            (
+                image
+                for image in item.get("images") or []
+                if isinstance(image, dict) and image.get("filename")
+            ),
+            {},
+        )
+        source_path = library.image_path(str(primary.get("filename") or ""))
+        if not source_path:
+            raise XiaohongshuError(
+                "favorite_image_missing",
+                "收藏的穿搭图片已丢失，请重新收藏这套穿搭。",
+                status=410,
+            )
+        extension = Path(source_path).suffix.lower()
+        digest = hashlib.sha256(
+            f"favorite:{schedule_date}:{item['id']}".encode("utf-8")
+        ).hexdigest()[:24]
+        filename = f"xhs_schedule_{schedule_date.replace('-', '')}_fav_{digest}{extension}"
+        os.makedirs(self.xiaohongshu_reference_dir, exist_ok=True)
+        path = os.path.join(self.xiaohongshu_reference_dir, filename)
+        old_reference = self._xiaohongshu_schedule_reference(schedule_date)
+        target_existed = os.path.exists(path)
+        try:
+            shutil.copy2(source_path, path)
+            self._verify_reference_image(path)
+            with Image.open(path) as image:
+                width, height = image.size
+        except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError) as exc:
+            if not target_existed:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            raise XiaohongshuError(
+                "invalid_image",
+                "收藏的穿搭图片无效，请重新收藏这套穿搭。",
+                status=400,
+            ) from exc
+
+        title = str(item.get("title") or "收藏穿搭").strip()[:80] or "收藏穿搭"
+        author = str(item.get("author") or "").strip()[:60]
+        created_at = self._now().isoformat(timespec="seconds")
+        record = {
+            "id": (
+                "xiaohongshu_schedule_"
+                + hashlib.sha1((schedule_date + filename).encode("utf-8")).hexdigest()[:12]
+            ),
+            "filename": filename,
+            "label": f"收藏穿搭 · {title}",
+            "title": title,
+            "author": author,
+            "source": "xiaohongshu",
+            "scope": "daily_schedule",
+            "schedule_date": schedule_date,
+            "query": str(query or "")[:80],
+            "selection_source": "favorite_library",
+            "feed_id": str(item.get("post_id") or ""),
+            "image_index": int(item.get("image_index") or 0),
+            "creator_id": str(item.get("creator_id") or ""),
+            "creator_name": author,
+            "favorite_id": str(item.get("id") or ""),
+            "outfit_key": str(item.get("outfit_key") or ""),
+            "post_id": str(item.get("post_id") or ""),
+            "width": width,
+            "height": height,
+            "size_bytes": os.path.getsize(path),
+            "created_at": created_at,
+        }
+        self.xiaohongshu_reference_store.update(
+            lambda records: {**records, filename: record}
+        )
+
+        def _save_state(state: dict) -> dict:
+            references = (
+                dict(state.get("references"))
+                if isinstance(state.get("references"), dict)
+                else {}
+            )
+            references[schedule_date] = record
+            state.update({
+                "enabled": True,
+                "references": references,
+                "pending_query": "",
+                "last_error": "",
+                "last_error_at": "",
+                "updated_at": created_at,
+            })
+            return state
+
+        self.xiaohongshu_schedule_store.update(_save_state)
+        self._release_replaced_favorite(
+            schedule_date,
+            old_reference,
+            keep_favorite_id=record["favorite_id"],
+        )
+        old_filename = str(old_reference.get("filename") or "").strip()
+        if old_filename and old_filename != filename:
+            try:
+                self._delete_xiaohongshu_reference_file(
+                    old_filename,
+                    allow_daily_schedule=True,
+                )
+            except OSError as exc:
+                logger.warning("清理旧的小红书日程参考图失败: %s", exc)
+        self._cleanup_old_xiaohongshu_schedule_references(schedule_date)
+        return self._xiaohongshu_schedule_reference(schedule_date)
+
+    async def _save_xiaohongshu_favorite(self, body: dict) -> tuple[dict, bool]:
+        """Save one outfit image into the favorites library.
+
+        One saved favorite is exactly one chosen image of one post, so a post
+        showing several distinct outfits can never be silently merged into a
+        single entry.  Returns ``(item, created)``.
+        """
+        library = self.xiaohongshu_favorites
+        client = self.xiaohongshu_client
+        title = str(body.get("title") or "").strip()
+        author = str(body.get("author") or "").strip()
+        post_id = str(body.get("feed_id") or body.get("post_id") or "").strip()
+        xsec_token = str(body.get("xsec_token") or "").strip()
+        image_url = str(body.get("image_url") or "").strip()
+        reference_url = str(body.get("reference_url") or "").strip()
+        note_url = str(body.get("note_url") or body.get("url") or "").strip()
+        description = str(body.get("description") or "").strip()[:500]
+        query = str(body.get("query") or "").strip()[:80]
+        try:
+            image_index = int(body.get("image_index") or 0)
+        except (TypeError, ValueError) as exc:
+            raise XiaohongshuError("invalid_image_index", "图片序号无效。", status=400) from exc
+
+        os.makedirs(self.xiaohongshu_favorite_dir, exist_ok=True)
+        source_path = ""
+        downloaded_new = False
+        width = height = 0
+
+        if reference_url:
+            selected = self._xiaohongshu_reference_for_value(reference_url)
+            record = self.xiaohongshu_reference_store.load().get(selected.get("filename", ""))
+            if not selected or not isinstance(record, dict) or not selected.get("path"):
+                raise XiaohongshuError(
+                    "reference_not_found",
+                    "指定的小红书参考图不存在或已失效。",
+                    status=404,
+                )
+            source_path = selected["path"]
+            title = title or str(record.get("title") or "")
+            author = author or str(record.get("author") or "")
+            post_id = post_id or str(record.get("feed_id") or "")
+        else:
+            if note_url:
+                # Cheap and offline for a full link; gives the stable post id
+                # and the token needed to reopen the original post later.
+                post_id, xsec_token = await client.parse_note_link(note_url)
+            if note_url and not image_url:
+                detail = await client.detail(post_id, xsec_token)
+                images = [
+                    image
+                    for image in detail.get("images") or []
+                    if isinstance(image, dict) and str(image.get("url") or "").strip()
+                ]
+                if not images:
+                    raise XiaohongshuError("no_images", "这条笔记没有可用图片。", status=400)
+                if "image_index" not in body and len(images) > 1:
+                    # Never guess which look the user means.
+                    raise XiaohongshuError(
+                        "image_selection_required",
+                        f"这条笔记有 {len(images)} 张图片，请选择要收藏的那一套穿搭。",
+                        status=409,
+                    )
+                chosen = next(
+                    (image for image in images if int(image.get("index") or 0) == image_index),
+                    None,
+                )
+                if chosen is None:
+                    raise XiaohongshuError("invalid_image_index", "没有找到指定序号的图片。", status=400)
+                image_url = str(chosen["url"]).strip()
+                title = title or str(detail.get("title") or "")
+                author = author or str(detail.get("author") or "")
+            if not image_url:
+                raise XiaohongshuError(
+                    "image_required",
+                    "请选择要收藏的穿搭图片。",
+                    status=400,
+                )
+            identity = self._xiaohongshu_image_identity(image_url)
+            known = library.find(outfit_key=make_outfit_key(post_id, identity))
+            if known:
+                # Repeat save: refresh metadata gaps only, never re-download or
+                # change the collection (a history outfit stays in history).
+                item, _created = library.save({
+                    "outfit_key": known["outfit_key"],
+                    "title": title,
+                    "author": author,
+                    "post_url": build_post_url(post_id, xsec_token),
+                    "xsec_token": xsec_token,
+                    "query": query,
+                    "description": description,
+                })
+                return item, False
+            downloaded = await client.import_image(image_url, self.xiaohongshu_favorite_dir)
+            source_path = str(downloaded.get("path") or "")
+            downloaded_new = True
+
+        try:
+            self._verify_reference_image(source_path)
+            with Image.open(source_path) as image:
+                width, height = image.size
+            with open(source_path, "rb") as handle:
+                image_sha256 = hashlib.sha256(handle.read()).hexdigest()
+        except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError) as exc:
+            if downloaded_new:
+                try:
+                    os.remove(source_path)
+                except OSError:
+                    pass
+            raise XiaohongshuError("invalid_image", "下载内容不是有效图片。", status=400) from exc
+
+        identity = self._xiaohongshu_image_identity(image_url) if image_url else ""
+        outfit_key = make_outfit_key(post_id, identity, image_sha256)
+        stored_name = os.path.basename(source_path)
+        if not downloaded_new:
+            stored_name = f"xhs_{image_sha256[:24]}{Path(source_path).suffix.lower()}"
+            stored_path = os.path.join(self.xiaohongshu_favorite_dir, stored_name)
+            if not os.path.exists(stored_path):
+                shutil.copy2(source_path, stored_path)
+        item, created = library.save({
+            "outfit_key": outfit_key,
+            "image_sha256": image_sha256,
+            "post_id": post_id,
+            "post_url": build_post_url(post_id, xsec_token),
+            "xsec_token": xsec_token,
+            "creator_id": str(body.get("creator_id") or ""),
+            "title": title or "小红书穿搭",
+            "author": author,
+            "query": query,
+            "description": description,
+            "image_index": image_index,
+            "images": [{
+                "index": image_index,
+                "filename": stored_name,
+                "width": width,
+                "height": height,
+                "size_bytes": os.path.getsize(source_path),
+            }],
+        })
+        stored_files = {
+            str(image.get("filename") or "") for image in item.get("images") or []
+        }
+        if not created and stored_name not in stored_files:
+            # Duplicate image saved under a new file name: keep only the original.
+            try:
+                os.remove(os.path.join(self.xiaohongshu_favorite_dir, stored_name))
+            except OSError:
+                pass
+        return item, created
+
+    async def handle_xiaohongshu_favorites(self, request: web.Request):
+        """List saved outfits (GET) or save a new one (POST)."""
+        library = self.xiaohongshu_favorites
+        if request.method == "GET":
+            collection = str(request.query.get("collection") or "").strip().lower()
+            if collection not in {"", "all", COLLECTION_FAVORITES, COLLECTION_HISTORY}:
+                return web.json_response({"error": "invalid_collection"}, status=400)
+            items = library.list_items("" if collection in {"", "all"} else collection)
+            return web.json_response({
+                "items": items,
+                "count": len(items),
+                "counts": library.counts(),
+                "settings": library.settings(),
+            })
+        try:
+            body = await self._xiaohongshu_json_body(request)
+            item, created = await self._save_xiaohongshu_favorite(body)
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+        return web.json_response(
+            {
+                "item": library.public_item(item),
+                "created": created,
+                "duplicate": not created,
+                "counts": library.counts(),
+            },
+            status=201 if created else 200,
+        )
+
+    async def handle_xiaohongshu_favorite_settings(self, request: web.Request):
+        """Toggle whether new schedules may draw from unused favorites."""
+        try:
+            body = await self._xiaohongshu_json_body(request)
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+        raw = body.get("auto_schedule")
+        enabled = (
+            raw
+            if isinstance(raw, bool)
+            else str(raw if raw is not None else True).strip().lower() in {"1", "true", "yes", "on"}
+        )
+        return web.json_response(self.xiaohongshu_favorites.set_auto_schedule(enabled))
+
+    async def handle_delete_xiaohongshu_favorite(self, request: web.Request):
+        """Remove an unused favorite; history and reserved outfits are kept."""
+        favorite_id = str(request.match_info.get("favorite_id") or "").strip()
+        library = self.xiaohongshu_favorites
+        removed, reason, files = library.delete(favorite_id)
+        if not removed:
+            status = 404 if reason == "not_found" else 409
+            return web.json_response({"error": reason or "not_found"}, status=status)
+        for filename in files:
+            path = library.image_path(filename)
+            if path:
+                try:
+                    os.remove(path)
+                except OSError as exc:
+                    logger.warning("删除小红书收藏图片失败: %s", exc)
+        return web.json_response({
+            "success": True,
+            "id": favorite_id,
+            "counts": library.counts(),
+        })
+
+    async def handle_wear_xiaohongshu_favorite(self, request: web.Request):
+        """Explicitly assign a saved outfit (favorite or history) to a date.
+
+        Reuses the existing manual-assignment flow, so the result behaves like
+        any other manually chosen outfit.  A history outfit stays in history;
+        its new use is appended once an image is actually generated.
+        """
+        favorite_id = str(request.match_info.get("favorite_id") or "").strip()
+        library = self.xiaohongshu_favorites
+        try:
+            body = await self._xiaohongshu_json_body(request)
+            schedule_date = self._normalize_xiaohongshu_schedule_date(
+                body.get("schedule_date") or ""
+            )
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+        item = library.get(favorite_id)
+        if not item:
+            return web.json_response({"error": "not_found"}, status=404)
+        primary = next(
+            (
+                image
+                for image in item.get("images") or []
+                if isinstance(image, dict) and image.get("filename")
+            ),
+            {},
+        )
+        source_path = library.image_path(str(primary.get("filename") or ""))
+        if not source_path:
+            return web.json_response(
+                {"error": "favorite_image_missing", "message": "收藏的穿搭图片已丢失。"},
+                status=410,
+            )
+
+        extension = Path(source_path).suffix.lower()
+        materialized = f"xhs_fav_{favorite_id[-12:]}{extension}"
+        materialized_path = os.path.join(self.xiaohongshu_reference_dir, materialized)
+        try:
+            async with self._xiaohongshu_schedule_lock:
+                os.makedirs(self.xiaohongshu_reference_dir, exist_ok=True)
+                shutil.copy2(source_path, materialized_path)
+                self._verify_reference_image(materialized_path)
+                with Image.open(materialized_path) as image:
+                    width, height = image.size
+                title = str(item.get("title") or "收藏穿搭")
+                author = str(item.get("author") or "")
+                self.xiaohongshu_reference_store.update(lambda records: {
+                    **records,
+                    materialized: {
+                        "id": f"xiaohongshu_{hashlib.sha1(materialized.encode('utf-8')).hexdigest()[:12]}",
+                        "filename": materialized,
+                        "label": f"小红书 · {title}",
+                        "title": title,
+                        "author": author,
+                        "source": "xiaohongshu",
+                        "feed_id": str(item.get("post_id") or ""),
+                        "image_index": int(item.get("image_index") or 0),
+                        "favorite_id": favorite_id,
+                        "outfit_key": str(item.get("outfit_key") or ""),
+                        "post_id": str(item.get("post_id") or ""),
+                        "width": width,
+                        "height": height,
+                        "size_bytes": os.path.getsize(materialized_path),
+                        "created_at": self._now().isoformat(timespec="seconds"),
+                    },
+                })
+                try:
+                    bound = self._bind_manual_xiaohongshu_schedule_reference(
+                        schedule_date,
+                        f"/local-refs/xiaohongshu/{materialized}",
+                        title=title,
+                        author=author,
+                    )
+                finally:
+                    # The date-scoped copy is what the schedule keeps; drop the
+                    # temporary source so it never shows up in the import list.
+                    try:
+                        self._delete_xiaohongshu_reference_file(materialized)
+                    except OSError:
+                        pass
+                    if os.path.exists(materialized_path):
+                        try:
+                            os.remove(materialized_path)
+                        except OSError:
+                            pass
+                library.reserve_manual(
+                    favorite_id,
+                    schedule_date,
+                    reference_filename=str(bound.get("filename") or ""),
+                )
+        except XiaohongshuError as exc:
+            return self._xiaohongshu_error_response(exc)
+        except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError):
+            return web.json_response(
+                {"error": "invalid_image", "message": "收藏的穿搭图片无效。"},
+                status=400,
+            )
+        return web.json_response({
+            "success": True,
+            "schedule": self.xiaohongshu_schedule_state(schedule_date),
+            "item": library.public_item(library.get(favorite_id)),
+            "counts": library.counts(),
+        })
 
     async def handle_upload_ref(self, request: web.Request):
         """上传普通参考图，或按 style 替换固定默认底模。"""

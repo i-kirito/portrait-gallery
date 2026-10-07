@@ -580,6 +580,68 @@ class PortraitGalleryApp:
             return {}, []
         return reference, [outfit_path, identity_path]
 
+    def _gallery_image_recorded(self, filename: str) -> bool:
+        """True once a generated image exists as a gallery entry.
+
+        The image spool registers its entry here immediately, so this also
+        holds while the file is still waiting for the NAS to come back.
+        """
+        filename = os.path.basename(str(filename or ""))
+        if not filename:
+            return False
+        try:
+            data = ScheduleStore(self.data_dir).load()
+        except Exception as exc:
+            logger.warning("读取画廊记录失败，无法确认图片已记录: %s", exc)
+            return False
+        if isinstance(data.get(filename), dict):
+            return True
+        return any(
+            isinstance(value, dict) and value.get("image_filename") == filename
+            for value in data.values()
+        )
+
+    def _record_favorite_outfit_use(
+        self,
+        schedule_date: str,
+        reference: dict,
+        image_filename: str,
+    ) -> None:
+        """Move a favorites-library outfit to History after a recorded image.
+
+        Called only once the outfit image was generated and recorded, so a
+        failed or merely drafted schedule never consumes the outfit.
+        """
+        favorite_id = str((reference or {}).get("favorite_id") or "").strip()
+        library = getattr(getattr(self, "web_server", None), "xiaohongshu_favorites", None)
+        filename = os.path.basename(str(image_filename or ""))
+        if not favorite_id or not filename or library is None:
+            return
+        if not self._gallery_image_recorded(filename):
+            logger.warning(
+                "小红书收藏穿搭暂不归档（图片尚未记录）: favorite=%s image=%s",
+                favorite_id,
+                filename,
+            )
+            return
+        try:
+            item = library.mark_used(
+                favorite_id,
+                schedule_date,
+                filename,
+                reference_filename=str((reference or {}).get("filename") or ""),
+            )
+        except Exception as exc:
+            logger.warning("小红书收藏穿搭归档失败: favorite=%s error=%s", favorite_id, exc)
+            return
+        if item:
+            logger.info(
+                "小红书收藏穿搭已移入历史: favorite=%s date=%s image=%s",
+                favorite_id,
+                schedule_date,
+                filename,
+            )
+
     async def _prepare_xiaohongshu_schedule_reference(
         self,
         schedule_date: str,
@@ -1143,6 +1205,12 @@ class PortraitGalleryApp:
                     store.update(_update_reference)
                 except Exception as e:
                     logger.error("保存初始生图参考图信息失败: %s", e)
+            if xiaohongshu_refs:
+                self._record_favorite_outfit_use(
+                    entry.date,
+                    selected_reference,
+                    entry.image_filename,
+                )
         return entry
 
     async def generate_theme_day(
@@ -5618,6 +5686,12 @@ class PortraitGalleryApp:
                             store.update(_update_reference)
                         except Exception as e:
                             logger.error("保存定时生图参考图信息失败: %s", e)
+                    if xiaohongshu_refs and filename:
+                        self._record_favorite_outfit_use(
+                            resolved_schedule_date,
+                            selected_reference,
+                            filename,
+                        )
                     caption_text = self._gallery_caption_for_image(image_path, caption_text)
                     if self._delivery_enabled():
                         self._set_gallery_delivery_status(filename, "sending")
