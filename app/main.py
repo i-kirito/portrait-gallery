@@ -87,6 +87,7 @@ from settings import (
     custom_shot_label,
     custom_shot_prompt,
     image_process_timeout,
+    qwen_fallback_process_extension,
     load_config,
     load_json_file,
     load_runtime_persona,
@@ -3010,6 +3011,9 @@ class PortraitGalleryApp:
             image_model=raw_model_name if engine == "gptimage" else "",
             precise_edit=is_precision_edit,
             xiaohongshu_outfit_reference=reroll_xiaohongshu_outfit_reference,
+            # Scheduled rerolls may use the optional Qwen fallback; image_gen and
+            # the child still exclude precision edits and non-[outfit, identity] refs.
+            qwen_fallback=bool(is_scheduled_reroll and not is_precision_edit),
         )
         if not filename:
             logger.error("图片重抽失败: %s", image_filename)
@@ -4203,8 +4207,18 @@ class PortraitGalleryApp:
             activity[:30],
         )
 
+    def _photo_job_process_timeout(self) -> int:
+        """Child timeout for a dynamic photo job, including the optional Qwen fallback window."""
+        base = image_process_timeout(self.config, with_reference_fallback=True)
+        data_dir = str(getattr(self, "data_dir", "") or "")
+        if not data_dir:
+            return base
+        return base + qwen_fallback_process_extension(self.config, data_dir)
+
     def _photo_job_stale_seconds(self) -> int:
-        return image_process_timeout(self.config, with_reference_fallback=True) + PHOTO_JOB_INFLIGHT_STALE_GRACE_SECONDS
+        # Must cover the full child window (incl. a running Qwen fallback) so task
+        # recovery never treats an in-flight job as stale and starts a duplicate.
+        return self._photo_job_process_timeout() + PHOTO_JOB_INFLIGHT_STALE_GRACE_SECONDS
 
     def _expire_stale_photo_jobs(self):
         if not self._photo_jobs_inflight:
@@ -5552,6 +5566,8 @@ class PortraitGalleryApp:
             if xiaohongshu_refs:
                 cmd.extend(["--ref-images", ",".join(xiaohongshu_refs)])
                 cmd.append("--xiaohongshu-outfit-reference")
+            # Optional GPT -> Qwen fallback; the child enforces eligibility.
+            cmd.append("--qwen-fallback")
             logger.info(
                 "定时生图选择参考图: %s mode=%s refs=%s",
                 selected_reference.get("label") or selected_reference.get("filename"),
@@ -5567,13 +5583,15 @@ class PortraitGalleryApp:
             child_env = self.image_gen.build_env()
             if self._delivery_enabled():
                 child_env["ZHUZHU_DELIVERY_PENDING"] = "1"
+            photo_timeout = self._photo_job_process_timeout()
+            child_env["ZHUZHU_PROCESS_DEADLINE"] = f"{time.time() + max(0, photo_timeout - 20):.0f}"
             result = await loop.run_in_executor(
                 None,
                 lambda: subprocess.run(
                     cmd,
                     capture_output=True,
                     text=True,
-                    timeout=image_process_timeout(self.config, with_reference_fallback=True),
+                    timeout=photo_timeout,
                     cwd=self.image_gen.script_dir,
                     env=child_env,
                 )
@@ -5667,7 +5685,7 @@ class PortraitGalleryApp:
         except PhotoDeliveryError:
             raise
         except subprocess.TimeoutExpired:
-            timeout = image_process_timeout(self.config, with_reference_fallback=True)
+            timeout = self._photo_job_process_timeout()
             logger.error(f"定时生图超时: theme={theme} ({timeout}s)")
             if slot_key:
                 self._failed_photo_jobs[slot_key] = {

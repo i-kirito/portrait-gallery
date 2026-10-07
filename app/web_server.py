@@ -5971,6 +5971,7 @@ class GalleryServer:
         plugin_config = {}
         gitee_key = ""
         gitee_fallback_enabled = False
+        qwen_fallback_enabled = False
         gpt_chat_fallback_enabled = False
         gpt_prompt_compact_enabled = False
         if os.path.exists(plugin_config_path):
@@ -5981,6 +5982,7 @@ class GalleryServer:
                     if gitee_keys:
                         gitee_key = gitee_keys[0]
                     gitee_fallback_enabled = bool(plugin_config.get("gitee_fallback_enabled", False))
+                    qwen_fallback_enabled = self._body_bool(plugin_config, "qwen_fallback_enabled")
                     gpt_chat_fallback_enabled = bool(
                         plugin_config.get("gpt_chat_fallback_enabled", False)
                     )
@@ -6122,6 +6124,7 @@ class GalleryServer:
             "llm_model_chain": llm_model_chain,
             "llm_stream_enabled": bool(full_llm_config.get("stream", False)),
             "gitee_fallback_enabled": gitee_fallback_enabled,
+            "qwen_fallback_enabled": qwen_fallback_enabled,
             "gpt_chat_fallback_enabled": gpt_chat_fallback_enabled,
             "gpt_prompt_compact_enabled": gpt_prompt_compact_enabled,
             "gpt_prompt_compact_target_chars": gpt_prompt_compact_target_chars,
@@ -7327,6 +7330,7 @@ class GalleryServer:
                     plugin_changed = (
                         "gitee_key" in body
                         or "gitee_fallback_enabled" in body
+                        or "qwen_fallback_enabled" in body
                         or "gpt_chat_fallback_enabled" in body
                         or "gpt_prompt_compact_enabled" in body
                     )
@@ -7341,6 +7345,10 @@ class GalleryServer:
                         if "gitee_fallback_enabled" in body:
                             plugin_config["gitee_fallback_enabled"] = self._body_bool(
                                 body, "gitee_fallback_enabled"
+                            )
+                        if "qwen_fallback_enabled" in body:
+                            plugin_config["qwen_fallback_enabled"] = self._body_bool(
+                                body, "qwen_fallback_enabled"
                             )
                         if "gpt_chat_fallback_enabled" in body:
                             plugin_config["gpt_chat_fallback_enabled"] = self._body_bool(

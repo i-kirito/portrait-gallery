@@ -5,9 +5,16 @@ import os
 import re
 import subprocess
 import sys
+import time
 from typing import Optional
 
-from settings import build_child_env, configured_python, image_process_timeout, resolve_image_dir
+from settings import (
+    build_child_env,
+    configured_python,
+    image_process_timeout,
+    qwen_fallback_process_extension,
+    resolve_image_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +58,7 @@ class ImageGenerator:
     def _fallback_transition(stderr: str) -> Optional[tuple[str, str]]:
         text = str(stderr or "")
         markers = (
+            ("GPT Image failed, falling back to Qwen", "gptimage", "qwen"),
             ("GPT Image failed, falling back to Gitee", "gptimage", "gitee"),
             ("Gemini CPA failed, falling back to Gitee", "gemini", "gitee"),
             ("Gitee failed, falling back to GPT Image", "gitee", "gptimage"),
@@ -68,6 +76,7 @@ class ImageGenerator:
             "gptimage": "GPT Image",
             "gitee": "Gitee",
             "gemini": "Gemini",
+            "qwen": "Qwen",
         }.get(str(failed_engine or "").strip().lower(), "生图")
         reasons = []
         if "insufficient_quota" in lower or "额度已用完" in lower:
@@ -123,8 +132,14 @@ class ImageGenerator:
         image_model: str = "",
         precise_edit: bool = False,
         xiaohongshu_outfit_reference: bool = False,
+        qwen_fallback: bool = False,
     ) -> Optional[str]:
-        """生成图片，返回图片文件名（相对路径）（异步，不阻塞事件循环）"""
+        """生成图片，返回图片文件名（相对路径）（异步，不阻塞事件循环）
+
+        ``qwen_fallback`` opts a scheduled outfit request into the optional
+        GPT -> Qwen fallback; the child only uses it after a known GPT failure
+        with the [outfit, identity] pair, and only when enabled in settings.
+        """
         if image_model.lower() in {"qwen-image-2.1", "qwen-image-2.1-q8_0", "qwen"}:
             engine = "qwen"
         engine = engine or self.default_engine
@@ -132,6 +147,9 @@ class ImageGenerator:
             timeout = max(timeout, int(self.config.get("image_gen", {}).get("qwen_timeout", 900)) + 90)
         if not timeout:
             timeout = image_process_timeout(self.config, with_reference_fallback=bool(style or ref_image or ref_images))
+        qwen_fallback_requested = bool(qwen_fallback and engine == "gptimage" and not precise_edit)
+        if qwen_fallback_requested:
+            timeout += qwen_fallback_process_extension(self.config, self.data_dir)
         model_label = image_model or "-"
         logger.info(
             f"开始生图: theme={theme}, engine={engine}, model={model_label}, "
@@ -173,11 +191,18 @@ class ImageGenerator:
             cmd.append("--precise-edit")
         if xiaohongshu_outfit_reference:
             cmd.append("--xiaohongshu-outfit-reference")
+        if qwen_fallback_requested:
+            cmd.append("--qwen-fallback")
         if prompt:
             cmd.extend(["--prompt", prompt])
 
         try:
-            child_env_extra = {"ZHUZHU_MEDIA_DIR": self.output_dir}
+            child_env_extra = {
+                "ZHUZHU_MEDIA_DIR": self.output_dir,
+                # Absolute deadline: the child only starts a Qwen fallback job
+                # when it can finish before this process is killed.
+                "ZHUZHU_PROCESS_DEADLINE": f"{time.time() + max(0, timeout - 20):.0f}",
+            }
             if image_model and engine == "gptimage":
                 child_env_extra["GPT_IMAGE_MODEL"] = image_model
             # 用 run_in_executor 避免阻塞事件循环
@@ -250,4 +275,5 @@ class ImageGenerator:
             size=size,
             source="cron",
             xiaohongshu_outfit_reference=xiaohongshu_outfit_reference,
+            qwen_fallback=True,
         )
