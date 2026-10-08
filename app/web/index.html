@@ -8936,6 +8936,19 @@ textarea:focus-visible,
                 </label>
               </div>
             </div>
+            <div class="sk-field sk-engine-option-field">
+              <div class="sk-gitee-fallback-inline" id="skQwenFallbackRow">
+                <div class="sk-gitee-fallback-copy">
+                  <span class="sk-gitee-fallback-title">Qwen 定时穿搭回退</span>
+                  <span class="sk-gitee-fallback-hint">GPT Image 明确失败后，按「穿搭图 + 脸部参考」用 Qwen-Image-2.1（ComfyUI，地址取自 image_gen.qwen_base_url）重画定时照片；超时或结果不明时不回退</span>
+                  <div class="sk-status" id="skQwenFallbackStatus">加载中...</div>
+                </div>
+                <label class="sk-switch" for="skQwenFallback" aria-label="允许定时穿搭图在 GPT 明确失败后回退到 Qwen">
+                  <input type="checkbox" id="skQwenFallback" onchange="syncQwenFallbackVisual(this.checked)">
+                  <span class="sk-switch-knob"></span>
+                </label>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -19723,6 +19736,16 @@ function updatePersonaPreview(data) {
   updatePushAgentPreview(data);
 }
 
+function syncQwenFallbackVisual(enabled) {
+  const row = document.getElementById("skQwenFallbackRow");
+  const status = document.getElementById("skQwenFallbackStatus");
+  if (row) row.classList.toggle("enabled", enabled === true);
+  if (status) {
+    status.textContent = enabled ? "✓ 回退开" : "○ 回退关";
+    status.className = "sk-status " + (enabled ? "set" : "unset");
+  }
+}
+
 function syncGiteeFallbackVisual(enabled) {
   const row = document.getElementById("skGiteeFallbackRow");
   const status = document.getElementById("skGiteeFallbackStatus");
@@ -20601,6 +20624,11 @@ async function loadSettingsStatus() {
     const giteeFallbackEl = document.getElementById("skGiteeFallback");
     giteeFallbackEl.checked = data.gitee_fallback_enabled === true;
     syncGiteeFallbackVisual(giteeFallbackEl.checked);
+    const qwenFallbackEl = document.getElementById("skQwenFallback");
+    if (qwenFallbackEl) {
+      qwenFallbackEl.checked = data.qwen_fallback_enabled === true;
+      syncQwenFallbackVisual(qwenFallbackEl.checked);
+    }
     const gptChatFallbackEl = document.getElementById("skGptChatFallback");
     gptChatFallbackEl.checked = data.gpt_chat_fallback_enabled === true;
     syncGptChatFallbackVisual(gptChatFallbackEl.checked);
@@ -21182,6 +21210,8 @@ async function saveSettings() {
     body.hermes_cli = document.getElementById("skHermesCliPath")?.value.trim() || "";
     body.openclaw_cli = document.getElementById("skOpenclawCliPath")?.value.trim() || "";
     body.gitee_fallback_enabled = giteeFallbackEnabled;
+    const qwenFallbackToggle = document.getElementById("skQwenFallback");
+    if (qwenFallbackToggle) body.qwen_fallback_enabled = qwenFallbackToggle.checked;
     body.gpt_chat_fallback_enabled = gptChatFallbackEnabled;
     body.gpt_prompt_compact_enabled = gptPromptCompactEnabled;
     body.video_generation_enabled = videoGenerationEnabledValue;

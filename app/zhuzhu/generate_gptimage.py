@@ -77,6 +77,12 @@ _IMAGES_API_UNSUPPORTED_BASES: set[str] = set()
 _LAST_TERMINAL_IMAGE_FAILURE = ""
 _LAST_IMAGE_FAILURE_KIND = ""
 _LAST_SUCCESSFUL_IMAGE_ENDPOINT = ""
+# Every failure kind / terminal reason seen during one generate() call, in
+# order.  The "last" values above are overwritten by the face-only retry, but
+# an optional downstream fallback must know whether ANY attempt in the call
+# ended ambiguously (e.g. timed out after the upstream may have rendered).
+_IMAGE_FAILURE_HISTORY: list[str] = []
+_TERMINAL_FAILURE_HISTORY: list[str] = []
 
 _PIPELINE_REFERENCE_BLOCK_START = "\n[GALLERY_PIPELINE_REFERENCE_RULES_V1]"
 _PIPELINE_REFERENCE_BLOCK_END = "\n[/GALLERY_PIPELINE_REFERENCE_RULES_V1]"
@@ -559,6 +565,7 @@ def _set_terminal_image_failure(status_code: int, body: str) -> str:
     reason = _terminal_image_failure_reason(status_code, body)
     if reason:
         _LAST_TERMINAL_IMAGE_FAILURE = reason
+        _TERMINAL_FAILURE_HISTORY.append(reason)
     return reason
 
 
@@ -568,7 +575,18 @@ def _note_image_failure_kind(kind: str) -> str:
     value = str(kind or "").strip()
     if value:
         _LAST_IMAGE_FAILURE_KIND = value
+        _IMAGE_FAILURE_HISTORY.append(value)
     return value
+
+
+def last_failure_report() -> dict:
+    """Failure kinds/terminal reasons recorded by the latest generate() call."""
+    return {
+        "kinds": list(_IMAGE_FAILURE_HISTORY),
+        "terminal_reasons": list(_TERMINAL_FAILURE_HISTORY),
+        "terminal_reason": _LAST_TERMINAL_IMAGE_FAILURE,
+        "last_kind": _LAST_IMAGE_FAILURE_KIND,
+    }
 
 
 def _images_api_failure_kind(
@@ -958,6 +976,7 @@ def _generate_via_images_api(
     images_base = _normalize_gpt_images_base_url(raw_base_url)
     engine_label = _image_engine_label()
     if not images_base:
+        _note_image_failure_kind("not_configured")
         print("ERROR: image_gen.gpt_base_url is required", file=sys.stderr)
         return None
 
@@ -1121,6 +1140,7 @@ def _generate_via_images_api(
                 return None
             img_data = _image_response_bytes(payload_json)
             if not img_data:
+                _note_image_failure_kind("no_image")
                 print(
                     f"{engine_label} Images API: no image in response [{endpoint_label}] "
                     f"refs={len(refs)} (attempt {attempt + 1}/{attempt_limit}): {resp.text[:240]}",
@@ -1170,6 +1190,7 @@ def _generate_via_chat_gpt(
 
     base_url = _normalize_gpt_chat_url(raw_base_url) if raw_base_url else _get_gpt_base_url()
     if not base_url:
+        _note_image_failure_kind("not_configured")
         print("ERROR: image_gen.gpt_base_url is required", file=sys.stderr)
         return None
 
@@ -1328,6 +1349,7 @@ def _generate_via_direct_gpt(
 
     endpoints = _direct_gpt_image_endpoints()
     if not endpoints:
+        _note_image_failure_kind("not_configured")
         print("ERROR: image_gen.gpt_base_url is required", file=sys.stderr)
         return None
     if not GPTIMAGE_DIRECT_MODEL:
@@ -1518,6 +1540,8 @@ def generate(theme: str, send: bool = False, caption: bool = False,
     global _LAST_TERMINAL_IMAGE_FAILURE, _LAST_IMAGE_FAILURE_KIND
     _LAST_TERMINAL_IMAGE_FAILURE = ""
     _LAST_IMAGE_FAILURE_KIND = ""
+    _IMAGE_FAILURE_HISTORY.clear()
+    _TERMINAL_FAILURE_HISTORY.clear()
     print(f"🎨 {engine_label} via {endpoint_label} ({requested_mode})...", file=sys.stderr)
     if len(refs) > 1:
         print(

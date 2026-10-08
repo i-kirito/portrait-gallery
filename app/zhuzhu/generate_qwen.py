@@ -31,8 +31,24 @@ class QwenError(RuntimeError):
     pass
 
 
-def resolve_size(size="", reference_size=None):
-    """Keep the first reference's aspect; size is an optional pixel budget."""
+class QwenBusyError(QwenError):
+    """ComfyUI already has more work queued than the caller allows (nothing submitted)."""
+
+
+class QwenJobFailed(QwenError):
+    """Definite failure: ComfyUI rejected or finished the job without an image.
+
+    Unlike a plain QwenError (lost response, poll failure, timeout), the job is
+    known not to be producing an image, so a later attempt may submit again.
+    """
+
+
+def resolve_size(size="", reference_size=None, allow_upscale=False):
+    """Keep the first reference's aspect; size is an optional pixel budget.
+
+    ``allow_upscale`` lets a small reference grow to the pixel budget (used for
+    a secondary identity reference so it is not outweighed by Image 1).
+    """
     value = str(size or "").strip().lower()
     budget = MAX_PIXELS
     if value not in {"", "auto"}:
@@ -50,7 +66,8 @@ def resolve_size(size="", reference_size=None):
         raise ValueError("参考图边长至少32像素，总像素不得超过64MP。")
     if max(width, height) > min(width, height) * 4:
         raise ValueError("Qwen 当前参考图宽高比支持 1:4 至 4:1。")
-    scale = min(1.0, math.sqrt(budget / (width * height)))
+    scale = math.sqrt(budget / (width * height))
+    scale = min(scale, 4.0) if allow_upscale else min(1.0, scale)
     return max(32, int(width * scale) // 32 * 32), max(32, int(height * scale) // 32 * 32)
 
 
@@ -86,7 +103,7 @@ def reference_paths(ref_image=None, ref_images=None):
     return paths
 
 
-def prepare_reference(path, size=""):
+def prepare_reference(path, size="", allow_upscale=False):
     """Decode locally, honor EXIF rotation, and send only normalized image pixels."""
     with Image.open(path) as source:
         source.verify()
@@ -94,7 +111,7 @@ def prepare_reference(path, size=""):
         if getattr(source, "is_animated", False):
             raise ValueError("请使用静态参考图，不能静默取动图的第一帧。")
         image = ImageOps.exif_transpose(source)
-        target = resolve_size(size, image.size)
+        target = resolve_size(size, image.size, allow_upscale=allow_upscale)
         image = image.convert("RGBA" if "A" in image.getbands() or "transparency" in image.info else "RGB")
         if image.size != target:
             image = image.resize(target, Image.Resampling.LANCZOS)
@@ -187,36 +204,43 @@ def build_workflow(prompt, size="", seed=None, steps=25, *, reference_images=Non
     return graph, width, height
 
 
-def generate_image_bytes(prompt, size="", request_info=None, seed=None, steps=25, *, ref_image=None, ref_images=None):
-    paths = reference_paths(ref_image, ref_images)
-    seed, steps = validate_settings(prompt, seed, steps)
-    # Validate every source before uploading anything or submitting a task.
-    prepared = [prepare_reference(path, size) for path in paths]
-    base_url = _base_url()
-    _json(base_url, "/system_stats", timeout=5)
-    uploaded = [upload_reference(base_url, data) for data, _ in prepared]
-    graph, width, height = build_workflow(prompt, seed=seed, steps=steps, reference_images=uploaded, reference_size=prepared[0][1])
-    timeout = max(60, min(1800, int(get_image_model("qwen_timeout", "900"))))
-    info = request_info if request_info is not None else {}
-    info.update(submitted_prompt=prompt, requested_size=size or "auto", resolved_size=f"{width}x{height}",
-                width=width, height=height, seed=seed, steps=steps, generation_mode="img2img",
-                quantization="Q8_0", text_encoder=CLIP_NAME, comfy_base_url=base_url,
-                ref_image=str(paths[0]), ref_image_path=str(paths[0]), ref_images=[str(p) for p in paths],
-                reference_count=len(paths), upstream_references=uploaded,
-                reference_sha256=[hashlib.sha256(data).hexdigest() for data, _ in prepared],
-                size_policy="preserve_first_reference_aspect")
-    prompt_id = str(uuid.uuid4())
-    info["comfy_prompt_id"] = prompt_id
-    started = time.monotonic()
-    try:
-        queued = _json(base_url, "/prompt", {"prompt": graph, "prompt_id": prompt_id, "client_id": str(uuid.uuid4())}, timeout=30)
-    except QwenError as exc:
-        raise QwenError(f"Qwen 提交响应失败，任务 {prompt_id} 可能已入队；先查询该ID，不要重复提交。{exc}") from exc
-    if queued.get("node_errors") or not queued.get("prompt_id"):
-        raise QwenError(f"Qwen 工作流校验失败：{queued}")
-    prompt_id = queued["prompt_id"]
-    info["comfy_prompt_id"] = prompt_id
-    print(f"QWEN_QUEUED:{prompt_id} mode=img2img references={len(paths)} size={width}x{height}", file=sys.stderr, flush=True)
+def queue_snapshot(base_url):
+    """Read-only view of ComfyUI's queue: running and pending prompt ids."""
+    queue = _json(base_url, "/queue", timeout=5)
+
+    def _ids(items):
+        ids = []
+        for item in items or []:
+            if isinstance(item, (list, tuple)) and len(item) > 1:
+                ids.append(str(item[1]))
+        return ids
+
+    return {"running": _ids(queue.get("queue_running")), "pending": _ids(queue.get("queue_pending"))}
+
+
+def prompt_state(base_url, prompt_id):
+    """Return completed / error / running / pending / absent for one prompt id (read only)."""
+    item = _json(base_url, "/history/" + urllib.parse.quote(str(prompt_id), safe=""), timeout=15).get(prompt_id)
+    if item:
+        status = item.get("status", {})
+        if status.get("status_str") == "error":
+            return "error"
+        if status.get("completed"):
+            return "completed"
+    snapshot = queue_snapshot(base_url)
+    if prompt_id in snapshot["running"]:
+        return "running"
+    if prompt_id in snapshot["pending"]:
+        return "pending"
+    return "running" if item else "absent"
+
+
+def _configured_timeout():
+    return max(60, min(1800, int(get_image_model("qwen_timeout", "900"))))
+
+
+def _await_output(base_url, prompt_id, width, height, timeout, info, started):
+    """Poll one already-submitted prompt and download its first output image."""
     while time.monotonic() - started < timeout:
         try:
             item = _json(base_url, "/history/" + prompt_id, timeout=15).get(prompt_id)
@@ -226,18 +250,18 @@ def generate_image_bytes(prompt, size="", request_info=None, seed=None, steps=25
             status = item.get("status", {})
             if status.get("status_str") == "error":
                 details = [m[1] for m in status.get("messages", []) if m[0] in {"execution_error", "execution_interrupted"}]
-                raise QwenError(f"Qwen 生成失败，prompt_id={prompt_id}: {json.dumps(details, ensure_ascii=False)[:3500]}")
+                raise QwenJobFailed(f"Qwen 生成失败，prompt_id={prompt_id}: {json.dumps(details, ensure_ascii=False)[:3500]}")
             if status.get("completed"):
                 outputs = [image for node in item.get("outputs", {}).values() for image in node.get("images", []) if image.get("type") == "output"]
                 if not outputs:
-                    raise QwenError(f"Qwen 任务 {prompt_id} 完成但没有保存图片。")
+                    raise QwenJobFailed(f"Qwen 任务 {prompt_id} 完成但没有保存图片。")
                 params = {key: outputs[0].get(key, "") for key in ("filename", "subfolder", "type")}
                 with _open(base_url, "/view?" + urllib.parse.urlencode(params), timeout=60) as response:
                     data = response.read(64 * 1024 * 1024 + 1)
                 if len(data) > 64 * 1024 * 1024:
                     raise QwenError("Qwen 输出超过 64 MiB，未保存。")
                 with Image.open(io.BytesIO(data)) as image:
-                    if image.size != (width, height):
+                    if width and height and image.size != (width, height):
                         raise QwenError(f"Qwen 输出尺寸异常：{image.size}，预期 {(width, height)}")
                     image.verify()
                 info["upstream_output"] = params
@@ -246,14 +270,96 @@ def generate_image_bytes(prompt, size="", request_info=None, seed=None, steps=25
     raise QwenError(f"Qwen 等待超过 {timeout} 秒，prompt_id={prompt_id}，任务可能仍在运行；超时不自动取消或重复提交。")
 
 
-def generate(theme, prompt, size="", source="custom", ref_image=None, ref_images=None):
-    info = {}
-    data, elapsed = generate_image_bytes(prompt, size=size, request_info=info, ref_image=ref_image, ref_images=ref_images)
-    path, filename, created_at = save_image(data, theme, MODEL_NAME, target_size=info["resolved_size"], filename_theme="qwen21_q8_edit")
-    update_metadata(filename, theme, prompt, MODEL_NAME, created_at, elapsed, extra_metadata={
-        **info, "model_name": MODEL_NAME, "size": info["resolved_size"], "source": source,
+def resume_image_bytes(prompt_id, *, width=0, height=0, request_info=None, wait_timeout=60):
+    """Collect the output of an earlier prompt without submitting anything new."""
+    base_url = _base_url()
+    info = request_info if request_info is not None else {}
+    info.update(comfy_prompt_id=prompt_id, comfy_base_url=base_url, reconciled_prompt=True)
+    timeout = max(5, int(wait_timeout))
+    return _await_output(base_url, str(prompt_id), int(width or 0), int(height or 0), timeout, info, time.monotonic())
+
+
+def generate_image_bytes(prompt, size="", request_info=None, seed=None, steps=25, *, ref_image=None, ref_images=None,
+                         wait_timeout=None, on_submit=None, max_queue_ahead=None, upscale_secondary_references=False):
+    """Submit one image-to-image job.
+
+    Keyword-only extras (all optional, defaults keep the standalone behavior):
+    ``wait_timeout`` caps the wait below ``qwen_timeout``; ``on_submit(prompt_id,
+    state)`` is called with ``"submitting"`` *before* ``POST /prompt`` and with
+    ``"queued"`` after it, so callers can persist the id for reconciliation;
+    ``max_queue_ahead`` refuses to enqueue behind more running/pending jobs;
+    ``upscale_secondary_references`` lets references after Image 1 grow to the
+    ~1MP budget (Image 1 still defines the canvas, nothing is cropped).
+    """
+    paths = reference_paths(ref_image, ref_images)
+    seed, steps = validate_settings(prompt, seed, steps)
+    # Validate every source before uploading anything or submitting a task.
+    prepared = [
+        prepare_reference(path, size, allow_upscale=bool(upscale_secondary_references and index > 0))
+        for index, path in enumerate(paths)
+    ]
+    base_url = _base_url()
+    _json(base_url, "/system_stats", timeout=5)
+    if max_queue_ahead is not None:
+        snapshot = queue_snapshot(base_url)
+        ahead = len(snapshot["running"]) + len(snapshot["pending"])
+        if ahead > int(max_queue_ahead):
+            raise QwenBusyError(f"WIND ComfyUI 队列已有 {ahead} 个任务（上限 {int(max_queue_ahead)}），本次不提交。")
+    uploaded = [upload_reference(base_url, data) for data, _ in prepared]
+    graph, width, height = build_workflow(prompt, seed=seed, steps=steps, reference_images=uploaded, reference_size=prepared[0][1])
+    timeout = _configured_timeout()
+    if wait_timeout is not None:
+        timeout = max(30, min(timeout, int(wait_timeout)))
+    info = request_info if request_info is not None else {}
+    info.update(submitted_prompt=prompt, requested_size=size or "auto", resolved_size=f"{width}x{height}",
+                width=width, height=height, seed=seed, steps=steps, generation_mode="img2img",
+                model_name=MODEL_NAME, quantization="Q8_0", text_encoder=CLIP_NAME, comfy_base_url=base_url,
+                ref_image=str(paths[0]), ref_image_path=str(paths[0]), ref_images=[str(p) for p in paths],
+                reference_count=len(paths), upstream_references=uploaded,
+                reference_sha256=[hashlib.sha256(data).hexdigest() for data, _ in prepared],
+                reference_sizes=[f"{w}x{h}" for _, (w, h) in prepared],
+                size_policy="preserve_first_reference_aspect")
+    prompt_id = str(uuid.uuid4())
+    info["comfy_prompt_id"] = prompt_id
+    if on_submit is not None:
+        # Persist the id before the request leaves this process: if the POST
+        # response is lost, the job can still be found by this id.
+        on_submit(prompt_id, "submitting")
+    started = time.monotonic()
+    try:
+        queued = _json(base_url, "/prompt", {"prompt": graph, "prompt_id": prompt_id, "client_id": str(uuid.uuid4())}, timeout=30)
+    except QwenError as exc:
+        raise QwenError(f"Qwen 提交响应失败，任务 {prompt_id} 可能已入队；先查询该ID，不要重复提交。{exc}") from exc
+    if queued.get("node_errors") or not queued.get("prompt_id"):
+        raise QwenJobFailed(f"Qwen 工作流校验失败：{queued}")
+    prompt_id = queued["prompt_id"]
+    info["comfy_prompt_id"] = prompt_id
+    if on_submit is not None:
+        on_submit(prompt_id, "queued")
+    print(f"QWEN_QUEUED:{prompt_id} mode=img2img references={len(paths)} size={width}x{height}", file=sys.stderr, flush=True)
+    return _await_output(base_url, prompt_id, width, height, timeout, info, started)
+
+
+def save_generated(data, elapsed, info, theme, prompt, source="custom", *, ref_image=None,
+                   filename_theme="qwen21_q8_edit", extra_metadata=None):
+    """Save provider output and its metadata; returns (path, filename, model_name)."""
+    model_name = str(info.get("model_name") or MODEL_NAME)
+    resolved_size = str(info.get("resolved_size") or "")
+    path, filename, created_at = save_image(data, theme, model_name, target_size=resolved_size,
+                                            filename_theme=filename_theme)
+    metadata = {
+        **info, "model_name": model_name, "size": resolved_size, "source": source,
         "engine": "qwen", "generation_mode": "img2img", "requested_generation_mode": "img2img",
         "custom_ref_mode": "reference", "requested_ref_image": str(ref_image or ""),
         "fallback_used": False, "fallback_from": "", "fallback_to": "",
-    })
+    }
+    metadata.update(extra_metadata or {})
+    update_metadata(filename, theme, prompt, model_name, created_at, elapsed, extra_metadata=metadata)
+    return path, filename, model_name
+
+
+def generate(theme, prompt, size="", source="custom", ref_image=None, ref_images=None, *, request_info=None):
+    info = request_info if request_info is not None else {}
+    data, elapsed = generate_image_bytes(prompt, size=size, request_info=info, ref_image=ref_image, ref_images=ref_images)
+    path, _filename, _model = save_generated(data, elapsed, info, theme, prompt, source, ref_image=ref_image)
     return path

@@ -33,6 +33,8 @@ from generate_gitee import MODEL_NAME as GITEE_MODEL_NAME
 from generate_gitee import generate as generate_with_gitee
 from generate_gptimage import GPTIMAGE_DIRECT_MODEL
 from generate_gptimage import generate as generate_with_gptimage
+from generate_gptimage import last_failure_report as gpt_last_failure_report
+import qwen_fallback as qwen_fallback_module  # not `qwen_fallback`: that name is a generate() flag
 from settings import (
     XIAOHONGSHU_OUTFIT_REFERENCE_MARKER,
     apply_schedule_image_framing,
@@ -871,6 +873,24 @@ def _get_schedule_context(
     return "", "", "", "", ""
 
 
+XIAOHONGSHU_GPT_REFERENCE_ROLES = (
+    "Strict ordered reference roles: Image 1 supplies only the outfit design, garment details, "
+    "styling, hairstyle, pose, action, props, scene, lighting, camera and composition. "
+    "Image 2 is the sole authoritative facial identity source. Preserve its recognizable facial "
+    "features without beautification or blending with Image 1. The target physique and body "
+    "proportions must follow only the Gallery configured character description in this prompt; "
+    "never copy either reference person's body."
+)
+
+
+def _strip_gpt_reference_roles(prompt: str) -> str:
+    """Remove the GPT-specific reference-role block; Qwen gets its own role contract."""
+    text = str(prompt or "")
+    text = text.replace(f"{XIAOHONGSHU_OUTFIT_REFERENCE_MARKER} {XIAOHONGSHU_GPT_REFERENCE_ROLES}", "")
+    text = text.replace(XIAOHONGSHU_OUTFIT_REFERENCE_MARKER, "")
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
 def generate(
     theme: str,
     engine: str = "gptimage",
@@ -890,6 +910,7 @@ def generate(
     no_auto_style: bool = False,
     precise_edit: bool = False,
     xiaohongshu_outfit_reference: bool = False,
+    qwen_fallback: bool = False,
 ):
     # If user didn't specify a hairstyle, let LLM pick one
     if prompt_override and not prompt_final and engine == "gptimage" and theme != "sexy":
@@ -978,12 +999,7 @@ def generate(
         resolved_prompt = re.sub(r"\bexpressive eyes\b\s*,?", "", resolved_prompt, flags=re.IGNORECASE)
         resolved_prompt = (
             f"{resolved_prompt.rstrip()} {XIAOHONGSHU_OUTFIT_REFERENCE_MARKER} "
-            "Strict ordered reference roles: Image 1 supplies only the outfit design, garment details, "
-            "styling, hairstyle, pose, action, props, scene, lighting, camera and composition. "
-            "Image 2 is the sole authoritative facial identity source. Preserve its recognizable facial "
-            "features without beautification or blending with Image 1. The target physique and body "
-            "proportions must follow only the Gallery configured character description in this prompt; "
-            "never copy either reference person's body."
+            f"{XIAOHONGSHU_GPT_REFERENCE_ROLES}"
         ).strip()
         print("📕 Applied Xiaohongshu daily outfit reference roles", file=sys.stderr)
     if schedule_time_constraint:
@@ -1026,11 +1042,15 @@ def generate(
     actual_style = explicit_style or auto_style
 
     used_model = ""
+    gallery_prompt_override = ""
+    qwen_fallback_used = False
+    qwen_fallback_ref = ""
     if engine == "qwen":
+        qwen_info: dict = {}
         path = generate_with_qwen(theme, resolved_prompt, size=size or "", source=source,
-                                  ref_image=ref_image, ref_images=ref_images)
+                                  ref_image=ref_image, ref_images=ref_images, request_info=qwen_info)
         if path:
-            used_model = QWEN_MODEL_NAME
+            used_model = str(qwen_info.get("model_name") or QWEN_MODEL_NAME)
     elif theme == "sexy":
         path = generate_with_gitee(
             theme,
@@ -1062,9 +1082,39 @@ def generate(
         )
         if path:
             used_model = GPTIMAGE_DIRECT_MODEL
+        qwen_outcome = None
+        if not path and qwen_fallback and not precise_edit:
+            # Opt-in schedule fallback: only after a *known* GPT failure and only
+            # with the [outfit, identity] pair (see qwen_fallback module).
+            qwen_outcome = qwen_fallback_module.run_fallback(
+                theme=theme,
+                scene_prompt=_strip_gpt_reference_roles(resolved_prompt),
+                ref_image=ref_image,
+                ref_images=ref_images,
+                outfit_identity_pair=xiaohongshu_outfit_reference,
+                source=source,
+                requested_size=size or "",
+                schedule_date=schedule_date,
+                schedule_time=schedule_raw or schedule_time,
+                primary_report=gpt_last_failure_report(),
+                deadline=qwen_fallback_module.deadline_from_env(),
+            )
+            if qwen_outcome.path:
+                path = qwen_outcome.path
+                used_model = qwen_outcome.model_name or QWEN_MODEL_NAME
+                gallery_prompt_override = qwen_outcome.prompt
+                qwen_fallback_used = True
+                qwen_fallback_ref = ref_image or ""
+            elif qwen_outcome.code not in {"fallback_disabled"}:
+                print(f"Qwen fallback not used: {qwen_outcome.code} {qwen_outcome.detail}".strip(), file=sys.stderr)
         if not path:
             if precise_edit:
                 print("Precision edit failed; refusing non-reference fallback", file=sys.stderr)
+            elif qwen_outcome is not None and qwen_outcome.uncertain:
+                print(
+                    "Qwen fallback outcome is uncertain; not starting another fallback for this request",
+                    file=sys.stderr,
+                )
             elif _gitee_fallback_enabled():
                 print("GPT Image failed, falling back to Gitee", file=sys.stderr)
                 path = generate_with_gitee(
@@ -1154,10 +1204,21 @@ def generate(
     # Precision edits are merged by the app after reference-mode validation.
     if path and not precise_edit:
         from core import sync_to_gallery
-        gallery_prompt = (
+        gallery_prompt = gallery_prompt_override or (
             resolved_prompt
             if theme in DAILY_THEMES
             else (prompt_override or resolved_prompt)
+        )
+        fallback_kwargs = (
+            {
+                "generation_mode": "img2img",
+                "requested_generation_mode": "img2img",
+                "ref_image": qwen_fallback_ref,
+                "requested_ref_image": qwen_fallback_ref,
+                "fallback_used": True,
+            }
+            if qwen_fallback_used
+            else {}
         )
         sync_to_gallery(path, os.path.basename(path), theme, actual_style,
                         prompt=gallery_prompt,
@@ -1166,7 +1227,8 @@ def generate(
                         source=source,
                         schedule_time=schedule_raw,
                         outfit_style=_gallery_outfit_style_for_source(source, actual_style, schedule_date),
-                        schedule_date=schedule_date)
+                        schedule_date=schedule_date,
+                        **fallback_kwargs)
 
     return path
 
@@ -1191,6 +1253,7 @@ if __name__ == "__main__":
     parser.add_argument("--no-auto-style", action="store_true", help="不自动选择底模参考图，用于纯文/纯图生图")
     parser.add_argument("--precise-edit", action="store_true", help="严格局部编辑，禁止丢失原图参考后降级")
     parser.add_argument("--xiaohongshu-outfit-reference", action="store_true", help="按小红书穿搭图、脸模、画廊身材的顺序使用参考图")
+    parser.add_argument("--qwen-fallback", action="store_true", help="定时穿搭图：GPT 明确失败后允许按 [穿搭图, 脸部参考] 回退到 Qwen（需在设置中开启）")
     args = parser.parse_args()
 
     effective_theme = args.theme or ("custom" if args.prompt else "morning")
@@ -1214,6 +1277,7 @@ if __name__ == "__main__":
         no_auto_style=args.no_auto_style,
         precise_edit=args.precise_edit,
         xiaohongshu_outfit_reference=args.xiaohongshu_outfit_reference,
+        qwen_fallback=args.qwen_fallback,
     )
     if not path:
         print("ERROR: generation failed", file=sys.stderr)

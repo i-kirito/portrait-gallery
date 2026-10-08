@@ -1270,6 +1270,42 @@ def runtime_config_path(data_dir: str) -> str:
     return os.path.join(data_dir, "runtime_config.json")
 
 
+def _read_json_dict(path: str) -> dict:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def qwen_fallback_enabled(data_dir: str) -> bool:
+    """Optional GPT -> Qwen schedule fallback switch (plugin_config.json, default off)."""
+    raw = _read_json_dict(plugin_config_path(data_dir)).get("qwen_fallback_enabled", False)
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def qwen_fallback_process_extension(config: dict, data_dir: str) -> int:
+    """Extra child-process seconds needed when the Qwen fallback may run.
+
+    The child gets an absolute deadline and only starts Qwen when enough of it
+    remains, so this extension (Qwen wait + uploads/model load + save/caption)
+    keeps a started ComfyUI job from being cut off by the parent timeout.
+    """
+    if not qwen_fallback_enabled(data_dir):
+        return 0
+    raw = _read_json_dict(api_keys_path(data_dir)).get("qwen_timeout")
+    if raw in (None, ""):
+        raw = get_nested(config, "image_gen.qwen_timeout", 900)
+    try:
+        qwen_timeout = max(60, min(1800, int(raw)))
+    except (TypeError, ValueError):
+        qwen_timeout = 900
+    return qwen_timeout + 180
+
+
 def normalize_chat_url(base_url: str) -> str:
     base = _non_empty(base_url).rstrip("/")
     if not base:
