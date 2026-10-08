@@ -12,7 +12,6 @@ import requests
 
 from characters import NATURAL_FACE_SHAPE_GUARD, sanitize_daily_image_prompt
 from core import (
-    CONFIG_PATH,
     DAILY_IMAGE_SAFETY_GUARD,
     SECRETARY_SCHEDULE_PATH,
     _GALLERY_CONFIG,
@@ -116,16 +115,6 @@ def _gallery_outfit_style_for_source(source: str, actual_style: Optional[str], s
             return "自定义"
         return style
     return _get_today_outfit_style_name(schedule_date)
-
-
-def _gitee_fallback_enabled() -> bool:
-    """Return whether automatic GPT/Gemini -> Gitee fallback is enabled."""
-    try:
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            data = json.load(f) or {}
-        return bool(data.get("gitee_fallback_enabled", False))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return False
 
 
 def _chat_llm(messages: list[dict], max_tokens: int, temperature: float) -> str:
@@ -1115,43 +1104,14 @@ def generate(
                     "Qwen fallback outcome is uncertain; not starting another fallback for this request",
                     file=sys.stderr,
                 )
-            elif _gitee_fallback_enabled():
-                print("GPT Image failed, falling back to Gitee", file=sys.stderr)
-                path = generate_with_gitee(
-                    theme,
-                    send=False,
-                    caption=False,
-                    prompt_override=resolved_prompt,
-                    prompt_is_final=True,
-                    source=source,
-                    sync_gallery=False,
-                    schedule_time=schedule_raw,
-                )
-                if path:
-                    used_model = GITEE_MODEL_NAME
             else:
-                print("GPT Image failed; Gitee fallback is disabled", file=sys.stderr)
+                print("GPT Image failed; no eligible Qwen fallback succeeded", file=sys.stderr)
     elif engine == "gemini":
         path = _generate_with_gemini_cpa(theme, resolved_prompt, schedule_time=schedule_raw)
         if path:
             used_model = _GEMINI_CPA_MODEL
         if not path:
-            if _gitee_fallback_enabled():
-                print("Gemini CPA failed, falling back to Gitee", file=sys.stderr)
-                path = generate_with_gitee(
-                    theme,
-                    send=False,
-                    caption=False,
-                    prompt_override=resolved_prompt,
-                    prompt_is_final=True,
-                    source=source,
-                    sync_gallery=False,
-                    schedule_time=schedule_raw,
-                )
-                if path:
-                    used_model = GITEE_MODEL_NAME
-            else:
-                print("Gemini CPA failed; Gitee fallback is disabled", file=sys.stderr)
+            print("Gemini CPA failed; Qwen fallback requires a classified GPT failure", file=sys.stderr)
     else:  # engine == "gitee"
         path = generate_with_gitee(
             theme,
@@ -1236,7 +1196,7 @@ def generate(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="聊天生图主入口")
     parser.add_argument("--theme", choices=ALL_THEMES, default=None)
-    parser.add_argument("--engine", choices=["gitee", "gemini", "gptimage", "qwen"], default="gptimage", help="默认 GPT Image，失败自动降级")
+    parser.add_argument("--engine", choices=["gitee", "gemini", "gptimage", "qwen"], default="gptimage", help="默认 GPT Image；定时穿搭图可选 Qwen 兜底")
     parser.add_argument("--caption", action="store_true")
     parser.add_argument("--send", action="store_true")
     parser.add_argument("--prompt", type=str, default=None, help="自定义描述（自动注入前缀+外貌）")

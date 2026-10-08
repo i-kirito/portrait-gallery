@@ -121,6 +121,7 @@ from settings import (
     configured_llm_models,
     configured_python,
     image_process_timeout,
+    resolve_qwen_fallback_enabled,
     llm_choice_text,
     llm_request_config,
     llm_response_excerpt,
@@ -6003,7 +6004,6 @@ class GalleryServer:
         plugin_config_path = os.path.join(self.data_dir, "plugin_config.json")
         plugin_config = {}
         gitee_key = ""
-        gitee_fallback_enabled = False
         qwen_fallback_enabled = False
         gpt_chat_fallback_enabled = False
         gpt_prompt_compact_enabled = False
@@ -6014,8 +6014,7 @@ class GalleryServer:
                     gitee_keys = plugin_config.get("gitee_config", {}).get("api_keys", [])
                     if gitee_keys:
                         gitee_key = gitee_keys[0]
-                    gitee_fallback_enabled = bool(plugin_config.get("gitee_fallback_enabled", False))
-                    qwen_fallback_enabled = self._body_bool(plugin_config, "qwen_fallback_enabled")
+                    qwen_fallback_enabled = resolve_qwen_fallback_enabled(plugin_config)
                     gpt_chat_fallback_enabled = bool(
                         plugin_config.get("gpt_chat_fallback_enabled", False)
                     )
@@ -6156,7 +6155,7 @@ class GalleryServer:
             "llm_models": self.config.get("llm", {}),
             "llm_model_chain": llm_model_chain,
             "llm_stream_enabled": bool(full_llm_config.get("stream", False)),
-            "gitee_fallback_enabled": gitee_fallback_enabled,
+            "gitee_fallback_enabled": False,  # Retired; older clients must not advertise z-image fallback.
             "qwen_fallback_enabled": qwen_fallback_enabled,
             "gpt_chat_fallback_enabled": gpt_chat_fallback_enabled,
             "gpt_prompt_compact_enabled": gpt_prompt_compact_enabled,
@@ -7330,12 +7329,6 @@ class GalleryServer:
                             keys_config.pop("image_dir", None)
 
                     if self._body_bool(body, "validate_required_config"):
-                        plugin_config = self._load_plugin_config()
-                        effective_gitee_key = self._effective_gitee_api_key(
-                            plugin_config,
-                            local_override=body.get("gitee_key", ""),
-                        )
-                        effective_gitee_url = self._effective_gitee_image_url(keys_config)
                         effective_gpt_base_url = self._effective_gpt_image_base_url(keys_config)
                         effective_cpa_url = (
                             str(keys_config.get("cpa_url", "") or "").strip()
@@ -7343,8 +7336,6 @@ class GalleryServer:
                             or str(llm_config.get("base_url", "") or "").strip()
                         )
                         required_fields = [
-                            ("Gitee API URL", effective_gitee_url),
-                            ("Gitee API Key", effective_gitee_key),
                             ("GPT Image Base URL", effective_gpt_base_url),
                             ("GPT Image Key", body.get("gpt_key") or keys_config.get("gpt_key")),
                             ("CPA Base URL", effective_cpa_url),
@@ -7375,14 +7366,13 @@ class GalleryServer:
                             if not isinstance(plugin_config, dict):
                                 plugin_config = {}
 
-                        if "gitee_fallback_enabled" in body:
-                            plugin_config["gitee_fallback_enabled"] = self._body_bool(
-                                body, "gitee_fallback_enabled"
-                            )
                         if "qwen_fallback_enabled" in body:
-                            plugin_config["qwen_fallback_enabled"] = self._body_bool(
-                                body, "qwen_fallback_enabled"
-                            )
+                            plugin_config["qwen_fallback_enabled"] = resolve_qwen_fallback_enabled(body)
+                        elif "gitee_fallback_enabled" in body and "qwen_fallback_enabled" not in plugin_config:
+                            plugin_config["qwen_fallback_enabled"] = resolve_qwen_fallback_enabled(body)
+                        elif "gitee_fallback_enabled" in plugin_config:
+                            plugin_config["qwen_fallback_enabled"] = resolve_qwen_fallback_enabled(plugin_config)
+                        plugin_config.pop("gitee_fallback_enabled", None)
                         if "gpt_chat_fallback_enabled" in body:
                             plugin_config["gpt_chat_fallback_enabled"] = self._body_bool(
                                 body, "gpt_chat_fallback_enabled"

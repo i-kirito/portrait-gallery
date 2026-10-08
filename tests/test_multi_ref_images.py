@@ -79,7 +79,7 @@ class MultiRefImageTests(unittest.TestCase):
             generate_main,
             "generate_with_gptimage",
             side_effect=fake_generate,
-        ), patch.object(generate_main, "_gitee_fallback_enabled", return_value=False):
+        ):
             result = generate_main.generate(
                 "morning",
                 source="cron",

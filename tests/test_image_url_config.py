@@ -87,6 +87,31 @@ class ImageUrlConfigTest(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("cpa_url", stored)
             self.assertEqual("", stored.get("github_proxy"))
 
+    async def test_qwen_fallback_save_does_not_require_gitee_credentials(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            test_server = TestServer(server.app)
+            await test_server.start_server(access_log=None)
+            client = TestClient(test_server)
+            try:
+                with patch.dict(os.environ, {"GALLERY_PASSWORD": "", "GITEE_API_KEY": ""}):
+                    response = await client.post("/api/config/keys", json={
+                        "validate_required_config": True,
+                        "gpt_key": "gpt-secret",
+                        "cpa_key": "cpa-secret",
+                        "gitee_key": "",
+                        "qwen_fallback_enabled": True,
+                    })
+                    payload = await response.json()
+                self.assertEqual(200, response.status, payload)
+                self.assertTrue(payload.get("success"))
+                stored = json.loads((root / "data" / "plugin_config.json").read_text(encoding="utf-8"))
+                self.assertTrue(stored["qwen_fallback_enabled"])
+                self.assertFalse(stored.get("gitee_config", {}).get("api_keys"))
+            finally:
+                await client.close()
+
     async def test_config_write_failure_returns_500_without_false_success(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

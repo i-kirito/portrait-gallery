@@ -1279,12 +1279,17 @@ def _read_json_dict(path: str) -> dict:
         return {}
 
 
-def qwen_fallback_enabled(data_dir: str) -> bool:
-    """Optional GPT -> Qwen schedule fallback switch (plugin_config.json, default off)."""
-    raw = _read_json_dict(plugin_config_path(data_dir)).get("qwen_fallback_enabled", False)
+def resolve_qwen_fallback_enabled(plugin_config: dict) -> bool:
+    """Prefer the Qwen switch; migrate the retired z-image fallback preference."""
+    raw = plugin_config.get("qwen_fallback_enabled", plugin_config.get("gitee_fallback_enabled", False))
     if isinstance(raw, bool):
         return raw
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def qwen_fallback_enabled(data_dir: str) -> bool:
+    """Optional GPT -> Qwen schedule fallback switch (default off for new installs)."""
+    return resolve_qwen_fallback_enabled(_read_json_dict(plugin_config_path(data_dir)))
 
 
 def qwen_fallback_process_extension(config: dict, data_dir: str) -> int:

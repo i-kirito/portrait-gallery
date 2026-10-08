@@ -10,7 +10,7 @@
 
 - 📅 **LLM 日程驱动** — DeepSeek 自动生成每日穿搭日程（HH:mm 精度），按时触发生图
 - 👥 **多角色与群聊** — 支持本地角色库、单人图、合照、群聊房间、角色自动回复和群聊触发生图
-- 🎨 **多引擎生图** — 支持 OpenAI-compatible API (GPT Image / AxonHub / 自定义端点)、Gemini、Gitee z-image-turbo 可选回退（默认关闭）
+- 🎨 **多引擎生图** — 支持 OpenAI-compatible API (GPT Image / AxonHub / 自定义端点)、Gemini，以及 Qwen-Image-2.1 定时穿搭兜底（新安装默认关闭）
 - 🧩 **三级 LLM 模型链** — 设置页维护主模型与多级 fallback，日程、caption、群聊和即时推断都会按链路降级
 - ☁️ **关键词偏好云** — 从自定义生图输入与收藏衣柜中提取偏好词，作为每日穿搭日程的柔性参考
 - 🗓️ **真实日期约束** — 日程生成会识别周末、法定节假日、调休上班日和自定义假期，减少休息日写上班/上课的冲突
@@ -209,11 +209,13 @@ portrait-gallery/
 | **GPT Image** | 40-60s | ⭐⭐⭐⭐⭐ | 日常首选，高质量写真 |
 | **Gitee z-image-turbo** | 12s | ⭐⭐⭐ | 快速出图、性感风格 |
 
-默认优先使用 GPT Image，并按重试机制处理失败；只有在设置里开启 Gitee 回退时，GPT Image 多次失败后才会改用 Gitee。
+默认优先使用 GPT Image，并按重试机制处理失败；自动兜底统一为下述 Qwen 路径。Gitee z-image-turbo 保留为独立引擎，不再作为 GPT/Gemini 失败后的自动兜底。
 
 ### Qwen-Image-2.1 定时穿搭回退（可选）
 
-设置面板「Qwen 定时穿搭回退」（`data/plugin_config.json` 的 `qwen_fallback_enabled`，**默认关闭**）开启后，定时穿搭图在 GPT Image **明确失败**时可改用 ComfyUI 上的 Qwen-Image-2.1 重画。ComfyUI 地址沿用现有的 `image_gen.qwen_base_url` / `QWEN_COMFYUI_URL` 配置；独立的 Qwen 图生图接口行为不变。
+设置面板「Qwen 定时穿搭兜底」（`data/plugin_config.json` 的 `qwen_fallback_enabled`，**新安装默认关闭**）开启后，定时穿搭图在 GPT Image **明确失败**时可改用 ComfyUI 上的 Qwen-Image-2.1 重画。ComfyUI 地址沿用现有的 `image_gen.qwen_base_url` / `QWEN_COMFYUI_URL` 配置；独立的 Qwen 图生图接口行为不变。
+
+升级时，旧 `gitee_fallback_enabled` 仅作为 Qwen 开关的迁移来源；已有 `qwen_fallback_enabled`（包括明确关闭）优先。保存设置后会移除旧字段。Qwen 跳过或失败后不会继续调用 z-image；配置 Qwen 兜底无需 Gitee 密钥。
 
 - **适用范围**：定时首图、动态定时照片和定时图重抽；自定义、角色、群像、精确编辑和「现在在干嘛」不会回退。
 - **何时回退**：只在 GPT 返回明确错误（4xx/429/500/503、额度、凭据、无可用渠道、无图片、未配置）时回退。超时、断连、Codex EOF、网关 408/502/504/52x 或未分类异常时，上游可能仍在出图计费且没有任务 ID 可核对，因此**不回退**、只记录原因；内容安全拦截也不会转给其他模型。
@@ -463,7 +465,7 @@ Hermes 调用 `/api/generate-custom`、`/api/hermes/text-to-image` 或 `/api/her
 - **角色 Tab** — 管理本地角色、人设、外貌、绑定模型、单人照、设定图和多角色合照
 - **群聊 Tab** — 创建群聊房间、编辑参与角色、保存消息、删除/清空上下文、回溯重发回复和触发群聊图片生成
 - **🎀 穿搭生成** — 自定义 prompt + 参考图 + 尺寸选择
-- **⚙️ 设置** — Web UI 管理 API 密钥、三级 LLM 模型链、Gitee 回退、日程风格和升级选项
+- **⚙️ 设置** — Web UI 管理 API 密钥、三级 LLM 模型链、Qwen 穿搭兜底、日程风格和升级选项
 
 ## 🧾 Release Notes
 

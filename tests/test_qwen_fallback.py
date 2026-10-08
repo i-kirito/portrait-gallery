@@ -22,6 +22,7 @@ for directory in (APP_DIR, os.path.join(APP_DIR, "zhuzhu")):
         sys.path.insert(0, directory)
 
 import generate as generate_module  # noqa: E402  (app/zhuzhu/generate.py)
+import generate_scheduled as scheduled_module  # noqa: E402
 import generate_gptimage as gpt  # noqa: E402
 import generate_qwen as qwen  # noqa: E402
 import main as main_module  # noqa: E402
@@ -445,7 +446,7 @@ class GenerateIntegrationTests(RefsMixin, unittest.TestCase):
         self.qwen_path = str(Path(self.tmp.name) / "morning_qwen.png")
         Path(self.qwen_path).write_bytes(png_bytes((864, 1152)))
 
-    def call(self, *, qwen_fallback, outcome, gitee=False):
+    def call(self, *, qwen_fallback, outcome):
         run = Mock(return_value=outcome)
         sync = Mock()
         gitee_gen = Mock(return_value=None)
@@ -453,7 +454,6 @@ class GenerateIntegrationTests(RefsMixin, unittest.TestCase):
              patch.object(generate_module, "gpt_last_failure_report", return_value=DEFINITE), \
              patch.object(generate_module.qwen_fallback_module, "run_fallback", run), \
              patch.object(generate_module, "generate_with_gitee", gitee_gen), \
-             patch.object(generate_module, "_gitee_fallback_enabled", return_value=gitee), \
              patch("core.sync_to_gallery", sync):
             path = generate_module.generate(
                 "custom", "gptimage", False, "在湖边图书馆看书", prompt_final=True, source="cron",
@@ -479,17 +479,67 @@ class GenerateIntegrationTests(RefsMixin, unittest.TestCase):
         self.assertEqual("QWEN PROMPT", sync.call_args.kwargs["prompt"])
 
     def test_without_opt_in_the_existing_flow_is_unchanged(self):
-        path, run, sync, _ = self.call(qwen_fallback=False, outcome=fb.FallbackOutcome())
+        path, run, sync, gitee_gen = self.call(qwen_fallback=False, outcome=fb.FallbackOutcome())
         self.assertIsNone(path)
         run.assert_not_called()
         sync.assert_not_called()
+        gitee_gen.assert_not_called()
 
     def test_uncertain_qwen_outcome_blocks_further_fallbacks(self):
         outcome = fb.FallbackOutcome(code="qwen_outcome_unknown", uncertain=True)
-        path, _run, sync, gitee_gen = self.call(qwen_fallback=True, outcome=outcome, gitee=True)
+        path, _run, sync, gitee_gen = self.call(qwen_fallback=True, outcome=outcome)
         self.assertIsNone(path)
         gitee_gen.assert_not_called()
         sync.assert_not_called()
+
+    def test_no_gitee_after_disabled_skipped_or_failed_qwen(self):
+        for code in ("fallback_disabled", "missing_reference_pair", "comfyui_queue_busy", "qwen_job_failed"):
+            with self.subTest(code=code):
+                path, run, sync, gitee_gen = self.call(qwen_fallback=True, outcome=fb.FallbackOutcome(code=code))
+                self.assertIsNone(path)
+                run.assert_called_once()
+                sync.assert_not_called()
+                gitee_gen.assert_not_called()
+
+    def test_gemini_failure_does_not_invoke_gitee_or_unclassified_qwen(self):
+        with patch.object(generate_module, "_generate_with_gemini_cpa", return_value=None), \
+             patch.object(generate_module, "generate_with_gitee") as gitee_gen, \
+             patch.object(generate_module.qwen_fallback_module, "run_fallback") as run:
+            path = generate_module.generate(
+                "custom", "gemini", False, "在湖边图书馆看书", prompt_final=True,
+                source="cron", ref_images=[self.outfit, self.face], qwen_fallback=True,
+            )
+        self.assertIsNone(path)
+        gitee_gen.assert_not_called()
+        run.assert_not_called()
+
+    def test_scheduled_entrypoint_uses_shared_fallback_with_references(self):
+        def backend(*args, **kwargs):
+            print("CAPTION:湖边读书")
+            return self.qwen_path
+
+        with patch.object(scheduled_module, "generate_image", side_effect=backend) as generate:
+            path, caption = scheduled_module.generate(
+                "morning", ref_images=[self.outfit, self.face],
+                xiaohongshu_outfit_reference=True,
+                schedule_date="2026-10-08", schedule_time="08:30",
+            )
+        self.assertEqual((self.qwen_path, "湖边读书"), (path, caption))
+        generate.assert_called_once_with(
+            "morning", send=False, caption=True, source="cron", qwen_fallback=True,
+            ref_images=[self.outfit, self.face], xiaohongshu_outfit_reference=True,
+            schedule_date="2026-10-08", schedule_time="08:30",
+        )
+
+    def test_scheduled_cli_loads_without_external_pythonpath(self):
+        env = dict(os.environ)
+        env.pop("PYTHONPATH", None)
+        result = subprocess.run(
+            [sys.executable, str(Path(APP_DIR, "zhuzhu", "generate_scheduled.py")), "--help"],
+            env=env, cwd=self.tmp.name, capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("--ref-images", result.stdout)
 
 
 class CallerWiringTests(RefsMixin, unittest.IsolatedAsyncioTestCase):
@@ -503,6 +553,25 @@ class CallerWiringTests(RefsMixin, unittest.IsolatedAsyncioTestCase):
             self.enable(tmpdir)
             Path(tmpdir, "api_keys_config.json").write_text(json.dumps({"qwen_timeout": 600}), encoding="utf-8")
             self.assertEqual(780, qwen_fallback_process_extension({}, tmpdir))
+
+    def test_old_switch_migration_matches_child_and_parent_timeouts(self):
+        cases = [
+            ({"gitee_fallback_enabled": True}, True),
+            ({"gitee_fallback_enabled": "true"}, True),
+            ({"gitee_fallback_enabled": False}, False),
+            ({"gitee_fallback_enabled": "false"}, False),
+            ({"gitee_fallback_enabled": True, "qwen_fallback_enabled": False}, False),
+            ({"gitee_fallback_enabled": False, "qwen_fallback_enabled": True}, True),
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir, "plugin_config.json")
+            Path(tmpdir, "api_keys_config.json").write_text(json.dumps({"qwen_timeout": 600}), encoding="utf-8")
+            for config, enabled in cases:
+                with self.subTest(config=config):
+                    path.write_text(json.dumps(config), encoding="utf-8")
+                    self.assertEqual(enabled, qwen_fallback_enabled(tmpdir))
+                    self.assertEqual(enabled, fb.fallback_settings(str(path))["enabled"])
+                    self.assertEqual(780 if enabled else 0, qwen_fallback_process_extension({}, tmpdir))
 
     async def test_image_gen_opt_in_flag_timeout_and_deadline(self):
         with tempfile.TemporaryDirectory() as tmpdir:

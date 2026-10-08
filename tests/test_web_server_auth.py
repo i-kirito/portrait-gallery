@@ -352,6 +352,39 @@ class WebServerImageFallbackSettingsTest(unittest.IsolatedAsyncioTestCase):
             str(config_path),
         )
 
+    async def test_legacy_fallback_migrates_and_cannot_override_explicit_qwen_choice(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            server = self._make_server(root)
+            plugin_path = root / "data" / "plugin_config.json"
+            plugin_path.write_text(json.dumps({"gitee_fallback_enabled": True}), encoding="utf-8")
+            test_server = TestServer(server.app)
+            await test_server.start_server(access_log=None)
+            client = TestClient(test_server)
+            try:
+                with patch.dict(os.environ, {"GALLERY_PASSWORD": ""}):
+                    response = await client.get("/api/config/keys")
+                    self.assertEqual(200, response.status)
+                    initial = await response.json()
+                    self.assertTrue(initial["qwen_fallback_enabled"])
+                    self.assertFalse(initial["gitee_fallback_enabled"])
+                    for body, expected in (
+                        ({"gpt_chat_fallback_enabled": False}, True),
+                        ({"qwen_fallback_enabled": False, "gitee_fallback_enabled": True}, False),
+                        ({"gitee_fallback_enabled": True}, False),
+                        ({"qwen_fallback_enabled": True}, True),
+                    ):
+                        response = await client.post("/api/config/keys", json=body)
+                        self.assertEqual(200, response.status, await response.text())
+                        stored = json.loads(plugin_path.read_text(encoding="utf-8"))
+                        self.assertEqual(expected, stored["qwen_fallback_enabled"])
+                        self.assertNotIn("gitee_fallback_enabled", stored)
+                        current = await (await client.get("/api/config/keys")).json()
+                        self.assertEqual(expected, current["qwen_fallback_enabled"])
+                        self.assertFalse(current["gitee_fallback_enabled"])
+            finally:
+                await client.close()
+
     async def test_chat_fallback_defaults_off_and_can_be_enabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

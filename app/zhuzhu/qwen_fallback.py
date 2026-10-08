@@ -55,6 +55,7 @@ from typing import Any, Callable, Optional
 
 import generate_qwen as qwen_provider
 from core import CONFIG_PATH, SECRETARY_GALLERY_DIR, _DATA_DIR, schedule_filename_theme
+from settings import resolve_qwen_fallback_enabled
 
 LEDGER_FILENAME = "qwen_fallback_jobs.json"
 LEDGER_RETENTION_SECONDS = 48 * 3600
@@ -94,8 +95,7 @@ def fallback_settings(config_path: str = CONFIG_PATH) -> dict:
         data = loaded if isinstance(loaded, dict) else {}
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         data = {}
-    raw_enabled = data.get("qwen_fallback_enabled", False)
-    enabled = raw_enabled if isinstance(raw_enabled, bool) else str(raw_enabled).strip().lower() in {"1", "true", "yes", "on"}
+    enabled = resolve_qwen_fallback_enabled(data)
     try:
         max_queue_ahead = max(0, min(4, int(data.get("qwen_fallback_max_queue_ahead", DEFAULT_MAX_QUEUE_AHEAD))))
     except (TypeError, ValueError):
@@ -280,7 +280,7 @@ class FallbackOutcome:
     detail: str = ""
     submitted: bool = False
     # True when a ComfyUI job may still produce an image: callers must not
-    # start any further fallback (e.g. Gitee) for this request.
+    # start any further generation for this request.
     uncertain: bool = False
     reused: bool = False
     prompt: str = ""
