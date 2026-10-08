@@ -2341,6 +2341,298 @@ textarea:focus-visible,
   }
 }
 
+/* ===== Xiaohongshu outfit favorites library ===== */
+.xfav-section {
+  display: block;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+.xfav-section.hidden { display: none; }
+.xfav-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.xfav-head h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #4a335f;
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+.xfav-subtabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid rgba(218, 207, 226, 0.9);
+  border-radius: 18px;
+  background: #eee9f2;
+}
+.xfav-subtab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 14px;
+  border: none;
+  border-radius: 14px;
+  background: transparent;
+  color: #817986;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+.xfav-subtab.active {
+  background: #fff;
+  color: #c2185b;
+  box-shadow: 0 1px 6px rgba(82, 45, 112, 0.12);
+}
+.xfav-count {
+  min-width: 18px;
+  padding: 1px 6px;
+  border: 1px solid rgba(233, 30, 99, 0.12);
+  border-radius: 999px;
+  background: #fff;
+  color: #c2185b;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+}
+.xfav-auto {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(224, 210, 238, 0.9);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #4a335f;
+  font-size: 13px;
+  font-weight: 800;
+}
+.xfav-auto-copy { min-width: 0; }
+.xfav-auto-copy small {
+  display: block;
+  margin-top: 3px;
+  color: #8b8b91;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.xfav-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.xfav-toolbar input {
+  min-width: 0;
+  padding: 10px 14px;
+  border: 1px solid #ded9dc;
+  border-radius: 22px;
+  background: #fff;
+  color: #3f3154;
+  font: inherit;
+  font-size: 14px;
+}
+.xfav-toolbar[hidden] { display: none; }
+.xfav-toolbar .btn { justify-content: center; white-space: nowrap; }
+.xfav-status {
+  min-height: 18px;
+  margin-bottom: 8px;
+  color: #7c3aed;
+  font-size: 12px;
+  font-weight: 800;
+}
+.xfav-status.error { color: #b91c1c; }
+.xfav-link-images { margin-bottom: 12px; }
+.xfav-link-images[hidden] { display: none; }
+.xfav-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+.xfav-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid rgba(224, 210, 238, 0.9);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 3px 14px rgba(82, 45, 112, 0.07);
+}
+.xfav-card.busy { opacity: 0.66; pointer-events: none; }
+.xfav-thumb {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  border: 1px solid rgba(231, 221, 242, 0.9);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #f7f3fb, #efe8f9);
+}
+.xfav-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.18s ease;
+}
+.xfav-thumb:hover img { transform: scale(1.025); }
+.xfav-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.93);
+  color: #c2185b;
+  font-size: 10px;
+  font-weight: 800;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
+}
+.xfav-badge.reserved { color: #7c3aed; }
+.xfav-badge.history { color: #6b7280; }
+.xfav-title {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #3f3154;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.xfav-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  color: #a79ab7;
+  font-size: 11px;
+  font-weight: 700;
+}
+.xfav-meta a { color: #c2185b; font-weight: 800; text-decoration: none; }
+.xfav-meta a:hover { text-decoration: underline; }
+.xfav-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.xfav-tag {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #f7f2ff;
+  color: #7c3aed;
+  font-size: 10px;
+  font-weight: 800;
+}
+.xfav-usage {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  color: #6b5b7b;
+  font-size: 11px;
+  list-style: none;
+}
+.xfav-usage a { color: #c2185b; font-weight: 800; text-decoration: none; }
+.xfav-usage a:hover { text-decoration: underline; }
+.xfav-note { color: #7c3aed; font-size: 11px; font-weight: 800; }
+.xfav-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 3px;
+}
+.xfav-btn {
+  display: inline-flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 1px solid rgba(139, 92, 246, 0.22);
+  border-radius: 999px;
+  background: #f7f2ff;
+  color: #7c3aed;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.xfav-btn:hover { background: #f0e7ff; border-color: rgba(139, 92, 246, 0.34); }
+.xfav-btn.remove {
+  flex: 0 0 auto;
+  border-color: rgba(233, 30, 99, 0.2);
+  background: #fff7fb;
+  color: #c2185b;
+}
+.xfav-btn.remove:hover { background: #ffeaf3; border-color: rgba(233, 30, 99, 0.34); }
+.xfav-btn:disabled { cursor: default; opacity: 0.58; }
+.xfav-empty {
+  padding: 56px 20px;
+  border: 1px dashed rgba(167, 139, 250, 0.34);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #a78bfa;
+  font-size: 13px;
+  line-height: 1.7;
+  text-align: center;
+}
+.xfav-empty .icon { margin-bottom: 8px; font-size: 38px; line-height: 1; }
+.xhs-note-tile { position: relative; width: 132px; min-width: 0; }
+.xhs-note-tile .xhs-note-image { width: 100%; }
+.egg-theme-day-xhs-tile { position: relative; min-width: 0; }
+.egg-theme-day-xhs-tile .egg-theme-day-xhs-image { width: 100%; }
+.xhs-note-save {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid rgba(233, 30, 99, 0.22);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.95);
+  color: #c2185b;
+  font-size: 15px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
+  cursor: pointer;
+}
+.xhs-note-save:hover { border-color: rgba(233, 30, 99, 0.45); background: #fff7fb; }
+.xhs-note-save.saved { border-color: #e91e63; background: #e91e63; color: #fff; }
+.xhs-note-save:disabled { cursor: progress; opacity: 0.65; }
+@media (max-width: 700px) {
+  .xfav-head h2 { font-size: 20px; }
+  .xfav-auto { align-items: flex-start; }
+  .xfav-toolbar { grid-template-columns: 1fr; }
+  .xfav-toolbar .btn { width: 100%; min-height: 40px; }
+  .xfav-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .xhs-note-tile { width: 116px; }
+}
+@media (max-width: 380px) {
+  .xfav-grid { grid-template-columns: 1fr; }
+}
+
 .gallery-list {
   display: flex;
   flex-direction: column;
@@ -5325,9 +5617,9 @@ textarea:focus-visible,
   .header-left h1 { font-size: clamp(22px, 2.35vw, 26px); }
   .tabs {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     justify-self: center;
-    width: min(560px, 100%);
+    width: min(620px, 100%);
     overflow: visible;
   }
   .tab {
@@ -5488,7 +5780,7 @@ textarea:focus-visible,
   }
   .tabs {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     justify-self: stretch;
     width: 100%;
     padding: 4px;
@@ -5516,13 +5808,22 @@ textarea:focus-visible,
     text-overflow: clip;
   }
   .tab-badge {
-    min-width: 14px;
-    height: 14px;
+    /* Six tabs share the row on phones: float the count over the tab corner
+       instead of spending horizontal space on it, so labels are never clipped. */
+    position: absolute;
+    top: -3px;
+    right: -1px;
+    z-index: 1;
+    min-width: 15px;
+    height: 15px;
     font-size: 8px;
-    line-height: 14px;
+    line-height: 12px;
     padding: 0 3px;
     margin-left: 0;
+    border: 1.5px solid #eee9f2;
+    box-sizing: border-box;
   }
+  .tab.active .tab-badge { border-color: #fff; }
   .container { padding: 16px 14px; }
   .wardrobe-head h2 { font-size: 20px; }
   .wardrobe-head { margin-bottom: 10px; }
@@ -5939,6 +6240,11 @@ textarea:focus-visible,
     bottom: calc(78px + env(safe-area-inset-bottom));
     gap: 8px;
   }
+}
+@media (max-width: 400px) {
+  .tab-icon { font-size: 14px; }
+  .tab-text { font-size: 10px; }
+  .tab-label { gap: 1px; }
 }
 @media (max-width: 340px) {
   .header { padding-inline: 10px; gap: 9px 6px; }
@@ -8028,16 +8334,20 @@ textarea:focus-visible,
     const gallerySec = document.getElementById('gallerySection');
     const wardrobeSec = document.getElementById('wardrobeSection');
     const groupChatSec = document.getElementById('groupChatSection');
-    const savedKnownTab = ["gallery", "today", "favorites", "wardrobe", "character", "group-chat"].includes(savedTab) ? savedTab : "today";
+    const xhsFavSec = document.getElementById('xhsFavSection');
+    const savedKnownTab = ["gallery", "today", "favorites", "wardrobe", "xhs-favorites", "character", "group-chat"].includes(savedTab) ? savedTab : "today";
     const normalizedTab = savedKnownTab === "character" ? "group-chat" : savedKnownTab;
     if (todaySec) todaySec.classList.remove('visible');
     if (gallerySec) gallerySec.classList.add('hidden');
     if (wardrobeSec) wardrobeSec.classList.add('hidden');
     if (groupChatSec) groupChatSec.classList.add('hidden');
+    if (xhsFavSec) xhsFavSec.classList.add('hidden');
     if (normalizedTab === 'today') {
       if (todaySec) todaySec.classList.add('visible');
     } else if (normalizedTab === 'wardrobe') {
       if (wardrobeSec) wardrobeSec.classList.remove('hidden');
+    } else if (normalizedTab === 'xhs-favorites') {
+      if (xhsFavSec) xhsFavSec.classList.remove('hidden');
     } else if (normalizedTab === 'group-chat') {
       if (groupChatSec) groupChatSec.classList.remove('hidden');
     } else {
@@ -8059,6 +8369,7 @@ textarea:focus-visible,
     <button class="tab has-badge" data-tab="today" onclick="switchTab('today')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">🌸</span><span class="tab-text">今日</span></span><span class="tab-badge" id="badge-today">0</span></button>
     <button class="tab has-badge" data-tab="favorites" onclick="switchTab('favorites')" title="点击切换收藏和未收藏" aria-label="收藏，点击切换收藏和未收藏"><span class="tab-label"><span class="tab-icon" aria-hidden="true">❤️</span><span class="tab-text">收藏</span></span><span class="tab-badge" id="badge-favorites">0</span></button>
     <button class="tab has-badge" data-tab="wardrobe" onclick="switchTab('wardrobe')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">👗</span><span class="tab-text">衣柜</span></span><span class="tab-badge" id="badge-wardrobe">0</span></button>
+    <button class="tab has-badge" data-tab="xhs-favorites" onclick="switchTab('xhs-favorites')" title="小红书穿搭收藏夹"><span class="tab-label"><span class="tab-icon" aria-hidden="true">📕</span><span class="tab-text">小红书</span></span><span class="tab-badge" id="badge-xhs-favorites">0</span></button>
     <button class="tab" data-tab="group-chat" onclick="switchTab('group-chat')"><span class="tab-label"><span class="tab-icon" aria-hidden="true">💬</span><span class="tab-text">互动</span></span></button>
   </div>
   <div class="header-actions">
@@ -8105,6 +8416,36 @@ textarea:focus-visible,
     </div>
     <div id="wardrobeContent">
       <div class="wardrobe-empty"><div class="icon">👗</div><p>正在打开衣柜...</p></div>
+    </div>
+  </div>
+
+  <!-- Xiaohongshu outfit favorites library (gallery-local collection) -->
+  <div class="xfav-section hidden" id="xhsFavSection">
+    <div class="xfav-head">
+      <h2><i class="fa-solid fa-bookmark" aria-hidden="true"></i><span>小红书穿搭收藏</span></h2>
+      <div class="xfav-subtabs" role="tablist" aria-label="小红书穿搭收藏视图">
+        <button type="button" class="xfav-subtab active" id="xfavTabFavorites" role="tab" aria-selected="true" onclick="setXhsFavView('favorites')">收藏池<span class="xfav-count" id="xfavCountFavorites">0</span></button>
+        <button type="button" class="xfav-subtab" id="xfavTabHistory" role="tab" aria-selected="false" onclick="setXhsFavView('history')">历史<span class="xfav-count" id="xfavCountHistory">0</span></button>
+      </div>
+    </div>
+    <div class="xfav-auto">
+      <span class="xfav-auto-copy">
+        新日程自动使用收藏
+        <small id="xfavAutoHint">开启后，新生成的日程会从未使用的收藏里挑选合适的穿搭做参考；穿搭成功生成后自动移入历史，不再被自动选中。</small>
+      </span>
+      <label class="sk-switch" for="xfavAutoSchedule" aria-label="新日程自动使用收藏的小红书穿搭">
+        <input type="checkbox" id="xfavAutoSchedule" onchange="setXhsFavAutoSchedule(this.checked)">
+        <span class="sk-switch-knob"></span>
+      </label>
+    </div>
+    <div class="xfav-toolbar" id="xfavToolbar">
+      <input type="url" id="xfavLinkInput" autocomplete="off" placeholder="粘贴小红书笔记分享链接，把里面的穿搭收藏起来" onkeydown="if(event.key==='Enter'){event.preventDefault();openXhsFavLink();}">
+      <button type="button" class="btn btn-primary" id="xfavLinkButton" onclick="openXhsFavLink()"><i class="fa-solid fa-link" aria-hidden="true"></i><span>打开笔记</span></button>
+    </div>
+    <div class="xfav-status" id="xfavStatus" role="status" aria-live="polite" aria-atomic="true"></div>
+    <div class="xhs-note-images xfav-link-images" id="xfavLinkImages" hidden></div>
+    <div id="xfavContent">
+      <div class="xfav-empty"><div class="icon">📕</div><p>正在打开小红书穿搭收藏...</p></div>
     </div>
   </div>
 
@@ -9734,6 +10075,7 @@ async function showUnfavoriteGallery(event) {
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
   document.querySelector('.tab[data-tab="favorites"]')?.classList.add("active");
   window.galleryStorageSet('active_tab', 'favorites');
+  document.getElementById("xhsFavSection")?.classList.add("hidden");
   if (todaySec) todaySec.classList.remove("visible");
   if (gallerySec) gallerySec.classList.remove("hidden");
   if (wardrobeSec) wardrobeSec.classList.add("hidden");
@@ -13235,6 +13577,9 @@ function renderActivePhotoView() {
   const activeTab = document.querySelector(".tab.active")?.dataset.tab || "";
   if (activeTab === "wardrobe") {
     renderWardrobe();
+  } else if (activeTab === "xhs-favorites") {
+    // Newly generated photos may have moved outfits into History.
+    loadXhsFavorites({ render: true, silent: true }).catch(() => null);
   } else if (activeTab === "today" || showTodayOnly) {
     renderToday();
   } else {
@@ -13452,7 +13797,8 @@ function switchTab(tab) {
   const gallerySec = document.getElementById("gallerySection");
   const wardrobeSec = document.getElementById("wardrobeSection");
   const groupChatSec = document.getElementById("groupChatSection");
-  const allowedTabs = new Set(["gallery", "today", "favorites", "wardrobe", "group-chat"]);
+  const xhsFavSec = document.getElementById("xhsFavSection");
+  const allowedTabs = new Set(["gallery", "today", "favorites", "wardrobe", "xhs-favorites", "group-chat"]);
   if (!allowedTabs.has(tab)) tab = "today";
   const targetTab = document.querySelector(`.tab[data-tab="${tab}"]`);
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
@@ -13463,8 +13809,16 @@ function switchTab(tab) {
   if (gallerySec) gallerySec.classList.add("hidden");
   if (wardrobeSec) wardrobeSec.classList.add("hidden");
   if (groupChatSec) groupChatSec.classList.add("hidden");
+  if (xhsFavSec) xhsFavSec.classList.add("hidden");
 
-  if (tab === "today") {
+  if (tab === "xhs-favorites") {
+    if (xhsFavSec) xhsFavSec.classList.remove("hidden");
+    showFavoritesOnly = false;
+    showUnfavoritesOnly = false;
+    showTodayOnly = false;
+    currentTagFilter = "";
+    loadXhsFavorites({ render: true });
+  } else if (tab === "today") {
     if (todaySec) todaySec.classList.add("visible");
     showFavoritesOnly = false;
     showUnfavoritesOnly = false;
@@ -17526,6 +17880,398 @@ async function loadRefImages(options = {}) {
   }
 }
 
+// ===== Xiaohongshu outfit favorites library (gallery-local collection) =====
+// Saving here never touches the user's Xiaohongshu account; it only keeps the
+// outfit inside Portrait Gallery for later scheduling.
+let xhsFavItems = [];
+let xhsFavCounts = { favorites: 0, available: 0, reserved: 0, history: 0 };
+let xhsFavSettings = { auto_schedule: true };
+let xhsFavView = "favorites";
+let xhsFavLoadedAt = 0;
+let xhsFavLoadPromise = null;
+let xhsFavLinkNote = null;
+const xhsFavSavedKeys = new Set();
+const XHS_FAV_SEASON_LABELS = { spring: "春", summer: "夏", autumn: "秋", winter: "冬" };
+const XHS_FAV_ACTIVITY_LABELS = {
+  home: "居家", commute: "通勤", date: "约会", casual: "休闲",
+  sport: "运动", travel: "旅行", campus: "校园", party: "聚会"
+};
+
+function setXhsFavStatus(message, isError = false) {
+  const status = document.getElementById("xfavStatus");
+  if (!status) return;
+  status.textContent = message || "";
+  status.classList.toggle("error", Boolean(isError) && Boolean(message));
+}
+
+function xhsFavScheduleDate(target) {
+  const d = new Date();
+  if (target === "tomorrow") d.setDate(d.getDate() + 1);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function xhsFavNoteKey(note, imageIndex) {
+  const image = note && Array.isArray(note.images) ? note.images[imageIndex] : null;
+  const index = image && image.index != null ? image.index : imageIndex;
+  return `${(note && (note.id || note.note_url)) || ""}:${index}`;
+}
+
+function xhsFavIsSaved(note, imageIndex) {
+  if (xhsFavSavedKeys.has(xhsFavNoteKey(note, imageIndex))) return true;
+  const image = note && Array.isArray(note.images) ? note.images[imageIndex] : null;
+  const index = Number(image && image.index != null ? image.index : imageIndex);
+  const postId = note && note.id;
+  // Also consult the library itself so the state survives page reloads.
+  return Boolean(postId) && xhsFavItems.some(item => item.post_id === postId && Number(item.image_index || 0) === index);
+}
+
+function xhsFavSaveButtonHtml(source, note, imageIndex) {
+  const saved = xhsFavIsSaved(note, imageIndex);
+  const title = saved ? "已在小红书穿搭收藏夹" : "收藏这套穿搭到小红书收藏夹";
+  return `<button type="button" class="xhs-note-save${saved ? " saved" : ""}" onclick="saveXhsFavFromNote('${source}', ${imageIndex}, this)" title="${title}" aria-label="${title}"><i class="${saved ? "fa-solid" : "fa-regular"} fa-heart" aria-hidden="true"></i></button>`;
+}
+
+function markXhsFavButtonSaved(button) {
+  if (!button) return;
+  button.classList.add("saved");
+  const icon = button.querySelector("i");
+  if (icon) icon.className = "fa-solid fa-heart";
+  button.title = "已在小红书穿搭收藏夹";
+  button.setAttribute("aria-label", "已在小红书穿搭收藏夹");
+}
+
+async function saveXiaohongshuFavorite(payload, options = {}) {
+  const button = options.button || null;
+  if (button) button.disabled = true;
+  setXhsFavStatus("正在收藏这套穿搭…");
+  try {
+    const response = await fetchWithTimeout(`${API}/api/xiaohongshu/favorites`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    }, 120000, "收藏超时，请稍后重试");
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    const item = data.item || {};
+    if (options.key) xhsFavSavedKeys.add(options.key);
+    markXhsFavButtonSaved(button);
+    const message = data.created
+      ? "已收藏，可在「小红书」页查看"
+      : (item.collection === "history"
+        ? "这套穿搭已在历史里，不会重新加入收藏池"
+        : "这套穿搭已经在收藏夹里了");
+    showToast(message);
+    setXhsFavStatus(message);
+    // Re-render too: a save made from the link box inside the 小红书 tab must
+    // show the new card right away, not only after switching tabs.
+    await loadXhsFavorites({ render: true, silent: true, force: true });
+    return data;
+  } catch (error) {
+    const message = error && error.message ? error.message : "收藏失败";
+    showToast("收藏失败：" + message);
+    setXhsFavStatus("收藏失败：" + message, true);
+    return null;
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function xhsFavActiveNote(source) {
+  return source === "themeday" ? themeDayXhsActiveNote : xiaohongshuActiveNote;
+}
+
+async function saveXhsFavFromNote(source, imageIndex, button) {
+  const note = xhsFavActiveNote(source);
+  const image = note && Array.isArray(note.images) ? note.images[imageIndex] : null;
+  if (!note || !image) return;
+  const payload = {
+    title: note.title || "",
+    author: note.author || "",
+    query: note.query || "",
+    image_url: image.url || "",
+    image_index: image.index != null ? image.index : imageIndex
+  };
+  if (note.xsec_token && note.id) {
+    payload.feed_id = note.id;
+    payload.xsec_token = note.xsec_token;
+  } else if (note.note_url) {
+    payload.note_url = note.note_url;
+  } else if (note.id) {
+    payload.feed_id = note.id;
+  } else {
+    return;
+  }
+  await saveXiaohongshuFavorite(payload, { button, key: xhsFavNoteKey(note, imageIndex) });
+}
+
+function updateXhsFavBadges() {
+  const badge = document.getElementById("badge-xhs-favorites");
+  if (badge) badge.textContent = String(xhsFavCounts.favorites || 0);
+  const fav = document.getElementById("xfavCountFavorites");
+  const hist = document.getElementById("xfavCountHistory");
+  if (fav) fav.textContent = String(xhsFavCounts.favorites || 0);
+  if (hist) hist.textContent = String(xhsFavCounts.history || 0);
+  const toggle = document.getElementById("xfavAutoSchedule");
+  if (toggle) toggle.checked = xhsFavSettings.auto_schedule !== false;
+}
+
+async function loadXhsFavorites(options = {}) {
+  const render = options.render === true;
+  if (xhsFavLoadPromise) {
+    await xhsFavLoadPromise;
+    if (render) renderXhsFavorites();
+    return xhsFavItems;
+  }
+  if (options.silent && !options.force && Date.now() - xhsFavLoadedAt < 3000) {
+    if (render) renderXhsFavorites();
+    return xhsFavItems;
+  }
+  const run = (async () => {
+    try {
+      const response = await fetchWithTimeout(`${API}/api/xiaohongshu/favorites?collection=all`, {}, 30000, "加载小红书收藏超时");
+      const data = await readGalleryApiJson(response);
+      xhsFavItems = Array.isArray(data.items) ? data.items : [];
+      xhsFavCounts = Object.assign({ favorites: 0, available: 0, reserved: 0, history: 0 }, data.counts || {});
+      xhsFavSettings = Object.assign({ auto_schedule: true }, data.settings || {});
+      xhsFavLoadedAt = Date.now();
+      updateXhsFavBadges();
+    } catch (error) {
+      if (!options.silent) setXhsFavStatus("加载失败：" + error.message, true);
+    }
+  })();
+  xhsFavLoadPromise = run;
+  try {
+    await run;
+  } finally {
+    xhsFavLoadPromise = null;
+  }
+  if (render) renderXhsFavorites();
+  return xhsFavItems;
+}
+
+function setXhsFavView(view) {
+  xhsFavView = view === "history" ? "history" : "favorites";
+  const favTab = document.getElementById("xfavTabFavorites");
+  const histTab = document.getElementById("xfavTabHistory");
+  if (favTab) {
+    favTab.classList.toggle("active", xhsFavView === "favorites");
+    favTab.setAttribute("aria-selected", String(xhsFavView === "favorites"));
+  }
+  if (histTab) {
+    histTab.classList.toggle("active", xhsFavView === "history");
+    histTab.setAttribute("aria-selected", String(xhsFavView === "history"));
+  }
+  renderXhsFavorites();
+}
+
+function xhsFavCardHtml(item) {
+  const id = escapeAttr(item.id || "");
+  const isHistory = item.collection === "history";
+  const reservations = Array.isArray(item.reservations) ? item.reservations : [];
+  const usage = Array.isArray(item.usage) ? item.usage : [];
+  let badgeClass = "";
+  let badgeText = "可用";
+  if (isHistory) {
+    badgeClass = "history";
+    badgeText = reservations.length ? "历史 · 已安排" : "已用过";
+  } else if (reservations.length) {
+    badgeClass = "reserved";
+    badgeText = "已预留";
+  }
+  const tags = []
+    .concat((item.seasons || []).map(key => XHS_FAV_SEASON_LABELS[key]).filter(Boolean))
+    .concat((item.activities || []).map(key => XHS_FAV_ACTIVITY_LABELS[key]).filter(Boolean))
+    .map(label => `<span class="xfav-tag">${escapeHtml(label)}</span>`).join("");
+  const reservationNote = reservations.length
+    ? `<div class="xfav-note">${reservations.map(r => `${r.mode === "manual" ? "已指定" : "已预留"} ${escapeHtml(String(r.schedule_date || "").slice(5))}`).join("、")}</div>`
+    : "";
+  const usageHtml = isHistory && usage.length
+    ? `<ul class="xfav-usage">${usage.slice(-3).reverse().map(entry => `<li>${escapeHtml(entry.schedule_date || "")} · ${entry.mode === "manual" ? "手动指定" : "自动选用"}${entry.image_url ? ` · <a href="${escapeAttr(entry.image_url)}" target="_blank" rel="noopener">查看成图</a>` : ""}</li>`).join("")}${usage.length > 3 ? `<li>共穿过 ${usage.length} 次</li>` : ""}</ul>`
+    : "";
+  const sourceLink = item.post_url
+    ? `<a href="${escapeAttr(item.post_url)}" target="_blank" rel="noopener noreferrer" title="打开小红书原帖">原帖 <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i></a>`
+    : "";
+  const imageNumber = Number(item.image_index || 0) + 1;
+  const savedDay = String(item.saved_at || "").slice(0, 10);
+  const wearVerb = isHistory ? "再穿" : "穿这套";
+  const wearButtons = ["today", "tomorrow"].map(target => {
+    const label = target === "tomorrow" ? "明天" : "今天";
+    return `<button type="button" class="xfav-btn" onclick="wearXhsFavorite('${id}', '${target}')" title="${isHistory ? "再次" : ""}把这套穿搭指定为${label}的参考" aria-label="${wearVerb}：${label}"><i class="fa-solid fa-shirt" aria-hidden="true"></i>${label}${isHistory ? "再穿" : "穿"}</button>`;
+  }).join("");
+  const removeButton = !isHistory && !reservations.length
+    ? `<button type="button" class="xfav-btn remove" onclick="removeXhsFavorite('${id}')" title="从收藏夹移除" aria-label="从收藏夹移除"><i class="fa-regular fa-trash-can" aria-hidden="true"></i></button>`
+    : "";
+  const image = item.preview_url
+    ? `<img src="${escapeAttr(item.preview_url)}" alt="${escapeAttr(item.title || "小红书穿搭")}" loading="lazy" decoding="async">`
+    : "";
+  return `
+    <div class="xfav-card" data-xhs-fav-id="${id}">
+      <a class="xfav-thumb" href="${escapeAttr(item.preview_url || "#")}" target="_blank" rel="noopener" title="查看大图">
+        ${image}
+        <span class="xfav-badge ${badgeClass}">${badgeText}</span>
+      </a>
+      <div class="xfav-title" title="${escapeAttr(item.title || "")}">${escapeHtml(item.title || "小红书穿搭")}</div>
+      <div class="xfav-meta">
+        <span>${escapeHtml(item.author || "小红书用户")}</span>
+        ${imageNumber > 0 && item.post_id ? `<span>第 ${imageNumber} 张图</span>` : ""}
+        ${sourceLink}
+      </div>
+      <div class="xfav-meta"><span>收藏于 ${escapeHtml(savedDay)}</span>${item.save_count > 1 ? `<span>重复收藏 ${item.save_count} 次</span>` : ""}</div>
+      ${tags ? `<div class="xfav-tags">${tags}</div>` : ""}
+      ${reservationNote}
+      ${usageHtml}
+      <div class="xfav-actions">${wearButtons}${removeButton}</div>
+    </div>`;
+}
+
+function renderXhsFavorites() {
+  const content = document.getElementById("xfavContent");
+  if (!content) return;
+  updateXhsFavBadges();
+  const toolbar = document.getElementById("xfavToolbar");
+  const linkImages = document.getElementById("xfavLinkImages");
+  if (toolbar) toolbar.hidden = xhsFavView !== "favorites";
+  if (linkImages && xhsFavView !== "favorites") linkImages.hidden = true;
+  const items = xhsFavItems.filter(item => item.collection === xhsFavView);
+  if (!items.length) {
+    content.innerHTML = xhsFavView === "history"
+      ? `<div class="xfav-empty"><div class="icon">🕘</div><p>还没有用过的穿搭。<br>收藏的穿搭成功生成图片后，会自动移到这里；这里的穿搭不会再被自动选中，但可以随时手动「再穿」。</p></div>`
+      : `<div class="xfav-empty"><div class="icon">📕</div><p>还没有收藏的小红书穿搭。<br>在「穿搭生成」的小红书搜索或日程彩蛋的主题日里点图片上的 ♡，<br>或在上方粘贴笔记链接来收藏。</p></div>`;
+    return;
+  }
+  content.innerHTML = `<div class="xfav-grid">${items.map(xhsFavCardHtml).join("")}</div>`;
+}
+
+async function openXhsFavLink() {
+  const input = document.getElementById("xfavLinkInput");
+  const button = document.getElementById("xfavLinkButton");
+  const container = document.getElementById("xfavLinkImages");
+  const url = input ? input.value.trim() : "";
+  if (!url) {
+    setXhsFavStatus("请粘贴小红书笔记链接", true);
+    return;
+  }
+  if (button) button.disabled = true;
+  setXhsFavStatus("正在打开小红书笔记…");
+  if (container) { container.hidden = true; container.innerHTML = ""; }
+  try {
+    const response = await fetchWithTimeout(`${API}/api/xiaohongshu/note-url`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ url })
+    }, 100000, "打开超时：请稍后再试");
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    data.note_url = url;
+    xhsFavLinkNote = data;
+    const images = Array.isArray(data.images) ? data.images : [];
+    if (container) {
+      container.innerHTML = images.map((image, imageIndex) => {
+        const saved = xhsFavIsSaved(data, imageIndex);
+        return `
+        <div class="xhs-note-tile">
+          <button type="button" class="xhs-note-image" onclick="saveXhsFavFromLinkImage(${imageIndex}, this)" title="收藏这一张的穿搭">
+            <img src="${escapeAttr(image.url || "")}" alt="${escapeAttr(data.title || "小红书穿搭")} ${imageIndex + 1}" loading="lazy" decoding="async" referrerpolicy="no-referrer">
+            <span>${saved ? "已收藏" : "收藏这套"}</span>
+          </button>
+        </div>`;
+      }).join("");
+      container.hidden = images.length === 0;
+    }
+    setXhsFavStatus(images.length === 0
+      ? "这条笔记没有可用图片"
+      : (images.length === 1
+        ? `${data.title || "这条笔记"} · 点击图片收藏`
+        : `${data.title || "这条笔记"} · 共 ${images.length} 张图。每张图单独收藏，不会合并成一套；请点要收藏的那一张`));
+  } catch (error) {
+    setXhsFavStatus("打开失败：" + (error && error.message ? error.message : "未知错误"), true);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function saveXhsFavFromLinkImage(imageIndex, button) {
+  const note = xhsFavLinkNote;
+  const image = note && Array.isArray(note.images) ? note.images[imageIndex] : null;
+  if (!note || !image) return;
+  const data = await saveXiaohongshuFavorite({
+    note_url: note.note_url,
+    image_url: image.url || "",
+    image_index: image.index != null ? image.index : imageIndex,
+    title: note.title || "",
+    author: note.author || ""
+  }, { button, key: xhsFavNoteKey(note, imageIndex) });
+  if (data && button) {
+    const label = button.querySelector("span");
+    if (label) label.textContent = "已收藏";
+  }
+}
+
+async function wearXhsFavorite(favoriteId, target) {
+  const label = target === "tomorrow" ? "明天" : "今天";
+  const card = document.querySelector(`[data-xhs-fav-id="${CSS.escape(favoriteId)}"]`);
+  if (card) card.classList.add("busy");
+  try {
+    const response = await fetchWithTimeout(`${API}/api/xiaohongshu/favorites/${encodeURIComponent(favoriteId)}/wear`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ schedule_date: xhsFavScheduleDate(target) })
+    }, 60000, "指定超时，请稍后重试");
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    const message = `已把这套穿搭指定为${label}的参考；图片生成成功后会记入历史`;
+    showToast(message);
+    setXhsFavStatus(message);
+  } catch (error) {
+    const message = "指定失败：" + (error && error.message ? error.message : "未知错误");
+    showToast(message);
+    setXhsFavStatus(message, true);
+  } finally {
+    await loadXhsFavorites({ render: true, silent: true, force: true });
+  }
+}
+
+async function removeXhsFavorite(favoriteId) {
+  if (!window.confirm("从收藏夹移除这套穿搭？（只会移除画廊里的收藏，不影响小红书）")) return;
+  const card = document.querySelector(`[data-xhs-fav-id="${CSS.escape(favoriteId)}"]`);
+  if (card) card.classList.add("busy");
+  try {
+    const response = await fetchWithTimeout(`${API}/api/xiaohongshu/favorites/${encodeURIComponent(favoriteId)}`, {
+      method: "DELETE"
+    }, 30000, "移除超时，请稍后重试");
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) {
+      throw new Error(data.error === "reserved" ? "已被日程预留，暂时不能移除" : (data.message || data.error || `HTTP ${response.status}`));
+    }
+    showToast("已从收藏夹移除");
+  } catch (error) {
+    showToast("移除失败：" + (error && error.message ? error.message : "未知错误"));
+  } finally {
+    await loadXhsFavorites({ render: true, silent: true, force: true });
+  }
+}
+
+async function setXhsFavAutoSchedule(enabled) {
+  const toggle = document.getElementById("xfavAutoSchedule");
+  try {
+    const response = await fetchWithTimeout(`${API}/api/xiaohongshu/favorites/settings`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ auto_schedule: Boolean(enabled) })
+    }, 30000, "保存超时，请稍后重试");
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    xhsFavSettings = Object.assign({}, xhsFavSettings, data);
+    showToast(enabled ? "新日程会优先从收藏里挑选穿搭" : "新日程不再自动使用收藏的穿搭");
+  } catch (error) {
+    if (toggle) toggle.checked = xhsFavSettings.auto_schedule !== false;
+    showToast("保存失败：" + (error && error.message ? error.message : "未知错误"));
+  }
+}
+
 function setXiaohongshuSearchStatus(message) {
   const element = document.getElementById("xhsSearchStatus");
   if (!element) return;
@@ -17878,13 +18624,18 @@ async function loadXiaohongshuNote(index) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || data.error) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    data.xsec_token = item.xsec_token || "";
+    data.query = (document.getElementById("xhsSearchKeyword")?.value || "").trim();
     xiaohongshuActiveNote = data;
     const images = Array.isArray(data.images) ? data.images : [];
     container.innerHTML = images.map((image, imageIndex) => `
-      <button type="button" class="xhs-note-image" onclick="importXiaohongshuOutfit(${imageIndex})" title="设为穿搭参考图">
-        <img src="${escapeAttr(image.url || "")}" alt="${escapeAttr(data.title || "小红书穿搭")} ${imageIndex + 1}" loading="lazy" decoding="async" referrerpolicy="no-referrer">
-        <span>使用这张图</span>
-      </button>`).join("");
+      <div class="xhs-note-tile">
+        <button type="button" class="xhs-note-image" onclick="importXiaohongshuOutfit(${imageIndex})" title="设为穿搭参考图">
+          <img src="${escapeAttr(image.url || "")}" alt="${escapeAttr(data.title || "小红书穿搭")} ${imageIndex + 1}" loading="lazy" decoding="async" referrerpolicy="no-referrer">
+          <span>使用这张图</span>
+        </button>
+        ${xhsFavSaveButtonHtml("search", data, imageIndex)}
+      </div>`).join("");
     container.hidden = images.length === 0;
     setXiaohongshuSearchStatus(images.length ? `${data.title || item.title} · ${images.length} 张图片` : "这条笔记没有可用图片");
   } catch (error) {
@@ -18320,6 +19071,7 @@ async function loadGallery(options = {}) {
       // Default to saved tab or today
       const savedTab = window.galleryStorageGet('active_tab', 'today');
       loadWardrobe({ render: savedTab === 'wardrobe', silent: true }).catch(() => null);
+      if (savedTab !== 'xhs-favorites') loadXhsFavorites({ silent: true }).catch(() => null);
       if (options.skipTabSwitch) renderActivePhotoView();
       else switchTab(savedTab);
     }
@@ -21213,9 +21965,11 @@ function renderThemeDayXhsNoteImages(data) {
   if (!container) return;
   var images = Array.isArray(data.images) ? data.images : [];
   container.innerHTML = images.map(function(image, imageIndex) {
-    return '<button type="button" class="egg-theme-day-xhs-image" onclick="chooseThemeDayXhsImage(' + imageIndex + ')" title="设为' + (selectedThemeDayTarget === 'tomorrow' ? '第二天' : '当天') + '日程穿搭">' +
+    return '<div class="egg-theme-day-xhs-tile">' +
+      '<button type="button" class="egg-theme-day-xhs-image" onclick="chooseThemeDayXhsImage(' + imageIndex + ')" title="设为' + (selectedThemeDayTarget === 'tomorrow' ? '第二天' : '当天') + '日程穿搭">' +
       '<img src="' + escapeAttr(image.url || '') + '" alt="' + escapeAttr(data.title || '小红书穿搭') + '" loading="lazy" referrerpolicy="no-referrer">' +
-      '<span>设为' + (selectedThemeDayTarget === 'tomorrow' ? '第二天' : '当天') + '穿搭</span></button>';
+      '<span>设为' + (selectedThemeDayTarget === 'tomorrow' ? '第二天' : '当天') + '穿搭</span></button>' +
+      xhsFavSaveButtonHtml('themeday', data, imageIndex) + '</div>';
   }).join('');
 }
 
@@ -21237,6 +21991,8 @@ async function openThemeDayXhsNote(index) {
     });
     var data = await response.json().catch(function() { return {}; });
     if (!response.ok || data.error) throw new Error(data.message || data.error || 'HTTP ' + response.status);
+    data.xsec_token = item.xsec_token || '';
+    data.query = (document.getElementById('eggThemeDayXhsKeyword') || {}).value || '';
     themeDayXhsActiveNote = data;
     var images = Array.isArray(data.images) ? data.images : [];
     renderThemeDayXhsNoteImages(data);
@@ -21272,6 +22028,7 @@ async function resolveThemeDayXhsUrl() {
     });
     var data = await response.json().catch(function() { return {}; });
     if (!response.ok || data.error) throw new Error(data.message || data.error || 'HTTP ' + response.status);
+    data.note_url = url;
     themeDayXhsActiveNote = data;
     themeDayXhsResults = [];
     renderThemeDayXhsResults();

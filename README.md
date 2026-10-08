@@ -18,6 +18,7 @@
 - ✏️ **今日计划微调** — 今日生图计划支持双击编辑活动内容，并同步保存到当天日程和待执行任务
 - 🖼️ **Web 画廊** — 今日/全部/收藏/衣柜四 Tab，横版大卡 + 网格双布局
 - 🎀 **穿搭生成** — 自定义 prompt + 参考图 + 尺寸选择
+- 📕 **小红书穿搭收藏夹** — 把喜欢的小红书穿搭先存进画廊（不必先指定日期），新日程可从未使用的收藏里挑选并作为真实参考图；成功出图后自动移入历史，历史穿搭不再被自动选中，但可手动「再穿」
 - ⏰ **动态调度** — LLM 日程驱动，根据 HH:mm 时间动态创建一次性生图任务
 - 🔧 **REST API** — 完整 CRUD 接口，支持集成到任何 AI Agent
 
@@ -288,6 +289,39 @@ curl -X POST http://localhost:18889/api/theme-day \
 
 # 读取第二天已生成的主题日详情
 curl "http://localhost:18889/api/schedule-detail?date=YYYY-MM-DD"
+```
+
+### 小红书穿搭收藏夹
+
+收藏夹是画廊内部的一个集合，只写入 `data/xiaohongshu_favorites.json` 和 `data/references/xiaohongshu_favorites/`；**不会**修改你的小红书账号收藏，也不会发布任何内容，也与「衣柜」的 `favorite_outfits.json` 完全独立。
+
+- 在「穿搭生成」的小红书搜索、日程彩蛋的主题日选图里，点图片右上角的 ♡ 即可收藏；也可在顶部「小红书」页粘贴笔记分享链接。每次收藏的是**一张具体图片**（同一帖子的不同图片是不同的穿搭，不会被合并）。
+- 同一套穿搭重复收藏只会去重；已进入历史的穿搭再次收藏不会被重新激活。
+- 生命周期：`收藏池`（可用 / 已预留）→ 穿搭图片**成功生成并记录**后 → `历史`。仅生成日程草稿、生图失败或取消指定，都不会消耗它；预留超过 2 天仍未完成会自动释放。
+- 「新日程自动使用收藏」开关开启时，新日程会按季节/活动/主题选一套未使用的收藏作为参考图；没有合适的就回退到原有的实时搜索与已验证缓存。手动指定的穿搭永远优先，历史穿搭不会被任何自动路径选中（含回退与实时搜索）。
+- 「历史」里的穿搭可手动「今天再穿 / 明天再穿」：复用原有手动指定流程，仍留在历史并追加使用记录。
+
+```bash
+# 列表（collection: favorites | history | all）
+curl "http://localhost:18889/api/xiaohongshu/favorites?collection=all"
+
+# 保存一张图片（搜索结果 / 分享链接 / 已导入的参考图三选一）
+curl -X POST http://localhost:18889/api/xiaohongshu/favorites \
+  -H "Content-Type: application/json" \
+  -d '{"feed_id":"<笔记ID>","xsec_token":"<token>","image_url":"<图片地址>","image_index":1,"title":"…","author":"…"}'
+curl -X POST http://localhost:18889/api/xiaohongshu/favorites \
+  -H "Content-Type: application/json" -d '{"note_url":"<分享链接>","image_index":1}'
+
+# 手动穿这套（只支持今天或第二天，收藏和历史都可以）
+curl -X POST http://localhost:18889/api/xiaohongshu/favorites/{id}/wear \
+  -H "Content-Type: application/json" -d '{"schedule_date":"YYYY-MM-DD"}'
+
+# 开关：新日程是否自动使用收藏
+curl -X POST http://localhost:18889/api/xiaohongshu/favorites/settings \
+  -H "Content-Type: application/json" -d '{"auto_schedule":true}'
+
+# 移除（仅未使用且未预留的收藏；历史受保护）
+curl -X DELETE http://localhost:18889/api/xiaohongshu/favorites/{id}
 ```
 
 ### Hermes 安全升级 API

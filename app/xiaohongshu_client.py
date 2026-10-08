@@ -631,8 +631,8 @@ class XiaohongshuClient:
             ) from exc
         return current
 
-    async def resolve_note_url(self, url: str) -> dict:
-        """Resolve one pasted note link to its image list, bypassing keyword search."""
+    async def parse_note_link(self, url: str) -> tuple[str, str]:
+        """Resolve a pasted note/share link to ``(feed_id, xsec_token)``."""
         final_url = await self._resolve_share_url(url)
         feed_id, xsec_token = self._parse_note_url(final_url)
         if not feed_id:
@@ -647,6 +647,11 @@ class XiaohongshuClient:
                 "链接缺少 xsec_token 参数，请在 App 里点分享复制完整链接。",
                 status=400,
             )
+        return feed_id, xsec_token
+
+    async def resolve_note_url(self, url: str) -> dict:
+        """Resolve one pasted note link to its image list, bypassing keyword search."""
+        feed_id, xsec_token = await self.parse_note_link(url)
         return await self.detail(feed_id, xsec_token)
 
     def _image_host_allowed(self, hostname: str) -> bool:
